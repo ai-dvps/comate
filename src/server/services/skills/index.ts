@@ -24,6 +24,9 @@ export { stripTerminalEscapes, sanitizeMetadata } from './sanitize.js';
 
 // skills.sh search
 export {
+  SEARCH_PROVIDER_REGISTRY,
+  SkillSearchProviderError,
+  checkSkillSearchProviders,
   searchFederatedSkills,
   searchSkillsAPI,
   searchSkillsHubSkills,
@@ -37,6 +40,15 @@ export {
   isSkillSort,
 } from './search-query.js';
 export type { SkillScene, SkillSort, SkillSearchQuery } from './search-query.js';
+export {
+  SKILL_SEARCH_PROVIDER_IDS,
+} from './types.js';
+export type {
+  FederatedSkillSearchResult,
+  SkillProviderAvailability,
+  SkillProviderFailureReason,
+  SkillSearchProviderId,
+} from './types.js';
 
 export {
   getExpertPackage,

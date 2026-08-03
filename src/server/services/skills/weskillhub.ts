@@ -12,6 +12,7 @@ const RESPONSE_TOO_LARGE_SENTINEL = 'WESKILLHUB_RESPONSE_TOO_LARGE';
 export type WeSkillHubErrorCategory =
   | 'configuration'
   | 'network'
+  | 'timeout'
   | 'http'
   | 'response-too-large'
   | 'invalid-response'
@@ -21,6 +22,7 @@ export type WeSkillHubErrorCategory =
 const PUBLIC_ERROR_MESSAGES: Record<WeSkillHubErrorCategory, string> = {
   configuration: 'WeSkillHub configuration error',
   network: 'WeSkillHub network error',
+  timeout: 'WeSkillHub timeout',
   http: 'WeSkillHub HTTP error',
   'response-too-large': 'WeSkillHub response too large',
   'invalid-response': 'WeSkillHub invalid response',
@@ -119,8 +121,10 @@ export function createWeSkillHubClient(options: WeSkillHubClientOptions = {}): W
         redirect: 'error',
         signal: AbortSignal.timeout(timeoutMs),
       });
-    } catch {
-      throw new WeSkillHubError('network');
+    } catch (error) {
+      throw new WeSkillHubError(
+        error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'network',
+      );
     }
     if (!response.ok) throw new WeSkillHubError('http');
 
@@ -216,8 +220,10 @@ export function createWeSkillHubClient(options: WeSkillHubClientOptions = {}): W
           redirect: 'error',
           signal: AbortSignal.timeout(downloadTimeoutMs),
         });
-      } catch {
-        throw new WeSkillHubError('network');
+      } catch (error) {
+        throw new WeSkillHubError(
+          error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'network',
+        );
       }
       if (!response.ok) throw new WeSkillHubError('http');
       const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();

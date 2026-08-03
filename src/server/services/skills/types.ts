@@ -59,11 +59,34 @@ export interface SearchSkill {
   /** Source reference passed to the existing resolver and installer. */
   installSource: string;
   /** Registry that returned this result. */
-  sourceKind: 'skills.sh' | 'skillshub' | 'xfyun' | 'skillhub-cn' | 'weskillhub';
+  sourceKind: SkillSearchProviderId;
   description: string;
   installs: number;
   /** Optional provider timestamp in milliseconds, used by the newest sort. */
   updatedAt?: number;
+}
+
+export const SKILL_SEARCH_PROVIDER_IDS = [
+  'skills.sh',
+  'skillshub',
+  'xfyun',
+  'skillhub-cn',
+  'weskillhub',
+] as const;
+
+export type SkillSearchProviderId = (typeof SKILL_SEARCH_PROVIDER_IDS)[number];
+export type SkillProviderFailureReason = 'network' | 'timeout' | 'http' | 'invalid-response';
+
+export interface SkillProviderAvailability {
+  id: SkillSearchProviderId;
+  label: string;
+  status: 'available' | 'unavailable';
+  reason?: SkillProviderFailureReason;
+}
+
+export interface FederatedSkillSearchResult {
+  skills: SearchSkill[];
+  providers: SkillProviderAvailability[];
 }
 
 /**

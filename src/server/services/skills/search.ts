@@ -19,8 +19,18 @@ import {
   type SkillSearchInput,
   type SkillSearchQuery,
 } from './search-query.js';
-import type { SearchSkill } from './types.js';
-import { createWeSkillHubClient, type WeSkillHubSearchSort } from './weskillhub.js';
+import type {
+  FederatedSkillSearchResult,
+  SearchSkill,
+  SkillProviderAvailability,
+  SkillProviderFailureReason,
+  SkillSearchProviderId,
+} from './types.js';
+import {
+  createWeSkillHubClient,
+  WeSkillHubError,
+  type WeSkillHubSearchSort,
+} from './weskillhub.js';
 
 // API endpoint for skills search. Allow override via env for testing/staging.
 const SEARCH_API_BASE = process.env.SKILLS_API_URL || 'https://skills.sh';
@@ -29,7 +39,18 @@ const XFYUN_API_BASE = process.env.XFYUN_SKILLS_API_URL || 'https://skill.xfyun.
 const SKILLHUB_CN_API_BASE = process.env.SKILLHUB_CN_API_URL || 'https://api.skillhub.cn';
 const SEARCH_TIMEOUT_MS = 1_500;
 
-type SearchProvider = (query: SkillSearchQuery) => Promise<SearchSkill[]>;
+export class SkillSearchProviderError extends Error {
+  constructor(readonly reason: SkillProviderFailureReason) {
+    super(`Skill search provider ${reason}`);
+    this.name = 'SkillSearchProviderError';
+  }
+}
+
+export interface SkillSearchProviderDescriptor {
+  id: SkillSearchProviderId;
+  label: string;
+  search: (query: SkillSearchQuery) => Promise<SearchSkill[]>;
+}
 
 function isUsableQuery(query: string): boolean {
   return Boolean(query && query.trim());
@@ -39,14 +60,49 @@ function fetchWithDeadline(url: string, init: RequestInit): Promise<Response> {
   return fetch(url, { ...init, signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) });
 }
 
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === 'TimeoutError'
+    : error instanceof Error && error.name === 'TimeoutError';
+}
+
+async function fetchProviderJson(url: string, init: RequestInit): Promise<unknown> {
+  let response: Response;
+  try {
+    response = await fetchWithDeadline(url, init);
+  } catch (error) {
+    throw new SkillSearchProviderError(isTimeoutError(error) ? 'timeout' : 'network');
+  }
+  if (!response.ok) throw new SkillSearchProviderError('http');
+  try {
+    return await response.json() as unknown;
+  } catch {
+    throw new SkillSearchProviderError('invalid-response');
+  }
+}
+
+function invalidProviderResponse(): never {
+  throw new SkillSearchProviderError('invalid-response');
+}
+
+function toSafeFailureReason(error: unknown): SkillProviderFailureReason {
+  if (error instanceof SkillSearchProviderError) return error.reason;
+  if (error instanceof WeSkillHubError) {
+    if (error.category === 'network') return 'network';
+    if (error.category === 'timeout') return 'timeout';
+    if (error.category === 'http') return 'http';
+    return 'invalid-response';
+  }
+  return isTimeoutError(error) ? 'timeout' : 'network';
+}
+
 /**
  * Search the skills.sh registry by keyword.
  *
- * Behavior matches upstream:
+ * Behavior matches upstream for successful and empty queries:
  *   - Empty query returns `[]` without calling fetch
- *   - Non-2xx response returns `[]`
- *   - Network error returns `[]` (catch-and-return-empty semantics)
  *   - Results are sorted by install count (descending)
+ * Provider failures throw a safe classified error for the federation layer.
  *
  * Mirrors upstream `searchSkillsAPI(query): Promise<SearchSkill[]>`.
  */
@@ -59,48 +115,39 @@ export async function searchSkillsAPI(input: SkillSearchInput): Promise<SearchSk
     return [];
   }
 
-  try {
-    const task = toNaturalLanguageTask(query, 'en');
-    const url = `${SEARCH_API_BASE}/api/search?q=${encodeURIComponent(task)}&limit=10`;
-    const res = await fetchWithDeadline(url, {
-      headers: { Accept: 'application/json' },
-    });
+  const task = toNaturalLanguageTask(query, 'en');
+  const url = `${SEARCH_API_BASE}/api/search?q=${encodeURIComponent(task)}&limit=10`;
+  const data = (await fetchProviderJson(url, {
+    headers: { Accept: 'application/json' },
+  })) as {
+    skills?: Array<{
+      id: string;
+      name: string;
+      installs?: number;
+      source?: string;
+    }>;
+  };
 
-    if (!res.ok) return [];
+  if (!Array.isArray(data.skills)) invalidProviderResponse();
 
-    const data = (await res.json()) as {
-      skills?: Array<{
-        id: string;
-        name: string;
-        installs?: number;
-        source?: string;
-      }>;
-    };
-
-    if (!data.skills || !Array.isArray(data.skills)) return [];
-
-    return data.skills
-      .map((skill) => {
-        const slug = sanitizeMetadata(skill.id || '');
-        const source = sanitizeMetadata(skill.source || '');
-        const normalized: SearchSkill = {
-          id: `skills.sh:${slug}`,
-          name: sanitizeMetadata(skill.name || ''),
-          slug,
-          source,
-          installSource: source,
-          sourceKind: 'skills.sh' as const,
-          description: '',
-          installs: typeof skill.installs === 'number' ? skill.installs : 0,
-        };
-        return normalized;
-      })
-      .filter((skill) => skill.slug.length > 0 && skill.installSource.length > 0)
-      .sort((a, b) => (b.installs || 0) - (a.installs || 0));
-  } catch {
-    // Network error, JSON parse error, etc. — match upstream catch-and-return-empty.
-    return [];
-  }
+  return data.skills
+    .map((skill) => {
+      const slug = sanitizeMetadata(skill.id || '');
+      const source = sanitizeMetadata(skill.source || '');
+      const normalized: SearchSkill = {
+        id: `skills.sh:${slug}`,
+        name: sanitizeMetadata(skill.name || ''),
+        slug,
+        source,
+        installSource: source,
+        sourceKind: 'skills.sh' as const,
+        description: '',
+        installs: typeof skill.installs === 'number' ? skill.installs : 0,
+      };
+      return normalized;
+    })
+    .filter((skill) => skill.slug.length > 0 && skill.installSource.length > 0)
+    .sort((a, b) => (b.installs || 0) - (a.installs || 0));
 }
 
 /**
@@ -114,19 +161,15 @@ export async function searchSkillsHubSkills(input: SkillSearchInput): Promise<Se
   const query = normalizeSkillSearchQuery(input);
   if (!isUsableQuery(query.keyword)) return [];
 
-  try {
-    const task = toNaturalLanguageTask(query, 'en');
-    const url = `${SKILLS_HUB_API_BASE}/skills/resolve?task=${encodeURIComponent(task)}`;
-    const res = await fetchWithDeadline(url, { headers: { Accept: 'application/json' } });
-    if (!res.ok) return [];
+  const task = toNaturalLanguageTask(query, 'en');
+  const url = `${SKILLS_HUB_API_BASE}/skills/resolve?task=${encodeURIComponent(task)}`;
+  const data = (await fetchProviderJson(url, { headers: { Accept: 'application/json' } })) as {
+    data?: Array<{ skill?: SkillsHubSkill }>;
+  };
+  if (!Array.isArray(data.data)) invalidProviderResponse();
 
-    const data = (await res.json()) as {
-      data?: Array<{ skill?: SkillsHubSkill }>;
-    };
-    if (!Array.isArray(data.data)) return [];
-
-    const results = data.data
-      .map(({ skill }) => {
+  const results = data.data
+    .map(({ skill }) => {
         if (!skill) return null;
         const slug = sanitizeMetadata(skill.slug || '');
         const owner = sanitizeMetadata(skill.repo?.githubOwner || '');
@@ -145,15 +188,14 @@ export async function searchSkillsHubSkills(input: SkillSearchInput): Promise<Se
             : typeof skill.repo?.starCount === 'number' ? skill.repo.starCount : 0,
         };
         return normalized;
-      })
-      .filter((skill): skill is SearchSkill => Boolean(skill && skill.slug.length > 0 && skill.installSource.length > 0));
-    // `/resolve` is already ranked semantically by SkillsHub. Preserve that
-    // order for the unified "综合" sort; global download sorting happens in
-    // `searchFederatedSkills` when explicitly requested.
-    return results;
-  } catch {
-    return [];
-  }
+    })
+    .filter((skill): skill is SearchSkill => Boolean(
+      skill && skill.slug.length > 0 && skill.installSource.length > 0,
+    ));
+  // `/resolve` is already ranked semantically by SkillsHub. Preserve that
+  // order for the unified "综合" sort; global download sorting happens in
+  // `searchFederatedSkills` when explicitly requested.
+  return results;
 }
 
 /** Search iFlytek Astron SkillHub's public ClawHub-compatible catalog. */
@@ -161,26 +203,22 @@ export async function searchXfyunSkills(input: SkillSearchInput): Promise<Search
   const query = normalizeSkillSearchQuery(input);
   if (!isUsableQuery(query.keyword)) return [];
 
-  try {
-    const task = toNaturalLanguageTask(query, 'zh');
-    const url = `${XFYUN_API_BASE}/skills?q=${encodeURIComponent(task)}&page=0&size=10`;
-    const res = await fetchWithDeadline(url, { headers: { Accept: 'application/json' } });
-    if (!res.ok) return [];
+  const task = toNaturalLanguageTask(query, 'zh');
+  const url = `${XFYUN_API_BASE}/skills?q=${encodeURIComponent(task)}&page=0&size=10`;
+  const data = (await fetchProviderJson(url, { headers: { Accept: 'application/json' } })) as {
+    items?: Array<{
+      slug?: string;
+      displayName?: string;
+      summary?: string | null;
+      stats?: { downloads?: number };
+    }>;
+  };
+  if (!Array.isArray(data.items)) invalidProviderResponse();
 
-    const data = (await res.json()) as {
-      items?: Array<{
-        slug?: string;
-        displayName?: string;
-        summary?: string | null;
-        stats?: { downloads?: number };
-      }>;
-    };
-    if (!Array.isArray(data.items)) return [];
-
-    return data.items
-      .map((skill) => {
-        const slug = sanitizeMetadata(skill.slug || '');
-        return {
+  return data.items
+    .map((skill) => {
+      const slug = sanitizeMetadata(skill.slug || '');
+      return {
           id: `xfyun:${slug}`,
           name: sanitizeMetadata(skill.displayName || slug),
           slug,
@@ -189,13 +227,10 @@ export async function searchXfyunSkills(input: SkillSearchInput): Promise<Search
           sourceKind: 'xfyun' as const,
           description: sanitizeMetadata(skill.summary || ''),
           installs: typeof skill.stats?.downloads === 'number' ? skill.stats.downloads : 0,
-        };
-      })
-      .filter((skill) => skill.slug.length > 0)
-      .sort((a, b) => b.installs - a.installs);
-  } catch {
-    return [];
-  }
+      };
+    })
+    .filter((skill) => skill.slug.length > 0)
+    .sort((a, b) => b.installs - a.installs);
 }
 
 /**
@@ -209,39 +244,35 @@ export async function searchSkillhubCnSkills(input: SkillSearchInput): Promise<S
   const query = normalizeSkillSearchQuery(input);
   if (!isUsableQuery(query.keyword)) return [];
 
-  try {
-    const params = new URLSearchParams({
-      page: '1',
-      pageSize: '10',
-      keyword: query.preferChinese ? `${query.keyword} 中文` : query.keyword,
-      sortBy: query.sort || 'score',
-    });
-    if (query.scene) params.set('category', query.scene);
-    if (query.noApiKey) params.set('labels', 'requires_api_key:false');
-    const res = await fetchWithDeadline(`${SKILLHUB_CN_API_BASE}/api/skills?${params.toString()}`, {
-      headers: { Accept: 'application/json' },
-    });
-    if (!res.ok) return [];
-
-    const data = (await res.json()) as {
-      code?: number;
-      data?: {
-        skills?: Array<{
-          slug?: string;
-          name?: string;
-          description?: string | null;
-          description_zh?: string | null;
-          downloads?: number;
-          installs?: number;
-          updated_at?: number;
-          namespace?: { handle?: string };
-        }>;
-      };
+  const params = new URLSearchParams({
+    page: '1',
+    pageSize: '10',
+    keyword: query.preferChinese ? `${query.keyword} 中文` : query.keyword,
+    sortBy: query.sort || 'score',
+  });
+  if (query.scene) params.set('category', query.scene);
+  if (query.noApiKey) params.set('labels', 'requires_api_key:false');
+  const data = (await fetchProviderJson(`${SKILLHUB_CN_API_BASE}/api/skills?${params.toString()}`, {
+    headers: { Accept: 'application/json' },
+  })) as {
+    code?: number;
+    data?: {
+      skills?: Array<{
+        slug?: string;
+        name?: string;
+        description?: string | null;
+        description_zh?: string | null;
+        downloads?: number;
+        installs?: number;
+        updated_at?: number;
+        namespace?: { handle?: string };
+      }>;
     };
-    if (data.code !== 0 || !Array.isArray(data.data?.skills)) return [];
+  };
+  if (data.code !== 0 || !Array.isArray(data.data?.skills)) invalidProviderResponse();
 
-    return data.data.skills
-      .map((skill) => {
+  return data.data.skills
+    .map((skill) => {
         const slug = sanitizeMetadata(skill.slug || '');
         const namespace = sanitizeMetadata(skill.namespace?.handle || '');
         const coordinate = namespace && slug ? `${namespace}/${slug}` : '';
@@ -258,12 +289,9 @@ export async function searchSkillhubCnSkills(input: SkillSearchInput): Promise<S
             : typeof skill.installs === 'number' ? skill.installs : 0,
           ...(typeof skill.updated_at === 'number' ? { updatedAt: skill.updated_at } : {}),
         };
-      })
-      .filter((skill) => skill.slug.length > 0 && skill.installSource !== 'skillhub-cn:')
-      .sort((a, b) => b.installs - a.installs);
-  } catch {
-    return [];
-  }
+    })
+    .filter((skill) => skill.slug.length > 0 && skill.installSource !== 'skillhub-cn:')
+    .sort((a, b) => b.installs - a.installs);
 }
 
 /** Search WeSkillHub's public catalog through its bounded provider client. */
@@ -277,37 +305,70 @@ export async function searchWeSkillHubSkills(input: SkillSearchInput): Promise<S
     newest: 'update_date',
   };
 
+  const records = await createWeSkillHubClient().searchSkills({
+    search: query.keyword,
+    sort: sortMap[query.sort || 'score'],
+  });
+  return records.map((skill) => {
+    const coordinate = `${skill.id}/${skill.slug}`;
+    return {
+      id: `weskillhub:${coordinate}`,
+      name: skill.name,
+      slug: skill.slug,
+      source: 'weskillhub.weoa.com',
+      installSource: `weskillhub:${coordinate}`,
+      sourceKind: 'weskillhub' as const,
+      description: skill.description,
+      installs: skill.downloads,
+      ...(skill.updatedAt !== undefined ? { updatedAt: skill.updatedAt } : {}),
+    };
+  });
+}
+
+export const SEARCH_PROVIDER_REGISTRY: readonly SkillSearchProviderDescriptor[] = [
+  { id: 'skills.sh', label: 'skills.sh', search: searchSkillsAPI },
+  { id: 'skillshub', label: 'SkillsHub', search: searchSkillsHubSkills },
+  { id: 'xfyun', label: '讯飞 SkillHub', search: searchXfyunSkills },
+  { id: 'skillhub-cn', label: '腾讯 SkillHub', search: searchSkillhubCnSkills },
+  { id: 'weskillhub', label: 'WeSkillHub', search: searchWeSkillHubSkills },
+];
+
+async function runProvider(
+  provider: SkillSearchProviderDescriptor,
+  query: SkillSearchQuery,
+): Promise<{ skills: SearchSkill[]; availability: SkillProviderAvailability }> {
   try {
-    const records = await createWeSkillHubClient().searchSkills({
-      search: query.keyword,
-      sort: sortMap[query.sort || 'score'],
-    });
-    return records.map((skill) => {
-      const coordinate = `${skill.id}/${skill.slug}`;
-      return {
-        id: `weskillhub:${coordinate}`,
-        name: skill.name,
-        slug: skill.slug,
-        source: 'weskillhub.weoa.com',
-        installSource: `weskillhub:${coordinate}`,
-        sourceKind: 'weskillhub' as const,
-        description: skill.description,
-        installs: skill.downloads,
-        ...(skill.updatedAt !== undefined ? { updatedAt: skill.updatedAt } : {}),
-      };
-    });
-  } catch {
-    return [];
+    return {
+      skills: await provider.search(query),
+      availability: { id: provider.id, label: provider.label, status: 'available' },
+    };
+  } catch (error) {
+    return {
+      skills: [],
+      availability: {
+        id: provider.id,
+        label: provider.label,
+        status: 'unavailable',
+        reason: toSafeFailureReason(error),
+      },
+    };
   }
 }
 
-const searchProviders: SearchProvider[] = [
-  searchSkillsAPI,
-  searchSkillsHubSkills,
-  searchXfyunSkills,
-  searchSkillhubCnSkills,
-  searchWeSkillHubSkills,
-];
+function selectedProviders(ids: SkillSearchProviderId[] | undefined): SkillSearchProviderDescriptor[] {
+  if (ids === undefined) return [...SEARCH_PROVIDER_REGISTRY];
+  const selected = new Set(ids);
+  return SEARCH_PROVIDER_REGISTRY.filter(({ id }) => selected.has(id));
+}
+
+export async function checkSkillSearchProviders(
+  ids?: SkillSearchProviderId[],
+): Promise<SkillProviderAvailability[]> {
+  const providers = selectedProviders(ids);
+  const probeQuery: SkillSearchQuery = { keyword: 'skill', sort: 'score' };
+  const results = await Promise.all(providers.map((provider) => runProvider(provider, probeQuery)));
+  return results.map(({ availability }) => availability);
+}
 
 /**
  * Query the enabled registries concurrently and normalize their results.
@@ -316,17 +377,31 @@ const searchProviders: SearchProvider[] = [
  * embedding index is written locally. A failed registry contributes no
  * results but never hides results returned by another registry.
  */
-export async function searchFederatedSkills(input: SkillSearchInput): Promise<SearchSkill[]> {
+export async function searchFederatedSkills(input: SkillSearchInput): Promise<FederatedSkillSearchResult> {
   const query = normalizeSkillSearchQuery(input);
-  if (!isUsableQuery(query.keyword)) return [];
+  if (!isUsableQuery(query.keyword)) return { skills: [], providers: [] };
 
-  const providerResults = await Promise.allSettled(searchProviders.map((search) => search(query)));
+  const providers = selectedProviders(query.providers);
+  const providerResults = await Promise.allSettled(
+    providers.map((provider) => runProvider(provider, query)),
+  );
   const seen = new Set<string>();
   const results: SearchSkill[] = [];
+  const availability: SkillProviderAvailability[] = [];
 
-  for (const providerResult of providerResults) {
-    if (providerResult.status !== 'fulfilled') continue;
-    for (const result of providerResult.value) {
+  for (const [index, providerResult] of providerResults.entries()) {
+    if (providerResult.status !== 'fulfilled') {
+      const provider = providers[index]!;
+      availability.push({
+        id: provider.id,
+        label: provider.label,
+        status: 'unavailable',
+        reason: toSafeFailureReason(providerResult.reason),
+      });
+      continue;
+    }
+    availability.push(providerResult.value.availability);
+    for (const result of providerResult.value.skills) {
       const key = `${result.sourceKind}:${result.installSource}:${result.name}`.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
@@ -334,9 +409,9 @@ export async function searchFederatedSkills(input: SkillSearchInput): Promise<Se
     }
   }
 
-  if (query.sort === 'downloads') return results.sort((a, b) => b.installs - a.installs);
-  if (query.sort === 'newest') return results.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-  return results;
+  if (query.sort === 'downloads') results.sort((a, b) => b.installs - a.installs);
+  if (query.sort === 'newest') results.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  return { skills: results, providers: availability };
 }
 
 interface SkillsHubSkill {
