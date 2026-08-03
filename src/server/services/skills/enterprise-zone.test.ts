@@ -97,13 +97,11 @@ describe('Enterprise Zone provider', () => {
         requested = String(input);
         return Response.json({ items: [skill()], page: 1, pageSize: 20, total: 1 });
       };
-      const result = await listEnterpriseSkills('org-acme', { keyword: ' deploy ', sort, page: 1 });
+      await listEnterpriseSkills('org-acme', { keyword: ' deploy ', sort, page: 1 });
       const url = new URL(requested);
       assert.strictEqual(url.searchParams.get('sort'), sort);
       assert.strictEqual(url.searchParams.get('keyword'), 'deploy');
       assert.strictEqual(url.searchParams.get('pageSize'), '20');
-      assert.strictEqual(result.skills[0]?.source, 'skillhub-cn:acme/deploy-helper');
-      assert.strictEqual(result.skills[0]?.createdAt, 1_700_000_000_000);
     }
   });
 

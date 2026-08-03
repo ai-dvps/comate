@@ -7,11 +7,13 @@ import {
   Search,
   X,
 } from 'lucide-react'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   EnterpriseIndustry,
   EnterprisePage,
 } from '../../stores/enterprise-zone-store'
+import { formatCount, industryLabels } from './enterprise-zone-utils'
 
 interface EnterpriseListProps {
   page: EnterprisePage | null
@@ -30,14 +32,6 @@ interface EnterpriseListProps {
   onSelect: (orgId: string) => void
   onRetry: () => void
   onRetryIndustries: () => void
-}
-
-function formatCount(value: number): string {
-  return value.toLocaleString()
-}
-
-function industryLabel(industries: EnterpriseIndustry[], key: string): string {
-  return industries.find((industry) => industry.key === key)?.displayName ?? key
 }
 
 export default function EnterpriseList({
@@ -59,6 +53,7 @@ export default function EnterpriseList({
   onRetryIndustries,
 }: EnterpriseListProps) {
   const { t } = useTranslation('settings')
+  const labelsByIndustry = useMemo(() => industryLabels(industries), [industries])
   const enterprises = page?.enterprises.slice(0, 20) ?? []
   const visiblePage = page?.page ?? requestedPage
   const totalPages = page ? Math.max(1, Math.ceil(page.total / page.pageSize)) : 1
@@ -187,7 +182,7 @@ export default function EnterpriseList({
                 </div>
                 <p className="mt-3 line-clamp-2 min-h-10 text-xs leading-5 text-text-secondary">{item.description}</p>
                 <div className="mt-3 flex flex-wrap gap-1.5">
-                  {item.industryTags.map((tag) => <span key={tag} className="rounded-md bg-surface-hover px-2 py-1 text-[10px] text-text-tertiary">{industryLabel(industries, tag)}</span>)}
+                    {item.industryTags.map((tag) => <span key={tag} className="rounded-md bg-surface-hover px-2 py-1 text-[10px] text-text-tertiary">{labelsByIndustry.get(tag) ?? tag}</span>)}
                 </div>
                 <div className="mt-3 flex items-center gap-3 text-[10px] text-text-tertiary">
                   <span>{t('skills.enterpriseZone.skillCount', { count: formatCount(item.publishedSkillCount) })}</span>

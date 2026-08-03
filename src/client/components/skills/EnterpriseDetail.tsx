@@ -9,6 +9,7 @@ import {
   Star,
   X,
 } from 'lucide-react'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   EnterpriseDetail as EnterpriseDetailData,
@@ -16,6 +17,7 @@ import type {
   EnterpriseSkillPage,
   EnterpriseSkillSort,
 } from '../../stores/enterprise-zone-store'
+import { formatCount, industryLabels } from './enterprise-zone-utils'
 
 interface EnterpriseDetailProps {
   detail: EnterpriseDetailData | null
@@ -35,14 +37,6 @@ interface EnterpriseDetailProps {
   onSkillSortChange: (value: EnterpriseSkillSort) => void
   onSkillPageChange: (page: number) => void
   onSelectSkill: (namespace: string, slug: string) => void
-}
-
-function formatCount(value: number): string {
-  return value.toLocaleString()
-}
-
-function industryLabel(industries: EnterpriseIndustry[], key: string): string {
-  return industries.find((industry) => industry.key === key)?.displayName ?? key
 }
 
 export default function EnterpriseDetail({
@@ -65,6 +59,7 @@ export default function EnterpriseDetail({
   onSelectSkill,
 }: EnterpriseDetailProps) {
   const { t } = useTranslation('settings')
+  const labelsByIndustry = useMemo(() => industryLabels(industries), [industries])
   if (detailLoading && !detail) {
     return (
       <div aria-busy="true" aria-label={t('skills.enterpriseZone.loadingEnterpriseProfile')} className="mx-auto max-w-5xl animate-pulse space-y-4">
@@ -119,7 +114,7 @@ export default function EnterpriseDetail({
             {detail.fullName && detail.fullName !== detail.name ? <p className="mt-1 text-xs text-text-tertiary">{detail.fullName}</p> : null}
             <p className="mt-2 max-w-3xl text-xs leading-5 text-text-secondary">{detail.description}</p>
             <div className="mt-3 flex flex-wrap gap-1.5">
-              {detail.industryTags.map((tag) => <span key={tag} className="rounded-md bg-surface-hover px-2 py-1 text-[10px] text-text-tertiary">{industryLabel(industries, tag)}</span>)}
+              {detail.industryTags.map((tag) => <span key={tag} className="rounded-md bg-surface-hover px-2 py-1 text-[10px] text-text-tertiary">{labelsByIndustry.get(tag) ?? tag}</span>)}
             </div>
             <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-[11px] text-text-tertiary">
               <span>{t('skills.enterpriseZone.publishedSkillCount', { count: formatCount(detail.publishedSkillCount) })}</span>

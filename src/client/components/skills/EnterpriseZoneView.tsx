@@ -15,7 +15,6 @@ interface EnterpriseZoneViewProps {
   isOpen: boolean
   workspaceId?: string
   onInstalled?: () => void
-  onSelectSkill?: (orgId: string, namespace: string, slug: string) => void
 }
 
 type EnterpriseLocation =
@@ -23,7 +22,6 @@ type EnterpriseLocation =
   | { view: 'enterprise'; orgId: string }
   | { view: 'skill'; orgId: string; namespace: string; slug: string }
 
-const EMPTY_SELECT_SKILL = () => undefined
 const EMPTY_INSTALLED = () => undefined
 
 export default function EnterpriseZoneView({
@@ -31,7 +29,6 @@ export default function EnterpriseZoneView({
   isOpen,
   workspaceId = '',
   onInstalled = EMPTY_INSTALLED,
-  onSelectSkill = EMPTY_SELECT_SKILL,
 }: EnterpriseZoneViewProps) {
   const [location, setLocation] = useState<EnterpriseLocation>({ view: 'list' })
   const [enterpriseKeyword, setEnterpriseKeyword] = useState('')
@@ -57,6 +54,7 @@ export default function EnterpriseZoneView({
     enterprisePage,
     isLoadingEnterprises,
     enterprisesError,
+    activeEnterpriseOrgId,
     enterpriseDetail,
     isLoadingEnterprise,
     enterpriseError,
@@ -80,6 +78,7 @@ export default function EnterpriseZoneView({
     enterprisePage: state.enterprisePage,
     isLoadingEnterprises: state.isLoadingEnterprises,
     enterprisesError: state.enterprisesError,
+    activeEnterpriseOrgId: state.activeEnterpriseOrgId,
     enterpriseDetail: state.enterpriseDetail,
     isLoadingEnterprise: state.isLoadingEnterprise,
     enterpriseError: state.enterpriseError,
@@ -99,6 +98,10 @@ export default function EnterpriseZoneView({
   })))
 
   const isListView = location.view === 'list'
+  const enterpriseOrgId = location.view === 'enterprise' ? location.orgId : null
+  const skillOrgId = location.view === 'skill' ? location.orgId : null
+  const skillNamespace = location.view === 'skill' ? location.namespace : null
+  const skillSlug = location.view === 'skill' ? location.slug : null
   const installed = useSkillsStore((state) => state.installed)
   const hasIndustries = industries.length > 0
 
@@ -132,15 +135,15 @@ export default function EnterpriseZoneView({
   ])
 
   useEffect(() => {
-    if (!isOpen || !active || location.view !== 'enterprise') return
-    void fetchEnterprise(location.orgId)
-  }, [isOpen, active, location, fetchEnterprise])
+    if (!isOpen || !active || !enterpriseOrgId) return
+    void fetchEnterprise(enterpriseOrgId)
+  }, [isOpen, active, enterpriseOrgId, fetchEnterprise])
 
   useEffect(() => {
-    if (!isOpen || !active || location.view !== 'enterprise') return
+    if (!isOpen || !active || !enterpriseOrgId) return
     if (skillDebounceRef.current) clearTimeout(skillDebounceRef.current)
     skillDebounceRef.current = setTimeout(() => {
-      void fetchEnterpriseSkills(location.orgId, {
+      void fetchEnterpriseSkills(enterpriseOrgId, {
         keyword: skillKeyword,
         sort: skillSort,
         page: skillPageNumber,
@@ -149,12 +152,12 @@ export default function EnterpriseZoneView({
     return () => {
       if (skillDebounceRef.current) clearTimeout(skillDebounceRef.current)
     }
-  }, [isOpen, active, location, skillKeyword, skillSort, skillPageNumber, fetchEnterpriseSkills])
+  }, [isOpen, active, enterpriseOrgId, skillKeyword, skillSort, skillPageNumber, fetchEnterpriseSkills])
 
   useEffect(() => {
-    if (!isOpen || !active || location.view !== 'skill') return
-    void fetchEnterpriseSkill(location.orgId, location.namespace, location.slug)
-  }, [isOpen, active, location, fetchEnterpriseSkill])
+    if (!isOpen || !active || !skillOrgId || !skillNamespace || !skillSlug) return
+    void fetchEnterpriseSkill(skillOrgId, skillNamespace, skillSlug)
+  }, [isOpen, active, skillOrgId, skillNamespace, skillSlug, fetchEnterpriseSkill])
 
   useEffect(() => {
     if (isOpen) return
@@ -199,7 +202,6 @@ export default function EnterpriseZoneView({
     skillScrollTopRef.current = rootRef.current?.parentElement?.scrollTop ?? 0
     selectedSkillRef.current = `${namespace}/${slug}`
     setLocation({ view: 'skill', orgId, namespace, slug })
-    onSelectSkill(orgId, namespace, slug)
   }
 
   const backToEnterprise = (orgId: string) => {
@@ -285,7 +287,7 @@ export default function EnterpriseZoneView({
     return (
       <div ref={rootRef} className="contents">
         <EnterpriseSkillDetail
-          enterprise={enterpriseDetail?.orgId === location.orgId ? enterpriseDetail : null}
+          enterprise={activeEnterpriseOrgId === location.orgId && enterpriseDetail?.orgId === location.orgId ? enterpriseDetail : null}
           detail={currentDetail}
           skillSlug={location.slug}
           loading={isLoadingSkill}
@@ -315,14 +317,20 @@ export default function EnterpriseZoneView({
     )
   }
 
+  const currentEnterpriseDetail = activeEnterpriseOrgId === location.orgId
+    && enterpriseDetail?.orgId === location.orgId
+    ? enterpriseDetail
+    : null
+  const currentSkillPage = activeEnterpriseOrgId === location.orgId ? skillPage : null
+
   return (
     <div ref={rootRef} className="contents">
       <EnterpriseDetail
-        detail={enterpriseDetail}
+        detail={currentEnterpriseDetail}
         industries={industries}
         detailLoading={isLoadingEnterprise}
         detailError={enterpriseError}
-        skillPage={skillPage}
+        skillPage={currentSkillPage}
         skillKeyword={skillKeyword}
         skillSort={skillSort}
         requestedSkillPage={skillPageNumber}
