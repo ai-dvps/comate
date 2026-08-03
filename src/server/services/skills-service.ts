@@ -30,6 +30,7 @@ import {
   discoverSkills,
   toDiscoveredSkill,
   copySkillToScope,
+  sanitizeName,
   removeSkillFromScope,
   parseSkillMd,
   getOwnerRepo,
@@ -250,6 +251,10 @@ export class SkillsService {
       try {
         await materializeRegistrySource(registrySource, tempDir);
         const skills = await discoverSkills(tempDir);
+        if (registrySource.skillId !== undefined) {
+          const validationError = this.registrySkillValidationError(registrySource, skills);
+          if (validationError) throw new Error(validationError);
+        }
         return skills.map((s) => toDiscoveredSkill(s, tempDir));
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
@@ -336,22 +341,32 @@ export class SkillsService {
     try {
       // Package orchestration is copied verbatim, even when its frontmatter is incomplete.
       // Other sources still require normal Skill discovery and metadata validation.
-      const expectedRegistryName = registrySource?.packageSlug ?? registrySource?.slug;
       const allSkills: Array<Pick<Skill, 'name' | 'path'>> = registrySource?.kind === 'expert-package-orchestrator'
         ? [{
             name: registrySource.packageSlug!,
             path: join(sourceRoot, registrySource.packageSlug!),
           }]
         : await discoverSkills(sourceRoot, parsed?.subpath);
-      if (
-        expectedRegistryName &&
-        (allSkills.length !== 1 || allSkills[0]?.name !== expectedRegistryName)
-      ) {
+      const registryValidationError = registrySource
+        ? this.registrySkillValidationError(registrySource, allSkills)
+        : null;
+      if (registryValidationError) {
         return requestedSkills.map((skillName) => ({
           skillName,
           kind: registrySource?.kind ?? 'skill',
           status: 'error',
-          error: `Registry source must contain exactly one Skill named "${expectedRegistryName}".`,
+          error: registryValidationError,
+        }));
+      }
+      if (
+        registrySource?.skillId !== undefined
+        && (requestedSkills.length !== 1 || requestedSkills[0] !== allSkills[0]!.name)
+      ) {
+        return requestedSkills.map((skillName) => ({
+          skillName,
+          kind: registrySource.kind,
+          status: 'error',
+          error: `WeSkillHub source contains exactly one Skill named "${allSkills[0]!.name}".`,
         }));
       }
       const skillByName = new Map<string, Pick<Skill, 'name' | 'path'>>();
@@ -377,6 +392,20 @@ export class SkillsService {
             async (): Promise<InstallResult> => {
               const destPath = join(getSkillsDirForScope(scope, workspacePath), skill.name);
               const existedBeforeCopy = existsSync(destPath);
+              if (registrySource?.skillId !== undefined) {
+                const existingEntry = await this.readLockEntry(scope, workspacePath, skill.name);
+                if (
+                  (existingEntry && (existingEntry.source !== source || existingEntry.sourceType !== 'registry'))
+                  || (existedBeforeCopy && !existingEntry)
+                ) {
+                  return {
+                    skillName: skill.name,
+                    kind: registrySource.kind,
+                    status: 'error',
+                    error: `Skill name "${skill.name}" is already used by another source in this scope.`,
+                  };
+                }
+              }
               const copyResult = await copySkillToScope(
                 skill.path,
                 { skillName: skill.name, scope, workspacePath },
@@ -407,7 +436,9 @@ export class SkillsService {
                   workspacePath,
                   skillName: skill.name,
                   source,
-                  sourceUrl: registrySource ? registrySourceUrl(registrySource) : parsed!.url,
+                  sourceUrl: registrySource
+                    ? (registrySource.skillId !== undefined ? registrySource.source : registrySourceUrl(registrySource))
+                    : parsed!.url,
                   sourceType: registrySource ? 'registry' : parsed!.type,
                   ref: parsed?.ref,
                   skillPath: this.computeSkillPathForLock(sourceRoot, skill.path),
@@ -868,6 +899,28 @@ export class SkillsService {
       });
       await writeGlobalLock(lock);
     }
+  }
+
+  private registrySkillValidationError(
+    source: NonNullable<ReturnType<typeof parseRegistrySource>>,
+    skills: Array<Pick<Skill, 'name'>>,
+  ): string | null {
+    if (source.skillId !== undefined) {
+      if (skills.length !== 1) {
+        return 'WeSkillHub source must contain exactly one discoverable Skill.';
+      }
+      const name = skills[0]!.name;
+      if (name !== sanitizeName(name)) {
+        return `WeSkillHub Skill name "${name}" must already be in its filesystem-safe canonical form.`;
+      }
+      return null;
+    }
+
+    const expectedName = source.packageSlug ?? source.slug;
+    if (expectedName && (skills.length !== 1 || skills[0]?.name !== expectedName)) {
+      return `Registry source must contain exactly one Skill named "${expectedName}".`;
+    }
+    return null;
   }
 
   private scopeMutationKey(scope: SkillScope, workspacePath?: string): string {
