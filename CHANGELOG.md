@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **WeSkillHub federated Skills provider** — WeSkillHub is now the fifth federated provider, with discovery using the generic project/global Skill installation and update lifecycle.
+
 - **Enterprise Zone in Skills** — Skills now includes a top-level Enterprise Zone for searchable, industry-filtered enterprise discovery, per-enterprise Skill search and sorting, Skill details, and individual project/global installation through the standard Skill flow.
 
 - **Expert Packages in Skills** — Skills now includes a top-level Expert Packages area with searchable and scene-filtered package discovery, package and included-Skill detail pages, and in-app project/global installation. Complete package installs preserve partial successes and support failed-item retry, while package orchestration remains runtime-compatible but is labeled separately from standard Skills.

@@ -19,7 +19,7 @@
  * does not duplicate those checks.
  */
 
-import { mkdtempSync, rmSync, existsSync, lstatSync } from 'fs';
+import { mkdtempSync, rmSync, existsSync, lstatSync, readdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, relative } from 'path';
 import { sidecarLog } from '../utils/sidecar-logger.js';
@@ -250,9 +250,15 @@ export class SkillsService {
       const tempDir = mkdtempSync(join(tmpdir(), 'comate-skills-resolve-'));
       try {
         await materializeRegistrySource(registrySource, tempDir);
-        const skills = await discoverSkills(tempDir);
+        const skills = await discoverSkills(tempDir, undefined, {
+          fullDepth: registrySource.skillId !== undefined,
+        });
         if (registrySource.skillId !== undefined) {
-          const validationError = this.registrySkillValidationError(registrySource, skills);
+          const validationError = this.registrySkillValidationError(
+            registrySource,
+            skills,
+            this.countSkillManifests(tempDir),
+          );
           if (validationError) throw new Error(validationError);
         }
         return skills.map((s) => toDiscoveredSkill(s, tempDir));
@@ -346,9 +352,15 @@ export class SkillsService {
             name: registrySource.packageSlug!,
             path: join(sourceRoot, registrySource.packageSlug!),
           }]
-        : await discoverSkills(sourceRoot, parsed?.subpath);
+        : await discoverSkills(sourceRoot, parsed?.subpath, {
+            fullDepth: registrySource?.skillId !== undefined,
+          });
       const registryValidationError = registrySource
-        ? this.registrySkillValidationError(registrySource, allSkills)
+        ? this.registrySkillValidationError(
+            registrySource,
+            allSkills,
+            registrySource.skillId !== undefined ? this.countSkillManifests(sourceRoot) : undefined,
+          )
         : null;
       if (registryValidationError) {
         return requestedSkills.map((skillName) => ({
@@ -904,9 +916,10 @@ export class SkillsService {
   private registrySkillValidationError(
     source: NonNullable<ReturnType<typeof parseRegistrySource>>,
     skills: Array<Pick<Skill, 'name'>>,
+    skillManifestCount?: number,
   ): string | null {
     if (source.skillId !== undefined) {
-      if (skills.length !== 1) {
+      if (skills.length !== 1 || skillManifestCount !== 1) {
         return 'WeSkillHub source must contain exactly one discoverable Skill.';
       }
       const name = skills[0]!.name;
@@ -921,6 +934,28 @@ export class SkillsService {
       return `Registry source must contain exactly one Skill named "${expectedName}".`;
     }
     return null;
+  }
+
+  private countSkillManifests(dir: string, depth = 0): number {
+    if (depth > 5) return 0;
+
+    let count = 0;
+    try {
+      const skillMdPath = join(dir, 'SKILL.md');
+      if (existsSync(skillMdPath) && lstatSync(skillMdPath).isFile()) count += 1;
+
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (
+          entry.isDirectory()
+          && !['node_modules', '.git', 'dist', 'build', '__pycache__'].includes(entry.name)
+        ) {
+          count += this.countSkillManifests(join(dir, entry.name), depth + 1);
+        }
+      }
+    } catch {
+      return count;
+    }
+    return count;
   }
 
   private scopeMutationKey(scope: SkillScope, workspacePath?: string): string {
