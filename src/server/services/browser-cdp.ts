@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import type { RawAxNode } from './browser-page-model.js';
+import type { InspectedElement, RawAxNode } from './browser-page-model.js';
 import type { BrowserNetworkCaptureTransport, CdpEventEnvelope } from './browser-network-capture.js';
 
 /**
@@ -237,6 +237,8 @@ export interface SteelCdpSession {
   navigate(url: string): Promise<void>;
   getFullAXTree(): Promise<RawAxNode[]>;
   clickBackendNode(backendNodeId: number): Promise<void>;
+  /** Resolve an AX-backed ref without accepting an arbitrary selector. */
+  inspectBackendNode?(backendNodeId: number, functionDeclaration: string): Promise<InspectedElement | null>;
   /** JPEG base64 (bare, no data-URL prefix) for MCP image blocks. */
   captureScreenshot(): Promise<string>;
   /**
@@ -374,6 +376,29 @@ class SteelCdpSessionImpl implements SteelCdpSession {
       await this.connection
         .send('Runtime.releaseObject', { objectId: object.objectId }, this.sessionId)
         .catch(() => undefined);
+    }
+  }
+
+  async inspectBackendNode(
+    backendNodeId: number,
+    functionDeclaration: string,
+  ): Promise<InspectedElement | null> {
+    const { object } = await this.connection.send<{ object: { objectId?: string } }>(
+      'DOM.resolveNode',
+      { backendNodeId },
+      this.sessionId,
+    );
+    if (!object.objectId) return null;
+    try {
+      const result = await this.connection.send<EvaluateResult>(
+        'Runtime.callFunctionOn',
+        { objectId: object.objectId, functionDeclaration, returnByValue: true },
+        this.sessionId,
+      );
+      if (result.exceptionDetails) return null;
+      return (result.result?.value ?? null) as InspectedElement | null;
+    } finally {
+      await this.connection.send('Runtime.releaseObject', { objectId: object.objectId }, this.sessionId).catch(() => undefined);
     }
   }
 

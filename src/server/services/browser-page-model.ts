@@ -141,6 +141,41 @@ export interface RefEntry {
   submitSemantics?: boolean;
 }
 
+export interface InspectedElementChild {
+  tag: string;
+  role?: string;
+  name?: string;
+  text?: string;
+}
+
+export interface InspectedElementForm {
+  name?: string;
+  method: string;
+  action?: string;
+  fields: Array<{
+    name?: string;
+    label?: string;
+    tag: string;
+    type?: string;
+    required: boolean;
+    sensitive: boolean;
+    filled: boolean;
+  }>;
+  truncated: boolean;
+}
+
+export interface InspectedElement {
+  tag: string;
+  role?: string;
+  name?: string;
+  attributes: Record<string, string>;
+  nearbyText?: string;
+  descendants: InspectedElementChild[];
+  descendantsTruncated: boolean;
+  form?: InspectedElementForm;
+  actions: string[];
+}
+
 export class RefTable {
   private entries = new Map<string, RefEntry>();
   private batch: RefBatchKey | null = null;
@@ -193,6 +228,121 @@ export class RefTable {
     if (!entry) return false;
     return entry.batch.docId === current.docId && entry.batch.domEpoch === current.domEpoch;
   }
+}
+
+const INSPECT_MAX_TEXT = 600;
+const INSPECT_MAX_DESCENDANTS = 12;
+const INSPECT_MAX_FORM_FIELDS = 20;
+
+/** Function declaration used both by Runtime.evaluate and backend-node callFunctionOn. */
+export function buildInspectElementFunction(): string {
+  return `function __comateInspectElement() {
+  ${IN_PAGE_SENSITIVE_FN}
+  var root = this;
+  var MAX_TEXT = ${INSPECT_MAX_TEXT};
+  var MAX_DESCENDANTS = ${INSPECT_MAX_DESCENDANTS};
+  var MAX_FORM_FIELDS = ${INSPECT_MAX_FORM_FIELDS};
+  if (!root || !root.tagName) return null;
+  function cap(value, limit) { return String(value || '').replace(/\\s+/g, ' ').trim().slice(0, limit); }
+  function textWithoutFields(node, limit) {
+    var output = '', walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode() && output.length < limit) {
+      var parent = walker.currentNode.parentElement;
+      if (!parent || parent.closest('script,style,noscript,input,textarea,select,[hidden],[aria-hidden="true"]')) continue;
+      output += ' ' + (walker.currentNode.textContent || '');
+    }
+    return cap(output, limit);
+  }
+  function labelFor(el) {
+    var aria = el.getAttribute('aria-label');
+    if (aria) return cap(aria, 160);
+    if (el.labels && el.labels.length) return cap(el.labels[0].textContent, 160);
+    return '';
+  }
+  var allowed = ['href','action','method','type','name','role','aria-label','aria-expanded','aria-controls','placeholder','title','target'];
+  var attributes = {};
+  for (var ai = 0; ai < allowed.length; ai++) {
+    var attr = allowed[ai], attrValue = root.getAttribute(attr);
+    if (attrValue !== null && attr !== 'value') attributes[attr] = cap(attrValue, 300);
+  }
+  var all = Array.prototype.slice.call(root.querySelectorAll('*'));
+  var descendants = [];
+  for (var di = 0; di < all.length && descendants.length < MAX_DESCENDANTS; di++) {
+    var child = all[di];
+    if (!child.tagName || child.matches('script,style,noscript,[hidden],[aria-hidden="true"]')) continue;
+    var sensitive = __comateSensitive(child);
+    var item = { tag: child.tagName.toLowerCase() };
+    var childRole = child.getAttribute('role');
+    var childName = labelFor(child) || child.getAttribute('name');
+    if (childRole) item.role = cap(childRole, 80);
+    if (childName) item.name = cap(childName, 160);
+    var childText = sensitive ? '' : textWithoutFields(child, 180);
+    if (childText) item.text = childText;
+    descendants.push(item);
+  }
+  var form = root.tagName.toLowerCase() === 'form' ? root : root.closest('form');
+  var formSummary;
+  if (form) {
+    var controls = Array.prototype.slice.call(form.querySelectorAll('input,textarea,select,button'));
+    formSummary = {
+      method: cap(form.getAttribute('method') || 'get', 16).toLowerCase(),
+      fields: [],
+      truncated: controls.length > MAX_FORM_FIELDS
+    };
+    var formName = form.getAttribute('name') || form.id;
+    var formAction = form.getAttribute('action');
+    if (formName) formSummary.name = cap(formName, 160);
+    if (formAction) formSummary.action = cap(formAction, 300);
+    for (var fi = 0; fi < controls.length && fi < MAX_FORM_FIELDS; fi++) {
+      var field = controls[fi], fieldSensitive = __comateSensitive(field);
+      var summary = {
+        tag: field.tagName.toLowerCase(),
+        required: field.hasAttribute('required'),
+        sensitive: fieldSensitive,
+        filled: fieldSensitive ? field.hasAttribute('data-comate-filled') : field.hasAttribute('value')
+      };
+      var fieldName = field.getAttribute('name');
+      var fieldType = field.getAttribute('type');
+      var fieldLabel = labelFor(field);
+      if (fieldName) summary.name = cap(fieldName, 160);
+      if (fieldType) summary.type = cap(fieldType, 40);
+      if (fieldLabel) summary.label = fieldLabel;
+      formSummary.fields.push(summary);
+    }
+  }
+  var tag = root.tagName.toLowerCase(), actions = [];
+  if (tag === 'a' || tag === 'button' || root.getAttribute('role') === 'button') actions.push('click');
+  if (tag === 'input' || tag === 'textarea') actions.push('fill');
+  if (tag === 'select') actions.push('select');
+  if (tag === 'input' && /^(checkbox|radio)$/i.test(root.getAttribute('type') || '')) actions.push('check');
+  if (form && (tag === 'form' || /^(submit|image)$/i.test(root.getAttribute('type') || ''))) actions.push('submit');
+  var result = {
+    tag: tag,
+    attributes: attributes,
+    descendants: descendants,
+    descendantsTruncated: all.length > descendants.length,
+    actions: actions
+  };
+  var role = root.getAttribute('role');
+  var name = labelFor(root) || root.getAttribute('name');
+  var nearbyText = __comateSensitive(root) ? '' : textWithoutFields(root, MAX_TEXT);
+  if (role) result.role = cap(role, 80);
+  if (name) result.name = cap(name, 160);
+  if (nearbyText) result.nearbyText = nearbyText;
+  if (formSummary) result.form = formSummary;
+  return result;
+}`;
+}
+
+/** Build an inspector for a ref-owned XPath/form index; never accepts a caller selector. */
+export function buildInspectElementScript(entry: RefEntry): string {
+  let target = 'null';
+  if (entry.xpath) {
+    target = `document.evaluate(${JSON.stringify(entry.xpath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue`;
+  } else if (entry.kind === 'form' && typeof entry.formIndex === 'number' && entry.formIndex >= 0) {
+    target = `document.forms[${JSON.stringify(entry.formIndex)}]`;
+  }
+  return `(() => { var inspect = ${buildInspectElementFunction()}; var target = ${target}; return inspect.call(target); })()`;
 }
 
 // ---------------------------------------------------------------------------

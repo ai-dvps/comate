@@ -10,6 +10,7 @@ import { BrowserService } from '../browser-service.js';
 import { BrowserControlService } from '../browser-control.js';
 import type { SteelExitInfo, SteelProcessHandle, SteelProcessOptions } from '../browser-steel-process.js';
 import type { SteelCdpSession } from '../browser-cdp.js';
+import type { BrowserNetworkCaptureTransport, CdpEventEnvelope } from '../browser-network-capture.js';
 import {
   BROWSER_MCP_SERVER_KEY,
   BROWSER_STREAM_CLOSE_TIMEOUT_MS,
@@ -75,6 +76,36 @@ interface FakePageOptions {
   probe?: { docId: string; domEpoch: number };
   submitSnapshots?: Array<SubmitSnapshot | null>;
   extractResults?: Record<string, unknown>;
+  inspectResult?: Record<string, unknown>;
+  networkTransport?: BrowserNetworkCaptureTransport;
+}
+
+class FakeNetworkTransport implements BrowserNetworkCaptureTransport {
+  readonly primarySessionId = 'page';
+  private readonly eventListeners = new Set<(event: CdpEventEnvelope) => void>();
+  private readonly closeListeners = new Set<() => void>();
+  readonly bodies = new Map<string, { body: string; base64Encoded: boolean }>();
+  async start(): Promise<void> {}
+  onEvent(listener: (event: CdpEventEnvelope) => void): () => void {
+    this.eventListeners.add(listener);
+    return () => this.eventListeners.delete(listener);
+  }
+  onClose(listener: () => void): () => void {
+    this.closeListeners.add(listener);
+    return () => this.closeListeners.delete(listener);
+  }
+  async send<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+    if (method === 'Network.getResponseBody') {
+      return (this.bodies.get(String(params.requestId)) ?? { body: '', base64Encoded: false }) as T;
+    }
+    return {} as T;
+  }
+  emit(method: string, params: Record<string, unknown>, sessionId = 'page'): void {
+    for (const listener of [...this.eventListeners]) listener({ method, params, sessionId });
+  }
+  close(): void {
+    for (const listener of [...this.closeListeners]) listener();
+  }
 }
 
 class FakePage implements SteelCdpSession {
@@ -106,6 +137,9 @@ class FakePage implements SteelCdpSession {
     if (expression.includes('window.__comateProbe')) {
       return this.probe as T; // READ_PROBE_SCRIPT
     }
+    if (expression.includes('__comateInspectElement')) {
+      return (this.options.inspectResult ?? null) as T;
+    }
     if (expression.includes('document.forms[') && expression.includes('hash')) {
       const next =
         this.submitSnapshots.length > 1 ? this.submitSnapshots.shift() : this.submitSnapshots[0];
@@ -134,6 +168,9 @@ class FakePage implements SteelCdpSession {
   async clickBackendNode(backendNodeId: number): Promise<void> {
     this.clickedBackendNodes.push(backendNodeId);
   }
+  async inspectBackendNode(): Promise<import('../browser-page-model.js').InspectedElement | null> {
+    return (this.options.inspectResult ?? null) as import('../browser-page-model.js').InspectedElement | null;
+  }
   async captureScreenshot(): Promise<string> {
     this.screenshots += 1;
     return 'aGVsbG8';
@@ -145,6 +182,10 @@ class FakePage implements SteelCdpSession {
   }
   async evaluateOnNewDocument(expression: string): Promise<void> {
     this.initScripts.push(expression);
+  }
+  createNetworkCaptureTransport(): BrowserNetworkCaptureTransport {
+    if (!this.options.networkTransport) throw new Error('network capture unavailable');
+    return this.options.networkTransport;
   }
   onClose(listener: () => void): void {
     this.closeListeners.add(listener);
@@ -329,11 +370,11 @@ function resultPayload(result: CallToolResult): Record<string, unknown> {
 // ---------------------------------------------------------------------------
 
 describe('browser-mcp tool surface (KTD-3)', () => {
-  it('registers the seven first-class tools with the comate-browser server key', () => {
+  it('registers the ten first-class tools with the comate-browser server key', () => {
     const harness = makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.deepStrictEqual(
       [...harness.tools.keys()].sort(),
-      ['act', 'close', 'extract', 'open', 'requestHandoff', 'snapshot', 'submit'],
+      ['act', 'close', 'extract', 'inspectElement', 'open', 'requestHandoff', 'snapshot', 'startNetworkCapture', 'stopNetworkCapture', 'submit'],
     );
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
@@ -342,6 +383,9 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const harness = makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.strictEqual(harness.tools.get('snapshot')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('extract')?.annotations?.readOnlyHint, true);
+    assert.strictEqual(harness.tools.get('inspectElement')?.annotations?.readOnlyHint, true);
+    assert.strictEqual(harness.tools.get('startNetworkCapture')?.annotations?.readOnlyHint, true);
+    assert.strictEqual(harness.tools.get('stopNetworkCapture')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('submit')?.annotations?.destructiveHint, true);
     // Auxiliary meta only — the security property lives in the handler gate.
     assert.strictEqual(
@@ -355,7 +399,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const defs = buildBrowserToolDefinitions({ sessionId: 's', workspaceId: 'w' });
     assert.deepEqual(
       defs.map((d) => d.name),
-      ['open', 'snapshot', 'act', 'submit', 'extract', 'requestHandoff', 'close'],
+      ['open', 'snapshot', 'inspectElement', 'startNetworkCapture', 'stopNetworkCapture', 'act', 'submit', 'extract', 'requestHandoff', 'close'],
     );
     assert.strictEqual(BROWSER_TOOL_PREFIX, 'mcp__comate-browser__');
   });
@@ -904,6 +948,96 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
     const result = await snapshot?.handler({}, {});
     assert.strictEqual(result?.isError, undefined);
     assert.strictEqual(dials, 2, 'dead connection evicted, fresh dial made');
+  });
+
+  it('preserves current refs across stateless definition builds and rejects stale/forged refs', async () => {
+    const service = makeService();
+    const contextRegistry = new Map();
+    const page = new FakePage({
+      extraction: makeExtraction(),
+      inspectResult: {
+        tag: 'input',
+        attributes: { type: 'email', value: 'must-not-pass', onclick: 'steal()' },
+        nearbyText: 'Email address',
+        descendants: [],
+        descendantsTruncated: false,
+        actions: ['fill'],
+      },
+    });
+    const deps: BrowserMcpDeps = {
+      sessionId: 'inspect-session', workspaceId: 'w', browserService: service,
+      connectPage: async () => page, pageRegistry: new Map(), contextRegistry, settleMs: 0,
+    };
+    const first = buildBrowserToolDefinitions(deps);
+    const opened = await first.find((definition) => definition.name === 'open')!.handler({ url: 'https://shop.example/' }, {});
+    const fieldRef = (resultPayload(opened).model as { forms: Array<{ fields: Array<{ ref: string }> }> }).forms[0].fields[0].ref;
+    const second = buildBrowserToolDefinitions(deps);
+    const inspect = second.find((definition) => definition.name === 'inspectElement')!;
+    const inspected = await inspect.handler({ ref: fieldRef }, {});
+    const serialized = JSON.stringify(resultPayload(inspected));
+    assert.match(serialized, /Email address/);
+    assert.doesNotMatch(serialized, /must-not-pass|onclick|steal/);
+    const forged = resultPayload(await inspect.handler({ ref: 'e999-forged' }, {})).error as { code: string };
+    assert.equal(forged.code, 'browser_ref_unknown');
+
+    const stalePage = new FakePage({
+      extraction: makeExtraction(), probe: { docId: 'other-doc', domEpoch: 1 },
+      inspectResult: { tag: 'input', attributes: {}, descendants: [], descendantsTruncated: false, actions: [] },
+    });
+    const staleDeps: BrowserMcpDeps = {
+      sessionId: 'stale-session', workspaceId: 'w', browserService: service,
+      connectPage: async () => stalePage, pageRegistry: new Map(), contextRegistry, settleMs: 0,
+    };
+    const staleDefs = buildBrowserToolDefinitions(staleDeps);
+    const staleOpen = await staleDefs.find((definition) => definition.name === 'open')!.handler({ url: 'https://shop.example/' }, {});
+    const staleRef = (resultPayload(staleOpen).model as { forms: Array<{ fields: Array<{ ref: string }> }> }).forms[0].fields[0].ref;
+    const stale = resultPayload(await staleDefs.find((definition) => definition.name === 'inspectElement')!.handler({ ref: staleRef }, {})).error as { code: string };
+    assert.equal(stale.code, 'browser_ref_stale');
+  });
+
+  it('preserves capture across stateless builds, ranks APIs, and removes credential sentinels', async () => {
+    const service = makeService();
+    const transport = new FakeNetworkTransport();
+    const secret = 'credential-sentinel-1234567890-abcdef';
+    transport.bodies.set('api', { body: JSON.stringify({ remaining: 42, unfamiliar: secret }), base64Encoded: false });
+    transport.bodies.set('image', { body: 'AAE=', base64Encoded: true });
+    const page = new FakePage({ extraction: makeExtraction(), networkTransport: transport });
+    const deps: BrowserMcpDeps = {
+      sessionId: 'capture-session', workspaceId: 'w', browserService: service,
+      connectPage: async () => page, pageRegistry: new Map(), contextRegistry: new Map(),
+      settleMs: 0, captureOptions: { quietMs: 1, hardDeadlineMs: 50 },
+    };
+    const first = buildBrowserToolDefinitions(deps);
+    await first.find((definition) => definition.name === 'startNetworkCapture')!.handler({ action: 'Load quota' }, {});
+    transport.emit('Network.requestWillBeSent', {
+      requestId: 'api', type: 'Fetch',
+      request: { url: 'https://api.example.com/v1/quota', method: 'GET', headers: { authorization: `Bearer ${secret}`, accept: 'application/json' } },
+    });
+    transport.emit('Network.responseReceived', {
+      requestId: 'api', response: { url: 'https://api.example.com/v1/quota', status: 200, statusText: 'OK', headers: { 'content-type': 'application/json' }, mimeType: 'application/json' },
+    });
+    transport.emit('Network.requestWillBeSent', {
+      requestId: 'image', type: 'Image', request: { url: 'https://api.example.com/logo.png', method: 'GET', headers: {} },
+    });
+    transport.emit('Network.responseReceived', {
+      requestId: 'image', response: { url: 'https://api.example.com/logo.png', status: 200, statusText: 'OK', headers: { 'content-type': 'image/png' }, mimeType: 'image/png' },
+    });
+    const second = buildBrowserToolDefinitions(deps);
+    const stopping = second.find((definition) => definition.name === 'stopNetworkCapture')!.handler({}, {});
+    transport.emit('Network.requestWillBeSent', {
+      requestId: 'late', type: 'Fetch', request: { url: 'https://api.example.com/v1/late', method: 'GET', headers: {} },
+    });
+    transport.emit('Network.loadingFinished', { requestId: 'api' });
+    transport.emit('Network.loadingFinished', { requestId: 'image' });
+    const payload = resultPayload(await stopping);
+    const serialized = JSON.stringify(payload);
+    assert.doesNotMatch(serialized, new RegExp(secret));
+    assert.doesNotMatch(serialized, /Bearer/);
+    const candidates = payload.candidates as Array<{ url: string; evidence: { confidence: string; action: string } }>;
+    assert.equal(candidates.length, 2, 'post-stop request is not admitted');
+    assert.match(candidates[0].url, /\/v1\/quota/);
+    assert.equal(candidates[0].evidence.confidence, 'high');
+    assert.match(candidates[0].evidence.action, /temporal association only/);
   });
 });
 

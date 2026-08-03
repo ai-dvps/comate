@@ -4,6 +4,7 @@ import assert from 'node:assert';
 import {
   RefTable,
   buildExtractorScript,
+  buildInspectElementScript,
   buildSubmitSnapshotScript,
   diffPageModels,
   diffSubmitSnapshots,
@@ -140,6 +141,22 @@ function fakeSource(extraction: RawPageExtraction, axNodes: RawAxNode[]): PageMo
 }
 
 describe('browser-page-model sensitivity ruleset (KTD-8)', () => {
+  it('builds a bounded positive-shape inspector with no raw HTML/value escape hatch', () => {
+    const script = buildInspectElementScript({
+      ref: 'e1-aa',
+      kind: 'field',
+      role: 'textbox',
+      name: 'Email',
+      batch: { docId: 'doc-1', domEpoch: 0 },
+      xpath: '/html/body/input[1]',
+    });
+    assert.match(script, /__comateInspectElement/);
+    assert.match(script, /MAX_DESCENDANTS/);
+    assert.match(script, /__comateSensitive/);
+    assert.doesNotMatch(script, /outerHTML|innerHTML/);
+    assert.doesNotMatch(script, /\.value\b/);
+  });
+
   it('marks type=password sensitive', () => {
     assert.strictEqual(isSensitiveField({ type: 'password', name: 'x' }), true);
     assert.strictEqual(isSensitiveField({ type: 'Password' }), true);

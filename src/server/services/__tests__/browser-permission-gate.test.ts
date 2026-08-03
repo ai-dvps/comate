@@ -372,7 +372,7 @@ describe('session-runtime browser gates', { concurrency: false }, () => {
     assert.strictEqual(fillResult?.behavior, 'allow', 'fill follows the approval mode even on submit-semantics refs');
   });
 
-  it('readonly mode auto-approves snapshot/extract but not act/open/submit', async () => {
+  it('readonly mode auto-approves browser inspection tools but not act/open/submit', async () => {
     openRuntime();
     runtime!.setApprovalMode('readonly');
 
@@ -380,8 +380,16 @@ describe('session-runtime browser gates', { concurrency: false }, () => {
     assert.strictEqual(snapshot?.behavior, 'allow');
     const extract = await callTool(BROWSER_TOOL_NAMES.extract, { schema: { t: { source: 'text' } } }, 'r-extract');
     assert.strictEqual(extract?.behavior, 'allow');
+    for (const toolName of [
+      BROWSER_TOOL_NAMES.inspectElement,
+      BROWSER_TOOL_NAMES.startNetworkCapture,
+      BROWSER_TOOL_NAMES.stopNetworkCapture,
+    ]) {
+      const result = await callTool(toolName, {}, `r-${toolName}`);
+      assert.strictEqual(result?.behavior, 'allow');
+    }
     const readonlyEvents = events.filter((e) => e.type === 'auto_approval');
-    assert.strictEqual(readonlyEvents.length, 2);
+    assert.strictEqual(readonlyEvents.length, 5);
 
     const actPromise = callTool(BROWSER_TOOL_NAMES.act, { ref: 'e1-aa', action: 'click' }, 'r-act-ro');
     assert.strictEqual(pendingApprovalEvents().length, 1, 'act must ask in readonly mode');
