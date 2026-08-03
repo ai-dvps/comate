@@ -1,9 +1,12 @@
 import { readBoundedResponse } from './bounded-response.js';
 import { sanitizeMetadata } from './sanitize.js';
+import { createHash } from 'node:crypto';
 
 export const WESKILLHUB_JSON_MAX_BYTES = 1024 * 1024;
+export const WESKILLHUB_ARCHIVE_MAX_BYTES = 20 * 1024 * 1024;
 const DEFAULT_WESKILLHUB_API_URL = 'http://weskillhub.weoa.com/api/v1';
 const DEFAULT_TIMEOUT_MS = 1_500;
+const DEFAULT_DOWNLOAD_TIMEOUT_MS = 15_000;
 const RESPONSE_TOO_LARGE_SENTINEL = 'WESKILLHUB_RESPONSE_TOO_LARGE';
 
 export type WeSkillHubErrorCategory =
@@ -12,7 +15,8 @@ export type WeSkillHubErrorCategory =
   | 'http'
   | 'response-too-large'
   | 'invalid-response'
-  | 'provider';
+  | 'provider'
+  | 'archive';
 
 const PUBLIC_ERROR_MESSAGES: Record<WeSkillHubErrorCategory, string> = {
   configuration: 'WeSkillHub configuration error',
@@ -21,6 +25,7 @@ const PUBLIC_ERROR_MESSAGES: Record<WeSkillHubErrorCategory, string> = {
   'response-too-large': 'WeSkillHub response too large',
   'invalid-response': 'WeSkillHub invalid response',
   provider: 'WeSkillHub provider error',
+  archive: 'WeSkillHub archive error',
 };
 
 export class WeSkillHubError extends Error {
@@ -41,14 +46,26 @@ export interface WeSkillHubSearchRecord {
 
 export type WeSkillHubSearchSort = 'hot' | 'downloads' | 'update_date';
 
+export interface WeSkillHubMaterializationTransaction {
+  readonly id: number;
+  readonly slug: string;
+  readonly version: string;
+  readonly fileSize: number;
+  readonly sha256: string;
+  readonly downloadUrl: string;
+}
+
 export interface WeSkillHubClient {
   searchSkills(input: { search: string; sort: WeSkillHubSearchSort }): Promise<WeSkillHubSearchRecord[]>;
+  resolveLatestVersion(input: { id: number; slug: string }): Promise<WeSkillHubMaterializationTransaction>;
+  downloadExactVersion(transaction: WeSkillHubMaterializationTransaction): Promise<Uint8Array>;
 }
 
 interface WeSkillHubClientOptions {
   baseUrl?: string;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  downloadTimeoutMs?: number;
 }
 
 export function normalizeWeSkillHubBaseUrl(value: string): string {
@@ -90,6 +107,7 @@ export function createWeSkillHubClient(options: WeSkillHubClientOptions = {}): W
   );
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const downloadTimeoutMs = options.downloadTimeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS;
 
   async function requestJson(pathSegments: readonly string[], searchParams?: URLSearchParams): Promise<unknown> {
     const url = buildWeSkillHubUrl(baseUrl, pathSegments, searchParams);
@@ -142,6 +160,90 @@ export function createWeSkillHubClient(options: WeSkillHubClientOptions = {}): W
         throw new WeSkillHubError('invalid-response');
       }
       return body.data.data.flatMap(normalizeSearchRecord);
+    },
+    async resolveLatestVersion(input) {
+      if (!Number.isSafeInteger(input.id) || input.id <= 0 || !isSafeSlug(input.slug)) {
+        throw new WeSkillHubError('invalid-response');
+      }
+      const body = await requestJson(['skills', String(input.id), 'versions']);
+      if (!isRecord(body)) throw new WeSkillHubError('invalid-response');
+      if (body.code !== '0') throw new WeSkillHubError('provider');
+      if (!isRecord(body.data) || !Array.isArray(body.data.versions)) {
+        throw new WeSkillHubError('invalid-response');
+      }
+
+      const latest = body.data.versions.filter((value) => isRecord(value) && value.is_latest === true);
+      if (latest.length !== 1) throw new WeSkillHubError('invalid-response');
+      const selected = latest[0]!;
+      if (typeof selected.version !== 'string'
+        || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(selected.version)
+        || typeof selected.file_size !== 'number'
+        || !Number.isSafeInteger(selected.file_size)
+        || selected.file_size < 0
+        || selected.file_size > WESKILLHUB_ARCHIVE_MAX_BYTES
+        || typeof selected.sha256 !== 'string'
+        || !/^[A-Fa-f0-9]{64}$/.test(selected.sha256)) {
+        throw new WeSkillHubError('invalid-response');
+      }
+
+      const downloadUrl = buildWeSkillHubUrl(
+        baseUrl,
+        ['skills', input.slug, 'download'],
+        new URLSearchParams({ version: selected.version }),
+      ).toString();
+      return Object.freeze({
+        id: input.id,
+        slug: input.slug,
+        version: selected.version,
+        fileSize: selected.file_size,
+        sha256: selected.sha256.toLowerCase(),
+        downloadUrl,
+      });
+    },
+    async downloadExactVersion(transaction) {
+      const expectedUrl = buildWeSkillHubUrl(
+        baseUrl,
+        ['skills', transaction.slug, 'download'],
+        new URLSearchParams({ version: transaction.version }),
+      ).toString();
+      if (transaction.downloadUrl !== expectedUrl) throw new WeSkillHubError('archive');
+
+      let response: Response;
+      try {
+        response = await fetchImpl(expectedUrl, {
+          headers: { Accept: 'application/zip, application/x-zip-compressed, application/octet-stream' },
+          credentials: 'omit',
+          redirect: 'error',
+          signal: AbortSignal.timeout(downloadTimeoutMs),
+        });
+      } catch {
+        throw new WeSkillHubError('network');
+      }
+      if (!response.ok) throw new WeSkillHubError('http');
+      const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+      if (contentType !== 'application/zip'
+        && contentType !== 'application/x-zip-compressed'
+        && contentType !== 'application/octet-stream') {
+        throw new WeSkillHubError('archive');
+      }
+
+      let bytes: Uint8Array;
+      try {
+        bytes = await readBoundedResponse(
+          response,
+          WESKILLHUB_ARCHIVE_MAX_BYTES,
+          RESPONSE_TOO_LARGE_SENTINEL,
+        );
+      } catch (error) {
+        if (error instanceof Error && error.message === RESPONSE_TOO_LARGE_SENTINEL) {
+          throw new WeSkillHubError('response-too-large');
+        }
+        throw new WeSkillHubError('archive');
+      }
+      if (bytes.byteLength !== transaction.fileSize) throw new WeSkillHubError('archive');
+      const digest = createHash('sha256').update(bytes).digest('hex');
+      if (digest !== transaction.sha256) throw new WeSkillHubError('archive');
+      return bytes;
     },
   };
 }
