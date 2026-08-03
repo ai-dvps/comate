@@ -1,22 +1,24 @@
 import { parseFrontmatter } from './frontmatter.js';
-import { sanitizeMetadata } from './sanitize.js';
-import { readBoundedResponse } from './bounded-response.js';
+import {
+  fetchSkillHubJson,
+  getSkillHubSkill,
+  isSkillHubCoordinate,
+  skillHubLimits,
+  skillHubNumber,
+  SkillHubProviderError,
+  skillHubRecord,
+  skillHubText,
+} from './skillhub.js';
 import type {
   ExpertPackageChild,
   ExpertPackageDetail,
   ExpertPackageSummary,
-  ExpertSkillDetail,
-  ExpertSkillSecurityReport,
 } from './types.js';
 
-const API_BASE = process.env.SKILLHUB_CN_API_URL || 'https://api.skillhub.cn';
-const REQUEST_TIMEOUT_MS = 8_000;
-const MAX_JSON_BYTES = 5 * 1024 * 1024;
 const MAX_ORCHESTRATION_BYTES = 256 * 1024;
 const MAX_PACKAGE_CHILDREN = 64;
 const MAX_PAGE_SIZE = 200;
 const CHILD_HYDRATION_CONCURRENCY = 6;
-const COORDINATE = /^[A-Za-z0-9._-]+$/;
 export const EXPERT_PACKAGE_SCENES = [
   'academic', 'content-creation', 'design', 'ecommerce', 'education', 'finance',
   'healthcare', 'hr', 'legal', 'lifestyle', 'marketing', 'media', 'mysticism', 'tech',
@@ -27,13 +29,8 @@ export function isExpertPackageScene(value: unknown): value is typeof EXPERT_PAC
 }
 
 export function isExpertPackageCoordinate(value: unknown): value is string {
-  return typeof value === 'string'
-    && COORDINATE.test(value)
-    && value !== '.'
-    && value !== '..';
+  return isSkillHubCoordinate(value);
 }
-
-type UnknownRecord = Record<string, unknown>;
 
 export interface ExpertPackageDefinition {
   summary: ExpertPackageSummary;
@@ -43,88 +40,18 @@ export interface ExpertPackageDefinition {
   structurallyComplete: boolean;
 }
 
-export class ExpertPackageProviderError extends Error {
-  constructor(
-    message: string,
-    readonly code: 'invalid-input' | 'not-found' | 'unavailable' | 'invalid-response',
-    readonly status?: number,
-  ) {
-    super(message);
-  }
-}
+export { SkillHubProviderError as ExpertPackageProviderError } from './skillhub.js';
 
-function record(value: unknown): UnknownRecord | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as UnknownRecord
-    : null;
-}
-
-function text(value: unknown): string {
-  return typeof value === 'string' ? sanitizeMetadata(value).trim() : '';
-}
-
-function number(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-}
-
-function summary(value: unknown): string {
-  const normalized = text(value);
-  if (!normalized.startsWith('{')) return normalized;
-  try {
-    const parsed = record(JSON.parse(normalized));
-    return text(parsed?.answer) || text(parsed?.content) || normalized;
-  } catch {
-    return normalized;
-  }
-}
+const record = skillHubRecord;
+const text = skillHubText;
+const number = skillHubNumber;
 
 function assertCoordinate(value: string, label: string): void {
   if (!isExpertPackageCoordinate(value)) {
-    throw new ExpertPackageProviderError(`Invalid ${label}: ${value}`, 'invalid-input');
+    throw new SkillHubProviderError(`Invalid ${label}`, 'invalid-input');
   }
 }
-
-async function fetchJson(path: string): Promise<unknown> {
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE}${path}`, {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-  } catch (error) {
-    throw new ExpertPackageProviderError(
-      `SkillHub request failed: ${(error as Error).message}`,
-      'unavailable',
-    );
-  }
-
-  if (!response.ok) {
-    throw new ExpertPackageProviderError(
-      response.status === 404 ? 'SkillHub resource not found' : `SkillHub returned ${response.status}`,
-      response.status === 404 ? 'not-found' : 'unavailable',
-      response.status,
-    );
-  }
-
-  let bytes: Uint8Array;
-  try {
-    bytes = await readBoundedResponse(response, MAX_JSON_BYTES, 'SkillHub response is too large');
-  } catch (error) {
-    if ((error as Error).message === 'SkillHub response is too large') {
-      throw new ExpertPackageProviderError('SkillHub response is too large', 'invalid-response');
-    }
-    throw new ExpertPackageProviderError(
-      `SkillHub response could not be read: ${(error as Error).message}`,
-      'unavailable',
-    );
-  }
-
-  try {
-    return JSON.parse(new TextDecoder().decode(bytes));
-  } catch {
-    throw new ExpertPackageProviderError('SkillHub returned invalid JSON', 'invalid-response');
-  }
-}
+const fetchJson = fetchSkillHubJson;
 
 function normalizeSummary(value: unknown): ExpertPackageSummary | null {
   const item = record(value);
@@ -158,7 +85,7 @@ export async function listExpertPackages(input: {
   if (input.scene?.trim()) params.set('scene', input.scene.trim());
   const body = record(await fetchJson(`/api/v1/skillsets?${params.toString()}`));
   if (!body || !Array.isArray(body.skillSets)) {
-    throw new ExpertPackageProviderError('SkillHub package list is malformed', 'invalid-response');
+    throw new SkillHubProviderError('SkillHub package list is malformed', 'invalid-response');
   }
   return {
     packages: body.skillSets.map(normalizeSummary).filter((item): item is ExpertPackageSummary => Boolean(item)),
@@ -166,55 +93,7 @@ export async function listExpertPackages(input: {
   };
 }
 
-function normalizeSecurityReports(value: unknown): ExpertSkillSecurityReport[] {
-  const reports = record(value);
-  if (!reports) return [];
-  return Object.entries(reports).flatMap(([provider, raw]) => {
-    const report = record(raw);
-    if (!report) return [];
-    const reportUrl = text(report.reportUrl);
-    return [{
-      provider: sanitizeMetadata(provider),
-      status: text(report.status),
-      statusText: text(report.statusText),
-      ...(reportUrl.startsWith('http://') || reportUrl.startsWith('https://') ? { reportUrl } : {}),
-    }];
-  });
-}
-
-export async function getExpertSkill(namespace: string, slug: string): Promise<ExpertSkillDetail> {
-  assertCoordinate(namespace, 'namespace');
-  assertCoordinate(slug, 'Skill slug');
-  const body = record(await fetchJson(
-    `/api/v1/skills/${encodeURIComponent(slug)}?namespace=${encodeURIComponent(namespace)}`,
-  ));
-  const skill = record(body?.skill);
-  if (!body || !skill || text(body.slug) !== slug) {
-    throw new ExpertPackageProviderError('SkillHub Skill response is malformed', 'invalid-response');
-  }
-  const owner = record(body.owner);
-  const namespaceRecord = record(body.namespace);
-  const latestVersion = record(body.latestVersion);
-  const stats = record(skill.stats);
-  return {
-    namespace: text(namespaceRecord?.handle) || namespace,
-    slug,
-    displayName: text(skill.displayName) || slug,
-    summary: summary(skill.summary_zh) || summary(skill.summary),
-    category: text(skill.category),
-    owner: {
-      handle: text(owner?.handle) || namespace,
-      displayName: text(owner?.displayName) || namespace,
-    },
-    version: text(latestVersion?.version),
-    stats: {
-      downloads: number(stats?.downloads),
-      installs: number(stats?.installs),
-    },
-    securityReports: normalizeSecurityReports(body.securityReports),
-    source: `skillhub-cn:${namespace}/${slug}`,
-  };
-}
+export const getExpertSkill = getSkillHubSkill;
 
 async function hydrateChildren(
   coordinates: Array<{ namespace: string; slug: string }>,
@@ -255,7 +134,7 @@ export async function getExpertPackageDefinition(slug: string): Promise<ExpertPa
   const body = record(await fetchJson(`/api/v1/skillsets/${encodeURIComponent(slug)}`));
   const summary = normalizeSummary(body);
   if (!body || !summary || summary.slug !== slug) {
-    throw new ExpertPackageProviderError('SkillHub package response is malformed', 'invalid-response');
+    throw new SkillHubProviderError('SkillHub package response is malformed', 'invalid-response');
   }
   const content = typeof body.content === 'string' ? body.content : '';
   const contentEn = typeof body.contentEn === 'string' ? body.contentEn : '';
@@ -267,7 +146,7 @@ export async function getExpertPackageDefinition(slug: string): Promise<ExpertPa
     || contentBytes > MAX_ORCHESTRATION_BYTES
     || contentEnBytes > MAX_ORCHESTRATION_BYTES
   ) {
-    throw new ExpertPackageProviderError('SkillHub package exceeds safety limits', 'invalid-response');
+    throw new SkillHubProviderError('SkillHub package exceeds safety limits', 'invalid-response');
   }
   const coordinates = rawSkills.flatMap((raw) => {
     const child = record(raw);
@@ -313,7 +192,7 @@ export async function getExpertPackage(slug: string): Promise<ExpertPackageDetai
 }
 
 export const expertPackageLimits = {
-  maxJsonBytes: MAX_JSON_BYTES,
+  maxJsonBytes: skillHubLimits.maxJsonBytes,
   maxOrchestrationBytes: MAX_ORCHESTRATION_BYTES,
   maxPackageChildren: MAX_PACKAGE_CHILDREN,
   maxPageSize: MAX_PAGE_SIZE,
