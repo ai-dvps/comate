@@ -26,6 +26,7 @@ export default defineProject({
       'src/client/stores/provider-usage-store.test.ts',
       'src/client/stores/skills-store.test.ts',
       'src/client/stores/expert-packages-store.test.ts',
+      'src/client/stores/enterprise-zone-store.test.ts',
       'src/client/lib/bot-filter.test.ts',
       'src/client/lib/format-message-timestamp.test.ts',
       'src/client/lib/font-size.test.ts',
