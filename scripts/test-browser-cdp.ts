@@ -14,7 +14,7 @@ import { resolveSteelBundle } from '../src/server/utils/resolve-steel.js';
 import { connectSteelPage } from '../src/server/services/browser-cdp.js';
 import { BrowserNetworkCaptureManager } from '../src/server/services/browser-network-capture.js';
 
-const required = process.env.COMATE_REQUIRE_BROWSER_CDP === '1';
+const required = process.env.COMATE_REQUIRE_BROWSER_CDP === '1' || process.argv.includes('--required');
 const platformKey = `${process.platform}-${process.arch}`;
 const spec = CFT_PLATFORMS[platformKey];
 const resourceDir = path.resolve('src-tauri/resources');
@@ -70,7 +70,19 @@ const server = createServer((request, response) => {
     response.end(JSON.stringify({ worker: true }));
     return;
   }
-  if (request.url === '/hang') {
+  if (request.url === '/frame-quota') {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ frame: true }));
+    return;
+  }
+  if (request.url === '/frame') {
+    response.writeHead(200, { 'content-type': 'text/html' });
+    response.end(`<!doctype html><script>
+      fetch('/frame-quota').then(response => response.json()).then(() => parent.postMessage('frame-ready', '*'));
+    </script>frame`);
+    return;
+  }
+  if (request.url?.startsWith('/hang')) {
     response.writeHead(200, { 'content-type': 'application/json' });
     response.flushHeaders();
     return;
@@ -79,7 +91,11 @@ const server = createServer((request, response) => {
   response.end(`<!doctype html><script>
     const workerCode = 'postMessage("boot"); setTimeout(() => fetch(' + JSON.stringify(location.origin + '/worker-quota') + ').then(r => r.json()).then(v => { postMessage("quota"); postMessage("detach-ready"); fetch(' + JSON.stringify(location.origin + '/hang') + ') }), 200)';
     const worker = new Worker(URL.createObjectURL(new Blob([workerCode], { type: 'application/javascript' })));
-    window.captureState = { redirect: false, worker: false, detached: false };
+    window.captureState = { redirect: false, worker: false, detached: false, frame: false };
+    const frame = document.createElement('iframe');
+    frame.src = 'http://localhost:' + location.port + '/frame';
+    document.documentElement.appendChild(frame);
+    addEventListener('message', event => { if (event.data === 'frame-ready') window.captureState.frame = true; });
     fetch('/redirect').then(response => response.json()).then(() => { window.captureState.redirect = true; });
     worker.onmessage = event => {
       if (event.data === 'boot') window.captureState.workerBooted = true;
@@ -95,7 +111,7 @@ const server = createServer((request, response) => {
 
 await new Promise<void>((resolve, reject) => {
   server.once('error', reject);
-  server.listen(0, '127.0.0.1', resolve);
+  server.listen(0, resolve);
 });
 const address = server.address();
 if (!address || typeof address === 'string') throw new Error('CDP fixture server did not bind');
@@ -120,10 +136,10 @@ try {
   let captureState: Record<string, boolean> = {};
   for (let attempt = 0; attempt < 100; attempt += 1) {
     captureState = await page.evaluate<Record<string, boolean>>('window.captureState || {}');
-    if (captureState.redirect && captureState.worker && captureState.detached) break;
+    if (captureState.redirect && captureState.worker && captureState.detached && captureState.frame) break;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  if (!captureState.redirect || !captureState.worker || !captureState.detached) {
+  if (!captureState.redirect || !captureState.worker || !captureState.detached || !captureState.frame) {
     throw new Error(`CDP fixture actions did not complete: ${JSON.stringify(captureState)} requests=${JSON.stringify(fixtureRequests)} targetEvents=${JSON.stringify(targetEvents)}`);
   }
   const result = await capture.stop();
@@ -139,11 +155,29 @@ try {
   if (!fixtureRequests.includes('/worker-quota') || !fixtureRequests.includes('/hang')) {
     throw new Error(`Pinned Steel/CfT worker fixture did not execute: ${JSON.stringify(fixtureRequests)}`);
   }
+  const frameChain = result.chains.find((chain) =>
+    chain.hops.some((hop) => hop.request.url.endsWith('/frame-quota')));
+  if (!frameChain || frameChain.sessionId === transport.primarySessionId) {
+    throw new Error(`Pinned Steel/CfT OOPIF request was not captured in an iframe session: ${JSON.stringify(frameChain)}`);
+  }
   if (!targetEvents.some((event) => event.method === 'Target.detachedFromTarget')) {
     throw new Error('Pinned Steel/CfT pair did not deliver worker target detach events');
   }
   if (result.state !== 'complete' || result.incompleteReasons.includes('deadline_exceeded')) {
     throw new Error(`Pinned Steel/CfT capture did not settle cleanly: ${JSON.stringify(result.incompleteReasons)}`);
+  }
+  const deadlineCapture = new BrowserNetworkCaptureManager(transport, {
+    quietMs: 20,
+    hardDeadlineMs: 100,
+  });
+  await deadlineCapture.start();
+  await page.evaluate("fetch('/hang-main').catch(() => undefined)");
+  const deadlineStarted = Date.now();
+  const deadlineResult = await deadlineCapture.stop();
+  const deadlineElapsed = Date.now() - deadlineStarted;
+  const deadlineReasons = deadlineResult.chains.flatMap((chain) => chain.incompleteReasons);
+  if (!deadlineReasons.includes('deadline_exceeded') || deadlineElapsed > 1_000) {
+    throw new Error(`Pinned Steel/CfT deadline teardown failed: elapsed=${deadlineElapsed} result=${JSON.stringify(deadlineReasons)}`);
   }
   offTargetDebug();
   console.log(`PASS browser CDP compatibility: CfT ${CHROME_FOR_TESTING_VERSION}, Steel ${steel.source}; worker targets=lifecycle-only`);

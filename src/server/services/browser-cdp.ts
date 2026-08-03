@@ -484,8 +484,13 @@ export class CdpNetworkCaptureTransport implements BrowserNetworkCaptureTranspor
       const sessionId = (event.params as { sessionId?: string }).sessionId;
       if (sessionId) this.configuredSessions.delete(sessionId);
     });
-    await this.setupSession(this.primarySessionId, generation);
-    await this.drainSetupTasks();
+    try {
+      await this.setupSession(this.primarySessionId, generation);
+      await this.drainSetupTasks();
+    } catch (error) {
+      this.stop();
+      throw error;
+    }
   }
 
   send<T>(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<T> {

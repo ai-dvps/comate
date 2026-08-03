@@ -111,4 +111,16 @@ describe('POST /api/broker/request', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(aborted, true);
   });
+
+  it('returns a bounded JSON error when broker execution rejects', async () => {
+    browserApiBrokerService.execute = async () => {
+      throw new Error('sensitive-internal-failure');
+    };
+    const response = await post(taskToken(), sharedContractFixtures.brokerRequest);
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), {
+      error: 'broker_failed',
+      message: 'Broker request failed.',
+    });
+  });
 });

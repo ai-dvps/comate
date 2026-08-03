@@ -90,6 +90,27 @@ describe('BrowserAuthBindingVault', () => {
     assert.equal(vault.resolve('task-1', old, 'https://app.example.com/api').bearerToken, undefined);
   });
 
+  it('isolates sibling bindings before zeroization', () => {
+    const vault = new BrowserAuthBindingVault();
+    const material = {
+      siteKey: 'example.com',
+      sourceOrigin: 'https://app.example.com',
+      sessionContext: {
+        cookies: [{ name: 'sid', value: 'shared-secret', domain: '.example.com', path: '/', secure: true }],
+        localStorage: { 'app.example.com': { token: 'stored-secret' } },
+      },
+      bearerToken: 'bearer-secret',
+    };
+    const first = vault.capture('task-1', material);
+    const second = vault.capture('task-1', material);
+    vault.discard('task-1', first);
+
+    const resolved = vault.resolve('task-1', second, 'https://app.example.com/api');
+    assert.equal(resolved.cookies[0]?.value, 'shared-secret');
+    assert.equal(resolved.localStorage?.['app.example.com']?.token, 'stored-secret');
+    assert.equal(resolved.bearerToken, 'bearer-secret');
+  });
+
   it('applies cookie domain, host-only, path, secure, expiry, prefix and partition rules conservatively', () => {
     const httpsAdmin = new URL('https://app.example.com/admin/x');
     assert.equal(cookieAppliesToUrl({ name: 'a', value: 'x', domain: '.example.com', path: '/admin', secure: true }, httpsAdmin), true);
@@ -99,5 +120,15 @@ describe('BrowserAuthBindingVault', () => {
     assert.equal(cookieAppliesToUrl({ name: 'a', value: 'x', domain: '.example.com', expires: 1 }, httpsAdmin), false);
     assert.equal(cookieAppliesToUrl({ name: '__Host-a', value: 'x', domain: '.example.com', path: '/', secure: true }, httpsAdmin), false);
     assert.equal(cookieAppliesToUrl({ name: 'a', value: 'x', domain: '.example.com', partitionKey: 'https://top.example' }, httpsAdmin), false);
+    const laxDomainCookie = { name: 'lax', value: 'x', domain: '.example.com', path: '/', secure: true, sameSite: 'Lax' };
+    assert.equal(cookieAppliesToUrl(laxDomainCookie, new URL('https://api.example.com/'), {
+      sourceOrigin: 'https://app.example.com',
+    }), true);
+    assert.equal(cookieAppliesToUrl(laxDomainCookie, new URL('http://api.example.com/'), {
+      sourceOrigin: 'https://app.example.com',
+    }), false);
+    assert.equal(cookieAppliesToUrl(laxDomainCookie, new URL('https://api.example.net/'), {
+      sourceOrigin: 'https://app.example.com',
+    }), false);
   });
 });

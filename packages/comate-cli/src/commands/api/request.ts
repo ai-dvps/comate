@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { brokerRequestSchema, brokerResultSchema, type BrokerResult } from '@comate/api-contracts';
 import { resolveContext } from '../../lib/context.js';
 import { postJson } from '../../lib/http.js';
@@ -23,11 +24,24 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-function readRecipeFile(filePath: string): string {
-  const stat = fs.statSync(filePath);
-  if (!stat.isFile()) throw new Error('Recipe path is not a file.');
-  if (stat.size > MAX_INPUT_BYTES) throw new Error('Recipe exceeds the 1 MiB limit.');
-  return fs.readFileSync(filePath, 'utf8');
+function readRecipeFile(filePath: string, workspaceRoot: string): string {
+  const root = fs.realpathSync(workspaceRoot);
+  const candidate = fs.realpathSync(path.resolve(workspaceRoot, filePath));
+  const relative = path.relative(root, candidate);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error('Recipe path must stay inside the Comate workspace.');
+  }
+  const descriptor = fs.openSync(candidate, 'r');
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile()) throw new Error('Recipe path is not a file.');
+    if (stat.size > MAX_INPUT_BYTES) throw new Error('Recipe exceeds the 1 MiB limit.');
+    const content = fs.readFileSync(descriptor);
+    if (content.byteLength > MAX_INPUT_BYTES) throw new Error('Recipe exceeds the 1 MiB limit.');
+    return content.toString('utf8');
+  } finally {
+    fs.closeSync(descriptor);
+  }
 }
 
 function parseInput(text: string): unknown {
@@ -51,9 +65,9 @@ export async function runApiRequest(options: RequestOptions): Promise<number> {
   if (options.stdin === Boolean(options.recipePath)) {
     throw new Error('Choose exactly one input: --recipe <path> or --stdin.');
   }
-  const text = options.stdin ? await readStdin() : readRecipeFile(options.recipePath!);
-  const request = parseInput(text);
   const context = resolveContext();
+  const text = options.stdin ? await readStdin() : readRecipeFile(options.recipePath!, context.workspaceRoot);
+  const request = parseInput(text);
   const abort = new AbortController();
   const onSignal = () => abort.abort();
   process.once('SIGINT', onSignal);

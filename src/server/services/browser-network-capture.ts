@@ -260,6 +260,7 @@ export class BrowserNetworkCaptureManager {
     } catch (error) {
       context.offEvent();
       context.offClose();
+      this.transport.stop?.();
       this.current = undefined;
       throw error;
     }

@@ -66,11 +66,43 @@ export const disclosureReceiptSchema = z.object({
   }
 });
 
+const MAX_DISCLOSURE_STRING = 65_536;
+const MAX_DISCLOSURE_DEPTH = 8;
+const MAX_DISCLOSURE_MEMBERS = 256;
+
+const boundedJsonValueSchema = z.json().superRefine((value, context) => {
+  const pending: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
+  let members = 0;
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    members += 1;
+    if (members > MAX_DISCLOSURE_MEMBERS) {
+      context.addIssue({ code: 'custom', message: 'Disclosure exceeds member limit' });
+      return;
+    }
+    if (current.depth > MAX_DISCLOSURE_DEPTH) {
+      context.addIssue({ code: 'custom', message: 'Disclosure exceeds depth limit' });
+      return;
+    }
+    if (typeof current.value === 'string' && current.value.length > MAX_DISCLOSURE_STRING) {
+      context.addIssue({ code: 'custom', message: 'Disclosure string exceeds length limit' });
+      return;
+    }
+    if (Array.isArray(current.value)) {
+      for (const member of current.value) pending.push({ value: member, depth: current.depth + 1 });
+    } else if (current.value !== null && typeof current.value === 'object') {
+      for (const member of Object.values(current.value)) {
+        pending.push({ value: member, depth: current.depth + 1 });
+      }
+    }
+  }
+});
+
 export const sanitizedDisclosureSchema = z.object({
   class: disclosureClassSchema,
   mediaType: z.string().max(256).optional(),
   encoding: z.string().max(64).optional(),
-  value: z.union([z.json(), z.string().max(65_536)]).optional(),
+  value: boundedJsonValueSchema.optional(),
   receipt: disclosureReceiptSchema,
 }).strict().superRefine((disclosure, context) => {
   if (disclosure.class !== disclosure.receipt.class) {

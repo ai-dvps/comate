@@ -1,9 +1,11 @@
 export const SESSION_TOKEN_ENV = 'COMATE_SESSION_TOKEN';
 export const SERVER_URL_ENV = 'COMATE_SERVER_URL';
+export const WORKSPACE_ROOT_ENV = 'COMATE_WORKSPACE_ROOT';
 
 export interface ComateContext {
   token: string;
   serverUrl: string;
+  workspaceRoot: string;
 }
 
 export function resolveContext(env: NodeJS.ProcessEnv = process.env): ComateContext {
@@ -11,6 +13,8 @@ export function resolveContext(env: NodeJS.ProcessEnv = process.env): ComateCont
   if (!token) throw new Error('This command must run inside a live Comate task.');
   const rawUrl = env[SERVER_URL_ENV]?.trim();
   if (!rawUrl) throw new Error('The Comate server address is unavailable for this task.');
+  const workspaceRoot = env[WORKSPACE_ROOT_ENV]?.trim();
+  if (!workspaceRoot) throw new Error('The Comate workspace boundary is unavailable for this task.');
   let serverUrl: URL;
   try {
     serverUrl = new URL(rawUrl);
@@ -20,5 +24,5 @@ export function resolveContext(env: NodeJS.ProcessEnv = process.env): ComateCont
   if (serverUrl.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(serverUrl.hostname)) {
     throw new Error('The Comate server address is not a loopback HTTP endpoint.');
   }
-  return { token, serverUrl: serverUrl.origin };
+  return { token, serverUrl: serverUrl.origin, workspaceRoot };
 }

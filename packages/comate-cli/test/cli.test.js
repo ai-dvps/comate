@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -31,6 +31,7 @@ function run(args, { input, env = {} } = {}) {
       env: {
         PATH: process.env.PATH,
         COMATE_SESSION_TOKEN: 'task-token-fixture',
+        COMATE_WORKSPACE_ROOT: process.cwd(),
         http_proxy: '', HTTP_PROXY: '', https_proxy: '', HTTPS_PROXY: '',
         ...env,
       },
@@ -75,10 +76,32 @@ describe('comate api request', () => {
     tempDirs.push(dir);
     const recipe = path.join(dir, 'recipe.json');
     writeFileSync(recipe, JSON.stringify(sharedContractFixtures.brokerRequest));
-    const result = await run(['api', 'request', '--recipe', recipe], { env: { COMATE_SERVER_URL: base } });
+    const result = await run(['api', 'request', '--recipe', recipe], {
+      env: { COMATE_SERVER_URL: base, COMATE_WORKSPACE_ROOT: dir },
+    });
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /^HTTP 200/);
     assert.doesNotMatch(`${result.stdout}${result.stderr}`, /task-token-fixture/i);
+  });
+
+  it('rejects recipe paths and symlinks outside the workspace', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'comate-workspace-'));
+    const outside = mkdtempSync(path.join(os.tmpdir(), 'comate-outside-'));
+    tempDirs.push(workspace, outside);
+    const recipe = path.join(outside, 'recipe.json');
+    writeFileSync(recipe, JSON.stringify(sharedContractFixtures.brokerRequest));
+    const absolute = await run(['api', 'request', '--recipe', recipe], {
+      env: { COMATE_SERVER_URL: 'http://127.0.0.1:1', COMATE_WORKSPACE_ROOT: workspace },
+    });
+    assert.equal(absolute.code, 1);
+    assert.match(absolute.stderr, /inside the Comate workspace/);
+    const link = path.join(workspace, 'recipe.json');
+    symlinkSync(recipe, link);
+    const symlink = await run(['api', 'request', '--recipe', link], {
+      env: { COMATE_SERVER_URL: 'http://127.0.0.1:1', COMATE_WORKSPACE_ROOT: workspace },
+    });
+    assert.equal(symlink.code, 1);
+    assert.match(symlink.stderr, /inside the Comate workspace/);
   });
 
   it('prints human BrokerResult failures to stderr and exits nonzero', async () => {
@@ -143,6 +166,29 @@ describe('comate api request', () => {
     await assert.rejects(
       postJson(`${base}/api/broker/request`, {}, 'token', { timeoutMs: 20 }),
       /Timed out/,
+    );
+  });
+
+  it('enforces a wall-clock deadline even when the response trickles', async () => {
+    const base = await listen((_req, res) => {
+      const timer = setInterval(() => res.write('x'), 5);
+      res.once('close', () => clearInterval(timer));
+    });
+    await assert.rejects(
+      postJson(`${base}/api/broker/request`, {}, 'token', { timeoutMs: 25 }),
+      /Timed out/,
+    );
+  });
+
+  it('rejects when a response stream aborts after headers', async () => {
+    const base = await listen((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.write('{"partial":');
+      res.socket?.destroy();
+    });
+    await assert.rejects(
+      postJson(`${base}/api/broker/request`, {}, 'token', { timeoutMs: 1_000 }),
+      /aborted|ended before completion|socket hang up/i,
     );
   });
 });

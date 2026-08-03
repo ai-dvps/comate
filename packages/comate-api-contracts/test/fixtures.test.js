@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import {
   brokerRequestSchema,
   brokerResultSchema,
+  sanitizedDisclosureSchema,
   sharedContractFixtures,
 } from '@comate/api-contracts';
 
@@ -18,5 +19,18 @@ describe('public contract fixtures', () => {
       brokerResultSchema.safeParse({ ...sharedContractFixtures.brokerSuccess, version: 999 }).success,
       false,
     );
+  });
+
+  it('bounds strings at every JSON disclosure depth', () => {
+    const receipt = {
+      class: 'json', disclosed: true, redactions: [], originalBytes: 1,
+      disclosedBytes: 1, truncated: false,
+    };
+    assert.equal(sanitizedDisclosureSchema.safeParse({
+      class: 'json', value: { nested: 'x'.repeat(65_536) }, receipt,
+    }).success, true);
+    assert.equal(sanitizedDisclosureSchema.safeParse({
+      class: 'json', value: { nested: 'x'.repeat(65_537) }, receipt,
+    }).success, false);
   });
 });

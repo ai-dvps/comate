@@ -14,11 +14,19 @@ class FakeTransport implements BrowserNetworkCaptureTransport {
   readonly commands: Array<{ method: string; params: Record<string, unknown>; sessionId?: string }> = [];
   private readonly eventListeners = new Set<(event: CdpEventEnvelope) => void>();
   private readonly closeListeners = new Set<() => void>();
-  bodyByKey = new Map<string, { body: string; base64Encoded: boolean } | Error>();
+  bodyByKey = new Map<string, { body: string; base64Encoded: boolean } | Error | Promise<{ body: string; base64Encoded: boolean }>>();
   starts = 0;
   stops = 0;
+  startError?: Error;
 
-  async start(): Promise<void> { this.starts += 1; }
+  async start(): Promise<void> {
+    this.starts += 1;
+    if (this.startError) {
+      const error = this.startError;
+      this.startError = undefined;
+      throw error;
+    }
+  }
   stop(): void { this.stops += 1; }
   onEvent(listener: (event: CdpEventEnvelope) => void): () => void {
     this.eventListeners.add(listener);
@@ -34,7 +42,7 @@ class FakeTransport implements BrowserNetworkCaptureTransport {
       const key = `${sessionId ?? ''}:${String(params.requestId)}`;
       const result = this.bodyByKey.get(key);
       if (result instanceof Error) throw result;
-      return (result ?? { body: '', base64Encoded: false }) as T;
+      return (await (result ?? { body: '', base64Encoded: false })) as T;
     }
     return {} as T;
   }
@@ -76,6 +84,19 @@ function manager(transport: FakeTransport, overrides = {}) {
 }
 
 describe('BrowserNetworkCaptureManager', () => {
+  it('stops partial transport startup and can retry', async () => {
+    const transport = new FakeTransport();
+    transport.startError = new Error('setup failed');
+    const capture = manager(transport);
+    await assert.rejects(capture.start(), /setup failed/);
+    assert.equal(transport.stops, 1);
+    await capture.start();
+    const result = await capture.stop();
+    assert.equal(result.state, 'complete');
+    assert.equal(transport.starts, 2);
+    assert.equal(transport.stops, 2);
+  });
+
   it('keys identical request IDs by session and reads bodies after loadingFinished', async () => {
     const transport = new FakeTransport();
     transport.bodyByKey.set('frame-a:1', { body: '{"a":1}', base64Encoded: false });
@@ -209,5 +230,36 @@ describe('BrowserNetworkCaptureManager', () => {
     assert.equal(result.chains.filter((chain) => chain.hops[0].responseBody).length, 1);
     assert.ok(result.incompleteReasons.includes('capture_limit_exceeded'));
     assert.equal(transport.stops, 1);
+  });
+
+  it('bounds redirect hops on the affected chain', async () => {
+    const transport = new FakeTransport();
+    const capture = manager(transport, { maxHopsPerChain: 1 });
+    await capture.start();
+    transport.emit('Network.requestWillBeSent', request('redirect', 'https://example.com/one'));
+    transport.emit('Network.requestWillBeSent', request('redirect', 'https://example.com/two', {
+      redirectResponse: { url: 'https://example.com/one', status: 302, statusText: 'Found', headers: {} },
+    }));
+    const result = await capture.stop();
+    assert.equal(result.chains[0].hops.length, 1);
+    assert.ok(result.chains[0].hops[0].incompleteReasons.includes('capture_limit_exceeded'));
+  });
+
+  it('bounds concurrent response-body reads on the affected hop', async () => {
+    const transport = new FakeTransport();
+    let resolveFirst!: (value: { body: string; base64Encoded: boolean }) => void;
+    transport.bodyByKey.set('page:first', new Promise((resolve) => { resolveFirst = resolve; }));
+    const capture = manager(transport, { maxPendingBodyReads: 1 });
+    await capture.start();
+    for (const id of ['first', 'second']) {
+      transport.emit('Network.requestWillBeSent', request(id, `https://example.com/${id}`));
+      transport.emit('Network.responseReceived', response(id));
+      transport.emit('Network.loadingFinished', { requestId: id });
+    }
+    resolveFirst({ body: '{}', base64Encoded: false });
+    const result = await capture.stop();
+    assert.equal(transport.commands.filter((command) => command.method === 'Network.getResponseBody').length, 1);
+    const second = result.chains.find((chain) => chain.requestId === 'second');
+    assert.ok(second?.hops[0].incompleteReasons.includes('capture_limit_exceeded'));
   });
 });

@@ -427,6 +427,8 @@ export class ChatService {
       taskId,
       method,
       siteKey,
+      destination,
+      bodySummary,
       correlationId,
       validationRequested,
       signal,
@@ -435,12 +437,14 @@ export class ChatService {
         toolName: BROWSER_TOOL_NAMES.authenticatedRequest,
         title: `Authorize ${method} request to ${siteKey}`,
         description: validationRequested
-          ? 'This request will be validated as non-mutating; a successful validation grants exact task-local reuse.'
-          : 'This authenticated request can change data on the destination site.',
+          ? 'Review the sanitized destination and body below. The request will be validated as non-mutating; a successful validation grants exact task-local reuse.'
+          : 'Review the sanitized destination and body below. This authenticated request can change data on the destination site.',
         payload: {
           kind: 'authenticated_request',
           method,
           siteKey,
+          destination,
+          ...(bodySummary ? { bodySummary } : {}),
           correlationId,
           validationRequested,
         },
@@ -2284,6 +2288,7 @@ export class ChatService {
         prependEnvPath(env, path.dirname(comateCliPath));
         env.COMATE_CLI_PATH = comateCliPath;
         env.COMATE_SERVER_URL = getSidecarBaseUrl();
+        env.COMATE_WORKSPACE_ROOT = workspace.folderPath;
         sidecarLog(`[ChatService.buildSdkOptions] set COMATE_CLI_PATH=${comateCliPath}`);
       }
     }

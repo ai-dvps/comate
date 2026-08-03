@@ -117,6 +117,34 @@ describe('CdpNetworkCaptureTransport', () => {
     assert.equal(methodListeners.get('Target.attachedToTarget')?.size, 0);
     assert.equal(methodListeners.get('Target.detachedFromTarget')?.size, 0);
   });
+
+  it('rolls back failed startup and permits a clean retry', async () => {
+    let failNetwork = true;
+    const methodListeners = new Map<string, Set<(event: CdpEventEnvelope) => void>>();
+    const fakeConnection = {
+      send: async <T>(method: string): Promise<T> => {
+        if (method === 'Network.enable' && failNetwork) {
+          failNetwork = false;
+          throw new Error('network setup failed');
+        }
+        return {} as T;
+      },
+      on: (method: string, listener: (event: CdpEventEnvelope) => void) => {
+        const listeners = methodListeners.get(method) ?? new Set();
+        listeners.add(listener);
+        methodListeners.set(method, listeners);
+        return () => listeners.delete(listener);
+      },
+      onEvent: () => () => {},
+      onClose: () => () => {},
+    };
+    const transport = new CdpNetworkCaptureTransport(fakeConnection as unknown as CdpConnection, 'page');
+    await assert.rejects(transport.start(), /network setup failed/);
+    assert.equal(methodListeners.get('Target.attachedToTarget')?.size, 0);
+    assert.equal(methodListeners.get('Target.detachedFromTarget')?.size, 0);
+    await transport.start();
+    transport.stop();
+  });
 });
 
 describe('retryDuringColdStart', () => {
