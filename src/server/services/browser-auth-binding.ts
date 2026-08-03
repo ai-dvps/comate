@@ -221,6 +221,15 @@ export class BrowserAuthBindingVault {
     this.tasks.delete(taskId);
   }
 
+  discard(taskId: string, bindingId: string): void {
+    const bindings = this.tasks.get(taskId);
+    const binding = bindings?.get(bindingId);
+    if (!bindings || !binding) return;
+    if (binding.mode === 'ephemeral') zeroizeMaterial(binding.material);
+    bindings.delete(bindingId);
+    if (bindings.size === 0) this.tasks.delete(taskId);
+  }
+
   private requireBinding(taskId: string, bindingId: string): Binding {
     const binding = this.tasks.get(taskId)?.get(bindingId);
     if (!binding) throw new BrowserAuthBindingError('auth_binding_stale');

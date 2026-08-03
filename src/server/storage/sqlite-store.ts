@@ -4217,7 +4217,7 @@ function parseAuditLogRow(row: RawAuditLogRow): BotAuditLogEntry {
 // column capable of holding a field value or an image (KTD-9 contract).
 // ---------------------------------------------------------------------------
 
-export type BrowserAuditCategory = 'tool' | 'control' | 'navigation' | 'site_auth';
+export type BrowserAuditCategory = 'tool' | 'control' | 'navigation' | 'site_auth' | 'broker';
 
 export type BrowserAuditOutcome = 'ok' | 'denied' | 'error' | 'timeout';
 

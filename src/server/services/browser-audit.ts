@@ -97,6 +97,19 @@ export interface BrowserAuditSiteAuthInput {
   detail?: string;
 }
 
+/** Positive-shape broker event. No path, query, headers, body, or credentials. */
+export interface BrowserBrokerAuditInput {
+  workspaceId: string;
+  sessionId: string;
+  phase: 'intent' | 'terminal';
+  correlationId: string;
+  method: string;
+  siteKey: string;
+  approval: 'not_required' | 'required' | 'approved' | 'task_grant' | 'denied' | 'timeout' | 'cancelled';
+  outcome: CreateBrowserAuditInput['outcome'];
+  status?: number;
+}
+
 export class BrowserAuditService {
   private readonly store: SqliteStore;
 
@@ -164,6 +177,19 @@ export class BrowserAuditService {
       siteKey: input.siteKey,
       outcome: input.outcome,
       detail: input.detail ?? null,
+    });
+  }
+
+  logBroker(input: BrowserBrokerAuditInput): BrowserAuditEntry | null {
+    const status = input.status !== undefined ? ` status=${input.status}` : '';
+    return this.record({
+      workspaceId: input.workspaceId,
+      sessionId: input.sessionId,
+      category: 'broker',
+      action: `${input.phase}:${input.method.slice(0, 16)}`,
+      siteKey: input.siteKey,
+      outcome: input.outcome,
+      detail: `correlation=${input.correlationId} approval=${input.approval}${status}`,
     });
   }
 

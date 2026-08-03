@@ -952,8 +952,8 @@ export class BrowserService {
     const bound = bindingId
       ? this.deps.authBindings.materialForRemember(sessionId, bindingId)
       : undefined;
-    if (bound && (bound.siteKey !== keyResult.key || bound.sourceOrigin !== keyResult.origin)) {
-      throw new BrowserSiteAuthError('invalid_url', 'The selected authentication belongs to another origin.');
+    if (bound && bound.siteKey !== keyResult.key) {
+      throw new BrowserSiteAuthError('invalid_url', 'The selected authentication belongs to another site.');
     }
     const storageDomainCount =
       Object.keys(scoped.localStorage ?? {}).length +
@@ -1031,6 +1031,38 @@ export class BrowserService {
       throw new BrowserSiteAuthError('browser_no_session', 'This chat session has no live browser.');
     }
     return this.deps.authBindings.capture(sessionId, material);
+  }
+
+  /** Turn one selected sanitized capture candidate into an opaque usable binding. */
+  async captureCandidateAuthBinding(
+    sessionId: string,
+    candidateUrl: string,
+    bearerToken?: string,
+  ): Promise<string | undefined> {
+    const entry = this.registry.get(sessionId);
+    if (!entry?.handle) return undefined;
+    const keyResult = siteKeyForUrl(candidateUrl);
+    if (!keyResult.ok) return undefined;
+    const raw = await this.deps.exportContext(entry.handle.baseUrl).catch(() => null);
+    const scoped = raw
+      ? filterContextToScope(
+          raw as { cookies?: unknown; localStorage?: unknown; sessionStorage?: unknown },
+          keyResult.key,
+        )
+      : { cookies: [] };
+    if (scoped.cookies.length === 0 && !bearerToken) return undefined;
+    const bindingId = this.deps.authBindings.capture(sessionId, {
+      siteKey: keyResult.key,
+      sourceOrigin: keyResult.origin,
+      sessionContext: scoped,
+      ...(bearerToken ? { bearerToken } : {}),
+    });
+    const applicable = this.deps.authBindings.resolve(sessionId, bindingId, candidateUrl);
+    if (applicable.cookies.length === 0 && !applicable.bearerToken) {
+      this.deps.authBindings.discard(sessionId, bindingId);
+      return undefined;
+    }
+    return bindingId;
   }
 
   /** Resolve only native-applicable material; later broker work consumes this. */
