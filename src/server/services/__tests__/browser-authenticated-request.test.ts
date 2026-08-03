@@ -111,6 +111,24 @@ describe('BrowserAuthenticatedRequestBroker', () => {
     assert.equal(h.approvalCalls(), 3);
   });
 
+  it('does not reuse an exact-operation grant after runtime generation rotation', async () => {
+    const h = harness(['allow', 'allow']);
+    const input = request('POST');
+    input.validateNonMutating = true;
+    input.recipe.authBinding = h.bindingId;
+
+    const first = await h.broker.execute({
+      taskId: 'task-1', workspaceId: 'ws-1', grantScope: 'runtime-generation-1',
+    }, input);
+    const afterRotation = await h.broker.execute({
+      taskId: 'task-1', workspaceId: 'ws-1', grantScope: 'runtime-generation-2',
+    }, input);
+
+    assert.equal(first.ok, true);
+    assert.equal(afterRotation.ok, true);
+    assert.equal(h.approvalCalls(), 2, 'rotated runtime must authorize again');
+  });
+
   it('does not turn an ordinary approved mutation into a reusable grant', async () => {
     const h = harness(['allow', 'allow']);
     const input = request('POST');

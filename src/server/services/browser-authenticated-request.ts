@@ -28,6 +28,8 @@ export type BrokerApprovalDecision =
 export interface BrokerExecutionContext {
   taskId: string;
   workspaceId: string;
+  /** Runtime-generation scope: grants must never survive task token rotation. */
+  grantScope: string;
   signal?: AbortSignal;
 }
 
@@ -58,6 +60,7 @@ interface PreparedOperation {
 
 interface Grant {
   taskId: string;
+  grantScope: string;
   bindingId: string;
   fingerprint: string;
   expiresAt: number;
@@ -232,7 +235,7 @@ export class BrowserAuthenticatedRequestBroker {
     const bindingId = parsed.data.recipe.authBinding;
     const correlationId = `broker_${randomBytes(12).toString('base64url')}`;
     const readOnly = operation.method === 'GET' || operation.method === 'HEAD';
-    const grantKey = `${context.taskId}\0${bindingId}\0${operation.fingerprint}`;
+    const grantKey = `${context.taskId}\0${context.grantScope}\0${bindingId}\0${operation.fingerprint}`;
     const grant = this.grants.get(grantKey);
     let approval: BrowserBrokerAuditInput['approval'] = readOnly
       ? 'not_required'
@@ -314,7 +317,8 @@ export class BrowserAuthenticatedRequestBroker {
       if (!readOnly && approval === 'approved' && result.status < 400 &&
           parsed.data.validateNonMutating === true) {
         this.grants.set(grantKey, {
-          taskId: context.taskId, bindingId, fingerprint: operation.fingerprint,
+          taskId: context.taskId, grantScope: context.grantScope,
+          bindingId, fingerprint: operation.fingerprint,
           expiresAt: this.now() + this.grantTtlMs,
         });
       }

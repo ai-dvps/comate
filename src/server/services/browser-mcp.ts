@@ -1,7 +1,12 @@
 import type { CallToolResult as CallToolResultType } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import type { ZodRawShape } from 'zod';
-import { CONTRACT_VERSION, sanitizedCandidateSchema, type SanitizedCandidate } from '@comate/api-contracts';
+import {
+  CONTRACT_VERSION,
+  brokerRequestSchema,
+  sanitizedCandidateSchema,
+  type SanitizedCandidate,
+} from '@comate/api-contracts';
 
 /**
  * Backend-agnostic browser tool definition (U6): identical in shape to the
@@ -88,6 +93,7 @@ import {
 import { browserAuditService, type BrowserAuditService } from './browser-audit.js';
 import { buildStorageInitScript } from './browser-site-auth.js';
 import { originOf } from './browser-origin.js';
+import { BrowserAuthenticatedRequestBroker } from './browser-authenticated-request.js';
 
 // Re-export so existing consumers of './browser-mcp.js' (chat-service, U3
 // tests) keep working; the canonical home is browser-tool-names.ts (U4) so
@@ -96,7 +102,7 @@ export { BROWSER_MCP_SERVER_KEY, BROWSER_TOOL_PREFIX };
 
 /**
  * browser-mcp — the first-class tool surface for the embedded controlled
- * browser (KTD-3). Ten tools on the `comate-browser` SDK MCP server
+ * browser (KTD-3). Eleven tools on the `comate-browser` SDK MCP server
  * (tool names `mcp__comate-browser__*`), injected into GUI chat sessions
  * only (KTD-4 ③: bot sessions never get this server).
  *
@@ -168,6 +174,10 @@ export type BrowserApprovalRequester = (
 export interface BrowserMcpDeps {
   sessionId: string;
   workspaceId: string;
+  /** Generation of the task capability authorizing this MCP invocation. */
+  runtimeGeneration?: string;
+  /** Whether this invocation's task capability also has the API-broker audience. */
+  apiBrokerAuthorized?: boolean;
   browserService?: BrowserService;
   /**
    * Handoff/control state machine driver (U5). Defaults to the process
@@ -179,6 +189,8 @@ export interface BrowserMcpDeps {
   connectPage?: (baseUrl: string) => Promise<SteelCdpSession>;
   /** Audit sink (U8); defaults to the process singleton. */
   audit?: Pick<BrowserAuditService, 'logToolAction'>;
+  /** Authenticated direct-request broker; tests may inject a deterministic one. */
+  authenticatedRequestBroker?: BrowserAuthenticatedRequestBroker;
   /**
    * Shared page-connection registry keyed by chat sessionId. Runtime rebuilds
    * mint a fresh MCP server instance (and BrowserToolContext) for the same
@@ -619,6 +631,7 @@ export class BrowserToolContext {
   private readonly pageRegistry: Map<string, Promise<SteelCdpSession>>;
   private readonly settleMs: number;
   private readonly audit: Pick<BrowserAuditService, 'logToolAction'>;
+  private readonly authenticatedRequestBroker: BrowserAuthenticatedRequestBroker;
   private networkCapture?: BrowserNetworkCaptureManager;
   private capturePrimarySessionId?: string;
   private captureAction = 'One explicitly bracketed browser action';
@@ -630,6 +643,33 @@ export class BrowserToolContext {
     this.pageRegistry = deps.pageRegistry ?? defaultPageRegistry;
     this.settleMs = deps.settleMs ?? 300;
     this.audit = deps.audit ?? browserAuditService;
+    this.authenticatedRequestBroker = deps.authenticatedRequestBroker ?? new BrowserAuthenticatedRequestBroker({
+      resolveAuth: (taskId, bindingId, destination) =>
+        this.svc.resolveAuthBinding(taskId, bindingId, destination),
+      approvalRequester: async ({ method, siteKey, correlationId, validationRequested, signal }) => {
+        const decision = await this.requestApproval({
+          toolName: BROWSER_TOOL_NAMES.authenticatedRequest,
+          title: `Authorize ${method} request to ${siteKey}`,
+          description: validationRequested
+            ? 'This request will be validated as non-mutating; a successful validation grants exact task-local reuse.'
+            : 'This authenticated request can change data on the destination site.',
+          payload: {
+            kind: 'authenticated_request',
+            method,
+            siteKey,
+            correlationId,
+            validationRequested,
+          },
+        }, signal);
+        if ('content' in decision) return { behavior: 'deny' as const };
+        // BrowserApprovalRequester currently exposes allow/deny only; runtime
+        // timeout/cancel are already normalized to deny before this boundary.
+        return decision.behavior === 'allow'
+          ? { behavior: 'allow' as const }
+          : { behavior: 'deny' as const };
+      },
+      audit: browserAuditService,
+    });
   }
 
   private async ensurePage(): Promise<SteelCdpSession> {
@@ -846,6 +886,31 @@ export class BrowserToolContext {
       }
       return this.toErrorResult(err, 'capture');
     }
+  }
+
+  // -- authenticated direct request ---------------------------------------
+
+  async handleAuthenticatedRequest(
+    raw: unknown,
+    runtimeGeneration: string,
+    apiBrokerAuthorized: boolean,
+    extra?: { signal?: AbortSignal },
+  ): Promise<CallToolResult> {
+    if (!apiBrokerAuthorized) {
+      return toolError(
+        'browser_broker_unauthorized',
+        'approval',
+        'This task capability is not authorized for direct API requests.',
+        'Rebuild the GUI task runtime to obtain an API-broker capability.',
+      );
+    }
+    const result = await this.authenticatedRequestBroker.execute({
+      taskId: this.deps.sessionId,
+      workspaceId: this.deps.workspaceId,
+      grantScope: runtimeGeneration,
+      signal: extra?.signal,
+    }, raw);
+    return toolJson(result);
   }
 
   private async requestApproval(request: Omit<BrowserApprovalRequest, 'signal'>, signal?: AbortSignal): Promise<BrowserApprovalDecision | CallToolResult> {
@@ -1768,6 +1833,21 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     { annotations: { readOnlyHint: true, openWorldHint: true } },
   );
 
+  const authenticatedRequestDef = tool(
+    'authenticatedRequest',
+    'Perform a sanitized HTTP request directly with an opaque authentication binding captured ' +
+      'from this task. GET/HEAD requests do not ask for approval; other methods are authorized ' +
+      'inside this handler before dispatch and can receive an exact task-local validation grant.',
+    brokerRequestSchema.shape,
+    async (args, extra) => ctx.handleAuthenticatedRequest(
+      args,
+      deps.runtimeGeneration ?? 'unscoped',
+      deps.apiBrokerAuthorized === true,
+      extra as { signal?: AbortSignal },
+    ),
+    { annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true } },
+  );
+
   const actDef = tool(
     'act',
     'Perform a single interaction (click/fill/select/check) on an element ref from the page ' +
@@ -1868,6 +1948,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     inspectElementDef,
     startNetworkCaptureDef,
     stopNetworkCaptureDef,
+    authenticatedRequestDef,
     actDef,
     submitDef,
     extractDef,

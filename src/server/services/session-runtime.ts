@@ -567,6 +567,14 @@ export class SessionRuntime {
         // nav.kind === 'invalid': fall through — the tool handler validates URLs.
       }
 
+      // The authenticated-request broker owns its method-sensitive approval
+      // inside the MCP handler. Letting the generic gate ask as well would
+      // produce two cards for POST while still being bypassable by SDK allow
+      // rules. The handler remains the single fail-closed authorization point.
+      if (toolName === BROWSER_TOOL_NAMES.authenticatedRequest) {
+        return { behavior: 'allow', updatedInput: input };
+      }
+
       // Check approval mode (after AskUserQuestion guard — questions always require user input)
       if (this.approvalMode === 'auto') {
         diagLog(`[Runtime ${this.sessionId}] auto-approve tool=${toolName} requestId=${requestId}`);

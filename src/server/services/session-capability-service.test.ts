@@ -81,6 +81,54 @@ describe('session-capability-service', { concurrency: false }, () => {
     assert.ok(service.resolve(second.token), 'fresh token must live');
   });
 
+  it('supports independently revocable simultaneous task and WeCom capabilities with explicit audiences', () => {
+    const task = service.mintForSession({
+      sessionId: 's1', workspaceId: 'w1', botId: null,
+      kind: 'task', audiences: ['browser-mcp', 'api-broker'], runtimeGeneration: 'runtime-1',
+    });
+    const wecom = service.mintForSession({
+      sessionId: 's1', workspaceId: 'w1', botId: 'b1',
+      kind: 'wecom', audiences: ['wecom-cli'], runtimeGeneration: 'runtime-1',
+    });
+    assert.equal(service.resolveForAudience(task.token, 'browser-mcp')?.runtimeGeneration, 'runtime-1');
+    assert.equal(service.resolveForAudience(task.token, 'api-broker')?.sessionId, 's1');
+    assert.equal(service.resolveForAudience(task.token, 'wecom-cli'), null);
+    assert.equal(service.resolveForAudience(wecom.token, 'browser-mcp'), null);
+    assert.ok(service.resolveForAudience(wecom.token, 'wecom-cli'));
+    assert.equal(service.revokeKind('s1', 'task'), 1);
+    assert.equal(service.resolveForAudience(task.token, 'browser-mcp'), null);
+    assert.ok(service.resolveForAudience(wecom.token, 'wecom-cli'));
+  });
+
+  it('rotates only the matching capability kind and binds the runtime generation', () => {
+    const wecom = service.mintForSession({
+      sessionId: 's1', workspaceId: 'w1', botId: 'b1', kind: 'wecom', audiences: ['wecom-cli'],
+    });
+    const first = service.mintForSession({
+      sessionId: 's1', workspaceId: 'w1', botId: null,
+      kind: 'task', audiences: ['browser-mcp', 'api-broker'], runtimeGeneration: 'g1',
+    });
+    const second = service.mintForSession({
+      sessionId: 's1', workspaceId: 'w1', botId: null,
+      kind: 'task', audiences: ['browser-mcp', 'api-broker'], runtimeGeneration: 'g2',
+    });
+    assert.equal(service.resolveForAudience(first.token, 'browser-mcp'), null);
+    assert.equal(service.resolveForAudience(second.token, 'browser-mcp', { runtimeGeneration: 'g1' }), null);
+    assert.ok(service.resolveForAudience(second.token, 'browser-mcp', { runtimeGeneration: 'g2' }));
+    assert.ok(service.resolveForAudience(wecom.token, 'wecom-cli'));
+  });
+
+  it('refuses cross-kind or empty audience sets at the minting boundary', () => {
+    assert.throws(() => service.mintForSession({
+      sessionId: 's1', workspaceId: 'w1', botId: null,
+      kind: 'task', audiences: ['wecom-cli'],
+    }), /invalid audiences/);
+    assert.throws(() => service.mintForSession({
+      sessionId: 's1', workspaceId: 'w1', botId: 'b1',
+      kind: 'wecom', audiences: [],
+    }), /invalid audiences/);
+  });
+
   it('revocation: revokeForSession kills the live token', () => {
     const minted = service.mintForSession({ sessionId: 's1', workspaceId: 'w1', botId: null });
     assert.strictEqual(service.revokeForSession('s1'), 1);

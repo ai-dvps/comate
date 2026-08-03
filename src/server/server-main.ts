@@ -175,7 +175,9 @@ app.use(express.json());
 // the middleware). Exemptions are the explicit list in loopback-auth.ts.
 app.use(
   createLoopbackAuthMiddleware({
-    resolveSessionToken: (token) => sessionCapabilityService.resolve(token),
+    // The generic loopback route set is the WeCom CLI audience. GUI task
+    // capabilities are deliberately limited to browser MCP + API broker.
+    resolveSessionToken: (token) => sessionCapabilityService.resolveForAudience(token, 'wecom-cli'),
     getDesktopToken: () => sessionCapabilityService.getDesktopToken(),
     // U6 (KTD-22): promote auth rejections from diagLog to the bot audit
     // trail. Attributable rejections (resolved token, 403 class) file under
