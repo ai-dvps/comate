@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, ChevronDown, Loader2, RefreshCw, Server } from 'lucide-react'
+import { useShallow } from 'zustand/react/shallow'
 import { useSkillsStore, type SkillProviderFailureReason } from '../../stores/skills-store'
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
 
@@ -26,7 +27,15 @@ export default function SkillProviderFilter({ onSelectionChange }: SkillProvider
     isCheckingSearchProviders,
     setSearchProviderSelected,
     retrySearchProvider,
-  } = useSkillsStore()
+  } = useSkillsStore(useShallow((state) => ({
+    searchProviders: state.searchProviders,
+    selectedSearchProviderIds: state.selectedSearchProviderIds,
+    newSearchProviderIds: state.newSearchProviderIds,
+    checkingSearchProviderIds: state.checkingSearchProviderIds,
+    isCheckingSearchProviders: state.isCheckingSearchProviders,
+    setSearchProviderSelected: state.setSearchProviderSelected,
+    retrySearchProvider: state.retrySearchProvider,
+  })))
   const unavailableSelected = searchProviders.some(
     ({ id, status }) => selectedSearchProviderIds.includes(id) && status === 'unavailable'
   )

@@ -27,6 +27,7 @@ export {
   SEARCH_PROVIDER_REGISTRY,
   SkillSearchProviderError,
   checkSkillSearchProviders,
+  isSkillSearchProviderId,
   searchFederatedSkills,
   searchSkillsAPI,
   searchSkillsHubSkills,

@@ -34,9 +34,9 @@ import {
   isExpertPackageCoordinate,
   isExpertPackageScene,
   isSkillHubCoordinate,
+  isSkillSearchProviderId,
   isSkillScene,
   isSkillSort,
-  SKILL_SEARCH_PROVIDER_IDS,
   type SkillSearchQuery,
   type SkillSearchProviderId,
 } from '../services/skills/index.js';
@@ -49,8 +49,8 @@ function parseSearchProviderIds(value: unknown): SkillSearchProviderId[] | undef
   if (value === '') return [];
   const ids = value.split(',');
   if (ids.some((id) => !id) || new Set(ids).size !== ids.length) return null;
-  if (ids.some((id) => !(SKILL_SEARCH_PROVIDER_IDS as readonly string[]).includes(id))) return null;
-  return ids as SkillSearchProviderId[];
+  if (ids.some((id) => !isSkillSearchProviderId(id))) return null;
+  return ids.filter(isSkillSearchProviderId);
 }
 
 function sendSkillHubError(
@@ -186,7 +186,7 @@ router.get('/search/providers', async (req, res) => {
   if (
     provider !== undefined
     && (typeof provider !== 'string'
-      || !(SKILL_SEARCH_PROVIDER_IDS as readonly string[]).includes(provider))
+      || !isSkillSearchProviderId(provider))
   ) {
     res.status(400).json({ error: 'Invalid provider' });
     return;
@@ -194,7 +194,7 @@ router.get('/search/providers', async (req, res) => {
   try {
     res.setHeader('Cache-Control', 'no-store');
     const providers = await skillsService.checkSearchProviders(
-      typeof provider === 'string' ? [provider as SkillSearchProviderId] : undefined,
+      typeof provider === 'string' && isSkillSearchProviderId(provider) ? [provider] : undefined,
     );
     res.json({ providers });
   } catch (error) {
