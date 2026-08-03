@@ -39,13 +39,12 @@ export default function ExpertPackagesView({ active, isOpen, workspaceId, onInst
   const listScrollTopRef = useRef(0)
   const installed = useSkillsStore((state) => state.installed)
   const {
-    packages, total, isLoadingList, listError,
+    packages, isLoadingList, listError,
     packageDetails, loadingPackageSlug, packageErrors,
     skillDetails, loadingSkillKey, skillErrors,
     fetchPackages, fetchPackage, fetchSkill,
   } = useExpertPackagesStore(useShallow((state) => ({
     packages: state.packages,
-    total: state.total,
     isLoadingList: state.isLoadingList,
     listError: state.listError,
     packageDetails: state.packageDetails,
@@ -102,7 +101,6 @@ export default function ExpertPackagesView({ active, isOpen, workspaceId, onInst
       <div ref={rootRef} className="contents">
         <ExpertPackageList
           packages={packages}
-          total={total}
           keyword={keyword}
           scene={scene}
           viewMode={viewMode}
