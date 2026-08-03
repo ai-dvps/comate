@@ -20,6 +20,7 @@ import {
   type SkillSearchQuery,
 } from './search-query.js';
 import type { SearchSkill } from './types.js';
+import { createWeSkillHubClient, type WeSkillHubSearchSort } from './weskillhub.js';
 
 // API endpoint for skills search. Allow override via env for testing/staging.
 const SEARCH_API_BASE = process.env.SKILLS_API_URL || 'https://skills.sh';
@@ -265,11 +266,47 @@ export async function searchSkillhubCnSkills(input: SkillSearchInput): Promise<S
   }
 }
 
+/** Search WeSkillHub's public catalog through its bounded provider client. */
+export async function searchWeSkillHubSkills(input: SkillSearchInput): Promise<SearchSkill[]> {
+  const query = normalizeSkillSearchQuery(input);
+  if (!isUsableQuery(query.keyword)) return [];
+
+  const sortMap: Record<NonNullable<SkillSearchQuery['sort']>, WeSkillHubSearchSort> = {
+    score: 'hot',
+    downloads: 'downloads',
+    newest: 'update_date',
+  };
+
+  try {
+    const records = await createWeSkillHubClient().searchSkills({
+      search: query.keyword,
+      sort: sortMap[query.sort || 'score'],
+    });
+    return records.map((skill) => {
+      const coordinate = `${skill.id}/${skill.slug}`;
+      return {
+        id: `weskillhub:${coordinate}`,
+        name: skill.name,
+        slug: skill.slug,
+        source: 'weskillhub.weoa.com',
+        installSource: `weskillhub:${coordinate}`,
+        sourceKind: 'weskillhub' as const,
+        description: skill.description,
+        installs: skill.downloads,
+        ...(skill.updatedAt !== undefined ? { updatedAt: skill.updatedAt } : {}),
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
 const searchProviders: SearchProvider[] = [
   searchSkillsAPI,
   searchSkillsHubSkills,
   searchXfyunSkills,
   searchSkillhubCnSkills,
+  searchWeSkillHubSkills,
 ];
 
 /**

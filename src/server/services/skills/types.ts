@@ -59,7 +59,7 @@ export interface SearchSkill {
   /** Source reference passed to the existing resolver and installer. */
   installSource: string;
   /** Registry that returned this result. */
-  sourceKind: 'skills.sh' | 'skillshub' | 'xfyun' | 'skillhub-cn';
+  sourceKind: 'skills.sh' | 'skillshub' | 'xfyun' | 'skillhub-cn' | 'weskillhub';
   description: string;
   installs: number;
   /** Optional provider timestamp in milliseconds, used by the newest sort. */
