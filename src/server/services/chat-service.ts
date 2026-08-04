@@ -3206,13 +3206,31 @@ export class ChatService {
                   });
                 }
                 // Sandboxed bash: default-allow when the probe passed (the
-                // sandbox is the containment, R2); on a degraded host the
-                // unmatched command is role-routed (R5/F3/AE5).
+                // sandbox is the containment, R2). On a degraded host: owner/admin
+                // bypass; a WeCom regular member's bash is routed to owner/admin
+                // approval — the host cannot sandbox it, so unsandboxed execution
+                // needs authorization, and the gate owns this decision (it does
+                // NOT depend on the model's per-call dangerouslyDisableSandbox
+                // flag, which is meaningless when the sandbox never starts).
+                // Non-WeCom channels keep the sandbox-unavailable deny until
+                // their card flow is aligned (R5/F3/AE5).
                 if (!isSandboxDegraded()) {
                   return { behavior: 'allow' as const, updatedInput: input };
                 }
                 if (isOwnerOrAdmin(freshRole)) {
                   return { behavior: 'allow' as const, updatedInput: input };
+                }
+                if (channel === 'wecom') {
+                  const degradedActor = { type: channel, channelKey: channel, channelUserId } as const;
+                  botAuditLogger.logSandboxEscapeRequested(bot.id, degradedActor, {
+                    sessionId: session.id,
+                    command: input.command,
+                    role: freshRole,
+                  });
+                  return escalateRemotely(degradedActor, {
+                    reason: 'escape',
+                    recipientRoles: new Set<BotRoleKey>(['owner', 'admin']),
+                  });
                 }
                 if (channel) {
                   botAuditLogger.logBashDenied(

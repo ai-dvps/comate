@@ -3338,16 +3338,53 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
 
   // --------------------------------------------------- AE5/F3 degraded routing
 
-  it('AE5: degraded platform — normal unmatched bash denies without a card', async () => {
-    const { canUseTool, approvalCalls } = await setupBotSession({ role: 'normal' });
+  it('AE5: degraded platform — normal WeCom bash escalates to owner/admin approval', async () => {
+    // On a degraded host the sandbox cannot contain anything, so a normal
+    // member's bash is routed (by the gate, deterministically) to the
+    // channel's owner/admin approval — not auto-denied. Comate owns this
+    // authorization; it does not depend on the model's per-call sandbox flag.
+    const { canUseTool, approvalCalls, botId } = await setupBotSession({ role: 'normal' });
+    botService.addMember(botId, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
     // Flip the probe to degraded AFTER spawn; the gate reads live probe state.
+    probeOk = false;
+    await ensureSandboxProbe({ forceRefresh: true });
+
+    const sdkOptions = { toolUseID: 'toolu_ae5_escalate', signal: new AbortController().signal };
+    const result = await canUseTool('Bash', { command: 'ls -la' }, sdkOptions);
+    assert.strictEqual(result.behavior, 'allow', 'mock approver approves the degraded-host bash');
+    assert.strictEqual(approvalCalls.length, 1);
+    assert.strictEqual(approvalCalls[0].options?.audience, 'admins');
+    const row = workspaceStore.listBotEscalations({ botId })[0];
+    assert.ok(row, 'a ledger row is created for the degraded-host bash approval');
+    assert.strictEqual(row.audience, 'admins');
+    assert.strictEqual(row.requester.role, 'normal');
+  });
+
+  it('AE5: degraded platform — normal WeCom bash without an approver fails closed', async () => {
+    const { canUseTool, approvalCalls, botId } = await setupBotSession({ role: 'normal' });
+    probeOk = false;
+    await ensureSandboxProbe({ forceRefresh: true });
+
+    const denied = await canUseTool('Bash', { command: 'ls -la' });
+    assert.strictEqual(denied.behavior, 'deny');
+    assert.match(denied.message ?? '', /has none/);
+    assert.strictEqual(approvalCalls.length, 0);
+    assert.strictEqual(workspaceStore.listBotEscalations({ botId }).length, 0);
+    const esc = workspaceStore.listAuditLogs(botId).find((l) => l.eventType === 'sandbox_escape_denied');
+    assert.ok(esc);
+    assert.strictEqual(esc.details.reason, 'escalation-no-approvers');
+  });
+
+  it('AE5: degraded platform — feishu normal bash keeps the sandbox-unavailable deny', async () => {
+    // Non-WeCom channels keep the phase-1 deny until their card flow is aligned.
+    const { canUseTool, approvalCalls } = await setupBotSession({ role: 'normal', source: 'feishu' });
     probeOk = false;
     await ensureSandboxProbe({ forceRefresh: true });
 
     const denied = await canUseTool('Bash', { command: 'ls -la' });
     assert.strictEqual(denied.behavior, 'deny');
     assert.match(denied.message ?? '', /routing: sandbox-unavailable/);
-    assert.strictEqual(approvalCalls.length, 0, 'no approval card for normal degraded deny');
+    assert.strictEqual(approvalCalls.length, 0);
   });
 
   it('AE5: degraded platform — owner and admin unmatched bash bypass approval', async () => {
@@ -3366,16 +3403,23 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
   });
 
   it('degraded posture recovers for new decisions when the probe passes again', async () => {
-    const { canUseTool } = await setupBotSession({ role: 'normal' });
+    // While degraded, a normal member's bash needs owner/admin approval (an
+    // approver denies here, so it is not runnable); once the probe passes,
+    // bash runs sandboxed again without any approval.
+    const { canUseTool, botId } = await setupBotSession({
+      role: 'normal',
+      approvalResult: { behavior: 'deny', message: 'denied by approver' },
+    });
+    botService.addMember(botId, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
     probeOk = false;
     await ensureSandboxProbe({ forceRefresh: true });
     const denied = await canUseTool('Bash', { command: 'ls -la' });
-    assert.strictEqual(denied.behavior, 'deny');
+    assert.strictEqual(denied.behavior, 'deny', 'degraded bash is not runnable without owner/admin approval');
 
     probeOk = true;
     await ensureSandboxProbe({ forceRefresh: true });
     const allowed = await canUseTool('Bash', { command: 'ls -la' });
-    assert.strictEqual(allowed.behavior, 'allow');
+    assert.strictEqual(allowed.behavior, 'allow', 'once the sandbox passes, bash runs sandboxed again');
   });
 
   // ------------------------------------------------------- fail-closed gate
@@ -3708,19 +3752,25 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     assert.strictEqual(requester.channelUserId, 'owner-1');
   });
 
-  it('U6: degraded-platform bash deny audits bash_denied with the routing class', async () => {
-    const { canUseTool, botId } = await setupBotSession({ role: 'normal' });
+  it('U6: degraded-platform WeCom bash audits sandbox_escape_requested via owner/admin approval', async () => {
+    const { canUseTool, botId, approvalCalls } = await setupBotSession({ role: 'normal' });
+    botService.addMember(botId, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
     probeOk = false;
     await ensureSandboxProbe({ forceRefresh: true });
 
     const result = await canUseTool('Bash', { command: 'ls -la' });
-    assert.strictEqual(result.behavior, 'deny');
-    const denied = workspaceStore.listAuditLogs(botId).find((l) => l.eventType === 'bash_denied');
-    assert.ok(denied);
-    assert.strictEqual(denied.actorId, 'user-1');
-    assert.strictEqual(denied.details.command, 'ls -la');
-    assert.strictEqual(denied.details.reason, 'degraded-platform-bash');
-    assert.strictEqual(denied.details.routingClass, 'sandbox-unavailable');
+    assert.strictEqual(result.behavior, 'allow');
+    assert.strictEqual(approvalCalls.length, 1);
+
+    const logs = workspaceStore.listAuditLogs(botId);
+    const requested = logs.find((l) => l.eventType === 'sandbox_escape_requested');
+    assert.ok(requested, 'degraded-host bash is audited as a sandbox escape request');
+    assert.strictEqual(requested.details.command, 'ls -la');
+    // The old degraded-platform-bash bash_denied audit no longer fires for WeCom normal users.
+    const bashDenied = logs.find(
+      (l) => l.eventType === 'bash_denied' && l.details.reason === 'degraded-platform-bash',
+    );
+    assert.ok(!bashDenied, 'WeCom normal degraded bash no longer emits a degraded-platform-bash bash_denied audit');
   });
 
   it('U6: legacy kill-switch whitelist deny audits bash_denied', async () => {

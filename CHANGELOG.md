@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Owner/admin-approved Bash on degraded hosts (bot sandbox model, AE5)** — On a host where the execution sandbox is unavailable (notably Windows, where the probe reports `platform-unsupported`), a regular WeCom bot member's Bash command no longer fails outright with "repair sandboxing first." The permission gate now routes it directly to the channel's owner/admin approval cards — the same flow as an out-of-sandbox escape — and runs it unsandboxed once an owner or admin approves. Owner/admin members still bypass approval, non-WeCom channels (e.g. Feishu) still deny until their card flow is aligned, and the existing per-user/per-bot caps, dedupe, and always-allow persistence bound the request volume. The authorization is decided by the gate from host sandbox state, not by the model's per-call sandbox flag.
 - **Todo title submission shortcut** — Creating and renaming todos now requires Ctrl/Cmd+Enter instead of plain Enter.
 - **Dismissible sandbox warning** — The degraded sandbox warning banner can now be dismissed for the current app session without changing the sandbox posture.
 
