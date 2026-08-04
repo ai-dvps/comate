@@ -668,6 +668,11 @@ export class ChatService {
   }
 
   async getSession(id: string, workspaceId: string): Promise<ChatSession | null> {
+    const localSession = workspaceStore.getLocalSession(id);
+    if (localSession && localSession.workspaceId !== workspaceId) {
+      return null;
+    }
+
     // Try SDK first for freshest data
     const workspace = await workspaceStore.get(workspaceId);
     if (workspace) {
@@ -678,7 +683,6 @@ export class ChatService {
           // Preserve providerId, backend identity, and local-only booleans from
           // local DB — the SDK doesn't know about them (review P1: dropping
           // backend here let a default change silently rebind a locked session).
-          const localSession = workspaceStore.getLocalSession(id);
           session.providerId = localSession?.providerId;
           session.backend = localSession?.backend;
           session.backendSessionId = localSession?.backendSessionId;
@@ -697,7 +701,7 @@ export class ChatService {
     }
 
     // Fall back to local DB
-    return workspaceStore.getLocalSession(id);
+    return localSession;
   }
 
   async updateSession(id: string, input: UpdateSessionInput, workspaceId: string): Promise<ChatSession | null> {

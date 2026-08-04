@@ -5136,6 +5136,25 @@ describe('chat-service backend review fixes (P1/P2)', { concurrency: false }, ()
     assert.strictEqual(synced?.backendSessionId, 'ses_remote_1');
   });
 
+  it('getSession does not return a local session from a different workspace', async () => {
+    const { workspace, session } = await createFixture('wecom');
+    const otherFolderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'comate-reviewfix-other-'));
+    const otherWorkspace = await workspaceStore.create({ name: 'Other', folderPath: otherFolderPath });
+    let sdkLookupCount = 0;
+    class TrackingSdkClient extends SdkClient {
+      override async getSessionInfo(): Promise<SDKSessionInfo | undefined> {
+        sdkLookupCount += 1;
+        return undefined;
+      }
+    }
+
+    const resolved = await new ChatService(new TrackingSdkClient()).getSession(session.id, otherWorkspace.id);
+
+    assert.strictEqual(resolved, null);
+    assert.strictEqual(sdkLookupCount, 0);
+    assert.strictEqual(workspaceStore.getLocalSession(session.id)?.workspaceId, workspace.id);
+  });
+
   it('failed first runtime attempt leaves the draft backend unset (P2)', async () => {
     const { workspace, session } = await createFixture('gui');
     SessionRuntime.open = () => {
