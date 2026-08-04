@@ -13,11 +13,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Numeric font-size controls** — Chat and UI font sizes can now be entered directly as bounded pixel values instead of choosing from preset sizes.
+- Nothing yet.
 
 ### Fixed
 
 - Nothing yet.
+
+## [0.0.32] - 2026-08-04
+
+### Added
+
+- **Provider usage in the status bar** — The status bar now shows provider usage information without leaving the active workspace.
+
+### Changed
+
+- **Numeric font-size controls** — Chat and UI font sizes can now be entered directly as bounded pixel values instead of choosing from preset sizes.
+
+### Fixed
+
+- **Workspace-scoped chat sessions** — Starting a chat no longer reuses a session from another workspace.
+- **WeCom interactive card updates** — Approval and workspace cards now carry the required task identity and update using valid interactive-card payloads.
+- **Privileged bot Bash access** — Bot owners and admins now receive their intended Bash approval bypass.
 
 ## [0.0.31] - 2026-08-04
 
