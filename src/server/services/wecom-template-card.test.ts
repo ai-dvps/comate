@@ -320,6 +320,7 @@ describe('wecom-template-card', () => {
       assert.strictEqual(card.main_title?.title, '已处理');
       assert.strictEqual(card.main_title?.desc, '该请求已过期');
       assert.strictEqual(card.task_id, 'task-123');
+      assert.deepStrictEqual(card.card_action, { type: 0 });
     });
 
     it('works without a task_id', () => {
