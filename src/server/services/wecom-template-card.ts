@@ -495,6 +495,7 @@ export function buildTerminalCard(
         disable: true,
         option_list: [{ id: '0', text: notice, is_checked: true }],
       },
+      card_action: { type: 0 },
       submit_button: terminalButton,
       replace_text: notice,
     } as TemplateCard;
@@ -515,6 +516,7 @@ export function buildTerminalCard(
           option_list: [{ id: '0', text: notice }],
         },
       ],
+      card_action: { type: 0 },
       submit_button: terminalButton,
       replace_text: notice,
     } as TemplateCard;

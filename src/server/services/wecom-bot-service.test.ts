@@ -2207,6 +2207,40 @@ describe('WeComBotService /workspace command', { concurrency: false }, () => {
     assert.ok(sentMessages.some((m) => m.body.markdown?.content.includes('已切换到工作空间')));
   });
 
+  it('creates the next bot session in the selected workspace even when the terminal card update is rejected', async () => {
+    const { wsA, wsB, bot } = await setupWorkspaces();
+    injectConnection(wsA.id, bot.id);
+    const conn = (service as any).connections.get(bot.id);
+    conn.client.updateTemplateCard = async () => {
+      throw Object.assign(new Error('Template_Card card_action Missing or Invalid'), {
+        errcode: 42045,
+      });
+    };
+
+    const channel = workspaceStore.getBotChannelByKey(bot.id, 'wecom')!;
+    const owner = workspaceStore.getBotUserByChannelIdentity(bot.id, channel.id, 'owner-1')!;
+    const previousSession = workspaceStore.createLocalSession(
+      wsA.id,
+      'previous',
+      undefined,
+      undefined,
+      'wecom',
+      undefined,
+      bot.id,
+    );
+    workspaceStore.addUserSession(wsA.id, previousSession.id, owner.id);
+    workspaceStore.setActiveUserSession(owner.id, previousSession.id);
+
+    await (service as any).handleTemplateCardEvent(wsA.id, makeWorkspaceSubmitEvent(wsB.id, bot.id));
+    const nextSessionId = await (service as any).getOrCreateSession(wsB.id, 'owner-1');
+    const nextSession = workspaceStore.getLocalSession(nextSessionId)!;
+
+    assert.notStrictEqual(nextSession.id, previousSession.id);
+    assert.strictEqual(nextSession.workspaceId, wsB.id);
+    assert.strictEqual(nextSession.botId, bot.id);
+    assert.strictEqual(workspaceStore.getActiveUserSession(owner.id), nextSession.id);
+  });
+
   it('select_workspace rejects non-Owners', async () => {
     const { wsA, wsB, bot } = await setupWorkspaces();
     injectConnection(wsA.id, bot.id);
