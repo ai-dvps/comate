@@ -2959,10 +2959,8 @@ export class ChatService {
               /**
                * Self-ask route (KTD-15 self audience): the requester is an
                * owner or admin, so their own approval IS supervision. Used by
-               * the Bash escape branch (owner everywhere; admin on non-WeCom
-               * channels) and by U9's MCP write/unknown classification for
-               * owner/admin requesters. `command` is absent for non-Bash
-               * tools (MCP calls carry no shell command).
+               * U9's MCP write/unknown classification for owner/admin
+               * requesters. `command` is absent for MCP calls.
                */
               const askSelfRoute = async (
                 escapeActor: BotActor,
@@ -3135,10 +3133,10 @@ export class ChatService {
                   // settings.permissions.allow (U4) and the SDK structural
                   // rule engine auto-allows matching escape requests upstream
                   // (proven against the real CLI in sdk-rule-contract.test).
-                  // Routing (U11): owner self-ask; admin routes owner-only
-                  // (KTD-21); regular members escalate to the channel's
-                  // owner/admin cards. Feishu stays on phase-1 behavior until
-                  // the card flow is aligned (Scope Boundaries).
+                  // Routing (U11): owner/admin bypass approval; regular
+                  // members escalate to the channel's owner/admin cards.
+                  // Feishu stays on phase-1 behavior until the card flow is
+                  // aligned (Scope Boundaries).
                   //
                   // U6 (KTD-22): the escape-routing decision is an audit
                   // decision point — requested fires for every escape request;
@@ -3152,6 +3150,19 @@ export class ChatService {
                       command: input.command,
                       role: freshRole,
                     });
+                  }
+                  if (escapeActor && isOwnerOrAdmin(freshRole)) {
+                    botAuditLogger.logSandboxEscapeApproved(bot.id, escapeActor, {
+                      sessionId: session.id,
+                      command: input.command,
+                      requester: {
+                        channel: escapeActor.channelKey ?? 'unknown',
+                        channelUserId: escapeActor.channelUserId ?? '',
+                        role: freshRole,
+                      },
+                      source: 'role-bypass',
+                    });
+                    return { behavior: 'allow' as const, updatedInput: input };
                   }
                   // KTD-19: the per-turn override-deny cap short-circuits
                   // BEFORE any new pending/ask — the model gets an explicit
@@ -3174,41 +3185,6 @@ export class ChatService {
                       message:
                         'STOP. This turn has reached the limit of out-of-sandbox requests. Do NOT retry this command or any variant of it with a sandbox override. Tell the user which actions still need owner/admin approval and wait for their decision.',
                     };
-                  }
-                  if (freshRole === 'owner') {
-                    return askSelfRoute(escapeActor as BotActor, input.command);
-                  }
-                  if (freshRole === 'admin') {
-                    // KTD-21: an admin's out-of-sandbox retry routes
-                    // owner-only; no owner → deny with explanation. Feishu
-                    // card alignment is deferred — keep the self-ask there.
-                    if (channel !== 'wecom') {
-                      return askSelfRoute(escapeActor as BotActor, input.command);
-                    }
-                    const hasOwner = botService
-                      .listMembers(bot.id)
-                      .some((m) => m.channelKey === 'wecom' && m.roleKey === 'owner');
-                    if (!hasOwner) {
-                      recordOverrideDeny();
-                      botAuditLogger.logSandboxEscapeDenied(bot.id, { type: 'system' }, {
-                        sessionId: session.id,
-                        command: input.command,
-                        requester: { channel: escapeActor?.channelKey ?? 'unknown', channelUserId, role: freshRole },
-                        reason: 'admin-escalation-no-owner',
-                      });
-                      diagLog(
-                        `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=admin-escalation-no-owner class=escalatable`,
-                      );
-                      return {
-                        behavior: 'deny' as const,
-                        message:
-                          'Denied (routing: escalatable). This action requires approval by the channel owner, but this channel has no owner. Tell the user a desktop administrator must appoint a channel owner first.',
-                      };
-                    }
-                    return escalateRemotely(escapeActor as BotActor, {
-                      reason: 'escape',
-                      recipientRoles: new Set<BotRoleKey>(['owner']),
-                    });
                   }
                   // Regular members (and unknown roles): escalate to the
                   // channel's owner/admin on WeCom; other channels keep the
@@ -3236,7 +3212,7 @@ export class ChatService {
                   return { behavior: 'allow' as const, updatedInput: input };
                 }
                 if (isOwnerOrAdmin(freshRole)) {
-                  return askHuman();
+                  return { behavior: 'allow' as const, updatedInput: input };
                 }
                 if (channel) {
                   botAuditLogger.logBashDenied(

@@ -490,8 +490,8 @@ function ownerPreamble(): string {
   return [
     'You are a bot assistant in a chat channel, running with the owner permission tier.',
     'Filesystem: unrestricted, except the Claude transcript library (~/.claude/projects) and the Comate application data directory, which stay denied.',
-    'Network: shell commands are sandboxed and limited to allowlisted domains by default; commands that need broader access must run outside the sandbox and ask for approval.',
-    'Escalation: if a command fails because of sandbox restrictions you may retry it outside the sandbox, which asks the requester for approval.',
+    'Network: shell commands are sandboxed and limited to allowlisted domains by default; commands that need broader access may run outside the sandbox without approval.',
+    'Escalation: if a command fails because of sandbox restrictions you may retry it outside the sandbox.',
     INJECTION_DEFENSE_LINE,
   ].join('\n');
 }
@@ -500,8 +500,8 @@ function adminPreamble(workspaceFolder: string): string {
   return [
     'You are a bot assistant in a chat channel, running with the admin permission tier.',
     `Writable surface: the workspace at ${workspaceFolder}, plus the workspace-level .claude/skills and .claude/agents directories. You cannot write .claude/plugins, hooks, .mcp.json, settings files, or anything outside the workspace. Credential files are denied to you.`,
-    'Network: denied by default for shell commands, except allowlisted domains (the WeCom API and the local Comate service); commands that need other network access must run outside the sandbox and ask for approval.',
-    'Escalation: if a command fails because of sandbox restrictions you may retry it outside the sandbox, which asks for approval; some requests route to the channel owner.',
+    'Network: denied by default for shell commands, except allowlisted domains (the WeCom API and the local Comate service); commands that need other network access may run outside the sandbox without approval.',
+    'Escalation: if a command fails because of sandbox restrictions you may retry it outside the sandbox.',
     INJECTION_DEFENSE_LINE,
   ].join('\n');
 }

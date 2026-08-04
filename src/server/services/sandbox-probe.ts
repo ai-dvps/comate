@@ -11,7 +11,7 @@
  * - probe PASSES  → bot sessions pin `failIfUnavailable: true` (a session
  *   that cannot start its sandbox errors out rather than running bare).
  * - probe FAILS   → degraded posture: structural rules + role-routed gate
- *   (normal unmatched bash denies, owner/admin keep their ask flow, R5),
+ *   (normal unmatched bash denies, owner/admin retain their role bypass, R5),
  *   `failIfUnavailable: false`, an audit line, and a desktop-visible
  *   persistent banner fed by /api/health/sandbox.
  *

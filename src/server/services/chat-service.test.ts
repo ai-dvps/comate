@@ -2928,13 +2928,24 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     assert.strictEqual(deniedLog?.details.reason, 'escalation-no-approvers');
   });
 
-  it('F2 phase-1: owner dangerouslyDisableSandbox retry enters the ask flow', async () => {
-    const { canUseTool, approvalCalls } = await setupBotSession({ role: 'owner' });
-    const sdkOptions = { toolUseID: 'toolu_escape_1', signal: new AbortController().signal };
-    const result = await canUseTool('Bash', { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true }, sdkOptions);
-    assert.strictEqual(result.behavior, 'allow');
-    assert.strictEqual(approvalCalls.length, 1);
-    assert.strictEqual(approvalCalls[0].toolName, 'Bash');
+  it('owner and admin dangerouslyDisableSandbox retries are allowed without approval', async () => {
+    for (const role of ['owner', 'admin'] as const) {
+      const { canUseTool, approvalCalls, botId } = await setupBotSession({ role });
+      const sdkOptions = { toolUseID: `toolu_escape_${role}`, signal: new AbortController().signal };
+      const result = await canUseTool(
+        'Bash',
+        { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true },
+        sdkOptions,
+      );
+
+      assert.strictEqual(result.behavior, 'allow');
+      assert.strictEqual(approvalCalls.length, 0, `${role} must bypass Bash approval`);
+      assert.strictEqual(
+        workspaceStore.listBotEscalations({ botId }).length,
+        0,
+        `${role} bypass must not create a pending escalation`,
+      );
+    }
   });
 
   it('F2 phase-1: passlist rules compile into inline allow rules for the SDK engine (U4)', async () => {
@@ -2971,49 +2982,7 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
 
   // ------------------------------------------- U8 escalation ledger wiring
 
-  it('U8: owner escape registers a ledger pending (audience=self) and settles approved', async () => {
-    const { canUseTool, botId, sessionId } = await setupBotSession({ role: 'owner' });
-    const sdkOptions = { toolUseID: 'toolu_u8_1', signal: new AbortController().signal };
-    const result = await canUseTool('Bash', { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true }, sdkOptions);
-    assert.strictEqual(result.behavior, 'allow');
-
-    const rows = workspaceStore.listBotEscalations({ botId });
-    assert.strictEqual(rows.length, 1);
-    const row = rows[0];
-    assert.strictEqual(row.id, 'toolu_u8_1');
-    assert.strictEqual(row.sessionId, sessionId);
-    assert.strictEqual(row.audience, 'self', 'owner/admin requester gets the self audience (KTD-15)');
-    assert.deepStrictEqual(row.requester, { channel: 'wecom', channelUserId: 'owner-1', role: 'owner' });
-    assert.deepStrictEqual(row.recipients, [{ userId: 'owner-1', taskId: 'toolu_u8_1' }]);
-    assert.strictEqual(row.rulePayload.command, 'curl https://example.com/x');
-    assert.strictEqual(row.state, 'approved');
-    assert.strictEqual(row.resolution?.decision, 'allow');
-    assert.strictEqual(row.resolution?.source, 'self-approval');
-
-    const logs = workspaceStore.listAuditLogs(botId);
-    const approved = logs.find((l) => l.eventType === 'sandbox_escape_approved');
-    assert.ok(approved);
-    assert.strictEqual(approved.actorType, 'wecom', 'phase-1: approver is the requester (self-ask)');
-    assert.strictEqual(approved.details.source, 'self-approval');
-  });
-
-  it('U11: admin escape routes owner-only (KTD-21); a normal requester can never get self (invariant)', async () => {
-    const admin = await setupBotSession({ role: 'admin' });
-    botService.addMember(admin.botId, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
-    botService.addMember(admin.botId, { channelKey: 'wecom', channelUserId: 'admin-2', roleKey: 'admin' });
-    const sdkOptions = { toolUseID: 'toolu_u8_admin', signal: new AbortController().signal };
-    const adminResult = await admin.canUseTool('Bash', { command: 'curl https://a.com', dangerouslyDisableSandbox: true }, sdkOptions);
-    assert.strictEqual(adminResult.behavior, 'allow');
-    const adminRow = workspaceStore.listBotEscalations({ botId: admin.botId })[0];
-    assert.strictEqual(adminRow.audience, 'admins', 'admin escalation routes to the owner card, not self-ask');
-    assert.strictEqual(adminRow.requester.role, 'admin');
-    assert.deepStrictEqual(
-      adminRow.recipients.map((r) => r.userId),
-      ['owner-1'],
-      'KTD-21: admin-requester escalations go to owners ONLY — fellow admins are excluded',
-    );
-
-    // Normal requester: admins audience (the fail-safe default) — never self.
+  it('U11: a normal requester escalates to the admins audience, never self', async () => {
     const normal = await setupBotSession({ role: 'normal' });
     botService.addMember(normal.botId, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
     const normalResult = await normal.canUseTool('Bash', { command: 'curl https://a.com', dangerouslyDisableSandbox: true });
@@ -3023,120 +2992,12 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     assert.strictEqual(normalRow.requester.role, 'normal');
   });
 
-  it('U8: TTL expiry (AE9) — deny resolves in bounded time, ledger expires, audit records expired', async () => {
-    const { canUseTool, botId } = await setupBotSession({
-      role: 'owner',
-      approvalResult: { behavior: 'deny', message: APPROVAL_TIMEOUT_DENY_MESSAGE },
-    });
-    const sdkOptions = { toolUseID: 'toolu_u8_ttl', signal: new AbortController().signal };
-    const result = await canUseTool('Bash', { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true }, sdkOptions);
-    assert.strictEqual(result.behavior, 'deny');
-    assert.strictEqual(result.message, APPROVAL_TIMEOUT_DENY_MESSAGE);
-
-    const row = workspaceStore.listBotEscalations({ botId })[0];
-    assert.strictEqual(row.state, 'expired');
-    assert.strictEqual(row.resolution?.source, 'timeout');
-    assert.strictEqual(row.resolution?.approver.type, 'system');
-
-    const logs = workspaceStore.listAuditLogs(botId);
-    const expired = logs.find((l) => l.eventType === 'sandbox_escape_expired');
-    assert.ok(expired, 'expired audit row written');
-    assert.strictEqual(expired.actorType, 'system');
-    assert.strictEqual(expired.details.source, 'timeout');
-    assert.strictEqual(expired.details.requestId, 'toolu_u8_ttl');
-  });
-
-  it('U8: denial settles the ledger denied with the approver provenance', async () => {
-    const { canUseTool, botId } = await setupBotSession({
-      role: 'owner',
-      approvalResult: { behavior: 'deny', message: 'User denied this tool call.' },
-    });
-    const sdkOptions = { toolUseID: 'toolu_u8_deny', signal: new AbortController().signal };
-    const result = await canUseTool('Bash', { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true }, sdkOptions);
-    assert.strictEqual(result.behavior, 'deny');
-
-    const row = workspaceStore.listBotEscalations({ botId })[0];
-    assert.strictEqual(row.state, 'denied');
-    assert.strictEqual(row.resolution?.decision, 'deny');
-    assert.strictEqual(row.resolution?.source, 'self-approval');
-
-    const deniedLog = workspaceStore.listAuditLogs(botId).find((l) => l.eventType === 'sandbox_escape_denied');
-    assert.ok(deniedLog);
-    assert.strictEqual(deniedLog.details.reason, 'approver-denied');
-  });
-
-  it('U8: desktop provenance yields the same audit row shape with a desktop actor (shared writer)', async () => {
-    const desktop = await setupBotSession({
-      role: 'owner',
-      provenance: { source: 'desktop', approver: { type: 'user' } },
-    });
-    const sdkOptions = { toolUseID: 'toolu_u8_desktop', signal: new AbortController().signal };
-    const result = await desktop.canUseTool('Bash', { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true }, sdkOptions);
-    assert.strictEqual(result.behavior, 'allow');
-
-    const desktopLog = workspaceStore
-      .listAuditLogs(desktop.botId)
-      .find((l) => l.eventType === 'sandbox_escape_approved');
-    assert.ok(desktopLog);
-    assert.strictEqual(desktopLog.actorType, 'user', 'desktop admin is the approver actor');
-    assert.strictEqual(desktopLog.details.source, 'desktop');
-
-    const desktopRow = workspaceStore.listBotEscalations({ botId: desktop.botId })[0];
-    assert.strictEqual(desktopRow.state, 'approved');
-    assert.strictEqual(desktopRow.resolution?.approver.type, 'user');
-    assert.strictEqual(desktopRow.resolution?.source, 'desktop');
-
-    // Identical shape to a card-flow resolution (only values differ).
-    const card = await setupBotSession({ role: 'owner' });
-    await card.canUseTool('Bash', { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true }, sdkOptions);
-    const cardLog = workspaceStore
-      .listAuditLogs(card.botId)
-      .find((l) => l.eventType === 'sandbox_escape_approved');
-    assert.ok(cardLog);
-    assert.deepStrictEqual(
-      Object.keys(desktopLog.details).sort(),
-      Object.keys(cardLog.details).sort(),
-      'desktop and card resolutions write identically-shaped audit details',
-    );
-  });
-
-  it('U8: the escape ask carries the ledger TTL when the tool input has no timeout (KTD-17)', async () => {
-    const { canUseTool, approvalCalls } = await setupBotSession({ role: 'owner' });
-    const sdkOptions = { toolUseID: 'toolu_u8_ttl_default', signal: new AbortController().signal };
-    await canUseTool('Bash', { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true }, sdkOptions);
-    assert.strictEqual(approvalCalls.length, 1);
-    assert.strictEqual(
-      approvalCalls[0].options?.timeout,
-      30 * 60 * 1000,
-      'pending Promise is bounded by the 30-minute ledger TTL when input.timeout is absent',
-    );
-    assert.strictEqual(approvalCalls[0].options?.audience, 'self');
-
-    const row = workspaceStore.listBotEscalations({})[0];
-    assert.ok(
-      Date.parse(row.expiresAt) - Date.parse(row.createdAt) === 30 * 60 * 1000,
-      'ledger expiry matches the TTL',
-    );
-  });
-
-  it('U8: an explicit tool-input timeout wins over the ledger TTL', async () => {
-    const { canUseTool, approvalCalls } = await setupBotSession({ role: 'owner' });
-    const sdkOptions = { toolUseID: 'toolu_u8_ttl_explicit', signal: new AbortController().signal };
-    await canUseTool(
-      'Bash',
-      { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true, timeout: 45_000 },
-      sdkOptions,
-    );
-    assert.strictEqual(approvalCalls[0].options?.timeout, 45_000);
-    const row = workspaceStore.listBotEscalations({})[0];
-    assert.strictEqual(Date.parse(row.expiresAt) - Date.parse(row.createdAt), 45_000);
-  });
-
   it('U8: bot session pending approval surfaces in getSessionsStatus and clears on resolution (desktop indicator)', async () => {
-    const { canUseTool, sessionId, workspaceId, settleApproval } = await setupBotSession({
-      role: 'owner',
+    const { canUseTool, sessionId, workspaceId, settleApproval, botId } = await setupBotSession({
+      role: 'normal',
       deferApprovals: true,
     });
+    botService.addMember(botId, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
     const sdkOptions = { toolUseID: 'toolu_u8_badge', signal: new AbortController().signal };
     const pendingCountFor = (n: number): boolean =>
       service.getSessionsStatus(workspaceId)[sessionId]?.pendingCount === n;
@@ -3412,14 +3273,11 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     assert.match(afterReset.message ?? '', /routing: escalatable/, 'back to the normal routing message, not STOP');
   });
 
-  it('U11 (KTD-21): admin escape without a channel owner denies with an explanation', async () => {
+  it('admin escape without a channel owner is allowed without approval', async () => {
     const { canUseTool, approvalCalls, botId } = await setupBotSession({ role: 'admin' });
     const result = await canUseTool('Bash', { command: 'curl https://a.com/x', dangerouslyDisableSandbox: true });
-    assert.strictEqual(result.behavior, 'deny');
-    assert.match(result.message ?? '', /no owner/);
-    assert.strictEqual(approvalCalls.length, 0, 'no ask when nobody can approve an admin escalation');
-    const deniedLog = workspaceStore.listAuditLogs(botId).find((l) => l.eventType === 'sandbox_escape_denied');
-    assert.strictEqual(deniedLog?.details.reason, 'admin-escalation-no-owner');
+    assert.strictEqual(result.behavior, 'allow');
+    assert.strictEqual(approvalCalls.length, 0);
     assert.strictEqual(workspaceStore.listBotEscalations({ botId }).length, 0);
   });
 
@@ -3480,7 +3338,7 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
 
   // --------------------------------------------------- AE5/F3 degraded routing
 
-  it('AE5: degraded platform — normal unmatched bash denies (no card), owner asks', async () => {
+  it('AE5: degraded platform — normal unmatched bash denies without a card', async () => {
     const { canUseTool, approvalCalls } = await setupBotSession({ role: 'normal' });
     // Flip the probe to degraded AFTER spawn; the gate reads live probe state.
     probeOk = false;
@@ -3492,15 +3350,19 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     assert.strictEqual(approvalCalls.length, 0, 'no approval card for normal degraded deny');
   });
 
-  it('AE5: degraded platform — owner unmatched bash enters the ask flow', async () => {
-    const { canUseTool, approvalCalls } = await setupBotSession({ role: 'owner' });
-    probeOk = false;
-    await ensureSandboxProbe({ forceRefresh: true });
+  it('AE5: degraded platform — owner and admin unmatched bash bypass approval', async () => {
+    for (const role of ['owner', 'admin'] as const) {
+      const { canUseTool, approvalCalls } = await setupBotSession({ role });
+      probeOk = false;
+      await ensureSandboxProbe({ forceRefresh: true });
 
-    const sdkOptions = { toolUseID: 'toolu_degraded_1', signal: new AbortController().signal };
-    const result = await canUseTool('Bash', { command: 'ls -la' }, sdkOptions);
-    assert.strictEqual(result.behavior, 'allow');
-    assert.strictEqual(approvalCalls.length, 1);
+      const sdkOptions = { toolUseID: `toolu_degraded_${role}`, signal: new AbortController().signal };
+      const result = await canUseTool('Bash', { command: 'ls -la' }, sdkOptions);
+      assert.strictEqual(result.behavior, 'allow');
+      assert.strictEqual(approvalCalls.length, 0);
+      probeOk = true;
+      await ensureSandboxProbe({ forceRefresh: true });
+    }
   });
 
   it('degraded posture recovers for new decisions when the probe passes again', async () => {
@@ -3825,8 +3687,8 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     assert.strictEqual(requester.role, 'normal');
   });
 
-  it('U6: owner escape self-ask approval audits requested + approved', async () => {
-    const { canUseTool, botId } = await setupBotSession({ role: 'owner' });
+  it('U6: owner escape role bypass audits requested + approved without a card', async () => {
+    const { canUseTool, botId, approvalCalls } = await setupBotSession({ role: 'owner' });
     const sdkOptions = { toolUseID: 'toolu_u6_1', signal: new AbortController().signal };
     const result = await canUseTool(
       'Bash',
@@ -3839,54 +3701,11 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     const requested = logs.find((l) => l.eventType === 'sandbox_escape_requested');
     const approved = logs.find((l) => l.eventType === 'sandbox_escape_approved');
     assert.ok(requested && approved);
-    assert.strictEqual(approved.actorId, 'owner-1', 'phase-1 self-approval: requester is the approver');
-    assert.strictEqual(approved.details.source, 'self-approval');
+    assert.strictEqual(approved.actorId, 'owner-1');
+    assert.strictEqual(approved.details.source, 'role-bypass');
+    assert.strictEqual(approvalCalls.length, 0);
     const requester = approved.details.requester as Record<string, unknown>;
     assert.strictEqual(requester.channelUserId, 'owner-1');
-  });
-
-  it('U6: owner escape self-ask denial audits denied with the approver as actor', async () => {
-    const { canUseTool, botId } = await setupBotSession({
-      role: 'owner',
-      approvalResult: { behavior: 'deny', message: 'Denied by user.' },
-    });
-    const sdkOptions = { toolUseID: 'toolu_u6_2', signal: new AbortController().signal };
-    const result = await canUseTool(
-      'Bash',
-      { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true },
-      sdkOptions,
-    );
-    assert.strictEqual(result.behavior, 'deny');
-
-    const denied = workspaceStore
-      .listAuditLogs(botId)
-      .find((l) => l.eventType === 'sandbox_escape_denied');
-    assert.ok(denied);
-    assert.strictEqual(denied.actorId, 'owner-1');
-    assert.strictEqual(denied.details.reason, 'approver-denied');
-  });
-
-  it('U6: owner escape ask timeout audits expired, not denied', async () => {
-    const { canUseTool, botId } = await setupBotSession({
-      role: 'owner',
-      approvalResult: { behavior: 'deny', message: APPROVAL_TIMEOUT_DENY_MESSAGE },
-    });
-    const sdkOptions = { toolUseID: 'toolu_u6_3', signal: new AbortController().signal };
-    const result = await canUseTool(
-      'Bash',
-      { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true },
-      sdkOptions,
-    );
-    assert.strictEqual(result.behavior, 'deny');
-
-    const logs = workspaceStore.listAuditLogs(botId);
-    const expired = logs.find((l) => l.eventType === 'sandbox_escape_expired');
-    assert.ok(expired, 'timeout must file as expired');
-    assert.strictEqual(expired.actorType, 'system');
-    assert.ok(
-      !logs.some((l) => l.eventType === 'sandbox_escape_denied'),
-      'a timeout must not double-file as denied',
-    );
   });
 
   it('U6: degraded-platform bash deny audits bash_denied with the routing class', async () => {
