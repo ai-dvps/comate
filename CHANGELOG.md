@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Nothing yet.
+- **Numeric font-size controls** — Chat and UI font sizes can now be entered directly as bounded pixel values instead of choosing from preset sizes.
 
 ### Fixed
 

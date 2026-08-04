@@ -9,7 +9,7 @@ import { getCodeMirrorLanguage } from '../lib/codemirror-language'
 import { getPathDisplayInfo } from '../lib/path-utils'
 import { isMarkdown } from '../lib/file-helpers'
 import { useAppSettings } from '../hooks/use-app-settings'
-import { fontSizeClass, fontSizeValue } from '../lib/font-size'
+import { fontSizeValue } from '../lib/font-size'
 import type { FileTab } from '../stores/right-panel-store'
 
 interface CodeMirrorFileViewerProps {
@@ -25,8 +25,7 @@ export default function CodeMirrorFileViewer({
   const { chatFontSize } = useAppSettings()
   const absolutePath = getPathDisplayInfo(tab.path, workspacePath).displayAbsolute
   const language = useMemo(() => getCodeMirrorLanguage(tab.name), [tab.name])
-  const fontSize = useMemo(() => fontSizeValue(chatFontSize ?? 'small'), [chatFontSize])
-  const contentFontClass = useMemo(() => fontSizeClass(chatFontSize ?? 'small'), [chatFontSize])
+  const fontSize = fontSizeValue(chatFontSize)
 
   const handleCopy = useCallback(async () => {
     try {
@@ -84,7 +83,7 @@ export default function CodeMirrorFileViewer({
             <p className="text-sm">{t('gitChanges.binaryPlaceholder')}</p>
           </div>
         ) : isMarkdown(tab.name) ? (
-          <MarkdownPreview content={tab.content} className={contentFontClass} />
+          <MarkdownPreview content={tab.content} style={{ fontSize }} />
         ) : (
           <CodeMirrorEditor
             value={tab.content}

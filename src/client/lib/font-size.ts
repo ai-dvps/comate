@@ -1,21 +1,10 @@
-export type FontSizePreset = 'small' | 'medium' | 'large'
+export const MIN_FONT_SIZE = 10
+export const MAX_FONT_SIZE = 24
 
-export const FONT_SIZE_PRESETS: FontSizePreset[] = ['small', 'medium', 'large']
-
-export function fontSizeClass(size: FontSizePreset): string {
-  const map: Record<FontSizePreset, string> = {
-    small: 'text-xs',
-    medium: 'text-sm',
-    large: 'text-base',
-  }
-  return map[size]
+export function clampFontSize(size: number): number {
+  return Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, Math.round(size)))
 }
 
-export function fontSizeValue(size: FontSizePreset): string {
-  const map: Record<FontSizePreset, string> = {
-    small: '12px',
-    medium: '14px',
-    large: '16px',
-  }
-  return map[size]
+export function fontSizeValue(size: number): string {
+  return `${size}px`
 }

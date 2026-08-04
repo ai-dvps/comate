@@ -16,7 +16,7 @@ import { isMarkdown } from '../lib/file-helpers'
 import { getStatusBadgeClass } from '../lib/git-status-helpers'
 import { useTheme } from '../hooks/use-theme'
 import { useAppSettings } from '../hooks/use-app-settings'
-import { fontSizeClass, fontSizeValue } from '../lib/font-size'
+import { fontSizeValue } from '../lib/font-size'
 import type { DiffTab } from '../stores/right-panel-store'
 
 const MIN_SIDE_BY_SIDE_WIDTH = 360
@@ -39,8 +39,7 @@ export default function CodeMirrorDiffViewer({
   const mergeRef = useRef<HTMLDivElement>(null)
   const absolutePath = getPathDisplayInfo(tab.path, workspacePath).displayAbsolute
 
-  const fontSize = useMemo(() => fontSizeValue(chatFontSize ?? 'small'), [chatFontSize])
-  const contentFontClass = useMemo(() => fontSizeClass(chatFontSize ?? 'small'), [chatFontSize])
+  const fontSize = fontSizeValue(chatFontSize)
 
   const language = useMemo(() => getCodeMirrorLanguage(tab.name), [tab.name])
   const mergeViewLanguageExtensions = useMemo(() => {
@@ -109,7 +108,7 @@ export default function CodeMirrorDiffViewer({
 
   const renderFileContent = useCallback(() => {
     if (isMarkdown(tab.name)) {
-      return <MarkdownPreview content={tab.modified} className={contentFontClass} />
+      return <MarkdownPreview content={tab.modified} style={{ fontSize }} />
     }
     return (
       <CodeMirrorEditor
@@ -120,7 +119,7 @@ export default function CodeMirrorDiffViewer({
         fontSize={fontSize}
       />
     )
-  }, [tab.modified, tab.name, language, fontSize, contentFontClass])
+  }, [tab.modified, tab.name, language, fontSize])
 
   return (
     <div className="flex flex-col h-full">

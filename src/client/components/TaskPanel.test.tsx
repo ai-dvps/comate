@@ -17,12 +17,9 @@ vi.mock('../stores/chat-store', () => ({
 }))
 
 vi.mock('../hooks/use-app-settings', () => ({
-  useAppSettings: () => ({ chatFontSize: 'medium' }),
+  useAppSettings: () => ({ chatFontSize: 14 }),
 }))
 
-vi.mock('../lib/font-size', () => ({
-  fontSizeClass: () => 'text-sm',
-}))
 
 describe('TaskPanel', () => {
   beforeEach(() => {

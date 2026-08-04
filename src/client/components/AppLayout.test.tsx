@@ -34,10 +34,10 @@ vi.mock('../components/tool-renderers/ToolRendererContext', () => ({
 vi.mock('../hooks/use-theme', () => ({ useTheme: () => {} }))
 vi.mock('../hooks/use-app-settings', () => ({
   useAppSettings: () => ({
-    uiFontSize: 'base',
+    uiFontSize: 14,
     autoCheckUpdates: false,
     setLastUpdateCheckAt: vi.fn(),
-    chatFontSize: 'base',
+    chatFontSize: 12,
     displayMode: 'linear',
     useModifierToSubmit: false,
   }),
@@ -109,7 +109,6 @@ vi.mock('../stores/chat-store', () => ({
 }))
 
 vi.mock('../lib/platform', () => ({ isMacOS: () => Promise.resolve(false) }))
-vi.mock('../lib/font-size', () => ({ fontSizeClass: () => 'text-base' }))
 vi.mock('../lib/updater-api', () => ({
   startPeriodicUpdateChecks: () => {},
   stopPeriodicUpdateChecks: () => {},

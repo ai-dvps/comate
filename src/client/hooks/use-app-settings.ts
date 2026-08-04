@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
 import i18n from '../i18n'
+import { clampFontSize, MAX_FONT_SIZE, MIN_FONT_SIZE } from '../lib/font-size'
 
-type FontSizePreset = 'small' | 'medium' | 'large'
 export type DisplayMode = 'result' | 'linear'
 
 interface AppSettings {
@@ -9,8 +9,8 @@ interface AppSettings {
   reopenLastWorkspace: boolean
   useModifierToSubmit: boolean
   language: string
-  chatFontSize: FontSizePreset
-  uiFontSize: FontSizePreset
+  chatFontSize: number
+  uiFontSize: number
   archiveThresholdDays: number
   autoCheckUpdates: boolean
   notificationSoundsEnabled: boolean
@@ -22,11 +22,21 @@ interface AppSettings {
 const STORAGE_KEY = 'app-settings'
 
 const SUPPORTED_LANGUAGES = ['en', 'zh-CN']
-const FONT_SIZE_PRESETS: FontSizePreset[] = ['small', 'medium', 'large']
 const DEFAULT_ARCHIVE_THRESHOLD_DAYS = 14
-
-function isValidFontSize(value: unknown): value is FontSizePreset {
-  return typeof value === 'string' && FONT_SIZE_PRESETS.includes(value as FontSizePreset)
+function storedFontSize(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= MIN_FONT_SIZE && value <= MAX_FONT_SIZE) {
+    return value
+  }
+  switch (value) {
+    case 'small':
+      return 12
+    case 'medium':
+      return 14
+    case 'large':
+      return 16
+    default:
+      return fallback
+  }
 }
 
 const defaultSettings: AppSettings = {
@@ -34,8 +44,8 @@ const defaultSettings: AppSettings = {
   reopenLastWorkspace: false,
   useModifierToSubmit: true,
   language: i18n.language,
-  chatFontSize: 'small',
-  uiFontSize: 'medium',
+  chatFontSize: 12,
+  uiFontSize: 14,
   archiveThresholdDays: DEFAULT_ARCHIVE_THRESHOLD_DAYS,
   autoCheckUpdates: true,
   notificationSoundsEnabled: true,
@@ -46,7 +56,12 @@ const defaultSettings: AppSettings = {
 }
 
 /** Validate/migrate a parsed stored blob into a complete AppSettings object. */
-function fromStored(parsed: Partial<AppSettings> | null | undefined): AppSettings {
+type StoredAppSettings = Omit<Partial<AppSettings>, 'chatFontSize' | 'uiFontSize'> & {
+  chatFontSize?: unknown
+  uiFontSize?: unknown
+}
+
+function fromStored(parsed: StoredAppSettings | null | undefined): AppSettings {
   if (!parsed) return { ...defaultSettings }
   const archiveThresholdDays =
     typeof parsed.archiveThresholdDays === 'number' && parsed.archiveThresholdDays > 0
@@ -57,8 +72,8 @@ function fromStored(parsed: Partial<AppSettings> | null | undefined): AppSetting
     reopenLastWorkspace: typeof parsed.reopenLastWorkspace === 'boolean' ? parsed.reopenLastWorkspace : false,
     useModifierToSubmit: typeof parsed.useModifierToSubmit === 'boolean' ? parsed.useModifierToSubmit : true,
     language: SUPPORTED_LANGUAGES.includes(parsed.language ?? '') ? parsed.language! : i18n.language,
-    chatFontSize: isValidFontSize(parsed.chatFontSize) ? parsed.chatFontSize : 'small',
-    uiFontSize: isValidFontSize(parsed.uiFontSize) ? parsed.uiFontSize : 'medium',
+    chatFontSize: storedFontSize(parsed.chatFontSize, defaultSettings.chatFontSize),
+    uiFontSize: storedFontSize(parsed.uiFontSize, defaultSettings.uiFontSize),
     archiveThresholdDays,
     autoCheckUpdates: typeof parsed.autoCheckUpdates === 'boolean' ? parsed.autoCheckUpdates : true,
     notificationSoundsEnabled:
@@ -168,12 +183,12 @@ export function useAppSettings() {
     commitSettings({ ...currentSettings, language })
   }, [])
 
-  const setChatFontSize = useCallback((chatFontSize: FontSizePreset) => {
-    commitSettings({ ...currentSettings, chatFontSize })
+  const setChatFontSize = useCallback((chatFontSize: number) => {
+    commitSettings({ ...currentSettings, chatFontSize: clampFontSize(chatFontSize) })
   }, [])
 
-  const setUiFontSize = useCallback((uiFontSize: FontSizePreset) => {
-    commitSettings({ ...currentSettings, uiFontSize })
+  const setUiFontSize = useCallback((uiFontSize: number) => {
+    commitSettings({ ...currentSettings, uiFontSize: clampFontSize(uiFontSize) })
   }, [])
 
   const setUseModifierToSubmit = useCallback((useModifierToSubmit: boolean) => {
