@@ -527,6 +527,7 @@ export function buildTerminalCard(
       title: '已处理',
       desc: notice,
     },
+    card_action: { type: 0 },
     task_id: taskId,
   };
 }

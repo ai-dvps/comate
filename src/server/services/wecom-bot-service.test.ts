@@ -597,6 +597,7 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     assert.strictEqual(updatedCards.length, 1);
     assert.strictEqual(updatedCards[0].card.card_type, 'text_notice');
     assert.strictEqual(updatedCards[0].card.main_title.desc, '已允许');
+    assert.deepStrictEqual(updatedCards[0].card.card_action, { type: 0 });
   });
 
   it('resolves approval when user clicks always_allow with suggestions', async () => {
