@@ -471,6 +471,69 @@ describe('TodosPanel — enriched todo rows (U3)', () => {
   });
 });
 
+describe('TodosPanel — todo submission shortcuts', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    useTodoStore.setState({ todos: [], isSyncing: false, error: null, searchQuery: '' });
+    useGithubStore.setState({ connection: null });
+  });
+
+  it.each([
+    ['Ctrl', { ctrlKey: true }],
+    ['Cmd', { metaKey: true }],
+  ])('creates a todo only after %s+Enter', async (_modifier, modifier) => {
+    stubFetchWithTodos([]);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
+
+    const quickAdd = screen.getByPlaceholderText('Add a todo…');
+    await userEvent.type(quickAdd, 'New task');
+    fireEvent.keyDown(quickAdd, { key: 'Enter' });
+
+    expect(useTodoStore.getState().todos).toHaveLength(0);
+    expect(quickAdd).toHaveValue('New task');
+
+    fireEvent.keyDown(quickAdd, { key: 'Enter', isComposing: true, ...modifier });
+
+    expect(useTodoStore.getState().todos).toHaveLength(0);
+    expect(quickAdd).toHaveValue('New task');
+
+    fireEvent.keyDown(quickAdd, { key: 'Enter', ...modifier });
+
+    await waitFor(() => expect(useTodoStore.getState().todos).toHaveLength(1));
+    expect(quickAdd).toHaveValue('');
+  });
+
+  it.each([
+    ['Ctrl', { ctrlKey: true }],
+    ['Cmd', { metaKey: true }],
+  ])('saves an edited todo title only after %s+Enter', async (_modifier, modifier) => {
+    const todo = makeTodo({ id: 'rename', text: 'Old title' });
+    stubFetchWithTodos([todo]);
+    renderWithI18n(<TodosPanel isOpen onClose={vi.fn()} />);
+
+    const title = await within(todoList()).findByText('Old title');
+    fireEvent.doubleClick(title);
+    const editInput = screen.getByRole('textbox', { name: 'Edit title' });
+    await userEvent.clear(editInput);
+    await userEvent.type(editInput, 'New title');
+
+    fireEvent.keyDown(editInput, { key: 'Enter' });
+    expect(editInput).toHaveValue('New title');
+    expect(screen.getByRole('textbox', { name: 'Edit title' })).toBeInTheDocument();
+
+    fireEvent.keyDown(editInput, { key: 'Enter', isComposing: true, ...modifier });
+
+    expect(editInput).toHaveValue('New title');
+    expect(screen.getByRole('textbox', { name: 'Edit title' })).toBeInTheDocument();
+
+    fireEvent.keyDown(editInput, { key: 'Enter', ...modifier });
+
+    await waitFor(() => expect(within(todoList()).getByText('New title')).toBeInTheDocument());
+    expect(screen.queryByRole('textbox', { name: 'Edit title' })).not.toBeInTheDocument();
+  });
+});
+
 describe('TodosPanel — states, chrome, and i18n (U4)', () => {
   afterEach(() => {
     cleanup();

@@ -107,8 +107,7 @@ export default function TodoRow({ todo, selected, onSelect, onToggle, onDelete, 
   }, [])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      // Plain Enter or Cmd/Ctrl+Enter both save.
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
       e.preventDefault()
       commit()
     } else if (e.key === 'Escape') {

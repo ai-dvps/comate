@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Nothing yet.
+- **Todo title submission shortcut** — Creating and renaming todos now requires Ctrl/Cmd+Enter instead of plain Enter.
 
 ### Fixed
 

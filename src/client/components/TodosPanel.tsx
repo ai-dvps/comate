@@ -351,7 +351,10 @@ export default function TodosPanel({ isOpen, onClose }: TodosPanelProps) {
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleAdd()
+                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
+                        e.preventDefault()
+                        void handleAdd()
+                      }
                     }}
                     placeholder={t('addPlaceholder')}
                     className="flex-1 bg-transparent text-text-primary text-sm outline-none placeholder:text-text-tertiary"
