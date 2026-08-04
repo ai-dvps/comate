@@ -292,7 +292,7 @@ async function build() {
   run(
     `npx esbuild ${join(rootDir, 'packages', 'comate-cli', 'dist', 'index.js')} ` +
       `--bundle --platform=node --target=node20 --format=cjs ` +
-      `--banner:js="#!/usr/bin/env node" --outfile=${comateBundle}`,
+      `--outfile=${comateBundle}`,
   );
   const cliTriples = process.platform === 'darwin'
     ? ['aarch64-apple-darwin', 'x86_64-apple-darwin']
