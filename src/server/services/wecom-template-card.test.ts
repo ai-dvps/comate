@@ -339,6 +339,7 @@ describe('wecom-template-card', () => {
       );
       assert.strictEqual((card as Record<string, { text?: string; key?: string }>).submit_button?.text, '已恢复会话');
       assert.strictEqual((card as Record<string, { text?: string; key?: string }>).submit_button?.key, 'terminal');
+      assert.deepStrictEqual(card.card_action, { type: 0 });
       assert.strictEqual(card.task_id, 'task-v1');
     });
 
@@ -352,6 +353,7 @@ describe('wecom-template-card', () => {
       assert.strictEqual(selector?.title, '已选择');
       assert.strictEqual((card as Record<string, { text?: string; key?: string }>).submit_button?.text, '已提交');
       assert.strictEqual((card as Record<string, { text?: string; key?: string }>).submit_button?.key, 'terminal');
+      assert.deepStrictEqual(card.card_action, { type: 0 });
       assert.strictEqual(card.task_id, 'task-m1');
     });
   });
