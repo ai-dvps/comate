@@ -6,13 +6,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 /**
- * Regression: the browser viewer iframe loads from the viewer proxy on
- * 127.0.0.1 (not localhost). Tauri's CSP must allow that origin in frame-src,
- * otherwise the iframe is blocked and the panel renders as a black rectangle.
+ * Regression coverage for remote content intentionally rendered by the Tauri
+ * webview: the local browser viewer and SkillHub Enterprise logos.
  */
 
-describe('Tauri CSP allows the browser viewer iframe origin', () => {
-  it('frame-src includes both localhost and 127.0.0.1', () => {
+describe('Tauri CSP allows required remote content', () => {
+  it('includes the browser viewer and Enterprise logo origins', () => {
     const configPath = path.join(
       path.dirname(fileURLToPath(import.meta.url)),
       '..',
@@ -38,6 +37,13 @@ describe('Tauri CSP allows the browser viewer iframe origin', () => {
     assert.ok(
       frameSrc.includes("http://localhost:*"),
       `frame-src should keep the sidecar API origin (http://localhost:*); got: ${frameSrc}`,
+    );
+
+    const imgSrcMatch = /img-src\s+([^;]+)/.exec(csp);
+    assert.ok(imgSrcMatch, `CSP is missing img-src directive: ${csp}`);
+    assert.ok(
+      imgSrcMatch[1].includes('https://oneid-private-prod-1258344699.cos.ap-guangzhou.myqcloud.com'),
+      `img-src must allow the SkillHub Enterprise logo origin; got: ${imgSrcMatch[1]}`,
     );
   });
 });
