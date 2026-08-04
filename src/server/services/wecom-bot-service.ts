@@ -888,9 +888,11 @@ export class WeComBotService {
 
     const workspaces = await workspaceStore.list();
     const activeWorkspaceId = botService.resolveActiveWorkspace(botId) ?? workspaceId;
+    const requestId = randomUUID();
     const card = buildWecomWorkspaceListCard({
-      requestId: randomUUID(),
+      requestId,
       botId,
+      taskId: requestId,
       workspaces: workspaces.map((ws) => ({
         workspaceId: ws.id,
         name: ws.name,

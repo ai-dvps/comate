@@ -2184,6 +2184,7 @@ describe('WeComBotService /workspace command', { concurrency: false }, () => {
     assert.strictEqual(sentMessages[0].body.msgtype, 'template_card');
     const card = sentMessages[0].body.template_card;
     assert.strictEqual(card.card_type, 'vote_interaction');
+    assert.ok(card.task_id, 'interactive WeCom cards require a unique task_id');
     assert.strictEqual(card.checkbox.option_list.length, 2);
     const activeOption = card.checkbox.option_list.find((o: any) => o.id === wsA.id);
     assert.ok(activeOption.text.includes('（当前）'));
