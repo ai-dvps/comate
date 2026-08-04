@@ -14,6 +14,30 @@ beforeEach(() => {
 })
 
 describe('getInitialSettings', () => {
+  it('defaults chat and UI font sizes to their previous pixel equivalents', () => {
+    const settings = getInitialSettings()
+    expect(settings.chatFontSize).toBe(12)
+    expect(settings.uiFontSize).toBe(14)
+  })
+
+  it('migrates stored font-size presets to pixel values', () => {
+    storage.set('app-settings', JSON.stringify({ chatFontSize: 'large', uiFontSize: 'small' }))
+
+    const settings = getInitialSettings()
+
+    expect(settings.chatFontSize).toBe(16)
+    expect(settings.uiFontSize).toBe(12)
+  })
+
+  it('loads valid numeric font sizes and rejects out-of-range values', () => {
+    storage.set('app-settings', JSON.stringify({ chatFontSize: 18, uiFontSize: 99 }))
+
+    const settings = getInitialSettings()
+
+    expect(settings.chatFontSize).toBe(18)
+    expect(settings.uiFontSize).toBe(14)
+  })
+
   it('defaults notificationSoundsVolume to 100 when nothing is stored', () => {
     const settings = getInitialSettings()
     expect(settings.notificationSoundsVolume).toBe(100)
@@ -48,6 +72,18 @@ describe('getInitialSettings', () => {
 })
 
 describe('useAppSettings', () => {
+  it('updates font sizes as clamped pixel values', () => {
+    const { result } = renderHook(() => useAppSettings())
+
+    act(() => {
+      result.current.setChatFontSize(8)
+      result.current.setUiFontSize(17.6)
+    })
+
+    expect(result.current.chatFontSize).toBe(10)
+    expect(result.current.uiFontSize).toBe(18)
+  })
+
   it('returns 100 by default', () => {
     const { result } = renderHook(() => useAppSettings())
     expect(result.current.notificationSoundsVolume).toBe(100)

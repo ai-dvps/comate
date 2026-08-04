@@ -141,9 +141,6 @@
     "language": "语言",
     "chatFontSize": "聊天字体大小",
     "uiFontSize": "界面字体大小",
-    "fontSizeSmall": "小",
-    "fontSizeMedium": "中",
-    "fontSizeLarge": "大",
     "displayMode": "聊天显示模式",
     "displayModeResult": "结果优先",
     "displayModeLinear": "线性"

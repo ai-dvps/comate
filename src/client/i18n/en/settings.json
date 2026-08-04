@@ -141,9 +141,6 @@
     "language": "Language",
     "chatFontSize": "Chat Font Size",
     "uiFontSize": "UI Font Size",
-    "fontSizeSmall": "Small",
-    "fontSizeMedium": "Medium",
-    "fontSizeLarge": "Large",
     "displayMode": "Chat Display",
     "displayModeResult": "Result-focused",
     "displayModeLinear": "Linear"

@@ -30,7 +30,6 @@ import { useRightPanelStore } from './stores/right-panel-store'
 import { useBrowserPaneStore } from './stores/browser-pane-store'
 import { useTheme } from './hooks/use-theme'
 import { useAppSettings } from './hooks/use-app-settings'
-import { fontSizeClass } from './lib/font-size'
 import { isMacOS } from './lib/platform'
 import { useBadgeSync } from './lib/use-badge-sync'
 import { useNotificationSounds } from './lib/use-notification-sounds'
@@ -241,7 +240,10 @@ function App() {
         onOpenFile: handleFileClick,
       }}
     >
-      <div className={`h-screen flex flex-col bg-work text-text-primary ${fontSizeClass(uiFontSize)} overflow-hidden`}>
+      <div
+        className="h-screen flex flex-col bg-work text-text-primary overflow-hidden"
+        style={{ fontSize: uiFontSize }}
+      >
         {/* Top Bar */}
         <header className="flex items-center h-11 flex-shrink-0 relative z-30 bg-chrome shadow-[0_1px_2px_0_rgba(0,0,0,0.06)]">
         <div className={`flex items-center gap-3 pr-4 ${isMac ? 'pl-20' : 'pl-4'} min-w-0`}>

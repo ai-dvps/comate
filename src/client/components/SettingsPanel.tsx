@@ -19,6 +19,7 @@ import { useAppSettings } from '../hooks/use-app-settings'
 import { useUpdaterStore } from '../stores/updater-store'
 import { checkForUpdates, getAppVersion, downloadAndInstallUpdate, restartToUpdate, dismissUpdate } from '../lib/updater-api'
 import i18n from '../i18n'
+import { clampFontSize, MAX_FONT_SIZE, MIN_FONT_SIZE } from '../lib/font-size'
 import type { Workspace } from '../stores/workspace-store'
 import ProviderSection from './ProviderSection'
 import BackendSection from './BackendSection'
@@ -1094,6 +1095,78 @@ export function GeneralTab({
   )
 }
 
+function FontSizeInput({
+  id,
+  label,
+  value,
+  onChange,
+}: {
+  id: string
+  label: string
+  value: number
+  onChange: (value: number) => void
+}) {
+  const [draft, setDraft] = useState(String(value))
+
+  useEffect(() => {
+    setDraft(String(value))
+  }, [value])
+
+  const commitDraft = () => {
+    if (draft.trim() === '') {
+      setDraft(String(value))
+      return
+    }
+
+    const parsed = Number(draft)
+    if (!Number.isFinite(parsed)) {
+      setDraft(String(value))
+      return
+    }
+
+    const normalized = clampFontSize(parsed)
+    setDraft(String(normalized))
+    if (normalized !== value) onChange(normalized)
+  }
+
+  return (
+    <div>
+      <label htmlFor={id} className="block text-xs font-medium text-text-secondary mb-2">
+        {label}
+      </label>
+      <div className="flex items-center gap-2">
+        <input
+          id={id}
+          type="number"
+          min={MIN_FONT_SIZE}
+          max={MAX_FONT_SIZE}
+          step={1}
+          value={draft}
+          onChange={(event) => {
+            const nextDraft = event.target.value
+            setDraft(nextDraft)
+
+            const nextValue = event.target.valueAsNumber
+            if (
+              Number.isInteger(nextValue) &&
+              nextValue >= MIN_FONT_SIZE &&
+              nextValue <= MAX_FONT_SIZE
+            ) {
+              onChange(nextValue)
+            }
+          }}
+          onBlur={commitDraft}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') commitDraft()
+          }}
+          className="w-24 px-3 py-1.5 text-sm bg-surface border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary"
+        />
+        <span className="text-xs text-text-tertiary">px</span>
+      </div>
+    </div>
+  )
+}
+
 function AppearanceTab() {
   const { theme, isFollowingSystem, setTheme, resetToSystem } = useTheme()
   const { language, setLanguage, chatFontSize, setChatFontSize, uiFontSize, setUiFontSize, displayMode, setDisplayMode } = useAppSettings()
@@ -1103,12 +1176,6 @@ function AppearanceTab() {
     setLanguage(lang)
     i18n.changeLanguage(lang)
   }
-
-  const fontSizePresets: { value: 'small' | 'medium' | 'large'; label: string }[] = [
-    { value: 'small', label: t('appearance.fontSizeSmall') },
-    { value: 'medium', label: t('appearance.fontSizeMedium') },
-    { value: 'large', label: t('appearance.fontSizeLarge') },
-  ]
 
   const displayModePresets: { value: 'result' | 'linear'; label: string }[] = [
     { value: 'result', label: t('appearance.displayModeResult') },
@@ -1186,43 +1253,19 @@ function AppearanceTab() {
           </div>
         </div>
 
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-2">{t('appearance.chatFontSize')}</label>
-          <div className="flex items-center gap-2">
-            {fontSizePresets.map((preset) => (
-              <button
-                key={preset.value}
-                onClick={() => setChatFontSize(preset.value)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                  chatFontSize === preset.value
-                    ? 'bg-accent text-accent-foreground border-accent'
-                    : 'bg-surface text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
-                }`}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <FontSizeInput
+          id="chat-font-size"
+          label={t('appearance.chatFontSize')}
+          value={chatFontSize}
+          onChange={setChatFontSize}
+        />
 
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-2">{t('appearance.uiFontSize')}</label>
-          <div className="flex items-center gap-2">
-            {fontSizePresets.map((preset) => (
-              <button
-                key={preset.value}
-                onClick={() => setUiFontSize(preset.value)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                  uiFontSize === preset.value
-                    ? 'bg-accent text-accent-foreground border-accent'
-                    : 'bg-surface text-text-secondary border-border hover:text-text-primary hover:bg-surface-hover'
-                }`}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <FontSizeInput
+          id="ui-font-size"
+          label={t('appearance.uiFontSize')}
+          value={uiFontSize}
+          onChange={setUiFontSize}
+        />
 
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-2">{t('appearance.displayMode')}</label>

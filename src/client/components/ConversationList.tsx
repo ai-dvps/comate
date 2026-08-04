@@ -5,7 +5,6 @@ import { useTranslation } from 'react-i18next'
 import type { DisplayMode } from '../hooks/use-app-settings'
 import { useConversationFollow } from '../hooks/use-conversation-follow'
 import type { MessageSearchMatch } from '../hooks/useMessageSearch'
-import { fontSizeClass, type FontSizePreset } from '../lib/font-size'
 import type { ConversationProjection } from '../lib/conversation-view'
 import { useChatStore } from '../stores/chat-store'
 import { ConversationEmptyState } from './ai-elements/conversation'
@@ -18,7 +17,7 @@ interface ConversationListProps {
   rows: ConversationRenderRow[]
   projection: ConversationProjection
   displayMode: DisplayMode
-  chatFontSize: FontSizePreset
+  chatFontSize: number
   onOpenDrawer: (parentToolUseId: string) => void
   onOpenWorkflow?: (runId: string) => void
   onOpenProcessRegion?: (messageId: string, regionIndex: number) => void
@@ -47,6 +46,7 @@ export default function ConversationList({
   const follow = useConversationFollow()
   const scrollerRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
+  const chatFontStyle = { fontSize: chatFontSize }
 
   const alignToBottom = useCallback(() => {
     const element = scrollerRef.current
@@ -180,7 +180,8 @@ export default function ConversationList({
           ) : rows.map((row, index) => (
             <div
               key={row.key}
-              className={`mx-auto w-full max-w-3xl px-3 pb-4 ${fontSizeClass(chatFontSize)}`}
+              className="mx-auto w-full max-w-3xl px-3 pb-4"
+              style={chatFontStyle}
               data-item-index={index}
               data-item-key={row.key}
             >

@@ -66,7 +66,7 @@ const appSettingsMock = vi.hoisted(() => ({
 
 vi.mock('../hooks/use-app-settings', () => ({
   useAppSettings: () => ({
-    chatFontSize: 'base',
+    chatFontSize: 14,
     displayMode: appSettingsMock.displayMode,
   }),
 }))

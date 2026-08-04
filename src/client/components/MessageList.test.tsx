@@ -68,7 +68,7 @@ vi.mock('../stores/chat-store', () => ({
 }))
 
 vi.mock('../hooks/use-app-settings', () => ({
-  useAppSettings: () => ({ chatFontSize: 'base', useModifierToSubmit: false }),
+  useAppSettings: () => ({ chatFontSize: 14, useModifierToSubmit: false }),
 }))
 
 vi.mock('streamdown', () => ({

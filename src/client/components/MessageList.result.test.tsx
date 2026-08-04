@@ -69,7 +69,7 @@ vi.mock('../stores/chat-store', () => ({
 }))
 
 vi.mock('../hooks/use-app-settings', () => ({
-  useAppSettings: () => ({ chatFontSize: 'base', displayMode: 'result' as const }),
+  useAppSettings: () => ({ chatFontSize: 14, displayMode: 'result' as const }),
 }))
 
 vi.mock('streamdown', () => ({

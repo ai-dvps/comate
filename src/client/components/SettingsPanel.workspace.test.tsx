@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '../i18n';
+import { clampFontSize } from '../lib/font-size';
 import SettingsPanel from './SettingsPanel';
 import type { Workspace } from '../stores/workspace-store';
 
@@ -54,7 +56,29 @@ const updaterState = {
   error: null,
 };
 
+const appSettingsListeners = new Set<() => void>();
+let appSettingsVersion = 0;
+
+function emitAppSettingsChange() {
+  appSettingsVersion += 1;
+  appSettingsListeners.forEach((listener) => listener());
+}
+
 const appSettings = {
+  language: 'en',
+  setLanguage: vi.fn(),
+  chatFontSize: 12,
+  setChatFontSize: vi.fn((value: number) => {
+    appSettings.chatFontSize = clampFontSize(value);
+    emitAppSettingsChange();
+  }),
+  uiFontSize: 14,
+  setUiFontSize: vi.fn((value: number) => {
+    appSettings.uiFontSize = clampFontSize(value);
+    emitAppSettingsChange();
+  }),
+  displayMode: 'result' as const,
+  setDisplayMode: vi.fn(),
   reopenLastWorkspace: false,
   setReopenLastWorkspace: vi.fn(),
   useModifierToSubmit: true,
@@ -110,8 +134,19 @@ vi.mock('../stores/updater-store', async () => {
 });
 
 vi.mock('../hooks/use-app-settings', async () => {
+  const React = await import('react');
   return {
-    useAppSettings: vi.fn(() => appSettings),
+    useAppSettings: vi.fn(() => {
+      React.useSyncExternalStore(
+        (listener) => {
+          appSettingsListeners.add(listener);
+          return () => appSettingsListeners.delete(listener);
+        },
+        () => appSettingsVersion,
+        () => appSettingsVersion,
+      );
+      return appSettings;
+    }),
   };
 });
 
@@ -140,6 +175,9 @@ describe('SettingsPanel workspace tab local footer', () => {
     cleanup();
     vi.clearAllMocks();
     mockUpdateWorkspace.mockResolvedValue(undefined);
+    appSettings.chatFontSize = 12;
+    appSettings.uiFontSize = 14;
+    emitAppSettingsChange();
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -149,6 +187,41 @@ describe('SettingsPanel workspace tab local footer', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('edits chat and UI font sizes through controlled number inputs', async () => {
+    const user = userEvent.setup();
+    await act(async () => {
+      renderWithI18n(<SettingsPanel isOpen onClose={vi.fn()} />);
+    });
+
+    await user.click(screen.getByRole('button', { name: /Appearance/i }));
+
+    const chatFontSize = screen.getByRole('spinbutton', { name: /Chat Font Size/i });
+    const uiFontSize = screen.getByRole('spinbutton', { name: /UI Font Size/i });
+    expect(chatFontSize).toHaveValue(12);
+    expect(uiFontSize).toHaveValue(14);
+
+    await user.clear(chatFontSize);
+    expect(chatFontSize).toHaveValue(null);
+    await user.click(uiFontSize);
+    expect(chatFontSize).toHaveValue(12);
+    expect(appSettings.setChatFontSize).not.toHaveBeenCalled();
+
+    await user.click(chatFontSize);
+    await user.clear(chatFontSize);
+    await user.type(chatFontSize, '18');
+    expect(chatFontSize).toHaveValue(18);
+    await user.click(uiFontSize);
+    expect(appSettings.setChatFontSize).toHaveBeenCalledWith(18);
+
+    await user.clear(uiFontSize);
+    await user.type(uiFontSize, '16');
+    expect(uiFontSize).toHaveValue(16);
+    await user.click(chatFontSize);
+    expect(appSettings.setUiFontSize).toHaveBeenCalledWith(16);
+    expect(chatFontSize).toHaveValue(18);
+    expect(uiFontSize).toHaveValue(16);
   });
 
   it('renders the workspace footer with disabled actions when clean', async () => {

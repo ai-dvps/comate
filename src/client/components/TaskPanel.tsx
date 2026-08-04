@@ -14,7 +14,6 @@ import {
 
 import { useChatStore, type TaskItem } from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
-import { fontSizeClass } from '../lib/font-size'
 import { cn } from './ui/utils'
 
 const EMPTY_ARRAY: [] = []
@@ -169,7 +168,10 @@ export default function TaskPanel({ sessionId }: TaskPanelProps) {
       </button>
 
       {expanded && (
-        <div className={cn('mt-2 max-h-64 overflow-y-auto', fontSizeClass(chatFontSize))}>
+        <div
+          className="mt-2 max-h-64 overflow-y-auto"
+          style={{ fontSize: chatFontSize }}
+        >
           <div className="py-1">
             {tasks.map((task) => (
               <TaskRow key={task.id} task={task} />
