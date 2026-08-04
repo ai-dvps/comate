@@ -1,18 +1,20 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { AlertTriangle, RefreshCw, X } from 'lucide-react';
 import { useSandboxHealth } from '../hooks/use-sandbox-health';
 
 /**
- * Persistent workspace-level banner for the degraded sandbox posture (U3,
- * KTD-24). Renders whenever the host's spawn probe fails; there is NO manual
- * dismissal — the banner clears only when a probe passes (the re-check button
- * forces a fresh probe via /api/health/sandbox?refresh=1).
+ * Workspace-level banner for the degraded sandbox posture (U3, KTD-24).
+ * Dismissal hides only this banner for the current app mount; it does not
+ * change the probe state or the degraded permission posture. Re-check forces
+ * a fresh probe via /api/health/sandbox?refresh=1.
  */
 export default function SandboxDegradedBanner() {
   const { t } = useTranslation('common');
   const { degraded, checking, probe, recheck } = useSandboxHealth();
+  const [dismissed, setDismissed] = useState(false);
 
-  if (!degraded) return null;
+  if (!degraded || dismissed) return null;
 
   const reason = probe?.failures.join(', ') ?? '';
 
@@ -30,12 +32,21 @@ export default function SandboxDegradedBanner() {
         </span>
       </div>
       <button
+        type="button"
         onClick={() => void recheck()}
         disabled={checking}
         className="px-2 py-1 text-xs font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-md transition-colors flex-shrink-0 disabled:opacity-50 flex items-center gap-1"
       >
         <RefreshCw className={`w-3 h-3 ${checking ? 'animate-spin' : ''}`} />
         {checking ? t('sandboxDegraded.checking') : t('sandboxDegraded.recheck')}
+      </button>
+      <button
+        type="button"
+        onClick={() => setDismissed(true)}
+        aria-label={t('sandboxDegraded.dismiss')}
+        className="p-1 text-text-secondary hover:text-text-primary rounded-md transition-colors flex-shrink-0"
+      >
+        <X className="w-4 h-4" />
       </button>
     </div>
   );

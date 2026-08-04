@@ -54,14 +54,17 @@ describe('SandboxDegradedBanner', () => {
     expect(screen.queryByTestId('sandbox-degraded-banner')).toBeNull();
   });
 
-  it('renders the persistent banner when the probe fails, with no dismiss button', async () => {
-    mockFetchWith({ ok: false, probe: probeDegraded() });
+  it('dismisses the degraded banner without changing the probe state', async () => {
+    const calls = mockFetchWith({ ok: false, probe: probeDegraded() });
     renderBanner();
     const banner = await screen.findByTestId('sandbox-degraded-banner');
     expect(banner).toBeInTheDocument();
-    // Persistent: no close/dismiss affordance — only a re-check action.
-    expect(screen.queryByLabelText(/close|dismiss/i)).toBeNull();
     expect(banner.textContent).toContain('filesystem-deny-not-enforced');
+
+    fireEvent.click(screen.getByRole('button', { name: /dismiss sandbox warning/i }));
+
+    expect(screen.queryByTestId('sandbox-degraded-banner')).toBeNull();
+    expect(calls).toEqual(['/api/health/sandbox']);
   });
 
   it('re-check button forces a re-probe and the banner clears when it passes', async () => {
@@ -81,7 +84,7 @@ describe('SandboxDegradedBanner', () => {
     await screen.findByTestId('sandbox-degraded-banner');
 
     degraded = false;
-    const button = screen.getByRole('button');
+    const button = screen.getByRole('button', { name: /re-check/i });
     fireEvent.click(button);
 
     await waitFor(() => expect(screen.queryByTestId('sandbox-degraded-banner')).toBeNull());
