@@ -197,6 +197,7 @@
     "selectProvider": "Provider",
     "noProviders": "No providers configured. Add one in Settings → Providers.",
     "usage": {
+      "label": "Usage",
       "connect": "Connect",
       "reconnect": "Reconnect",
       "noPlan": "No coding plan"

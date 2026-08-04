@@ -1,5 +1,6 @@
 import WorkspaceFolderPath from './WorkspaceFolderPath'
 import WorkspaceGitBranch from './WorkspaceGitBranch'
+import ProviderUsageStatus from './ProviderUsageStatus'
 import SessionTokenUsage from './SessionTokenUsage'
 
 interface StatusBarProps {
@@ -21,6 +22,7 @@ export default function StatusBar({
       </div>
 
       <div className="flex items-center gap-2 min-w-0 overflow-hidden">
+        <ProviderUsageStatus sessionId={sessionId} workspaceId={workspaceId} />
         <SessionTokenUsage
           sessionId={sessionId}
           workspaceId={workspaceId}
