@@ -33,6 +33,12 @@ function renderWithProviders(
   )
 }
 
+// ToolHeader must render inside a Tool card (it reads the Collapsible context).
+const renderToolHeader = (
+  header: ReactElement,
+  options?: { workspacePath?: string; onOpenFile?: (path: string, name: string) => void },
+) => renderWithProviders(<Tool>{header}</Tool>, options)
+
 describe('ToolHeader', () => {
   const originalClipboard = navigator.clipboard
 
@@ -49,7 +55,7 @@ describe('ToolHeader', () => {
   })
 
   it('renders path summary as relative path with absolute tooltip', () => {
-    renderWithProviders(
+    renderToolHeader(
       <ToolHeader
         type="tool-Read"
         state="output-available"
@@ -64,7 +70,7 @@ describe('ToolHeader', () => {
 
   it('opens file when path summary is clicked', async () => {
     const onOpenFile = vi.fn()
-    renderWithProviders(
+    renderToolHeader(
       <ToolHeader
         type="tool-Read"
         state="output-available"
@@ -78,7 +84,7 @@ describe('ToolHeader', () => {
   })
 
   it('copies relative path when copy button in path summary is clicked', async () => {
-    renderWithProviders(
+    renderToolHeader(
       <ToolHeader
         type="tool-Read"
         state="output-available"
@@ -93,7 +99,7 @@ describe('ToolHeader', () => {
 
   it('renders path summary as-is and non-clickable when outside workspace', async () => {
     const onOpenFile = vi.fn()
-    renderWithProviders(
+    renderToolHeader(
       <ToolHeader
         type="tool-Read"
         state="output-available"
@@ -110,7 +116,7 @@ describe('ToolHeader', () => {
 
   it('renders directory tool path summary non-clickable', async () => {
     const onOpenFile = vi.fn()
-    renderWithProviders(
+    renderToolHeader(
       <ToolHeader
         type="tool-Glob"
         state="output-available"
@@ -126,7 +132,7 @@ describe('ToolHeader', () => {
   })
 
   it('renders non-path summary unchanged', () => {
-    renderWithProviders(
+    renderToolHeader(
       <ToolHeader
         type="tool-Bash"
         state="output-available"
@@ -138,7 +144,7 @@ describe('ToolHeader', () => {
   })
 
   it('renders URL summary unchanged', () => {
-    renderWithProviders(
+    renderToolHeader(
       <ToolHeader
         type="tool-WebFetch"
         state="output-available"
@@ -225,6 +231,32 @@ describe('ToolContent', () => {
       renderCard(<div>hit tool body</div>, { hasSearchMatch: true, isCurrentSearchMatch: true }, { forceExpanded: false }),
     )
     expect(screen.getByText('hit tool body')).toBeInTheDocument()
+  })
+
+  it('scrolls the marked section (not the container) into view when the current hit is inside a long body', () => {
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView')
+    const receivers: Element[] = []
+    scrollSpy.mockImplementation(function (this: Element) {
+      receivers.push(this)
+    })
+
+    const { container } = render(
+      renderCard(
+        <ToolOutput
+          output={'payload line\n'.repeat(200)}
+          errorText={undefined}
+          searchMatches={[{ start: 0, end: 7, isActive: true }]}
+        />,
+        { hasSearchMatch: true, isCurrentSearchMatch: true },
+        { forceExpanded: true },
+      ),
+    )
+
+    const section = container.querySelector('[data-search-section-active="true"]')
+    expect(section).not.toBeNull()
+    expect(receivers).toContain(section)
+    // The container fallback must NOT be the scroll target when a section is marked.
+    expect(receivers).not.toContain(container.querySelector('[data-tool-content]'))
   })
 
   it('shows the accent ring on the card root while collapsed for the current match', () => {

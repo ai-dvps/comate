@@ -125,6 +125,24 @@ describe('ReasoningContent', () => {
     expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' })
     expect(receivers).toContain(hit)
   })
+
+  it('marks the content root as the active search section for the current match and scrolls it into view', () => {
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView')
+    const receivers: Element[] = []
+    scrollSpy.mockImplementation(function (this: Element) {
+      receivers.push(this)
+    })
+
+    const { container } = render(
+      renderReasoning({ forceOpen: true, hasSearchMatch: true, isCurrentSearchMatch: true }),
+    )
+
+    // Section-level locating: the content block itself is the marked section.
+    const content = container.querySelector('[data-reasoning-content]')
+    expect(content).toHaveAttribute('data-search-section-active', 'true')
+    expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' })
+    expect(receivers).toContain(content)
+  })
 })
 
 describe('Reasoning auto behavior', () => {
