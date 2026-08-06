@@ -8,7 +8,8 @@
  *  - Trigger row is static; a dedicated icon button at the row end toggles the body
  *    (same shape as the tool cards in `tool.tsx`).
  *  - Expanded body is capped at `max-h-[40vh] overflow-y-auto`; `forceOpen` (search
- *    hits) opens one-way and scrolls the active hit into view inside the cap.
+ *    hits) opens one-way and scrolls the active search section
+ *    (`data-search-section-active`) into view inside the cap.
  */
 'use client'
 
@@ -45,6 +46,7 @@ interface ReasoningContextValue {
   setIsOpen: (open: boolean) => void
   duration: number | undefined
   forceOpen: boolean
+  isCurrentSearchMatch: boolean
 }
 
 const ReasoningContext = createContext<ReasoningContextValue | null>(null)
@@ -155,8 +157,8 @@ export const Reasoning = memo(
     )
 
     const contextValue = useMemo(
-      () => ({ duration, forceOpen, isOpen, isStreaming, setIsOpen }),
-      [duration, forceOpen, isOpen, isStreaming, setIsOpen],
+      () => ({ duration, forceOpen, isCurrentSearchMatch, isOpen, isStreaming, setIsOpen }),
+      [duration, forceOpen, isCurrentSearchMatch, isOpen, isStreaming, setIsOpen],
     )
 
     return (
@@ -245,23 +247,28 @@ export type ReasoningContentProps = ComponentProps<typeof CollapsibleContent> & 
 
 export const ReasoningContent = memo(
   ({ className, children, ...props }: ReasoningContentProps) => {
-    const { forceOpen, isOpen } = useReasoning()
+    const { forceOpen, isCurrentSearchMatch, isOpen } = useReasoning()
     const contentRef = useRef<HTMLDivElement>(null)
 
-    // Once force-opened (search hit), bring the active hit into view inside the
-    // capped scroll container; fall back to the container body itself.
+    // Once force-opened (search hit), bring the active search section into view
+    // inside the capped scroll container; fall back to an inner search mark,
+    // then to the container body itself.
     useLayoutEffect(() => {
       if (!forceOpen || !isOpen) return
       const container = contentRef.current
       if (!container) return
-      const hit = container.querySelector('[data-search-active="true"]')
-      ;(hit ?? container).scrollIntoView({ block: 'nearest' })
+      const target =
+        container.querySelector('[data-search-section-active="true"]') ??
+        container.querySelector('[data-search-active="true"]') ??
+        container
+      target.scrollIntoView({ block: 'nearest' })
     }, [forceOpen, isOpen])
 
     return (
       <CollapsibleContent
         ref={contentRef}
         data-reasoning-content=""
+        data-search-section-active={isCurrentSearchMatch ? 'true' : undefined}
         className={cn(
           'mt-4 max-h-[40vh] overflow-y-auto',
           'data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-text-tertiary outline-none data-[state=closed]:animate-out data-[state=open]:animate-in',

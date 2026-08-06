@@ -12,7 +12,8 @@
  *    static and a dedicated icon button at the header end toggles the body.
  *  - Expanded body is a single `max-h-[40vh] overflow-y-auto` scroll container;
  *    `forceExpanded` (search hits) opens the card one-way and scrolls the active
- *    hit into view. Search-match rings live on the Collapsible root.
+ *    search section (`data-search-section-active`) into view. Search-match rings
+ *    live on the Collapsible root.
  */
 'use client'
 
@@ -162,9 +163,7 @@ export const ToolHeader = ({
   ...props
 }: ToolHeaderProps) => {
   const { t } = useTranslation('chat')
-  // Null when rendered standalone (outside a Tool); the toggle needs the
-  // Collapsible context, so it only renders inside a card.
-  const tool = useContext(ToolContext)
+  const tool = useTool()
   const [iconError, setIconError] = useState(false)
   const derivedName =
     type === 'dynamic-tool' ? toolName : type.split('-').slice(1).join('-')
@@ -173,7 +172,7 @@ export const ToolHeader = ({
   const isUrl = summary ? /^https?:\/\//i.test(summary) : false
   const isPathLike = summary && summary.includes('/') && !isUrl
   const isDirectoryTool = derivedName === 'Glob' || derivedName === 'Grep'
-  const toggleLabel = tool?.isOpen ? t('collapseToolDetails') : t('expandToolDetails')
+  const toggleLabel = tool.isOpen ? t('collapseToolDetails') : t('expandToolDetails')
 
   return (
     <div
@@ -232,24 +231,22 @@ export const ToolHeader = ({
           </span>
         )}
       </div>
-      {tool && (
-        <CollapsibleTrigger asChild>
-          <button
-            type="button"
-            aria-label={toggleLabel}
-            title={toggleLabel}
-            aria-expanded={tool.isOpen}
-            className="p-1 rounded-md flex-shrink-0 text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors"
-          >
-            <ChevronDownIcon
-              className={cn(
-                'size-4 transition-transform',
-                tool.isOpen ? 'rotate-180' : 'rotate-0',
-              )}
-            />
-          </button>
-        </CollapsibleTrigger>
-      )}
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          aria-label={toggleLabel}
+          title={toggleLabel}
+          aria-expanded={tool.isOpen}
+          className="p-1 rounded-md flex-shrink-0 text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors"
+        >
+          <ChevronDownIcon
+            className={cn(
+              'size-4 transition-transform',
+              tool.isOpen ? 'rotate-180' : 'rotate-0',
+            )}
+          />
+        </button>
+      </CollapsibleTrigger>
     </div>
   )
 }
@@ -274,14 +271,18 @@ export const ToolContent = ({
     }
   }, [forceExpanded, setIsOpen])
 
-  // Once force-expanded and open, bring the active search hit into view inside
-  // the card's scroll container; fall back to the container body itself.
+  // Once force-expanded and open, bring the active search section into view
+  // inside the card's scroll container; fall back to an inner search mark,
+  // then to the container body itself.
   useLayoutEffect(() => {
     if (!forceExpanded || !isOpen) return
     const container = contentRef.current
     if (!container) return
-    const hit = container.querySelector('[data-search-active="true"]')
-    ;(hit ?? container).scrollIntoView({ block: 'nearest' })
+    const target =
+      container.querySelector('[data-search-section-active="true"]') ??
+      container.querySelector('[data-search-active="true"]') ??
+      container
+    target.scrollIntoView({ block: 'nearest' })
   }, [forceExpanded, isOpen])
 
   return (
@@ -316,7 +317,10 @@ export const ToolInput = ({ className, input, toolName, searchMatches, ...props 
         Parameters
       </h4>
       {hasCustomRenderer ? (
-        <div className="overflow-x-auto rounded-md">
+        <div
+          className="overflow-x-auto rounded-md"
+          data-search-section-active={isCurrentSearchMatch ? 'true' : undefined}
+        >
           <div className="bg-surface-hover/50 px-2 py-1.5 min-w-fit">
             {renderer!(input) ?? <StructuredFallback data={input} />}
           </div>
@@ -392,6 +396,9 @@ export const ToolOutput = ({
               ? 'bg-destructive/20 text-destructive'
               : 'bg-surface-hover/50 text-text-primary',
           )}
+          data-search-section-active={
+            isCurrentSearchMatch && errorText ? 'true' : undefined
+          }
         >
           {errorText && <LinkifiedText text={errorText} />}
           {Output}
