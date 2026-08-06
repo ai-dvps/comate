@@ -202,6 +202,7 @@ export const ReasoningTrigger = memo(
   }: ReasoningTriggerProps) => {
     const { t } = useTranslation('chat')
     const { isStreaming, isOpen, duration } = useReasoning()
+    const toggleLabel = isOpen ? t('collapseThoughts') : t('expandThoughts')
 
     return (
       <div
@@ -220,8 +221,8 @@ export const ReasoningTrigger = memo(
         <CollapsibleTrigger asChild>
           <button
             type="button"
-            aria-label={isOpen ? t('collapseThoughts') : t('expandThoughts')}
-            title={isOpen ? t('collapseThoughts') : t('expandThoughts')}
+            aria-label={toggleLabel}
+            title={toggleLabel}
             aria-expanded={isOpen}
             className="ml-auto p-1 rounded-md flex-shrink-0 text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors"
           >

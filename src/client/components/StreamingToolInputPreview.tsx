@@ -21,17 +21,28 @@ export default function StreamingToolInputPreview({
   partialJson,
 }: StreamingToolInputPreviewProps) {
   const preRef = useRef<HTMLPreElement>(null)
+  const containerRef = useRef<Element | null>(null)
   const followRef = useRef(true)
+
+  // The scroll container (the tool card body marked `data-tool-content`) is
+  // stable for this component's lifetime — Radix unmounts the whole subtree on
+  // collapse — so resolve it once and cache instead of walking per chunk.
+  const resolveContainer = () => {
+    if (!containerRef.current) {
+      containerRef.current = preRef.current?.closest('[data-tool-content]') ?? null
+    }
+    return containerRef.current
+  }
 
   useLayoutEffect(() => {
     if (!followRef.current) return
-    const container = preRef.current?.closest('[data-tool-content]')
+    const container = resolveContainer()
     if (!container) return
     container.scrollTop = container.scrollHeight
   }, [partialJson])
 
   useEffect(() => {
-    const container = preRef.current?.closest('[data-tool-content]')
+    const container = resolveContainer()
     if (!container) return
     const handleScroll = () => {
       const distanceFromBottom =
