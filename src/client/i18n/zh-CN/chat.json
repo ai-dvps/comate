@@ -21,6 +21,8 @@
   "notSet": "未设置",
   "expandToolDetails": "展开工具详情",
   "collapseToolDetails": "收起工具详情",
+  "expandThoughts": "展开思考过程",
+  "collapseThoughts": "收起思考过程",
   "neverRefreshed": "从未刷新",
   "noNewMessages": "无新消息",
   "refreshFailed": "刷新失败",

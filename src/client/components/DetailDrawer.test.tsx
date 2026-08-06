@@ -343,11 +343,11 @@ describe('DetailDrawer process region default collapse state', () => {
       <DetailDrawer stack={[processView(messageId)]} {...defaultProps} sessionId={sessionId} />,
     )
 
-    const trigger = screen.getByRole('button', { name: /Thought for a few seconds/i })
-    expect(trigger).toBeInTheDocument()
+    // The trigger row text is static; only the row-end icon toggles the body.
+    expect(screen.getByText(/Thought for a few seconds/i)).toBeInTheDocument()
     expect(screen.queryByText('hidden reasoning')).not.toBeInTheDocument()
 
-    await userEvent.click(trigger)
+    await userEvent.click(screen.getByRole('button', { name: /Expand thoughts/i }))
     expect(screen.getByText('hidden reasoning')).toBeVisible()
   })
 

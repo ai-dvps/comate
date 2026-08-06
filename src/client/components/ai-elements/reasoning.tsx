@@ -5,6 +5,10 @@
  *  - Dropped the Streamdown plugin imports (`@streamdown/cjk`, `code`, `math`, `mermaid`)
  *    so we do not pull in those optional packages.
  *  - Token names remapped to this repo's Tailwind palette.
+ *  - Trigger row is static; a dedicated icon button at the row end toggles the body
+ *    (same shape as the tool cards in `tool.tsx`).
+ *  - Expanded body is capped at `max-h-[40vh] overflow-y-auto`; `forceOpen` (search
+ *    hits) opens one-way and scrolls the active hit into view inside the cap.
  */
 'use client'
 
@@ -18,10 +22,12 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Streamdown } from 'streamdown'
 
 import {
@@ -38,6 +44,7 @@ interface ReasoningContextValue {
   isOpen: boolean
   setIsOpen: (open: boolean) => void
   duration: number | undefined
+  forceOpen: boolean
 }
 
 const ReasoningContext = createContext<ReasoningContextValue | null>(null)
@@ -148,8 +155,8 @@ export const Reasoning = memo(
     )
 
     const contextValue = useMemo(
-      () => ({ duration, isOpen, isStreaming, setIsOpen }),
-      [duration, isOpen, isStreaming, setIsOpen],
+      () => ({ duration, forceOpen, isOpen, isStreaming, setIsOpen }),
+      [duration, forceOpen, isOpen, isStreaming, setIsOpen],
     )
 
     return (
@@ -172,7 +179,7 @@ export const Reasoning = memo(
   },
 )
 
-export type ReasoningTriggerProps = ComponentProps<typeof CollapsibleTrigger> & {
+export type ReasoningTriggerProps = ComponentProps<'div'> & {
   getThinkingMessage?: (isStreaming: boolean, duration?: number) => ReactNode
 }
 
@@ -193,12 +200,13 @@ export const ReasoningTrigger = memo(
     getThinkingMessage = defaultGetThinkingMessage,
     ...props
   }: ReasoningTriggerProps) => {
+    const { t } = useTranslation('chat')
     const { isStreaming, isOpen, duration } = useReasoning()
 
     return (
-      <CollapsibleTrigger
+      <div
         className={cn(
-          'flex w-full items-center gap-2 text-text-tertiary transition-colors hover:text-text-primary',
+          'flex w-full items-center gap-2 text-text-tertiary transition-colors',
           className,
         )}
         {...props}
@@ -207,15 +215,25 @@ export const ReasoningTrigger = memo(
           <>
             <BrainIcon className="size-4" />
             {getThinkingMessage(isStreaming, duration)}
+          </>
+        )}
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            aria-label={isOpen ? t('collapseThoughts') : t('expandThoughts')}
+            title={isOpen ? t('collapseThoughts') : t('expandThoughts')}
+            aria-expanded={isOpen}
+            className="ml-auto p-1 rounded-md flex-shrink-0 text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors"
+          >
             <ChevronDownIcon
               className={cn(
                 'size-4 transition-transform',
                 isOpen ? 'rotate-180' : 'rotate-0',
               )}
             />
-          </>
-        )}
-      </CollapsibleTrigger>
+          </button>
+        </CollapsibleTrigger>
+      </div>
     )
   },
 )
@@ -225,22 +243,39 @@ export type ReasoningContentProps = ComponentProps<typeof CollapsibleContent> & 
 }
 
 export const ReasoningContent = memo(
-  ({ className, children, ...props }: ReasoningContentProps) => (
-    <CollapsibleContent
-      className={cn(
-        'mt-4',
-        'data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-text-tertiary outline-none data-[state=closed]:animate-out data-[state=open]:animate-in',
-        className,
-      )}
-      {...props}
-    >
-      <Streamdown
-        className="[&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_*]:[font-size:inherit] [&_h1]:text-[1.875em] [&_h2]:text-[1.5em] [&_h3]:text-[1.25em] [&_h4]:text-[1.125em] [&_h5]:text-[1em] [&_h6]:text-[0.875em]"
+  ({ className, children, ...props }: ReasoningContentProps) => {
+    const { forceOpen, isOpen } = useReasoning()
+    const contentRef = useRef<HTMLDivElement>(null)
+
+    // Once force-opened (search hit), bring the active hit into view inside the
+    // capped scroll container; fall back to the container body itself.
+    useLayoutEffect(() => {
+      if (!forceOpen || !isOpen) return
+      const container = contentRef.current
+      if (!container) return
+      const hit = container.querySelector('[data-search-active="true"]')
+      ;(hit ?? container).scrollIntoView({ block: 'nearest' })
+    }, [forceOpen, isOpen])
+
+    return (
+      <CollapsibleContent
+        ref={contentRef}
+        data-reasoning-content=""
+        className={cn(
+          'mt-4 max-h-[40vh] overflow-y-auto',
+          'data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-text-tertiary outline-none data-[state=closed]:animate-out data-[state=open]:animate-in',
+          className,
+        )}
+        {...props}
       >
-        {children}
-      </Streamdown>
-    </CollapsibleContent>
-  ),
+        <Streamdown
+          className="[&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_*]:[font-size:inherit] [&_h1]:text-[1.875em] [&_h2]:text-[1.5em] [&_h3]:text-[1.25em] [&_h4]:text-[1.125em] [&_h5]:text-[1em] [&_h6]:text-[0.875em]"
+        >
+          {children}
+        </Streamdown>
+      </CollapsibleContent>
+    )
+  },
 )
 
 Reasoning.displayName = 'Reasoning'
