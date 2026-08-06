@@ -173,6 +173,7 @@ export const ToolHeader = ({
   const isUrl = summary ? /^https?:\/\//i.test(summary) : false
   const isPathLike = summary && summary.includes('/') && !isUrl
   const isDirectoryTool = derivedName === 'Glob' || derivedName === 'Grep'
+  const toggleLabel = tool?.isOpen ? t('collapseToolDetails') : t('expandToolDetails')
 
   return (
     <div
@@ -235,10 +236,8 @@ export const ToolHeader = ({
         <CollapsibleTrigger asChild>
           <button
             type="button"
-            aria-label={
-              tool.isOpen ? t('collapseToolDetails') : t('expandToolDetails')
-            }
-            title={tool.isOpen ? t('collapseToolDetails') : t('expandToolDetails')}
+            aria-label={toggleLabel}
+            title={toggleLabel}
             aria-expanded={tool.isOpen}
             className="p-1 rounded-md flex-shrink-0 text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors"
           >

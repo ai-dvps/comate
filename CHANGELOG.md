@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Default agent is now Claude** — The app-level default agent resolves to Claude from first launch instead of leaving "no default" selected. The Agent selector in settings now highlights Claude out of the box, so users no longer need to click once before chatting. An explicitly chosen agent still takes precedence.
+- **Tool cards and thinking blocks are collapsed by default** — In every chat view (linear mode, the result-focus process drawer, and the subagent drill-down), tool calls and thinking blocks now render header-only and expand via a dedicated icon at the end of the header. Expanded content is capped at ~40vh with its own vertical scroll, replacing the 192px preview with a Show more/Show less toggle. Search navigation force-expands the matching card and scrolls the hit into view, and running tools show progress through the header status badge.
 
 ### Fixed
 
