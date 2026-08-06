@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import ChatMessageRenderer, {
@@ -604,65 +604,302 @@ describe('ChatMessageRenderer JSON text parts', () => {
 })
 
 describe('ChatMessageRenderer tool expansion', () => {
-  let originalScrollHeight: PropertyDescriptor | undefined
-
-  beforeEach(() => {
-    originalScrollHeight = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight')
-  })
-
   afterEach(() => {
-    if (originalScrollHeight) {
-      Object.defineProperty(Element.prototype, 'scrollHeight', originalScrollHeight)
-    } else {
-      delete (Element.prototype as { scrollHeight?: number }).scrollHeight
-    }
+    vi.restoreAllMocks()
   })
 
-  it('renders tool cards expanded by default in linear mode', () => {
-    const message: RenderableMessage = {
-      id: 'msg-tool',
-      role: 'assistant',
-      parts: [
-        {
-          type: 'tool_use',
-          toolUseId: 'tu-read',
-          toolName: 'read_file',
-          input: { path: '/config.json' },
-          isStreaming: false,
-        },
-      ],
-    }
+  const toolMessage = (
+    parts: RenderableMessage['parts'],
+    id = 'msg-tool',
+  ): RenderableMessage => ({ id, role: 'assistant', parts })
+
+  it('renders tool cards collapsed by default in linear mode', () => {
+    const message = toolMessage([
+      {
+        type: 'tool_use',
+        toolUseId: 'tu-read',
+        toolName: 'read_file',
+        input: { path: '/config.json' },
+        isStreaming: false,
+      },
+    ])
 
     render(<ChatMessageRenderer {...baseProps} message={message} />)
 
     expect(screen.getByText('read_file')).toBeInTheDocument()
-    expect(screen.getByText('/config.json')).toBeInTheDocument()
+    expect(screen.queryByText('Parameters')).not.toBeInTheDocument()
+    const toggle = screen.getByRole('button', { name: 'expandToolDetails' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByRole('button', { name: /showDetails/i })).not.toBeInTheDocument()
   })
 
-  it('collapses tool cards in linear mode when defaultToolExpanded is false', () => {
-    Object.defineProperty(Element.prototype, 'scrollHeight', {
-      configurable: true,
-      value: 300,
-    })
+  it('toggles a card via the header icon; multiple cards expand independently', async () => {
+    const user = userEvent.setup()
+    const message = toolMessage([
+      {
+        type: 'tool_use',
+        toolUseId: 'tu-1',
+        toolName: 'read_file',
+        input: { path: '/a.json' },
+        isStreaming: false,
+      },
+      {
+        type: 'tool_use',
+        toolUseId: 'tu-2',
+        toolName: 'read_file',
+        input: { path: '/b.json' },
+        isStreaming: false,
+      },
+    ])
+    const resultMap = new Map([
+      ['tu-1', { type: 'tool_result' as const, toolUseId: 'tu-1', output: 'alpha-result-body', isError: false }],
+      ['tu-2', { type: 'tool_result' as const, toolUseId: 'tu-2', output: 'beta-result-body', isError: false }],
+    ])
 
-    const message: RenderableMessage = {
-      id: 'msg-tool',
-      role: 'assistant',
-      parts: [
+    render(<ChatMessageRenderer {...baseProps} message={message} resultMap={resultMap} />)
+
+    expect(screen.queryByText('alpha-result-body')).not.toBeInTheDocument()
+    expect(screen.queryByText('beta-result-body')).not.toBeInTheDocument()
+
+    const toggles = screen.getAllByRole('button', { name: 'expandToolDetails' })
+    expect(toggles).toHaveLength(2)
+
+    await user.click(toggles[0])
+    expect(screen.getByText('alpha-result-body')).toBeInTheDocument()
+    expect(screen.queryByText('beta-result-body')).not.toBeInTheDocument()
+    expect(toggles[0]).toHaveAttribute('aria-expanded', 'true')
+    expect(toggles[1]).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(toggles[0])
+    expect(screen.queryByText('alpha-result-body')).not.toBeInTheDocument()
+    expect(toggles[0]).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('caps the expanded body at 40vh with internal scroll and no show more/less', async () => {
+    const user = userEvent.setup()
+    const message = toolMessage([
+      {
+        type: 'tool_use',
+        toolUseId: 'tu-read',
+        toolName: 'read_file',
+        input: { path: '/config.json' },
+        isStreaming: false,
+      },
+    ])
+
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+
+    await user.click(screen.getByRole('button', { name: 'expandToolDetails' }))
+
+    const body = screen.getByText('Parameters').closest('[data-tool-content]')
+    expect(body).toHaveClass('max-h-[40vh]')
+    expect(body).toHaveClass('overflow-y-auto')
+    expect(screen.queryByRole('button', { name: /show details/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /hide details/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /show more/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /show less/i })).not.toBeInTheDocument()
+  })
+
+  it('keeps a streaming tool card collapsed, then follows the stream in the outer scroll container once expanded', async () => {
+    const user = userEvent.setup()
+    const message = toolMessage(
+      [
         {
           type: 'tool_use',
-          toolUseId: 'tu-read',
+          toolUseId: 'tu-stream',
+          toolName: 'Bash',
+          input: {},
+          isStreaming: true,
+          inputJsonStream: '{"command":"npm ',
+        },
+      ],
+      'msg-stream',
+    )
+
+    const { rerender } = render(<ChatMessageRenderer {...baseProps} message={message} />)
+
+    // Collapsed while streaming: the header badge is the only progress indicator.
+    expect(screen.getByText('Bash')).toBeInTheDocument()
+    expect(screen.getByText('Pending')).toBeInTheDocument()
+    expect(
+      screen.queryByText((content) => content.includes('command":"npm')),
+    ).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'expandToolDetails' }))
+    const preview = screen.getByText((content) => content.includes('command":"npm'))
+    expect(preview).toBeInTheDocument()
+    // The preview itself carries no nested expand toggle.
+    expect(screen.queryByRole('button', { name: /show more/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /show less/i })).not.toBeInTheDocument()
+
+    // Pin-to-bottom follow retargets the outer 40vh scroll container.
+    const scrollContainer = preview.closest('[data-tool-content]') as HTMLElement
+    expect(scrollContainer).not.toBeNull()
+    let mockScrollTop = 0
+    let followWrite = -1
+    Object.defineProperty(scrollContainer, 'scrollHeight', {
+      configurable: true,
+      value: 500,
+    })
+    Object.defineProperty(scrollContainer, 'scrollTop', {
+      configurable: true,
+      get: () => mockScrollTop,
+      set: (value: number) => {
+        followWrite = value
+      },
+    })
+
+    const streamed = (json: string): RenderableMessage =>
+      toolMessage(
+        [
+          {
+            type: 'tool_use',
+            toolUseId: 'tu-stream',
+            toolName: 'Bash',
+            input: {},
+            isStreaming: true,
+            inputJsonStream: json,
+          },
+        ],
+        'msg-stream',
+      )
+
+    rerender(<ChatMessageRenderer {...baseProps} message={streamed('{"command":"npm test"')} />)
+    expect(followWrite).toBe(500)
+
+    // User scrolls away from the bottom: forced follow pauses.
+    followWrite = -1
+    fireEvent.scroll(scrollContainer)
+    rerender(<ChatMessageRenderer {...baseProps} message={streamed('{"command":"npm test -- --watch"')} />)
+    expect(followWrite).toBe(-1)
+
+    // Back near the bottom: follow resumes.
+    mockScrollTop = 480
+    fireEvent.scroll(scrollContainer)
+    rerender(<ChatMessageRenderer {...baseProps} message={streamed('{"command":"npm test -- --watch --ci"')} />)
+    expect(followWrite).toBe(500)
+  })
+
+  it('force-expands a card containing the current search match and stays expanded when the match moves away', () => {
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView')
+    const message = toolMessage(
+      [
+        {
+          type: 'tool_use',
+          toolUseId: 'tu-1',
           toolName: 'read_file',
           input: { path: '/config.json' },
           isStreaming: false,
         },
       ],
-    }
+      'msg-1',
+    )
+    const matches: MessageSearchMatch[] = [
+      { messageId: 'msg-1', partIndex: 0, start: 0, end: 6 },
+    ]
 
-    render(<ChatMessageRenderer {...baseProps} message={message} defaultToolExpanded={false} />)
+    const { rerender } = render(
+      <ChatMessageRenderer
+        {...baseProps}
+        message={message}
+        searchMatches={matches}
+        currentMatch={matches[0]}
+      />,
+    )
 
-    expect(screen.getByText('read_file')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /showDetails/i })).toBeInTheDocument()
+    // Expanded without a click, ring preserved, hit scrolled into view.
+    expect(screen.getByText('Parameters')).toBeInTheDocument()
+    const cardRoot = screen.getByText('read_file').closest('[data-state]') as HTMLElement
+    expect(cardRoot).toHaveClass('ring-1')
+    expect(cardRoot).toHaveClass('ring-accent')
+    expect(cardRoot).toHaveClass('bg-accent/5')
+    expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' })
+
+    // One-way semantics: losing the current match must not collapse the card.
+    rerender(
+      <ChatMessageRenderer
+        {...baseProps}
+        message={message}
+        searchMatches={matches}
+        currentMatch={null}
+      />,
+    )
+    expect(screen.getByText('Parameters')).toBeInTheDocument()
+  })
+
+  it('keeps a collapsed card ringed at the root for a non-current search match', () => {
+    const message = toolMessage(
+      [
+        {
+          type: 'tool_use',
+          toolUseId: 'tu-1',
+          toolName: 'read_file',
+          input: { path: '/config.json' },
+          isStreaming: false,
+        },
+      ],
+      'msg-1',
+    )
+    const matches: MessageSearchMatch[] = [
+      { messageId: 'msg-1', partIndex: 0, start: 0, end: 6 },
+    ]
+
+    render(
+      <ChatMessageRenderer
+        {...baseProps}
+        message={message}
+        searchMatches={matches}
+        currentMatch={null}
+      />,
+    )
+
+    const cardRoot = screen.getByText('read_file').closest('[data-state]') as HTMLElement
+    expect(cardRoot).toHaveAttribute('data-state', 'closed')
+    expect(cardRoot).toHaveClass('ring-1')
+    expect(cardRoot).toHaveClass('ring-accent/30')
+    expect(cardRoot).not.toHaveClass('ring-accent')
+    expect(screen.queryByText('Parameters')).not.toBeInTheDocument()
+  })
+
+  it('shows only Parameters for a completed call without a result once expanded', async () => {
+    const user = userEvent.setup()
+    const message = toolMessage([
+      {
+        type: 'tool_use',
+        toolUseId: 'tu-1',
+        toolName: 'read_file',
+        input: { path: '/config.json' },
+        isStreaming: false,
+      },
+    ])
+
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+
+    await user.click(screen.getByRole('button', { name: 'expandToolDetails' }))
+    expect(screen.getByText('Parameters')).toBeInTheDocument()
+    expect(screen.queryByText('Result')).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Error' })).not.toBeInTheDocument()
+  })
+
+  it('renders the Error section for an error result once expanded', async () => {
+    const user = userEvent.setup()
+    const message = toolMessage([
+      {
+        type: 'tool_use',
+        toolUseId: 'tu-1',
+        toolName: 'read_file',
+        input: { path: '/config.json' },
+        isStreaming: false,
+      },
+    ])
+    const resultMap = new Map([
+      ['tu-1', { type: 'tool_result' as const, toolUseId: 'tu-1', output: 'boom happened', isError: true }],
+    ])
+
+    render(<ChatMessageRenderer {...baseProps} message={message} resultMap={resultMap} />)
+
+    await user.click(screen.getByRole('button', { name: 'expandToolDetails' }))
+    expect(screen.getByRole('heading', { name: 'Error' })).toBeInTheDocument()
+    expect(screen.getByText('boom happened')).toBeInTheDocument()
   })
 })
