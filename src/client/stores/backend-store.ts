@@ -35,7 +35,10 @@ const API_BASE = '/api/backends'
 
 export const useBackendStore = create<BackendState>((set) => ({
   backends: [],
-  defaultBackend: null,
+  // The app-level default agent is 'claude' from first paint; the server
+  // confirms or overrides this on fetch. Avoids the "nothing selected, must
+  // click before chatting" state.
+  defaultBackend: 'claude',
   isLoading: false,
   error: null,
 
@@ -51,7 +54,7 @@ export const useBackendStore = create<BackendState>((set) => ({
       const defaultData = defaultRes.ok ? await defaultRes.json() : { backend: null }
       set({
         backends: listData.backends || [],
-        defaultBackend: defaultData.backend ?? null,
+        defaultBackend: defaultData.backend ?? 'claude',
         isLoading: false,
       })
     } catch (err) {

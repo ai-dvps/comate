@@ -8,13 +8,19 @@
  *  - Token names remapped to this repo's Tailwind palette; the upstream destructive
  *    background/text utility is rendered with literal red palette tokens since the
  *    repo has no destructive token.
- *  - Replaced Collapsible with a compactable body (max-height overflow + Show more/less).
- *  - Header is now static (not a toggle).
+ *  - Card is a Collapsible (Radix) that defaults to collapsed: the header stays
+ *    static and a dedicated icon button at the header end toggles the body.
+ *  - Expanded body is a single `max-h-[40vh] overflow-y-auto` scroll container;
+ *    `forceExpanded` (search hits) opens the card one-way and scrolls the active
+ *    search section (`data-search-section-active`) into view. Search-match rings
+ *    live on the Collapsible root.
  */
 'use client'
 
+import { useControllableState } from '@radix-ui/react-use-controllable-state'
 import {
   CheckCircleIcon,
+  ChevronDownIcon,
   CircleIcon,
   ClockIcon,
   ShieldAlert,
@@ -23,30 +29,91 @@ import {
   XCircleIcon,
 } from 'lucide-react'
 import type { ComponentProps, ReactNode } from 'react'
-import { isValidElement, useState } from 'react'
+import {
+  createContext,
+  isValidElement,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { ToolPart, ToolState } from '../../types/message'
 import type { SearchHighlightRange } from '../../hooks/useMessageSearch'
 import { Badge } from '../ui/badge'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '../ui/collapsible'
 import { cn } from '../ui/utils'
 import { getToolRenderer, StructuredFallback } from '../tool-renderers'
 import FilePath from '../tool-renderers/FilePath'
 
 import { CodeBlock } from './code-block'
-import { CompactableContainer } from './compactable-container'
 import LinkifiedText from '../LinkifiedText'
 
 export type { ToolPart, ToolState }
 
-export type ToolProps = ComponentProps<'div'>
+interface ToolContextValue {
+  isOpen: boolean
+  setIsOpen: (open: boolean) => void
+}
 
-export const Tool = ({ className, ...props }: ToolProps) => (
-  <div
-    className={cn('not-prose mb-2 w-full rounded-md bg-surface-hover/30', className)}
-    {...props}
-  />
-)
+const ToolContext = createContext<ToolContextValue | null>(null)
+
+const useTool = () => {
+  const context = useContext(ToolContext)
+  if (!context) {
+    throw new Error('Tool components must be used within Tool')
+  }
+  return context
+}
+
+export type ToolProps = ComponentProps<typeof Collapsible> & {
+  hasSearchMatch?: boolean
+  isCurrentSearchMatch?: boolean
+}
+
+export const Tool = ({
+  className,
+  hasSearchMatch = false,
+  isCurrentSearchMatch = false,
+  open,
+  defaultOpen,
+  onOpenChange,
+  children,
+  ...props
+}: ToolProps) => {
+  const [isOpen, setIsOpen] = useControllableState<boolean>({
+    defaultProp: defaultOpen ?? false,
+    onChange: onOpenChange,
+    prop: open,
+  })
+
+  const contextValue = useMemo(() => ({ isOpen, setIsOpen }), [isOpen, setIsOpen])
+
+  return (
+    <ToolContext.Provider value={contextValue}>
+      <Collapsible
+        className={cn(
+          'not-prose mb-2 w-full rounded-md bg-surface-hover/30',
+          hasSearchMatch && 'ring-1 bg-accent/5',
+          hasSearchMatch && (isCurrentSearchMatch ? 'ring-accent' : 'ring-accent/30'),
+          className,
+        )}
+        open={isOpen}
+        onOpenChange={setIsOpen}
+        {...props}
+      >
+        {children}
+      </Collapsible>
+    </ToolContext.Provider>
+  )
+}
 
 export type ToolHeaderProps = {
   title?: string
@@ -96,6 +163,7 @@ export const ToolHeader = ({
   ...props
 }: ToolHeaderProps) => {
   const { t } = useTranslation('chat')
+  const tool = useTool()
   const [iconError, setIconError] = useState(false)
   const derivedName =
     type === 'dynamic-tool' ? toolName : type.split('-').slice(1).join('-')
@@ -104,6 +172,7 @@ export const ToolHeader = ({
   const isUrl = summary ? /^https?:\/\//i.test(summary) : false
   const isPathLike = summary && summary.includes('/') && !isUrl
   const isDirectoryTool = derivedName === 'Glob' || derivedName === 'Grep'
+  const toggleLabel = tool.isOpen ? t('collapseToolDetails') : t('expandToolDetails')
 
   return (
     <div
@@ -162,42 +231,71 @@ export const ToolHeader = ({
           </span>
         )}
       </div>
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          aria-label={toggleLabel}
+          title={toggleLabel}
+          aria-expanded={tool.isOpen}
+          className="p-1 rounded-md flex-shrink-0 text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors"
+        >
+          <ChevronDownIcon
+            className={cn(
+              'size-4 transition-transform',
+              tool.isOpen ? 'rotate-180' : 'rotate-0',
+            )}
+          />
+        </button>
+      </CollapsibleTrigger>
     </div>
   )
 }
 
-export type ToolContentProps = ComponentProps<'div'> & {
-  alwaysExpanded?: boolean
+export type ToolContentProps = ComponentProps<typeof CollapsibleContent> & {
+  /** One-way force expansion (search hits): opens the card, never closes it. */
   forceExpanded?: boolean
-  hasSearchMatch?: boolean
-  isCurrentSearchMatch?: boolean
 }
 
 export const ToolContent = ({
   className,
   children,
-  alwaysExpanded = true,
-  forceExpanded,
-  hasSearchMatch,
-  isCurrentSearchMatch,
+  forceExpanded = false,
   ...props
 }: ToolContentProps) => {
-  const { t } = useTranslation('chat')
+  const { isOpen, setIsOpen } = useTool()
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (forceExpanded) {
+      setIsOpen(true)
+    }
+  }, [forceExpanded, setIsOpen])
+
+  // Once force-expanded and open, bring the active search section into view
+  // inside the card's scroll container; fall back to an inner search mark,
+  // then to the container body itself.
+  useLayoutEffect(() => {
+    if (!forceExpanded || !isOpen) return
+    const container = contentRef.current
+    if (!container) return
+    const target =
+      container.querySelector('[data-search-section-active="true"]') ??
+      container.querySelector('[data-search-active="true"]') ??
+      container
+    target.scrollIntoView({ block: 'nearest' })
+  }, [forceExpanded, isOpen])
+
   return (
-    <CompactableContainer
-      className={cn(className)}
-      alwaysExpanded={alwaysExpanded}
-      forceExpanded={forceExpanded}
-      hasSearchMatch={hasSearchMatch}
-      isCurrentSearchMatch={isCurrentSearchMatch}
-      showMoreLabel={t('showDetails')}
-      showLessLabel={t('hideDetails')}
+    <CollapsibleContent
+      ref={contentRef}
+      data-tool-content=""
+      className={cn('max-h-[40vh] overflow-y-auto', className)}
       {...props}
     >
       <div className="space-y-2 p-2 text-text-primary">
         {children}
       </div>
-    </CompactableContainer>
+    </CollapsibleContent>
   )
 }
 
@@ -219,7 +317,10 @@ export const ToolInput = ({ className, input, toolName, searchMatches, ...props 
         Parameters
       </h4>
       {hasCustomRenderer ? (
-        <div className="overflow-x-auto rounded-md">
+        <div
+          className="overflow-x-auto rounded-md"
+          data-search-section-active={isCurrentSearchMatch ? 'true' : undefined}
+        >
           <div className="bg-surface-hover/50 px-2 py-1.5 min-w-fit">
             {renderer!(input) ?? <StructuredFallback data={input} />}
           </div>
@@ -295,6 +396,9 @@ export const ToolOutput = ({
               ? 'bg-destructive/20 text-destructive'
               : 'bg-surface-hover/50 text-text-primary',
           )}
+          data-search-section-active={
+            isCurrentSearchMatch && errorText ? 'true' : undefined
+          }
         >
           {errorText && <LinkifiedText text={errorText} />}
           {Output}

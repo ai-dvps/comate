@@ -240,6 +240,12 @@ describe('DetailDrawer process region real-time updates', () => {
       <DetailDrawer stack={[processView(messageId)]} {...defaultProps} sessionId={sessionId} />,
     )
 
+    // Streaming cards are collapsed by default: expand before the preview is visible.
+    expect(
+      screen.queryByText((content) => content.includes('command":"npm')),
+    ).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /Expand tool details/i }))
     expect(screen.getByText((content) => content.includes('command":"npm'))).toBeInTheDocument()
 
     const updated: ChatMessage[] = [
@@ -311,14 +317,7 @@ describe('DetailDrawer process region real-time updates', () => {
 })
 
 describe('DetailDrawer process region default collapse state', () => {
-  let originalScrollHeight: PropertyDescriptor | undefined
-
   beforeEach(() => {
-    originalScrollHeight = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight')
-    Object.defineProperty(Element.prototype, 'scrollHeight', {
-      configurable: true,
-      value: 300,
-    })
     chatStoreMock.getState().messages = {}
     chatStoreMock.getState().subagents = {}
     chatStoreMock.getState().workflows = {}
@@ -326,11 +325,6 @@ describe('DetailDrawer process region default collapse state', () => {
 
   afterEach(() => {
     cleanup()
-    if (originalScrollHeight) {
-      Object.defineProperty(Element.prototype, 'scrollHeight', originalScrollHeight)
-    } else {
-      delete (Element.prototype as { scrollHeight?: number }).scrollHeight
-    }
   })
 
   it('keeps thinking trigger visible but content collapsed by default', async () => {
@@ -349,15 +343,15 @@ describe('DetailDrawer process region default collapse state', () => {
       <DetailDrawer stack={[processView(messageId)]} {...defaultProps} sessionId={sessionId} />,
     )
 
-    const trigger = screen.getByRole('button', { name: /Thought for a few seconds/i })
-    expect(trigger).toBeInTheDocument()
+    // The trigger row text is static; only the row-end icon toggles the body.
+    expect(screen.getByText(/Thought for a few seconds/i)).toBeInTheDocument()
     expect(screen.queryByText('hidden reasoning')).not.toBeInTheDocument()
 
-    await userEvent.click(trigger)
+    await userEvent.click(screen.getByRole('button', { name: /Expand thoughts/i }))
     expect(screen.getByText('hidden reasoning')).toBeVisible()
   })
 
-  it('shows tool header and hides tool input/output behind a toggle by default', async () => {
+  it('shows the tool header with body collapsed by default and expands via the header-end icon', async () => {
     const sessionId = 's1'
     const messageId = 'm1'
     chatStoreMock.setMessages(sessionId, [
@@ -374,12 +368,21 @@ describe('DetailDrawer process region default collapse state', () => {
     )
 
     expect(screen.getByText('Bash')).toBeInTheDocument()
-    const toggle = screen.getByRole('button', { name: /Show details/i })
-    expect(toggle).toBeInTheDocument()
+    expect(screen.queryByText('Parameters')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Show details/i })).not.toBeInTheDocument()
+
+    const toggle = screen.getByRole('button', { name: /Expand tool details/i })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
 
     await userEvent.click(toggle)
-    expect(screen.getByRole('button', { name: /Hide details/i })).toBeInTheDocument()
     expect(screen.getByText('Parameters')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Collapse tool details/i }),
+    ).toHaveAttribute('aria-expanded', 'true')
+
+    const body = screen.getByText('Parameters').closest('[data-tool-content]')
+    expect(body).toHaveClass('max-h-[40vh]')
+    expect(body).toHaveClass('overflow-y-auto')
   })
 
   it('does not collapse text parts when they appear in the drawer', () => {

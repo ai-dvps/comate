@@ -59,8 +59,6 @@ export interface ChatMessageRendererProps {
   displayMode?: DisplayMode
   /** Open the per-region drawer (U4). Keyed by message id + region index. */
   onOpenProcessRegion?: (messageId: string, regionIndex: number) => void
-  /** When false, tool cards inside this renderer start collapsed. Defaults to true. */
-  defaultToolExpanded?: boolean
   resultRegions?: ResultFocusRegion[]
 }
 
@@ -208,7 +206,6 @@ function ChatMessageRenderer({
   currentMatch = null,
   displayMode = 'linear',
   onOpenProcessRegion,
-  defaultToolExpanded = true,
   resultRegions,
 }: ChatMessageRendererProps) {
   const messageIdRef = useRef(message.id)
@@ -437,7 +434,11 @@ function ChatMessageRenderer({
               const summary = summarizeToolInput(part.input)
               const autoApproved = autoApprovedTools?.[part.toolUseId]
               return (
-                <Tool key={partKey}>
+                <Tool
+                  key={partKey}
+                  hasSearchMatch={hasMatchInPart}
+                  isCurrentSearchMatch={isCurrentInPart}
+                >
                   <ToolHeader
                     state={state}
                     summary={summary}
@@ -445,11 +446,7 @@ function ChatMessageRenderer({
                     autoApproved={autoApproved}
                     meta={part.meta}
                   />
-                  <ToolContent
-                    hasSearchMatch={hasMatchInPart}
-                    isCurrentSearchMatch={isCurrentInPart}
-                    alwaysExpanded={defaultToolExpanded}
-                  >
+                  <ToolContent forceExpanded={isCurrentInPart}>
                     {isStreaming && streamingJson.length > 0 ? (
                       <StreamingToolInputPreview partialJson={streamingJson} />
                     ) : (
@@ -534,7 +531,6 @@ function areEqual(
   if (prevProps.onOpenWorkflow !== nextProps.onOpenWorkflow) return false
   if (prevProps.onOpenProcessRegion !== nextProps.onOpenProcessRegion) return false
   if (prevProps.autoApprovedTools !== nextProps.autoApprovedTools) return false
-  if (prevProps.defaultToolExpanded !== nextProps.defaultToolExpanded) return false
   if (prevProps.resultRegions !== nextProps.resultRegions) return false
 
   if (
