@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Compacting conversation progress bar width** — The "Compacting conversation…" progress bar no longer stretches to the full conversation width; it now matches the centered message column (`max-w-3xl`) like the rest of the messages.
+- **Todo "Start session" now loads the new session** — Starting a session from a todo's detail pane no longer left the workspace's session list stale. The run is created server-side, so the workspace's session list is now reloaded and the freshly started session is opened (and begins streaming) immediately after the run kicks off.
 
 ## [0.0.33] - 2026-08-05
 

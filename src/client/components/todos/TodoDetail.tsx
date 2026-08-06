@@ -14,6 +14,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import type { Todo, TodoRun, TodoStatus, TodoExecutionType } from '../../stores/todo-store'
+import { useChatStore } from '../../stores/chat-store'
 import { useWorkspaceStore } from '../../stores/workspace-store'
 import { cn } from '../ui/utils'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
@@ -109,7 +110,19 @@ export default function TodoDetail({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspaceId: todo.workspaceId }),
       })
-      if (res.ok) onResolved()
+      if (!res.ok) return
+      // Refresh the todo list so the new run + linked session show up.
+      onResolved()
+      // The session is created server-side (todo-execution-service), so the
+      // chat-store does not know about it yet. Reload the workspace's session
+      // list so the freshly started session appears, then open it so it loads
+      // and streams. The todo panel stays open (runs open independently).
+      const data = await res.json().catch(() => null) as { run?: TodoRun } | null
+      const sessionId = data?.run?.sessionId
+      if (sessionId) {
+        await useChatStore.getState().fetchSessions(todo.workspaceId)
+        openSessionDirect(todo.workspaceId, sessionId)
+      }
     } finally {
       setSpawning(false)
     }
