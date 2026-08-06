@@ -247,7 +247,6 @@ function ProcessBody({
       onOpenDrawer={onOpenDrawer}
       sessionId={sessionId}
       displayMode="linear"
-      defaultToolExpanded={false}
     />
   )
 }
