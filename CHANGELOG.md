@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Nothing yet.
+- **Compacting conversation progress bar width** — The "Compacting conversation…" progress bar no longer stretches to the full conversation width; it now matches the centered message column (`max-w-3xl`) like the rest of the messages.
 
 ## [0.0.33] - 2026-08-05
 

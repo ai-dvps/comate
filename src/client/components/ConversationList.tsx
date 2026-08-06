@@ -198,7 +198,14 @@ export default function ConversationList({
               />
             </div>
           ))}
-          {isCompacting && <CompactingIndicator sessionId={sessionId} />}
+          {isCompacting && (
+            <div
+              className="mx-auto w-full max-w-3xl px-3 pb-4"
+              style={chatFontStyle}
+            >
+              <CompactingIndicator sessionId={sessionId} />
+            </div>
+          )}
         </div>
       </div>
       {!follow.isFollowing && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-work to-transparent" />}
