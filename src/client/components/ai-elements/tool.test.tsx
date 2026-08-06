@@ -3,7 +3,7 @@ import type { ReactElement } from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { I18nextProvider } from 'react-i18next'
-import { ToolHeader, ToolContent, ToolOutput } from './tool'
+import { Tool, ToolHeader, ToolContent, ToolOutput } from './tool'
 import i18n from '../../i18n'
 import { ToolRendererProvider } from '../tool-renderers/ToolRendererContext'
 
@@ -33,6 +33,12 @@ function renderWithProviders(
   )
 }
 
+// ToolHeader must render inside a Tool card (it reads the Collapsible context).
+const renderToolHeader = (
+  header: ReactElement,
+  options?: { workspacePath?: string; onOpenFile?: (path: string, name: string) => void },
+) => renderWithProviders(<Tool>{header}</Tool>, options)
+
 describe('ToolHeader', () => {
   const originalClipboard = navigator.clipboard
 
@@ -49,7 +55,7 @@ describe('ToolHeader', () => {
   })
 
   it('renders path summary as relative path with absolute tooltip', () => {
-    renderWithProviders(
+    renderToolHeader(
       <ToolHeader
         type="tool-Read"
         state="output-available"
@@ -64,7 +70,7 @@ describe('ToolHeader', () => {
 
   it('opens file when path summary is clicked', async () => {
     const onOpenFile = vi.fn()
-    renderWithProviders(
+    renderToolHeader(
       <ToolHeader
         type="tool-Read"
         state="output-available"
@@ -78,7 +84,7 @@ describe('ToolHeader', () => {
   })
 
   it('copies relative path when copy button in path summary is clicked', async () => {
-    renderWithProviders(
+    renderToolHeader(
       <ToolHeader
         type="tool-Read"
         state="output-available"
@@ -93,7 +99,7 @@ describe('ToolHeader', () => {
 
   it('renders path summary as-is and non-clickable when outside workspace', async () => {
     const onOpenFile = vi.fn()
-    renderWithProviders(
+    renderToolHeader(
       <ToolHeader
         type="tool-Read"
         state="output-available"
@@ -110,7 +116,7 @@ describe('ToolHeader', () => {
 
   it('renders directory tool path summary non-clickable', async () => {
     const onOpenFile = vi.fn()
-    renderWithProviders(
+    renderToolHeader(
       <ToolHeader
         type="tool-Glob"
         state="output-available"
@@ -126,7 +132,7 @@ describe('ToolHeader', () => {
   })
 
   it('renders non-path summary unchanged', () => {
-    renderWithProviders(
+    renderToolHeader(
       <ToolHeader
         type="tool-Bash"
         state="output-available"
@@ -138,7 +144,7 @@ describe('ToolHeader', () => {
   })
 
   it('renders URL summary unchanged', () => {
-    renderWithProviders(
+    renderToolHeader(
       <ToolHeader
         type="tool-WebFetch"
         state="output-available"
@@ -151,72 +157,131 @@ describe('ToolHeader', () => {
 })
 
 describe('ToolContent', () => {
-  it('renders children fully without a toggle', () => {
-    renderWithProviders(
-      <ToolContent>
-        <div>tool body content</div>
-      </ToolContent>,
-    )
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
 
-    expect(screen.getByText('tool body content')).toBeInTheDocument()
-    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  const renderCard = (
+    body: ReactElement = <div>tool body content</div>,
+    cardProps: { hasSearchMatch?: boolean; isCurrentSearchMatch?: boolean } = {},
+    contentProps: { forceExpanded?: boolean } = {},
+  ) => (
+    <I18nextProvider i18n={i18n}>
+      <ToolRendererProvider value={{ workspacePath: '/workspace', onOpenFile: vi.fn() }}>
+        <Tool
+          hasSearchMatch={cardProps.hasSearchMatch}
+          isCurrentSearchMatch={cardProps.isCurrentSearchMatch}
+        >
+          <ToolHeader type="tool-Bash" state="output-available" />
+          <ToolContent forceExpanded={contentProps.forceExpanded}>
+            {body}
+          </ToolContent>
+        </Tool>
+      </ToolRendererProvider>
+    </I18nextProvider>
+  )
+
+  it('renders collapsed by default: header visible, body hidden, no show more/less', () => {
+    render(renderCard())
+
+    expect(screen.getByText('Bash')).toBeInTheDocument()
+    expect(screen.queryByText('tool body content')).not.toBeInTheDocument()
     expect(screen.queryByText('Show details')).not.toBeInTheDocument()
     expect(screen.queryByText('Hide details')).not.toBeInTheDocument()
+    expect(screen.queryByText('Show more')).not.toBeInTheDocument()
+    expect(screen.queryByText('Show less')).not.toBeInTheDocument()
   })
 
-  it('collapses overflowing content and expands on toggle click', async () => {
-    const originalScrollHeight = Object.getOwnPropertyDescriptor(
-      Element.prototype,
-      'scrollHeight',
-    )
-    Object.defineProperty(Element.prototype, 'scrollHeight', {
-      configurable: true,
-      value: 300,
-    })
+  it('expands and collapses via the header-end icon button', async () => {
+    render(renderCard())
 
-    renderWithProviders(
-      <ToolContent alwaysExpanded={false}>
-        <div style={{ height: '300px' }}> tall tool body </div>
-      </ToolContent>,
-    )
-
-    expect(screen.getByText('tall tool body')).toBeInTheDocument()
-    const toggle = screen.getByRole('button', { name: /Show details/i })
-    expect(toggle).toBeInTheDocument()
+    const toggle = screen.getByRole('button', { name: 'Expand tool details' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
 
     await userEvent.click(toggle)
-    expect(screen.getByRole('button', { name: /Hide details/i })).toBeInTheDocument()
+    expect(screen.getByText('tool body content')).toBeInTheDocument()
+    const collapseToggle = screen.getByRole('button', { name: 'Collapse tool details' })
+    expect(collapseToggle).toHaveAttribute('aria-expanded', 'true')
 
-    if (originalScrollHeight) {
-      Object.defineProperty(Element.prototype, 'scrollHeight', originalScrollHeight)
-    } else {
-      delete (Element.prototype as { scrollHeight?: number }).scrollHeight
-    }
+    await userEvent.click(collapseToggle)
+    expect(screen.queryByText('tool body content')).not.toBeInTheDocument()
   })
 
-  it('keeps content expanded when forceExpanded is true', () => {
-    renderWithProviders(
-      <ToolContent alwaysExpanded={false} forceExpanded>
-        <div style={{ height: '300px' }}> forced tool body </div>
-      </ToolContent>,
-    )
+  it('caps the expanded body with a single 40vh scroll container', async () => {
+    render(renderCard())
 
-    expect(screen.getByText('forced tool body')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Show details/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Hide details/i })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Expand tool details' }))
+
+    const body = screen.getByText('tool body content').closest('[data-tool-content]')
+    expect(body).toHaveClass('max-h-[40vh]')
+    expect(body).toHaveClass('overflow-y-auto')
   })
 
-  it('applies search-match ring classes when matched', () => {
-    const { container } = renderWithProviders(
-      <ToolContent hasSearchMatch isCurrentSearchMatch>
-        <div>matched tool body</div>
-      </ToolContent>,
+  it('force-expands for a current search hit, scrolls the hit into view, and never force-collapses', () => {
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView')
+    const { rerender } = render(
+      renderCard(<div>hit tool body</div>, { hasSearchMatch: true, isCurrentSearchMatch: true }, { forceExpanded: true }),
     )
 
-    const wrapper = container.firstChild as HTMLElement
-    expect(wrapper).toHaveClass('ring-1')
-    expect(wrapper).toHaveClass('ring-accent')
-    expect(wrapper).toHaveClass('bg-accent/5')
+    expect(screen.getByText('hit tool body')).toBeInTheDocument()
+    expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' })
+
+    // One-way semantics: clearing the flag must not collapse the card.
+    rerender(
+      renderCard(<div>hit tool body</div>, { hasSearchMatch: true, isCurrentSearchMatch: true }, { forceExpanded: false }),
+    )
+    expect(screen.getByText('hit tool body')).toBeInTheDocument()
+  })
+
+  it('scrolls the marked section (not the container) into view when the current hit is inside a long body', () => {
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView')
+    const receivers: Element[] = []
+    scrollSpy.mockImplementation(function (this: Element) {
+      receivers.push(this)
+    })
+
+    const { container } = render(
+      renderCard(
+        <ToolOutput
+          output={'payload line\n'.repeat(200)}
+          errorText={undefined}
+          searchMatches={[{ start: 0, end: 7, isActive: true }]}
+        />,
+        { hasSearchMatch: true, isCurrentSearchMatch: true },
+        { forceExpanded: true },
+      ),
+    )
+
+    const section = container.querySelector('[data-search-section-active="true"]')
+    expect(section).not.toBeNull()
+    expect(receivers).toContain(section)
+    // The container fallback must NOT be the scroll target when a section is marked.
+    expect(receivers).not.toContain(container.querySelector('[data-tool-content]'))
+  })
+
+  it('shows the accent ring on the card root while collapsed for the current match', () => {
+    const { container } = render(
+      renderCard(<div>matched body</div>, { hasSearchMatch: true, isCurrentSearchMatch: true }),
+    )
+
+    const root = container.firstChild as HTMLElement
+    expect(root).toHaveClass('ring-1')
+    expect(root).toHaveClass('bg-accent/5')
+    expect(root).toHaveClass('ring-accent')
+    expect(screen.queryByText('matched body')).not.toBeInTheDocument()
+  })
+
+  it('shows a muted ring on the card root for a non-current match without expanding', () => {
+    const { container } = render(
+      renderCard(<div>matched body</div>, { hasSearchMatch: true }),
+    )
+
+    const root = container.firstChild as HTMLElement
+    expect(root).toHaveClass('ring-1')
+    expect(root).toHaveClass('bg-accent/5')
+    expect(root).toHaveClass('ring-accent/30')
+    expect(root).not.toHaveClass('ring-accent')
+    expect(screen.queryByText('matched body')).not.toBeInTheDocument()
   })
 })
 

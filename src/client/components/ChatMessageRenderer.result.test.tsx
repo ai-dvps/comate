@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import React from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
@@ -39,19 +39,6 @@ function assistantMessage(parts: RenderablePart[], id = 'm1'): RenderableMessage
 const GHOST_NAME = /Process region/
 
 describe('ChatMessageRenderer result-focused mode', () => {
-  let originalScrollHeight: PropertyDescriptor | undefined
-
-  beforeEach(() => {
-    originalScrollHeight = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight')
-  })
-
-  afterEach(() => {
-    if (originalScrollHeight) {
-      Object.defineProperty(Element.prototype, 'scrollHeight', originalScrollHeight)
-    } else {
-      delete (Element.prototype as { scrollHeight?: number }).scrollHeight
-    }
-  })
   it('renders process regions as ghosts and keeps text visible (R5/R6/R8)', () => {
     const msg = assistantMessage([
       think(),
@@ -154,7 +141,7 @@ describe('ChatMessageRenderer result-focused mode', () => {
     expect(screen.getByTestId('process-region-ghost')).toHaveAttribute('data-error', 'true')
   })
 
-  it('linear mode renders tool cards expanded by default (R5)', () => {
+  it('linear mode renders tool cards collapsed by default and expands via the header icon (R1/R2)', () => {
     const msg = assistantMessage([toolInput('Bash', { command: 'npm test' })])
     renderWithI18n(
       <ChatMessageRenderer
@@ -167,16 +154,20 @@ describe('ChatMessageRenderer result-focused mode', () => {
     )
 
     expect(screen.getByText('Bash')).toBeInTheDocument()
-    expect(screen.getByText('Parameters')).toBeInTheDocument()
+    expect(screen.queryByText('Parameters')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Show details/i })).not.toBeInTheDocument()
+
+    const toggle = screen.getByRole('button', { name: /Expand tool details/i })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.click(toggle)
+    expect(screen.getByText('Parameters')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Collapse tool details/i }),
+    ).toHaveAttribute('aria-expanded', 'true')
   })
 
-  it('linear mode collapses tool cards when defaultToolExpanded is false (R2)', () => {
-    Object.defineProperty(Element.prototype, 'scrollHeight', {
-      configurable: true,
-      value: 300,
-    })
-
+  it('linear mode caps the expanded tool body with a 40vh scroll container (R4)', () => {
     const msg = assistantMessage([toolInput('Bash', { command: 'npm test' })])
     renderWithI18n(
       <ChatMessageRenderer
@@ -185,15 +176,17 @@ describe('ChatMessageRenderer result-focused mode', () => {
         onOpenDrawer={() => {}}
         sessionId="s1"
         displayMode="linear"
-        defaultToolExpanded={false}
       />,
     )
 
-    expect(screen.getByText('Bash')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Show details/i })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Expand tool details/i }))
+
+    const body = screen.getByText('Parameters').closest('[data-tool-content]')
+    expect(body).toHaveClass('max-h-[40vh]')
+    expect(body).toHaveClass('overflow-y-auto')
   })
 
-  it('result mode ignores defaultToolExpanded and still renders ghosts (R5)', () => {
+  it('result mode still renders ghosts for process regions (R5)', () => {
     const msg = assistantMessage([think(), tool('Bash'), text('done')])
     renderWithI18n(
       <ChatMessageRenderer
@@ -202,7 +195,6 @@ describe('ChatMessageRenderer result-focused mode', () => {
         onOpenDrawer={() => {}}
         sessionId="s1"
         displayMode="result"
-        defaultToolExpanded={false}
       />,
     )
 

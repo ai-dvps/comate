@@ -8,6 +8,7 @@ import { useWorkspaceStore } from '../../stores/workspace-store';
 import i18n from '../../i18n';
 import type { Todo } from '../../stores/todo-store';
 import { openSessionDirect } from '../../lib/session-jump';
+import { useChatStore } from '../../stores/chat-store';
 
 vi.mock('../CodeMirrorEditor', () => ({
   default: function CodeMirrorEditorMock({
@@ -304,5 +305,52 @@ describe('TodoDetail', () => {
     expect(historyTab).toHaveAttribute('aria-selected', 'true');
     await user.click(screen.getByRole('button', { name: /Succeeded/ }));
     expect(openSessionDirect).toHaveBeenCalledWith('ws-1', 'session-2');
+  });
+
+  it('refreshes the workspace sessions and opens the freshly started session after spawn', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        run: {
+          id: 'run-new',
+          todoId: 'todo-Task',
+          sessionId: 'session-new',
+          workspaceId: 'ws-1',
+          status: 'running',
+          fireAt: '2026-08-06T09:00:00.000Z',
+          startedAt: '2026-08-06T09:00:00.000Z',
+          endedAt: null,
+          reason: null,
+          instructionSnapshot: 'Do the task',
+          createdAt: '2026-08-06T09:00:00.000Z',
+        },
+      }),
+    }));
+    const fetchSessionsSpy = vi
+      .spyOn(useChatStore.getState(), 'fetchSessions')
+      .mockResolvedValue({ ok: true });
+
+    renderWithI18n(
+      <TodoDetail
+        todo={makeTodo({ text: 'Task', workspaceId: 'ws-1' })}
+        width={384}
+        onWidthChange={onWidthChange}
+        onResolved={onResolved}
+        onClose={onClose}
+        onUpdateTodo={onUpdateTodo}
+        onChangeStatus={onChangeStatus}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Start session' }));
+
+    await waitFor(() => {
+      expect(fetchSessionsSpy).toHaveBeenCalledWith('ws-1');
+      expect(openSessionDirect).toHaveBeenCalledWith('ws-1', 'session-new');
+    });
+    // Runs open independently — the todo panel is not closed.
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

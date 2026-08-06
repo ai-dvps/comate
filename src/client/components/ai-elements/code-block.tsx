@@ -7,6 +7,8 @@
  *  - Removed the `CodeBlockLanguageSelector*` family (it depends on a shadcn `Select`
  *    primitive that this repo does not vendor).
  *  - Token names remapped to this repo's Tailwind palette.
+ *  - The container carries `data-search-section-active` for the current search match
+ *    so card bodies can scroll the matching section into view.
  */
 'use client'
 
@@ -305,6 +307,7 @@ export const CodeBlockContainer = ({
       className,
     )}
     data-language={language}
+    data-search-section-active={isCurrentSearchMatch ? 'true' : undefined}
     style={{
       containIntrinsicSize: 'auto 200px',
       contentVisibility: 'auto',
