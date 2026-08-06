@@ -34,10 +34,13 @@ router.get('/', async (_req, res) => {
 });
 
 // GET /api/backends/default
+// The app-level default agent is 'claude' until the user explicitly picks one,
+// so the selector/settings always show a real default rather than "nothing
+// selected" (which forced a click before chatting).
 router.get('/default', async (_req, res) => {
   try {
     const backend = await getDefaultBackend();
-    res.json({ backend: backend ?? null });
+    res.json({ backend: backend ?? 'claude' });
   } catch (error) {
     console.error('Failed to read default backend:', error);
     res.status(500).json({ error: 'Failed to read default backend' });

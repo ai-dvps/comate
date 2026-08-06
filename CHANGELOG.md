@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Nothing yet.
+- **Default agent is now Claude** — The app-level default agent resolves to Claude from first launch instead of leaving "no default" selected. The Agent selector in settings now highlights Claude out of the box, so users no longer need to click once before chatting. An explicitly chosen agent still takes precedence.
 
 ### Fixed
 
