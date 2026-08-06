@@ -21,6 +21,8 @@
   "notSet": "Not set",
   "expandToolDetails": "Expand tool details",
   "collapseToolDetails": "Collapse tool details",
+  "expandThoughts": "Expand thoughts",
+  "collapseThoughts": "Collapse thoughts",
   "neverRefreshed": "Never refreshed",
   "noNewMessages": "No new messages",
   "refreshFailed": "Refresh failed",
