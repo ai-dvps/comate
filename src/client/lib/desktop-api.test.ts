@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-import type { ComateBridge } from './desktop-api'
+import type { ComateBridge, DownloadEvent } from './desktop-api'
 
 /**
  * U2 bridge coverage: the six shell capabilities routed through
@@ -233,7 +233,7 @@ describe('shell capabilities through the bridge', () => {
   })
 })
 
-describe('updater surface (degrades until U5 wires electron-updater)', () => {
+describe('updater surface (U5: handle reconstructed over the IPC bridge)', () => {
   it('checkForUpdate resolves null without the bridge updater', async () => {
     const api = await importBridge()
     await expect(api.checkForUpdate()).resolves.toBeNull()
@@ -243,15 +243,53 @@ describe('updater surface (degrades until U5 wires electron-updater)', () => {
     await expect(api2.checkForUpdate()).resolves.toBeNull()
   })
 
-  it('checkForUpdate returns the bridge update handle when present', async () => {
-    const update = {
-      currentVersion: '0.0.33',
-      version: '0.0.34',
-      downloadAndInstall: vi.fn(() => Promise.resolve()),
-    }
-    installBridge({ getApiInfo: vi.fn(), updater: { check: () => Promise.resolve(update) } })
+  it('checkForUpdate maps plain IPC info into a DesktopUpdate handle', async () => {
+    const info = { currentVersion: '0.0.33', version: '0.0.34', body: 'notes' }
+    installBridge({ getApiInfo: vi.fn(), updater: { check: () => Promise.resolve(info) } })
     const api = await importBridge()
-    await expect(api.checkForUpdate()).resolves.toBe(update)
+    const update = await api.checkForUpdate()
+    expect(update).toMatchObject(info)
+    expect(typeof update?.downloadAndInstall).toBe('function')
+  })
+
+  it('downloadAndInstall invokes the bridge download and relays pushed events', async () => {
+    const info = { currentVersion: '0.0.33', version: '0.0.34' }
+    const download = vi.fn(() => Promise.resolve())
+    let eventHandler: ((event: DownloadEvent) => void) | null = null
+    const unsubscribe = vi.fn()
+    installBridge({
+      getApiInfo: vi.fn(),
+      updater: {
+        check: () => Promise.resolve(info),
+        download,
+        onDownloadEvent: (handler) => {
+          eventHandler = handler
+          return unsubscribe
+        },
+      },
+    })
+    const api = await importBridge()
+    const update = await api.checkForUpdate()
+
+    const received: DownloadEvent[] = []
+    await update?.downloadAndInstall((event) => received.push(event))
+
+    expect(download).toHaveBeenCalledTimes(1)
+    // The subscription is live for the duration of the download, then removed.
+    expect(eventHandler).not.toBeNull()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+
+    const handler = eventHandler as unknown as (event: DownloadEvent) => void
+    handler({ event: 'Progress', data: { chunkLength: 10 } })
+    expect(received).toEqual([{ event: 'Progress', data: { chunkLength: 10 } }])
+  })
+
+  it('downloadAndInstall rejects when the bridge lacks updater.download', async () => {
+    const info = { currentVersion: '0.0.33', version: '0.0.34' }
+    installBridge({ getApiInfo: vi.fn(), updater: { check: () => Promise.resolve(info) } })
+    const api = await importBridge()
+    const update = await api.checkForUpdate()
+    await expect(update?.downloadAndInstall()).rejects.toThrow(/unavailable/)
   })
 
   it('getAppVersion resolves null without the bridge, the version with it', async () => {

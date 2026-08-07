@@ -82,10 +82,24 @@ const api = {
   },
 
   updater: {
-    // TODO(U5): wire electron-updater; the main-process handlers are benign
-    // stubs until then (check resolves null = "no update available").
+    // U5: electron-updater. check resolves the update info (null = none);
+    // download triggers the manual download with progress pushed over the
+    // whitelisted 'comate:updater-download-event' channel (onDownloadEvent);
+    // relaunch arms the shell's update grace then quitAndInstall.
     check: (): Promise<unknown | null> => ipcRenderer.invoke('comate:updater-check'),
+    download: (): Promise<void> => ipcRenderer.invoke('comate:updater-download'),
     relaunch: (): Promise<void> => ipcRenderer.invoke('comate:updater-relaunch'),
+    // Same wrapper pattern as notifications.onAction: raw ipcRenderer never
+    // crosses the contextBridge; returns an unsubscribe function.
+    onDownloadEvent: (handler: (event: unknown) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+        handler(payload);
+      };
+      ipcRenderer.on('comate:updater-download-event', listener);
+      return () => {
+        ipcRenderer.removeListener('comate:updater-download-event', listener);
+      };
+    },
   },
 };
 

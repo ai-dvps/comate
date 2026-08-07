@@ -122,11 +122,13 @@ const config: Configuration = {
     output: 'release',
   },
   // The bundled shell (dist-electron/main.cjs) requires only `electron` and
-  // node builtins — every server dependency runs inside the self-contained
-  // sidecar binary. Excluding node_modules keeps ~700 MB of server prod deps
-  // (better-sqlite3, playwright, …) out of the asar. If a future shell module
-  // needs a runtime dep (e.g. electron-updater in U5), whitelist it back with
-  // a later `node_modules/<pkg>/**` pattern.
+  // node builtins: electron-vite externalizes package.json `dependencies` but
+  // BUNDLES devDependencies — electron-updater (U5) ships inside main.cjs this
+  // way (verified: "app-update.yml" strings present, no bare
+  // require("electron-updater")). Excluding node_modules keeps ~700 MB of
+  // server prod deps (better-sqlite3, playwright, …) out of the asar. A future
+  // shell runtime dep listed under `dependencies` must be whitelisted back
+  // with a `node_modules/<pkg>/**` pattern (or moved to devDependencies).
   files: ['dist-electron/**', 'dist/client/**', 'package.json', '!node_modules/**'],
   // asar stays on for the shell code; the sidecar binary and all big
   // resources live in extraResources below — NEVER inside the asar.

@@ -22,12 +22,20 @@ export type DownloadEvent =
   | { event: 'Progress'; data: { chunkLength: number } }
   | { event: 'Finished' };
 
-/** Mirrors the old plugin-updater Update handle. */
-export interface DesktopUpdate {
+/**
+ * Plain-data update info as returned over IPC by the shell's
+ * `comate:updater-check` handler (a DesktopUpdate handle cannot cross IPC —
+ * the `downloadAndInstall` closure is reconstructed client-side below).
+ */
+export interface DesktopUpdateInfo {
   currentVersion: string;
   version: string;
   body?: string;
   date?: string;
+}
+
+/** Mirrors the old plugin-updater Update handle. */
+export interface DesktopUpdate extends DesktopUpdateInfo {
   downloadAndInstall(onEvent?: (event: DownloadEvent) => void): Promise<void>;
 }
 
@@ -56,8 +64,11 @@ export interface ComateBridge {
     onAction?: (handler: () => void) => Promise<unknown>;
   };
   updater?: {
-    check?: () => Promise<DesktopUpdate | null>;
+    check?: () => Promise<DesktopUpdateInfo | null>;
+    download?: () => Promise<void>;
     relaunch?: () => Promise<void>;
+    /** Subscribes to shell-pushed download events; returns an unsubscribe. */
+    onDownloadEvent?: (handler: (event: DownloadEvent) => void) => () => void;
   };
 }
 
@@ -241,14 +252,33 @@ export async function onNotificationAction(handler: () => void): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Updater (U5 wires electron-updater onto this surface; until then every
-// call degrades to "no update available" / null, matching the browser path)
+// Updater (U5: the shell resolves plain update info over IPC; the
+// plugin-updater-style DesktopUpdate handle is reconstructed here so
+// updater-api.ts and its consumers stay unchanged)
 // ---------------------------------------------------------------------------
 
 export async function checkForUpdate(): Promise<DesktopUpdate | null> {
   const bridge = getBridge();
   if (!bridge?.updater?.check) return null;
-  return bridge.updater.check();
+  const info = await bridge.updater.check();
+  if (!info) return null;
+  return {
+    currentVersion: info.currentVersion,
+    version: info.version,
+    body: info.body,
+    date: info.date,
+    downloadAndInstall: async (onEvent) => {
+      const updater = bridge.updater;
+      if (!updater?.download) throw unsupported('updater.download');
+      const unsubscribe =
+        onEvent && updater.onDownloadEvent ? updater.onDownloadEvent(onEvent) : undefined;
+      try {
+        await updater.download();
+      } finally {
+        unsubscribe?.();
+      }
+    },
+  };
 }
 
 /** Arms the shell's update grace period; no-op when not exposed yet. */

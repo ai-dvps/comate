@@ -34,6 +34,12 @@ import {
 } from './sidecar';
 import { createTray, runTrayStatusPoller, type TrayHandle, type TrayStatusPoller } from './tray';
 import { installAppMenu } from './menu';
+import { autoUpdater } from 'electron-updater';
+import {
+  createUpdaterController,
+  type UpdaterAdapter,
+  type UpdaterController,
+} from './updater';
 
 // ---------------------------------------------------------------------------
 // Early, pre-ready setup (order matters: these must run before 'ready')
@@ -82,6 +88,75 @@ let isQuitting = false;
 let isShuttingDown = false;
 let isUpdating = false;
 let pendingQuitReason: ShutdownReason = 'exit-requested';
+let updaterController: UpdaterController | null = null;
+
+// ---------------------------------------------------------------------------
+// Updater (U5: electron-updater behind the pure state machine in updater.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Real adapter over electron-updater. Channel selection is build-time: the
+ * enterprise flavor bakes `channel: latest-enterprise` into app-update.yml
+ * (electron-builder.config.ts publish.channel), and autoUpdater reads it from
+ * there — the two flavors can never cross-wire (KTD-13). In dev,
+ * forceDevUpdateConfig makes autoUpdater read dev-app-update.yml from the app
+ * root instead (gitignored; copy the github provider block to test locally).
+ */
+function createElectronUpdaterAdapter(): UpdaterAdapter {
+  autoUpdater.autoDownload = false; // manual-download UX parity (plan U5)
+  // autoInstallOnAppQuit stays true (default): an implicit quit carrying a
+  // downloaded update installs it — performShutdown arms the update grace.
+  // Dev feed: only when the developer dropped a dev-app-update.yml into the
+  // app root (gitignored) — otherwise check stays a quiet "no update".
+  if (!app.isPackaged) {
+    autoUpdater.forceDevUpdateConfig = existsSync(join(app.getAppPath(), 'dev-app-update.yml'));
+  }
+  autoUpdater.logger = logger;
+  return {
+    async checkForUpdates() {
+      const result = await autoUpdater.checkForUpdates();
+      if (!result) return null; // dev without dev-app-update.yml, or unsupported
+      const { updateInfo } = result;
+      const notes = updateInfo.releaseNotes;
+      return {
+        version: updateInfo.version,
+        body:
+          typeof notes === 'string'
+            ? notes
+            : Array.isArray(notes)
+              ? notes
+                  .map((n) => n.note)
+                  .filter((n): n is string => typeof n === 'string')
+                  .join('\n\n')
+              : undefined,
+        date: updateInfo.releaseDate,
+      };
+    },
+    downloadUpdate: () => autoUpdater.downloadUpdate().then(() => undefined),
+    quitAndInstall: () => autoUpdater.quitAndInstall(),
+    onDownloadProgress: (handler) => {
+      autoUpdater.on('download-progress', (progress) => {
+        handler({ transferred: progress.transferred, total: progress.total });
+      });
+    },
+  };
+}
+
+function setupUpdater(): void {
+  updaterController = createUpdaterController({
+    adapter: createElectronUpdaterAdapter(),
+    currentVersion: app.getVersion(),
+    logger,
+    onDownloadEvent: (event) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('comate:updater-download-event', event);
+      }
+    },
+    armUpdateGrace: () => {
+      isUpdating = true;
+    },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Window
@@ -281,13 +356,13 @@ function registerIpcHandlers(): void {
     notification.show();
   });
 
-  // TODO(U5): electron-updater. Until it is wired, check is a benign
-  // "no update available" so the client's periodic checks stay quiet, and
-  // relaunch fails loudly (it is unreachable while check returns null).
-  ipcMain.handle('comate:updater-check', () => null);
-  ipcMain.handle('comate:updater-relaunch', () => {
-    throw new Error('Updater not available yet (U5: electron-updater not wired)');
-  });
+  // U5: electron-updater via the updater.ts state machine. check discovers
+  // (autoDownload=false keeps the manual-download UX), download streams
+  // progress over 'comate:updater-download-event', relaunch arms the update
+  // grace then quitAndInstall. setupUpdater() runs before this registration.
+  ipcMain.handle('comate:updater-check', () => updaterController?.check() ?? null);
+  ipcMain.handle('comate:updater-download', () => updaterController?.download());
+  ipcMain.handle('comate:updater-relaunch', () => updaterController?.relaunch());
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +481,16 @@ async function performShutdown(): Promise<void> {
   if (isShuttingDown) return;
   isShuttingDown = true;
   trayPoller?.stop();
+  // U5: ANY quit carrying a downloaded update (electron-updater's implicit
+  // autoInstallOnAppQuit on tray-quit / Cmd+Q, not just the explicit relaunch
+  // path) takes the 5s update grace so sidecar cleanup doesn't race the
+  // installer relaunch (lib.rs is_updating parity).
+  if (updaterController?.hasDownloadedUpdate()) {
+    if (!isUpdating) {
+      logger.info('Downloaded update pending on implicit quit — arming update grace');
+    }
+    isUpdating = true;
+  }
   const graceMs = selectShutdownGraceMs(pendingQuitReason, isUpdating);
   logger.info(`Shutting down sidecar (reason=${pendingQuitReason}, grace=${graceMs}ms)`);
   if (sidecar) {
@@ -458,6 +543,7 @@ if (!gotSingleInstanceLock) {
     logger.info(`Comate shell starting (data dir: ${legacyDataDir})`);
     installAppMenu();
     registerUiProtocol();
+    setupUpdater();
     registerIpcHandlers();
     mainWindow = createMainWindow();
     setupTray();
