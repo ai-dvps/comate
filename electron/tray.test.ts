@@ -4,9 +4,11 @@ import http from 'node:http';
 import {
   botStatusLabel,
   buildTrayMenuModel,
+  createTray,
   fetchTrayStatus,
   resolveWindowCloseAction,
   runTrayStatusPoller,
+  type TrayStatus,
 } from './tray';
 
 /** Tray status logic mirrors lib.rs:234-326 (labels, Bearer auth, 5s poll loop). */
@@ -116,5 +118,109 @@ describe('runTrayStatusPoller', () => {  it('polls while running, skips when por
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.strictEqual(fetchCalls, callsAtStop, 'poller must stop once shutdown begins');
     poller.stop();
+  });
+
+  it('skips ticks while the previous fetch is still in flight', async () => {
+    let fetchCalls = 0;
+    const resolvers: Array<() => void> = [];
+    const pending = () =>
+      new Promise<Response>((resolve) => {
+        fetchCalls += 1;
+        resolvers.push(() =>
+          resolve({
+            ok: true,
+            json: async () => ({ wecomBot: 'connected', activeSessions: 1 }),
+          } as Response),
+        );
+      });
+    const poller = runTrayStatusPoller({
+      getPort: () => 1234,
+      getToken: () => 'tok',
+      isShuttingDown: () => false,
+      intervalMs: 30,
+      fetchImpl: pending as unknown as typeof fetch,
+      onStatus: () => {},
+      logger: { debug: () => {}, info: () => {}, error: () => {} },
+    });
+
+    try {
+      // The fetch never settles: every tick after the first must be skipped.
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      assert.strictEqual(fetchCalls, 1, 'overlapping ticks must not stack fetches');
+
+      // Once the fetch settles, polling resumes.
+      resolvers[0]!();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.ok(fetchCalls >= 2, 'poller should resume after the in-flight fetch settles');
+    } finally {
+      poller.stop();
+      for (const release of resolvers) release();
+    }
+  });
+});
+
+describe('createTray', () => {
+  function createTrayFakes() {
+    const builtTemplates: unknown[][] = [];
+    let appliedMenus = 0;
+    class FakeTray {
+      setContextMenu(): void {
+        appliedMenus += 1;
+      }
+      setToolTip(): void {}
+      destroy(): void {}
+    }
+    class FakeMenu {
+      static buildFromTemplate(template: unknown[]): unknown {
+        builtTemplates.push(template);
+        return { template };
+      }
+    }
+    return { builtTemplates, built: () => builtTemplates.length, applied: () => appliedMenus, FakeTray, FakeMenu };
+  }
+
+  function buildTray(fakes: ReturnType<typeof createTrayFakes>) {
+    const clicks = { open: 0, quit: 0 };
+    const tray = createTray({
+      TrayClass: fakes.FakeTray as never,
+      MenuClass: fakes.FakeMenu as never,
+      icon: {} as never,
+      onOpen: () => { clicks.open += 1; },
+      onQuit: () => { clicks.quit += 1; },
+      logger: { info: () => {}, error: () => {} },
+    });
+    return { tray, clicks };
+  }
+
+  it('rebuilds the menu only when the status actually changes', () => {
+    const fakes = createTrayFakes();
+    const { tray } = buildTray(fakes);
+    assert.strictEqual(fakes.built(), 1, 'initial placeholder menu');
+
+    const status: TrayStatus = { wecomBot: 'connected', activeSessions: 1 };
+    tray.updateStatus(status);
+    assert.strictEqual(fakes.built(), 2, 'first real status rebuilds');
+
+    tray.updateStatus({ ...status });
+    tray.updateStatus({ wecomBot: 'connected', activeSessions: 1 });
+    assert.strictEqual(fakes.built(), 2, 'deep-equal statuses skip the rebuild');
+
+    tray.updateStatus({ wecomBot: 'connected', activeSessions: 2 });
+    assert.strictEqual(fakes.built(), 3, 'a changed status rebuilds');
+
+    tray.updateStatus(null);
+    assert.strictEqual(fakes.built(), 4, 'dropping back to placeholders rebuilds');
+  });
+
+  it('wires clicks through the open/quit handler lookup', () => {
+    const fakes = createTrayFakes();
+    const { clicks } = buildTray(fakes);
+    const template = fakes.builtTemplates[0] as Array<{ id?: string; click?: () => void }>;
+    const byId = new Map(template.map((item) => [item.id, item.click]));
+    byId.get('open')!();
+    byId.get('quit')!();
+    assert.strictEqual(clicks.open, 1);
+    assert.strictEqual(clicks.quit, 1);
+    assert.strictEqual(byId.get('bot_status'), undefined, 'status items stay click-less');
   });
 });

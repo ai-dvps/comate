@@ -37,17 +37,12 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
+import { allocateLoopbackPort, createGateHarness } from './lib/gate-harness.js';
 
-const required =
-  process.env.COMATE_REQUIRE_ELECTRON_CDP === '1' || process.argv.includes('--required');
-
-function unavailable(reason: string): never {
-  if (required) {
-    throw new Error(`Electron shell CDP gate required but unavailable: ${reason}`);
-  }
-  console.log(`SKIP electron shell CDP gate: ${reason}`);
-  process.exit(0);
-}
+const { unavailable, check, assert, results } = createGateHarness({
+  gateName: 'electron shell CDP gate',
+  requiredEnvVar: 'COMATE_REQUIRE_ELECTRON_CDP',
+});
 
 const execFileAsync = promisify(execFile);
 
@@ -76,24 +71,14 @@ try {
   unavailable('playwright is not installed');
 }
 
-async function allocatePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('port allocation failed');
-  const { port } = address;
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  return port;
-}
-
 const dataDir = mkdtempSync(path.join(tmpdir(), 'comate-electron-gate-'));
 // U8: pre-seed an orphan partition dir (a "previous boot" leftover) so the
 // reconciliation check can watch it being swept.
 const orphanPartitionDir = path.join(dataDir, 'shell', 'Partitions', 'comate-browser-orphan-e2e');
 mkdirSync(orphanPartitionDir, { recursive: true });
 writeFileSync(path.join(orphanPartitionDir, 'leftover'), 'x');
-const controlPort = await allocatePort();
-const debugPort = await allocatePort();
+const controlPort = await allocateLoopbackPort();
+const debugPort = await allocateLoopbackPort();
 const token = randomBytes(24).toString('base64url');
 
 // Dev shells sometimes export ELECTRON_RUN_AS_NODE=1 (editor/CLI tooling);
@@ -120,22 +105,6 @@ const electronApp = await playwright._electron
       `Electron failed to launch in this environment (no GUI / sandbox?): ${err.message}`,
     );
   });
-
-const results: Array<{ name: string; ok: boolean; detail?: string }> = [];
-async function check(name: string, fn: () => Promise<void>): Promise<void> {
-  try {
-    await fn();
-    results.push({ name, ok: true });
-    console.log(`  ok  ${name}`);
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    results.push({ name, ok: false, detail });
-    console.error(`FAIL  ${name}: ${detail}`);
-  }
-}
-function assert(cond: unknown, message: string): asserts cond {
-  if (!cond) throw new Error(message);
-}
 
 async function controlFetch(pathname: string, init?: RequestInit): Promise<Response> {
   return fetch(`http://127.0.0.1:${controlPort}${pathname}`, {

@@ -34,15 +34,42 @@ vi.mock('../../../lib/websocket-client.js', () => ({
   DEFAULT_TIMEOUT: 30000,
 }))
 
-vi.mock('../../../lib/browser-view-bridge', () => ({
-  isNativeBrowserView: bridgeMock.isNativeBrowserView,
-  reportBrowserViewRect: bridgeMock.reportBrowserViewRect,
-  setBrowserViewInputMode: bridgeMock.setBrowserViewInputMode,
-  onBrowserViewEscape: vi.fn(() => () => {}),
-  // The pane store subscribes at module scope; the occlusion watcher is not
-  // under test here.
-  onBrowserViewOcclusionChange: vi.fn(() => () => {}),
-}))
+vi.mock('../../../lib/browser-view-bridge', async () => {
+  const { useEffect } = await import('react')
+  // Faithful stand-in for the shared hook: an immediate report while active,
+  // null on cleanup (rAF/ResizeObserver re-reports are not under test here).
+  function useMockRectReport(
+    ref: { current: HTMLElement | null },
+    sessionId: string | null,
+    active: boolean,
+  ): void {
+    useEffect(() => {
+      if (!active || !sessionId) return
+      const el = ref.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      bridgeMock.reportBrowserViewRect(
+        sessionId,
+        rect.width > 0 && rect.height > 0
+          ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+          : null,
+      )
+      return () => {
+        bridgeMock.reportBrowserViewRect(sessionId, null)
+      }
+    }, [ref, sessionId, active])
+  }
+  return {
+    isNativeBrowserView: bridgeMock.isNativeBrowserView,
+    reportBrowserViewRect: bridgeMock.reportBrowserViewRect,
+    setBrowserViewInputMode: bridgeMock.setBrowserViewInputMode,
+    useBrowserViewRectReport: useMockRectReport,
+    onBrowserViewEscape: vi.fn(() => () => {}),
+    // The pane store subscribes at module scope; the occlusion watcher is not
+    // under test here.
+    onBrowserViewOcclusionChange: vi.fn(() => () => {}),
+  }
+})
 
 import BrowserPane from '../BrowserPane'
 import {

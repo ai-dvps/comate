@@ -59,9 +59,8 @@ export type BrowserViewInputMode = 'user' | 'agent';
 export interface ComateBridge {
   getApiInfo: () => Promise<ComateApiInfo>;
   showWindow?: () => Promise<void>;
-  startDragging?: () => Promise<void>;
   updateBadgeState?: (count: number) => Promise<void>;
-  revealInFileManager?: (path: string, itemType: 'file' | 'folder') => Promise<void>;
+  revealInFileManager?: (path: string) => Promise<void>;
   openUrl?: (url: string) => Promise<void>;
   prepareUpdaterRelaunch?: () => Promise<void>;
   getVersion?: () => Promise<string>;
@@ -209,15 +208,6 @@ export async function showWindow(): Promise<void> {
   await getBridge()?.showWindow?.();
 }
 
-/**
- * Custom titlebar dragging. Electron drags via CSS `-webkit-app-region: drag`
- * (shell-side); the optional bridge hook exists for parity with the old
- * startDragging call and is a no-op when not exposed.
- */
-export async function startWindowDrag(): Promise<void> {
-  await getBridge()?.startDragging?.();
-}
-
 // ---------------------------------------------------------------------------
 // Shell capabilities
 // ---------------------------------------------------------------------------
@@ -228,13 +218,10 @@ export async function updateBadgeState(count: number): Promise<void> {
 }
 
 /** Reveal a file or folder in the OS file manager. Rejects without the bridge. */
-export async function revealInFileManager(
-  path: string,
-  itemType: 'file' | 'folder',
-): Promise<void> {
+export async function revealInFileManager(path: string): Promise<void> {
   const bridge = getBridge();
   if (!bridge?.revealInFileManager) throw unsupported('revealInFileManager');
-  await bridge.revealInFileManager(path, itemType);
+  await bridge.revealInFileManager(path);
 }
 
 /**

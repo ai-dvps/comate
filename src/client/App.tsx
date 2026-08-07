@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { showWindow, startWindowDrag } from './lib/desktop-api'
+import { showWindow } from './lib/desktop-api'
 import { AlertCircle, X } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 import { useSidebarWidth } from './hooks/use-sidebar-width'
@@ -188,11 +188,6 @@ function App() {
     toggleCollapse: toggleRightPanelCollapse,
   } = useRightPanelWidth()
 
-  const handleDrag = (e: React.MouseEvent) => {
-    if (!isMac || e.button !== 0) return
-    startWindowDrag().catch(() => {})
-  }
-
   if (claudeCheck.checking) {
     return (
       <div className="h-screen flex items-center justify-center bg-work text-text-primary">
@@ -244,7 +239,7 @@ function App() {
         {/* Top Bar */}
         <header className="flex items-center h-11 flex-shrink-0 relative z-30 bg-chrome shadow-[0_1px_2px_0_rgba(0,0,0,0.06)]">
         <div className={`flex items-center gap-3 pr-4 ${isMac ? 'pl-20' : 'pl-4'} min-w-0`}>
-          <div data-tauri-drag-region className="w-4 self-stretch select-none flex-shrink-0" onMouseDown={handleDrag} />
+          <div data-tauri-drag-region className="w-4 self-stretch select-none flex-shrink-0" />
           <div className="flex-shrink-0">
             <WorkspaceSwitcher
               open={isWorkspaceSwitcherOpen}
@@ -255,7 +250,7 @@ function App() {
             <WorkspaceTabs />
           </div>
         </div>
-        <div data-tauri-drag-region className="flex-1 self-stretch select-none" onMouseDown={handleDrag} />
+        <div data-tauri-drag-region className="flex-1 self-stretch select-none" />
         <div className="flex items-center flex-shrink-0 pl-4 pr-4">
           <HeaderToolbar
             popupOpen={activePanel !== null || showCreateModal}

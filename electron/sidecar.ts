@@ -16,6 +16,7 @@
 
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { join } from 'node:path';
+import { resolveHostTriple } from '../scripts/lib/host-config.js';
 
 // ---------------------------------------------------------------------------
 // Pure logic
@@ -97,20 +98,6 @@ export function buildSidecarEnv(opts: {
   };
 }
 
-/** Mirror of `getHostTriple()` in scripts/build-sidecar.ts. */
-export function resolveSidecarTriple(platform: NodeJS.Platform, arch: string): string {
-  if (platform === 'darwin') {
-    return arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin';
-  }
-  if (platform === 'win32') {
-    return 'x86_64-pc-windows-msvc';
-  }
-  if (platform === 'linux') {
-    return arch === 'arm64' ? 'aarch64-unknown-linux-gnu' : 'x86_64-unknown-linux-gnu';
-  }
-  throw new Error(`Unsupported platform: ${platform}-${arch}`);
-}
-
 export interface SidecarPathEnv {
   isPackaged: boolean;
   /** `process.resourcesPath` (packaged) — unused in dev. */
@@ -128,12 +115,11 @@ export interface SidecarPathEnv {
  * extraResources (U3; binaries must stay out of the asar).
  */
 export function resolveSidecarBinaryPath(env: SidecarPathEnv): string {
+  const ext = env.platform === 'win32' ? '.exe' : '';
   if (env.isPackaged) {
-    const ext = env.platform === 'win32' ? '.exe' : '';
     return join(env.resourcesPath, `sidecar-node${ext}`);
   }
-  const triple = resolveSidecarTriple(env.platform, env.arch);
-  const ext = env.platform === 'win32' ? '.exe' : '';
+  const triple = resolveHostTriple(env.platform, env.arch);
   return join(env.repoRoot, 'build', 'sidecar', `sidecar-node-${triple}${ext}`);
 }
 
@@ -179,6 +165,23 @@ export interface SpawnSidecarOptions {
 export interface SidecarHandle {
   readonly child: ChildProcess | null;
   readonly ready: Promise<SidecarReadyMessage>;
+}
+
+/** Incremental chunk accumulator that yields complete '\n'-terminated lines. */
+class LineBuffer {
+  private buffer = '';
+
+  feed(chunk: Buffer): string[] {
+    this.buffer += chunk.toString('utf8');
+    const lines: string[] = [];
+    let newlineIndex = this.buffer.indexOf('\n');
+    while (newlineIndex !== -1) {
+      lines.push(this.buffer.slice(0, newlineIndex));
+      this.buffer = this.buffer.slice(newlineIndex + 1);
+      newlineIndex = this.buffer.indexOf('\n');
+    }
+    return lines;
+  }
 }
 
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
@@ -229,15 +232,9 @@ export function spawnSidecar(options: SpawnSidecarOptions): SidecarHandle {
     // Never let the handshake timer keep the process alive on its own.
     timeout.unref?.();
 
-    let stdoutBuffer = '';
+    const stdoutLines = new LineBuffer();
     child.stdout?.on('data', (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString('utf8');
-      let newlineIndex = stdoutBuffer.indexOf('\n');
-      while (newlineIndex !== -1) {
-        const line = stdoutBuffer.slice(0, newlineIndex);
-        stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
-        newlineIndex = stdoutBuffer.indexOf('\n');
-
+      for (const line of stdoutLines.feed(chunk)) {
         const readyMsg = parseSidecarReadyLine(line);
         if (readyMsg) {
           // The ready line carries the desktop GUI credential — never log it.
@@ -252,15 +249,11 @@ export function spawnSidecar(options: SpawnSidecarOptions): SidecarHandle {
       }
     });
 
-    let stderrBuffer = '';
+    const stderrLines = new LineBuffer();
     child.stderr?.on('data', (chunk: Buffer) => {
-      stderrBuffer += chunk.toString('utf8');
-      let newlineIndex = stderrBuffer.indexOf('\n');
-      while (newlineIndex !== -1) {
-        const line = stderrBuffer.slice(0, newlineIndex).trim();
-        stderrBuffer = stderrBuffer.slice(newlineIndex + 1);
-        newlineIndex = stderrBuffer.indexOf('\n');
-        if (line.length > 0) logger.error(`Sidecar stderr: ${line}`);
+      for (const line of stderrLines.feed(chunk)) {
+        const trimmed = line.trim();
+        if (trimmed.length > 0) logger.error(`Sidecar stderr: ${trimmed}`);
       }
     });
 

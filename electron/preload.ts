@@ -59,8 +59,8 @@ const api = {
     ipcRenderer.invoke('comate:update-badge-state', count),
 
   /** Reveal a file or folder in the OS file manager. */
-  revealInFileManager: (path: string, itemType: 'file' | 'folder'): Promise<void> =>
-    ipcRenderer.invoke('comate:reveal-in-file-manager', path, itemType),
+  revealInFileManager: (path: string): Promise<void> =>
+    ipcRenderer.invoke('comate:reveal-in-file-manager', path),
 
   /** Open an http/https URL in the system browser (validated main-side). */
   openUrl: (url: string): Promise<void> => ipcRenderer.invoke('comate:open-url', url),

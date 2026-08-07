@@ -144,6 +144,12 @@ const DEFAULT_ACTIVITY_THROTTLE_MS = 15_000;
 const PARTITION_DIR_PREFIX = 'comate-browser-';
 /** The agent-mode shield paints nothing — it only eats pointer events. */
 const SHIELD_BACKGROUND = '#00000000';
+/**
+ * Bounds for unattached views: a zero-area view cannot produce screenshots
+ * (no compositor surface) and several CDP layout paths misbehave; the panel
+ * rect replaces this on attach.
+ */
+const DEFAULT_VIEW_RECT: ViewRect = { x: 0, y: 0, width: 1280, height: 800 };
 
 interface PopupRecord {
   view: ElectronViewLike;
@@ -283,7 +289,7 @@ export function createBrowserViewManager(deps: BrowserViewManagerDeps): BrowserV
     }) as never);
     host.contentView.addChildView(popupView);
     popup.attachedHost = host;
-    popupView.setBounds(record.bounds ?? desiredRects.get(sessionId) ?? { x: 0, y: 0, width: 1280, height: 800 });
+    popupView.setBounds(record.bounds ?? desiredRects.get(sessionId) ?? DEFAULT_VIEW_RECT);
     popupView.setVisible(record.visible);
     if (record.shieldVisible) raiseShield(record);
     void popupView.webContents.loadURL(url).catch(() => {
@@ -395,12 +401,11 @@ export function createBrowserViewManager(deps: BrowserViewManagerDeps): BrowserV
         lastActivityAt: 0,
         lastUrl: null,
       };
-      // Unattached but sized: a zero-area view cannot produce screenshots
-      // (no compositor surface) and several CDP layout paths misbehave; the
-      // panel rect replaces this on attach.
-      view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
+      // Unattached but sized (DEFAULT_VIEW_RECT); the panel rect replaces
+      // this on attach.
+      view.setBounds(DEFAULT_VIEW_RECT);
       view.setVisible(false);
-      shield.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
+      shield.setBounds(DEFAULT_VIEW_RECT);
       shield.setVisible(false);
       // Shield clicks never reach a page; they still count as activity
       // (parity with the iframe stack's read-only shield pointerdown ping).

@@ -61,6 +61,7 @@ export async function fetchTrayStatus(
 ): Promise<TrayStatus> {
   const response = await fetchImpl(`http://127.0.0.1:${port}/api/system/tray-status`, {
     headers: { authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(2_000),
   });
   if (!response.ok) {
     throw new Error(`tray-status request failed: HTTP ${response.status}`);
@@ -91,6 +92,7 @@ export interface TrayStatusPoller {
 export function runTrayStatusPoller(options: TrayStatusPollerOptions): TrayStatusPoller {
   const intervalMs = options.intervalMs ?? 5000;
   let stopped = false;
+  let inFlight = false;
 
   const tick = async (): Promise<void> => {
     if (stopped || options.isShuttingDown()) {
@@ -98,9 +100,13 @@ export function runTrayStatusPoller(options: TrayStatusPollerOptions): TrayStatu
       clearInterval(timer);
       return;
     }
+    // Skip ticks while the previous fetch hasn't settled (a hung poll delivers
+    // nothing either way; this keeps slow polls from stacking up).
+    if (inFlight) return;
     const port = options.getPort();
     const token = options.getToken();
     if (port == null || token == null) return;
+    inFlight = true;
     try {
       const status = await fetchTrayStatus(port, token, options.fetchImpl ?? fetch);
       if (!stopped && !options.isShuttingDown()) options.onStatus(status);
@@ -108,6 +114,8 @@ export function runTrayStatusPoller(options: TrayStatusPollerOptions): TrayStatu
       options.logger.debug?.(
         `Tray status fetch failed: ${err instanceof Error ? err.message : String(err)}`,
       );
+    } finally {
+      inFlight = false;
     }
   };
 
@@ -169,6 +177,11 @@ export function createTray(options: CreateTrayOptions): TrayHandle {
   const { TrayClass, MenuClass } = options;
   const tray = new TrayClass(options.icon);
 
+  const clickHandlers: Partial<Record<TrayMenuItemModel['id'], () => void>> = {
+    open: options.onOpen,
+    quit: options.onQuit,
+  };
+
   const templateFor = (status: TrayStatus | null): MenuItemConstructorOptions[] =>
     buildTrayMenuModel(status).map((item) => {
       if (item.id === 'separator') return { type: 'separator' as const };
@@ -176,11 +189,17 @@ export function createTray(options: CreateTrayOptions): TrayHandle {
         id: item.id,
         label: item.label,
         enabled: item.enabled,
-        click: item.id === 'open' ? options.onOpen : item.id === 'quit' ? options.onQuit : undefined,
+        click: clickHandlers[item.id],
       };
     });
 
+  // The 5s poller feeds updateStatus for the app's lifetime, but the labels
+  // rarely change — skip the Menu rebuild when the status is unchanged.
+  let lastAppliedStatus: TrayStatus | null | undefined;
+
   const applyMenu = (status: TrayStatus | null): void => {
+    if (lastAppliedStatus !== undefined && sameTrayStatus(lastAppliedStatus, status)) return;
+    lastAppliedStatus = status;
     tray.setContextMenu(MenuClass.buildFromTemplate(templateFor(status)));
   };
 
@@ -191,4 +210,9 @@ export function createTray(options: CreateTrayOptions): TrayHandle {
     updateStatus: (status) => applyMenu(status),
     destroy: () => tray.destroy(),
   };
+}
+
+function sameTrayStatus(a: TrayStatus | null, b: TrayStatus | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.wecomBot === b.wecomBot && a.activeSessions === b.activeSessions;
 }

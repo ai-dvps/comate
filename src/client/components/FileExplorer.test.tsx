@@ -187,7 +187,7 @@ describe('FileExplorer', () => {
     fireEvent.click(screen.getByText('Reveal in Finder'))
 
     await waitFor(() => {
-      expect(revealInFileManager).toHaveBeenCalledWith('/project/README.md', 'file')
+      expect(revealInFileManager).toHaveBeenCalledWith('/project/README.md')
     })
   })
 

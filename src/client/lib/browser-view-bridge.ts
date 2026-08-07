@@ -25,6 +25,8 @@
  * non-shell environment.
  */
 
+import { useEffect, type RefObject } from 'react'
+
 import { getDesktopBridge, type BrowserViewRect, type BrowserViewInputMode } from './desktop-api'
 
 export type { BrowserViewRect, BrowserViewInputMode }
@@ -91,6 +93,67 @@ export function setBrowserViewOcclusionExemption(sessionId: string | null): void
 }
 
 // ---------------------------------------------------------------------------
+// Rect-report hook (shared by NativeBrowserView and the usage-login modal)
+// ---------------------------------------------------------------------------
+
+export interface BrowserViewRectReportOptions {
+  /** Input mode to set while reporting (the usage-login modal is user-driven). */
+  inputMode?: BrowserViewInputMode
+  /** U9: exempt this session from modal occlusion while reporting; cleared on cleanup. */
+  occlusionExempt?: boolean
+}
+
+/**
+ * Report `ref`'s window-relative rect for a session's view while `active`:
+ * an initial report, then rAF-throttled re-reports on ResizeObserver and
+ * window resize. Cleanup cancels a pending rAF and hides the view (null
+ * report). An inactive hook reports nothing at all — no rect is hidden
+ * shell-side by default.
+ */
+export function useBrowserViewRectReport(
+  ref: RefObject<HTMLElement | null>,
+  sessionId: string | null,
+  active: boolean,
+  { inputMode, occlusionExempt }: BrowserViewRectReportOptions = {},
+): void {
+  useEffect(() => {
+    if (!active || !sessionId) return
+    if (occlusionExempt) setBrowserViewOcclusionExemption(sessionId)
+    if (inputMode) setBrowserViewInputMode(sessionId, inputMode)
+    const el = ref.current
+    if (!el) return
+    let raf = 0
+    const report = () => {
+      raf = 0
+      const rect = el.getBoundingClientRect()
+      reportBrowserViewRect(
+        sessionId,
+        rect.width > 0 && rect.height > 0
+          ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+          : null,
+      )
+    }
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(report)
+    }
+    report()
+    let observer: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(schedule)
+      observer.observe(el)
+    }
+    window.addEventListener('resize', schedule)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', schedule)
+      if (raf) cancelAnimationFrame(raf)
+      reportBrowserViewRect(sessionId, null)
+      if (occlusionExempt) setBrowserViewOcclusionExemption(null)
+    }
+  }, [ref, sessionId, active, inputMode, occlusionExempt])
+}
+
+// ---------------------------------------------------------------------------
 // Esc notifications (shell → renderer)
 // ---------------------------------------------------------------------------
 
@@ -144,13 +207,40 @@ export function onBrowserViewOcclusionChange(listener: (occluded: boolean) => vo
   }
 }
 
+/**
+ * True when a mutation could change which `[data-modal-overlay]` elements
+ * exist — the observer fires constantly during chat streaming, so the full
+ * querySelector recompute only runs for records that touch the marker.
+ */
+function mutationTouchesOverlay(record: MutationRecord): boolean {
+  if (record.type === 'attributes') {
+    // attributeFilter is the marker itself; any attribute record is relevant.
+    // Non-element targets fall back to the full recompute.
+    return record.target instanceof Element
+  }
+  if (record.type === 'childList') {
+    for (const node of [...record.addedNodes, ...record.removedNodes]) {
+      // Overlays mount with the marker present; text/comment nodes can never
+      // carry it and are skipped.
+      if (!(node instanceof Element)) continue
+      if (node.matches(MODAL_OVERLAY_SELECTOR) || node.querySelector(MODAL_OVERLAY_SELECTOR)) {
+        return true
+      }
+    }
+    return false
+  }
+  // Unknown record type: conservative full recompute.
+  return true
+}
+
 function startOcclusionWatcher(): void {
   if (occlusionWatcherStarted) return
   if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return
   if (!isNativeBrowserView()) return
   occlusionWatcherStarted = true
   let scheduled = false
-  const observer = new MutationObserver(() => {
+  const observer = new MutationObserver((records) => {
+    if (!records.some(mutationTouchesOverlay)) return
     // Coalesce the mutation burst a portal mount produces into one check.
     if (scheduled) return
     scheduled = true

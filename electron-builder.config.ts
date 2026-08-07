@@ -33,17 +33,13 @@
  * literal block below intact.
  */
 import type { Configuration } from 'electron-builder';
+import { parseBundleBackends } from './scripts/lib/host-config.js';
 
 // ---------------------------------------------------------------------------
-// Enterprise variant gate (mirrors scripts/build-sidecar.ts)
+// Enterprise variant gate (shared with scripts/build-sidecar.ts)
 // ---------------------------------------------------------------------------
 
-const bundleBackends = new Set(
-  (process.env.COMATE_BUNDLE_BACKENDS ?? 'claude,opencode')
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean),
-);
+const bundleBackends = parseBundleBackends(process.env.COMATE_BUNDLE_BACKENDS);
 const isEnterpriseVariant = !bundleBackends.has('claude');
 const variantSuffix = isEnterpriseVariant ? '-enterprise' : '';
 // Independent update channel per flavor (System-Wide Impact: 企业变体走独立更新通道).
