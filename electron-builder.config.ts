@@ -88,7 +88,7 @@ const winSigningEnabled = winAzureSignOptions !== null;
 // usable by end users: macOS requires signature AND notarization (unsigned or
 // un-notarized apps cannot auto-update / are Gatekeeper-blocked), Windows
 // requires Authenticode. Linux (AppImage/deb) has no signing requirement
-// (KTD-9 covers mac + Windows only) and is config-only until U10.
+// (KTD-9 covers mac + Windows only) and is always release-ready.
 const releaseReady =
   platform === 'darwin'
     ? macSigningEnabled && macNotarizeEnabled
@@ -194,11 +194,26 @@ const config: Configuration = {
     include: 'build/nsis-include.nsh',
   },
 
-  // Linux targets configured now (R3) but kept OUT of the CI matrix until U10.
+  // U10 (R3, KTD-5): AppImage is the primary Linux artifact (electron-updater
+  // auto-updates it via latest-linux.yml); deb is the secondary artifact —
+  // its updates need root/sudo (documented in development.md), so deb users
+  // update by reinstalling the new .deb.
   linux: {
     target: ['AppImage', 'deb'],
+    // Single 512x512 PNG; electron-builder derives the full icon size set.
     icon: 'build/icon.png',
     category: 'Utility',
+    // deb's control file requires a maintainer; package.json `author` is a
+    // bare org name with no email, which dpkg/lintian reject.
+    maintainer: 'ai-dvps <ai-dvps@users.noreply.github.com>',
+    // Desktop entry extras merged into the generated .desktop file
+    // ([Desktop Entry] overrides per electron-builder v26 LinuxDesktopFile).
+    desktop: {
+      entry: {
+        Comment: 'Your friendly AI workspace companion',
+        Keywords: 'ai;workspace;agent;',
+      },
+    },
   },
 };
 

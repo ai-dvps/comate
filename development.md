@@ -64,6 +64,15 @@ npm run release
 
 This bundles the sidecar server, runs the CDP gates (the native shell-CDP parity suite `test:shell-cdp:required` and the real-Electron shell-path gate `test:electron-cdp:required`), and packages the app with electron-builder. Output artifacts land in `release/`.
 
+### Linux artifacts (AppImage primary, deb secondary)
+
+Linux targets build only on a Linux host (electron-builder cannot cross-build them from macOS without Docker) — in practice the `ubuntu-22.04` CI leg produces them. Two artifacts ship per release:
+
+- **AppImage** — the primary, recommended install. It auto-updates through electron-updater (`latest-linux.yml`) exactly like the macOS/Windows lines.
+- **deb** — the secondary artifact for apt-based desktops. **deb updates need privileges:** electron-updater cannot swap files under `/opt` or `/usr` without root, so the in-app updater is supported on the AppImage only. deb users update by downloading the new `.deb` and reinstalling it (`sudo apt install ./Comate-<version>-linux-x86_64.deb`).
+
+Desktops without a status notifier host (minimal WMs) get no tray icon; the app degrades by quitting on window close instead of hiding to a nonexistent tray. The full Linux verification gate lives in `docs/runbooks/linux-smoke.md`.
+
 ## Embedded browser: CDP targets
 
 Inside the Electron shell the browser tools drive in-shell Chromium views: the main process opens a loopback-only random debug port and a per-boot-token control channel, and hands both to the sidecar via spawn env (`COMATE_SHELL_DEBUG_PORT` / `COMATE_SHELL_CONTROL_PORT` / `COMATE_SHELL_CONTROL_TOKEN`).
