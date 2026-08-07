@@ -118,8 +118,8 @@ router.delete('/sessions/:sessionId', async (req, res) => {
       res.status(404).json({ error: 'Session not found' });
       return;
     }
-    // Browser teardown path 1 (KTD-1): the per-session Steel process and the
-    // U4 gate state die with the chat session (the on-disk Chrome profile is
+    // Browser teardown path 1 (KTD-1): the per-session browser view and the
+    // U4 gate state die with the chat session (the on-disk shell partition is
     // wiped here — remembered login survives only via the workspace's
     // value-only-in browserSiteAuth store, U8).
     clearBrowserGateSession(sessionId);

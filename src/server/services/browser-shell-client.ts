@@ -5,8 +5,8 @@
  *
  * The channel is loopback HTTP gated by the per-boot token the shell passed
  * via spawn env; the event stream (SSE) carries the session_lost signals
- * (view-crashed / view-destroyed) that Steel's process exit used to provide
- * (KTD-14: detach → session_lost → one auto-reconnect on next use).
+ * (view-crashed / view-destroyed — KTD-14: detach → session_lost → one
+ * auto-reconnect on next use).
  */
 
 import http from 'node:http';
@@ -15,8 +15,16 @@ import {
   closeShellTarget,
   listCdpTargets,
 } from './browser-cdp.js';
-import type { SteelExitInfo } from './browser-steel-process.js';
 import { diagWarn } from '../utils/diag-logger.js';
+
+/**
+ * Exit/crash signal for a natively hosted session. Both fields are null for
+ * view-crash/detach notifications (no process exit exists on this stack).
+ */
+export interface BrowserExitInfo {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}
 
 export type ControlChannelErrorKind = 'unreachable' | 'http';
 
@@ -200,10 +208,10 @@ export class ShellControlClient {
 }
 
 // ---------------------------------------------------------------------------
-// ShellViewHandle — the registry handle for a natively hosted session.
-// Mirrors SteelProcessHandle's surface so browser-service can drive both
-// kinds through one code path (kind discriminates the differences: profile
-// locking, port accounting, wipe mechanics).
+// ShellViewHandle — the registry handle for a natively hosted session. This is
+// the only handle kind browser-service drives (U9 removed the child-process
+// stack); `kind` + optional fields discriminate shell views from external
+// targets (partition vs. throwaway browser context, wipe mechanics).
 // ---------------------------------------------------------------------------
 
 export interface ShellViewHandleOptions {
@@ -231,8 +239,8 @@ export class ShellViewHandle {
   private readonly partition?: string;
   private readonly client?: ShellControlClient;
   private readonly browserContextId?: string;
-  private readonly exitListeners = new Set<(info: SteelExitInfo) => void>();
-  private exitInfo: SteelExitInfo | null = null;
+  private readonly exitListeners = new Set<(info: BrowserExitInfo) => void>();
+  private exitInfo: BrowserExitInfo | null = null;
 
   constructor(options: ShellViewHandleOptions) {
     this.sessionId = options.sessionId;
@@ -284,7 +292,7 @@ export class ShellViewHandle {
     }
   }
 
-  onExit(listener: (info: SteelExitInfo) => void): () => void {
+  onExit(listener: (info: BrowserExitInfo) => void): () => void {
     if (this.exitInfo) {
       listener(this.exitInfo);
       return () => {};
@@ -298,9 +306,9 @@ export class ShellViewHandle {
   /**
    * Crash/detach signal into the registry (KTD-14): the SSE event stream
    * (shell mode) or a targetDestroyed watcher (external mode) turns into the
-   * same exit fan-out Steel's process death produced.
+   * exit fan-out that transitions the session to session_lost.
    */
-  notifyExit(info: SteelExitInfo): void {
+  notifyExit(info: BrowserExitInfo): void {
     if (this.exitInfo) return;
     this.exitInfo = info;
     for (const listener of [...this.exitListeners]) {

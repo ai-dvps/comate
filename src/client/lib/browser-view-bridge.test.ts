@@ -8,6 +8,7 @@ import {
   resetBrowserViewRectCache,
   setBrowserViewInputMode,
   setBrowserViewOccluded,
+  setBrowserViewOcclusionExemption,
   onBrowserViewEscape,
   onBrowserViewOcclusionChange,
 } from './browser-view-bridge'
@@ -15,10 +16,11 @@ import {
 type MutableWindow = Window & { comate?: Partial<ComateBridge> }
 
 const browserView = {
-  reportRect: vi.fn(() => Promise.resolve()),
-  setInputMode: vi.fn(() => Promise.resolve()),
-  setOccluded: vi.fn(() => Promise.resolve()),
-  onEscape: vi.fn((): (() => void) => () => {}),
+  reportRect: vi.fn<(sessionId: string, rect: unknown) => Promise<void>>(),
+  setInputMode: vi.fn<(sessionId: string, mode: string) => Promise<void>>(),
+  setOccluded: vi.fn<(occluded: boolean) => Promise<void>>(),
+  setOcclusionExemption: vi.fn<(sessionId: string | null) => Promise<void>>(),
+  onEscape: vi.fn<(handler: (sessionId: string) => void) => () => void>(),
 }
 
 function installBridge(): void {
@@ -88,6 +90,14 @@ describe('browser-view-bridge — input gating + escape', () => {
     installBridge()
     setBrowserViewInputMode('s1', 'user')
     expect(browserView.setInputMode).toHaveBeenCalledWith('s1', 'user')
+  })
+
+  it('forwards the modal occlusion exemption (U9)', () => {
+    installBridge()
+    setBrowserViewOcclusionExemption('s1')
+    expect(browserView.setOcclusionExemption).toHaveBeenCalledWith('s1')
+    setBrowserViewOcclusionExemption(null)
+    expect(browserView.setOcclusionExemption).toHaveBeenLastCalledWith(null)
   })
 
   it('fans shell escape notifications out to subscribers', () => {

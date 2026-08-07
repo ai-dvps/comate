@@ -82,7 +82,7 @@ export interface ControlViewManager {
   /** U8: stores the panel rect and applies bounds/attach to the live view. */
   setViewBounds(sessionId: string, rect: ViewRect | null): Promise<void>;
   /** U8 attestation snapshot; null when the session has no live view. */
-  getViewState(sessionId: string): unknown;
+  getViewState(sessionId: string): ControlViewState | null;
   /** U8 orphan-partition reconciliation (KTD-11). */
   reconcilePartitions(keep: string[]): Promise<{ removed: string[]; errors: string[] }>;
 }

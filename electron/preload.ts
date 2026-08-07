@@ -122,6 +122,8 @@ const api = {
       ipcRenderer.invoke('comate:browser-view-input-mode', sessionId, mode),
     setOccluded: (occluded: boolean): Promise<void> =>
       ipcRenderer.invoke('comate:browser-view-occluded', occluded),
+    setOcclusionExemption: (sessionId: string | null): Promise<void> =>
+      ipcRenderer.invoke('comate:browser-view-occlusion-exemption', sessionId),
     // Same wrapper pattern as notifications.onAction: raw ipcRenderer never
     // crosses the contextBridge; returns an unsubscribe function.
     onEscape: (handler: (sessionId: string) => void): (() => void) => {

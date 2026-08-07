@@ -1,33 +1,16 @@
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs';
+import { readdirSync, existsSync } from 'fs';
 import { join, relative } from 'path';
 
 /**
- * Build-time supply-chain gates over staged resource trees.
+ * Build-time supply-chain gates over the staged resource tree.
  *
- * Consumers:
- *  - scripts/build-steel-bundle.ts: the pure-JS gate (assertNoNativeArtifacts)
- *    and the size budget (assertSizeBudget) over the vendored Steel tree
- *    (KTD-2) — macOS dual-arch builds share one resources directory across
- *    architectures, so a stray native binary would silently break one arch.
- *  - scripts/build-sidecar.ts: the dangling-symlink and non-ASCII-path gates
- *    over the ENTIRE src-tauri/resources tree at the end of resource staging
- *    (re-homed here per KTD-13; electron-builder ships that whole tree via
- *    extraResources).
+ * Consumer: scripts/build-sidecar.ts runs the dangling-symlink and
+ * non-ASCII-path gates over the ENTIRE resources/ tree at the end of resource
+ * staging (KTD-13; electron-builder ships that whole tree via extraResources).
  *
  * Pure functions over a directory, unit-tested in
  * native-artifact-audit.test.ts.
  */
-
-const MAGIC_SIGNATURES: Array<{ name: string; bytes: number[] }> = [
-  { name: 'Mach-O', bytes: [0xfe, 0xed, 0xfa, 0xce] },
-  { name: 'Mach-O', bytes: [0xfe, 0xed, 0xfa, 0xcf] },
-  { name: 'Mach-O', bytes: [0xce, 0xfa, 0xed, 0xfe] },
-  { name: 'Mach-O', bytes: [0xcf, 0xfa, 0xed, 0xfe] },
-  { name: 'Mach-O fat/universal', bytes: [0xca, 0xfe, 0xba, 0xbe] },
-  { name: 'Mach-O fat/universal', bytes: [0xca, 0xfe, 0xba, 0xbf] },
-  { name: 'PE', bytes: [0x4d, 0x5a] },
-  { name: 'ELF', bytes: [0x7f, 0x45, 0x4c, 0x46] },
-];
 
 export function* walkFiles(dir: string): Generator<string> {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -40,57 +23,16 @@ export function* walkFiles(dir: string): Generator<string> {
   }
 }
 
-/** Returns the native artifact kind ('.node', 'Mach-O', 'PE', 'ELF') or undefined. */
-export function detectNativeKind(filePath: string): string | undefined {
-  if (filePath.endsWith('.node')) {
-    return '.node';
-  }
-  const content = readFileSync(filePath);
-  if (content.length < 4) {
-    return undefined;
-  }
-  for (const sig of MAGIC_SIGNATURES) {
-    if (sig.bytes.every((b, i) => content[i] === b)) {
-      return sig.name;
-    }
-  }
-  return undefined;
-}
-
-/** Lists offending files as `<kind>: <relative path>`, empty when clean. */
-export function findNativeArtifacts(dir: string): string[] {
-  const offenders: string[] = [];
-  for (const file of walkFiles(dir)) {
-    const kind = detectNativeKind(file);
-    if (kind) {
-      offenders.push(`${kind}: ${relative(dir, file)}`);
-    }
-  }
-  return offenders;
-}
-
-export function assertNoNativeArtifacts(dir: string): void {
-  const offenders = findNativeArtifacts(dir);
-  if (offenders.length > 0) {
-    throw new Error(
-      `native artifacts found in vendored tree (build gate):\n  ` +
-        offenders.join('\n  ') +
-        '\nSteel must ship pure JS only — stub or remove the responsible dependency.',
-    );
-  }
-}
-
 /**
  * Build gate for symlinks: a dangling symlink anywhere in the staged resource
- * tree must fail the build before packaging. Historically the Tauri bundler
- * walked the tree and aborted with `resource path ... doesn't exist` (the
- * error message below keeps that string); under electron-builder the whole
+ * tree must fail the build before packaging — under electron-builder the whole
  * tree ships via extraResources and a broken link would be silently copied
- * into the installed app. The classic offender is an npm `.bin` link that
- * fs.cpSync rewrote from relative to absolute-into-the-temp-build-dir (its
- * default resolves link targets against the source tree; verbatimSymlinks:
- * true preserves them). Symlinked directories are not recursed into, matching
- * walkFiles.
+ * into the installed app (the legacy bundler aborted with `resource path ...
+ * doesn't exist`; the error message below keeps that string). The classic
+ * offender is an npm `.bin` link that fs.cpSync rewrote from relative to
+ * absolute-into-the-temp-build-dir (its default resolves link targets against
+ * the source tree; verbatimSymlinks: true preserves them). Symlinked
+ * directories are not recursed into, matching walkFiles.
  */
 export function findDanglingSymlinks(dir: string): string[] {
   const offenders: string[] = [];
@@ -117,14 +59,14 @@ export function assertNoDanglingSymlinks(dir: string): void {
     throw new Error(
       `dangling symlinks found in vendored tree (build gate):\n  ` +
         offenders.join('\n  ') +
-        '\nThe Tauri bundler fails on these ("resource path ... doesn\'t exist"). ' +
+        '\nPackagers fail on these ("resource path ... doesn\'t exist"). ' +
         'Copy node_modules trees with verbatimSymlinks: true so npm .bin links stay relative.',
     );
   }
 }
 
 /**
- * Build gate for non-ASCII paths. Origin: the Windows MSI bundler (WiX
+ * Build gate for non-ASCII paths. Origin: the legacy Windows MSI bundler (WiX
  * light.exe) defaulted to database code page 1252 (Latin-1) and aborted with
  * LGHT0311 on any harvested path outside that code page (e.g. CJK, emoji —
  * @fastify/send ships a `test/fixtures/snow ☃` fixture). The MSI target is
@@ -154,27 +96,8 @@ export function assertNoNonAsciiPaths(dir: string): void {
     throw new Error(
       `non-ASCII paths found in vendored tree (build gate):\n  ` +
         offenders.join('\n  ') +
-        '\nThe Windows MSI bundler (WiX light.exe) uses code page 1252 and aborts with ' +
-        'LGHT0311 on such characters; Tauri swallows the error. ' +
-        'Strip the offending test/non-runtime directory during vendoring (pruneNonRuntimeDirs).',
+        '\nLegacy packaging tooling (WiX light.exe, code page 1252) aborts on such ' +
+        'characters. Strip the offending test/non-runtime directory during staging.',
     );
   }
-}
-
-export function dirSizeBytes(dir: string): number {
-  let total = 0;
-  for (const file of walkFiles(dir)) {
-    total += statSync(file).size;
-  }
-  return total;
-}
-
-export function assertSizeBudget(dir: string, maxBytes: number): number {
-  const bytes = dirSizeBytes(dir);
-  if (bytes > maxBytes) {
-    const mib = (bytes / (1024 * 1024)).toFixed(1);
-    const budgetMib = (maxBytes / (1024 * 1024)).toFixed(0);
-    throw new Error(`vendored tree is ${mib} MiB, over the ${budgetMib} MiB budget`);
-  }
-  return bytes;
 }

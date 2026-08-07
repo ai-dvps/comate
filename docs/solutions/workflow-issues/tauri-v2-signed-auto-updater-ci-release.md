@@ -17,6 +17,14 @@ tags: [tauri-updater, signed-releases, ci-cd, github-actions, auto-update]
 
 # Tauri v2 signed auto-updater setup and CI release pipeline
 
+> **Status (2026-08-07, U9 Tauri→Electron migration): superseded.** The app
+> line now ships on Electron with electron-updater (U5:
+> `electron/updater.ts`, `latest*.yml` manifests, GitHub provider in
+> `electron-builder.config.ts`). This document remains relevant only for the
+> bridge window: the last Tauri installs still read the tauri-format
+> `latest.json` manifest family, which the bridge release (U6) keeps
+> publishing until the Tauri install base drains.
+
 ## Context
 
 Comate is a Tauri v2 desktop app (Rust backend + React/Vite frontend + Node.js sidecar). When setting up signed auto-updates for the v0.0.10 release, the CI build did not produce `latest.json` updater artifacts, the updater endpoint returned no update, and the release download URL was unreachable. The fix required aligning `tauri.conf.json`, the GitHub Actions workflow, signing secrets, and the GitHub release state.

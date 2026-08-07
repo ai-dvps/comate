@@ -7,7 +7,9 @@
     "needsYou": "浏览器需要你接管",
     "emptyTitle": "此会话还没有浏览器",
     "emptyDetail": "让 Claude 处理网页任务时会自动打开浏览器。",
-    "popoutPlaceholder": "浏览器画面已在浮窗中打开。"
+    "popoutPlaceholder": "浏览器画面已在浮窗中打开。",
+    "needsDesktopTitle": "浏览器画面需要桌面端应用",
+    "needsDesktopDetail": "应用内浏览器画面仅在 Comate 桌面端可用。浏览器工具仍可通过外部 CDP 端点运行，但此处无法显示画面。"
   },
   "state": {
     "agentDriving": "Claude 正在驾驶",
@@ -22,8 +24,8 @@
     "unavailable": "浏览器不可用",
     "idlePrompt": "这个浏览器已闲置一段时间。关闭以释放资源？登录态会保留。",
     "starting": "正在启动浏览器…",
-    "preparing": "正在准备浏览器运行时…",
-    "firstUseHint": "首次使用可能需要下载浏览器组件，耗时几分钟。"
+    "preparing": "正在准备浏览器…",
+    "firstUseHint": "首次打开需要几秒钟来创建浏览器视图。"
   },
   "action": {
     "takeover": "接管",

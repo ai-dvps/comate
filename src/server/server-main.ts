@@ -38,7 +38,6 @@ import healthSandboxRoutes from './routes/health-sandbox.js';
 import browserRoutes from './routes/browser.js';
 import settingsRoutes from './routes/settings.js';
 import apiBrokerRoutes from './routes/api-broker.js';
-import { browserViewerProxy } from './routes/browser-proxy.js';
 import { wecomBotService } from './services/wecom-bot-service.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
 import { wecomQueueWorker } from './services/wecom-queue-worker.js';
@@ -319,14 +318,6 @@ const server = app.listen(PORT, () => {
   const serverUrl = `http://localhost:${actualPort}`;
   console.log(`Server running on ${serverUrl}`);
   diagLog(`Server started on ${serverUrl} (diag log file: ${path.join(getLogsDir(), 'sse-diag.log')})`);
-
-  // U7 viewer proxy: independent loopback port (a different origin from the
-  // sidecar API). Must listen before the first Steel spawn so browser-service
-  // can bake the proxy DOMAIN (token path prefix) into the child env — spawns
-  // are lazy (first browser tool call), so this never races in practice.
-  browserViewerProxy.start().catch((err) => {
-    diagLog(`[browser-proxy] failed to start; viewer will be unavailable: ${err}`);
-  });
 
   // Attach WebSocket server to the same HTTP listener.
   new ComateWebSocketServer().attach(server, { getSelfPort });

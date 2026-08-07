@@ -211,8 +211,8 @@ export function readGlobalSiteAuthEntry(
 
 /**
  * Build the new-document init script that replays web storage for the
- * remembered hostnames. The export keys storage maps by page HOSTNAME
- * (vendored Steel contract), so the script matches on `location.hostname`
+ * remembered hostnames. The export keys storage maps by page HOSTNAME,
+ * so the script matches on `location.hostname`
  * and writes both stores before any page script runs. Returns null when
  * there is nothing to inject. JSON.stringify embeds the data — the values
  * travel only from the server store into the target page (never into logs,
@@ -250,16 +250,15 @@ export function buildStorageInitScript(context: {
 
 /**
  * Filter a full browser context dump down to the site key's scope. The
- * vendored Steel export returns cookies BROWSER-WIDE (Network.getAllCookies)
- * and storage keyed by page hostname; storing the unfiltered dump under one
+ * export returns cookies browser-wide and storage keyed by page hostname;
+ * storing the unfiltered dump under one
  * key would replay OTHER sites' cookies on injection. Cookie domains are
  * matched by registrable domain; storage keys are page hostnames.
  *
  * IndexedDB is dropped here (R15 scope: cookie-primary auth + web storage —
- * the vendored export captures IndexedDB for open pages, but v1 reinjection
- * has no writer for it; storing it would be dead weight with a token's
- * sensitivity). SessionStorage is kept (same-origin tab state — some stacks
- * park tokens there).
+ * v1 reinjection has no writer for it; storing it would be dead weight with
+ * a token's sensitivity). SessionStorage is kept (same-origin tab state —
+ * some stacks park tokens there).
  */
 export function filterContextToScope(
   context: {

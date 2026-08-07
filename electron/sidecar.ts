@@ -1,7 +1,8 @@
 /**
  * U1 (KTD-1): sidecar lifecycle for the Electron shell — a behavioral port of
- * `src-tauri/src/lib.rs` (spawn env at L503-546, stdout ready-line parse at
- * L555-580, shutdown matrix at L143-212, annotated "verified, reuse").
+ * the legacy Tauri shell's `lib.rs` (spawn env at L503-546, stdout ready-line
+ * parse at L555-580, shutdown matrix at L143-212, annotated "verified, reuse";
+ * the Tauri tree was retired in U9).
  *
  * The sidecar contract is shell-agnostic: spawn the packaged binary via
  * `child_process.spawn` (NOT `utilityProcess` — the pkg-produced binary is a
@@ -121,10 +122,10 @@ export interface SidecarPathEnv {
 }
 
 /**
- * Dev: the same `src-tauri/binaries/sidecar-node-<triple>` externalBin layout
- * `tauri dev` uses. Packaged: `sidecar-node[.exe]` at the root of
- * `process.resourcesPath`, staged there via electron-builder extraResources
- * (U3; binaries must stay out of the asar).
+ * Dev: the `build/sidecar/sidecar-node-<triple>` staging layout
+ * scripts/build-sidecar.ts produces. Packaged: `sidecar-node[.exe]` at the
+ * root of `process.resourcesPath`, staged there via electron-builder
+ * extraResources (U3; binaries must stay out of the asar).
  */
 export function resolveSidecarBinaryPath(env: SidecarPathEnv): string {
   if (env.isPackaged) {
@@ -133,19 +134,20 @@ export function resolveSidecarBinaryPath(env: SidecarPathEnv): string {
   }
   const triple = resolveSidecarTriple(env.platform, env.arch);
   const ext = env.platform === 'win32' ? '.exe' : '';
-  return join(env.repoRoot, 'src-tauri', 'binaries', `sidecar-node-${triple}${ext}`);
+  return join(env.repoRoot, 'build', 'sidecar', `sidecar-node-${triple}${ext}`);
 }
 
 /**
  * `TAURI_RESOURCE_DIR` points at the directory that directly contains
  * `claude/`, `rg`, `claude-code-plugin/`, … (server resolvers append those
- * names). Dev: the repo's `src-tauri/resources`. Packaged: the same tree
- * staged under `<resourcesPath>/resources` (U3 extraResources).
+ * names). Dev: the repo's `resources/` staging tree (U9: re-homed from the
+ * retired Tauri tree). Packaged: the same tree staged under
+ * `<resourcesPath>/resources` (U3 extraResources).
  */
 export function resolveResourceDir(env: Pick<SidecarPathEnv, 'isPackaged' | 'resourcesPath' | 'repoRoot'>): string {
   return env.isPackaged
     ? join(env.resourcesPath, 'resources')
-    : join(env.repoRoot, 'src-tauri', 'resources');
+    : join(env.repoRoot, 'resources');
 }
 
 // ---------------------------------------------------------------------------

@@ -11,8 +11,10 @@ import {
 import { cn } from '../ui/utils'
 import {
   EMPTY_SESSION_BROWSER_STATE,
+  isLiveControlState,
   useBrowserPaneStore,
 } from '../../stores/browser-pane-store'
+import { isNativeBrowserView } from '../../lib/browser-view-bridge'
 import { FOCUS_CLASSES } from './focus-classes'
 
 /**
@@ -46,7 +48,7 @@ export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBar
   const takeover = useBrowserPaneStore((s) => s.takeover)
   const handback = useBrowserPaneStore((s) => s.handback)
   const setRememberSite = useBrowserPaneStore((s) => s.setRememberSite)
-  const retryViewer = useBrowserPaneStore((s) => s.retryViewer)
+  const retrySession = useBrowserPaneStore((s) => s.retrySession)
   const retryUnavailable = useBrowserPaneStore((s) => s.retryUnavailable)
   const close = useBrowserPaneStore((s) => s.close)
   const confirmIdleClose = useBrowserPaneStore((s) => s.confirmIdleClose)
@@ -244,7 +246,7 @@ export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBar
             <button
               type="button"
               data-testid="browser-retry-button"
-              onClick={() => void retryViewer(sessionId)}
+              onClick={() => void retrySession(sessionId)}
               className={cn(
                 'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium',
                 'bg-accent text-white hover:bg-accent/90 transition-colors',
@@ -256,7 +258,7 @@ export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBar
             </button>
           )}
 
-          {onPopout && session.viewerUrl && (
+          {onPopout && isLiveControlState(state) && isNativeBrowserView() && (
             <button
               type="button"
               data-testid="browser-popout-button"

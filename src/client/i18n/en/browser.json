@@ -7,7 +7,9 @@
     "needsYou": "Browser needs you",
     "emptyTitle": "No browser in this session",
     "emptyDetail": "This session has no browser yet. One opens automatically when Claude works on a web task.",
-    "popoutPlaceholder": "The browser view is open in the floating window."
+    "popoutPlaceholder": "The browser view is open in the floating window.",
+    "needsDesktopTitle": "The browser view needs the desktop app",
+    "needsDesktopDetail": "The in-app browser view is only available in the Comate desktop app. Browser tools may still run against an external CDP endpoint, but nothing can be displayed here."
   },
   "state": {
     "agentDriving": "Claude is driving",
@@ -22,8 +24,8 @@
     "unavailable": "Browser unavailable",
     "idlePrompt": "This browser has been idle. Close it to free its resources? Your login is preserved.",
     "starting": "Starting the browser…",
-    "preparing": "Preparing the browser runtime…",
-    "firstUseHint": "First use may download browser components and take a few minutes."
+    "preparing": "Preparing the browser…",
+    "firstUseHint": "The first open may take a few seconds while the browser view is created."
   },
   "action": {
     "takeover": "Take over",

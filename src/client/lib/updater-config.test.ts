@@ -4,8 +4,8 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 /**
- * U2: the updater endpoint source of truth moved from
- * src-tauri/tauri.conf.json (plugins.updater.endpoints) to
+ * U2: the updater endpoint source of truth moved from the legacy Tauri config
+ * (plugins.updater.endpoints) to
  * electron-builder.config.ts (publish provider). electron-builder has no
  * "endpoints" field — GitHub releases are addressed by owner/repo, which the
  * updater resolves to github.com/<owner>/<repo>/releases.

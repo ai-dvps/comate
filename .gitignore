@@ -12,12 +12,10 @@ dist-electron
 *~
 .claude/worktrees/
 .worktrees/
-src-tauri/target/
-src-tauri/gen/
-src-tauri/binaries/*
-!src-tauri/binaries/.gitkeep
-src-tauri/resources/*
-!src-tauri/resources/.gitkeep
+# Staged runtime resources (build output of scripts/build-sidecar.ts; shipped
+# via electron-builder extraResources)
+resources/*
+!resources/.gitkeep
 # electron-builder output + staged sidecar binaries (build output; build/ also
 # holds tracked icons/entitlements, so ignore only the staging subdir)
 release/

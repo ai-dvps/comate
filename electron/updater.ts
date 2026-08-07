@@ -3,7 +3,7 @@
  * whole module is node:test-able without an Electron runtime. electron/main.ts
  * supplies the real adapter backed by electron-updater's `autoUpdater`.
  *
- * Parity with the Tauri line (src-tauri + tauri-plugin-updater):
+ * Parity with the legacy Tauri line (tauri-plugin-updater):
  *  - `autoDownload = false` keeps the manual-download UX: check only discovers,
  *    the client explicitly downloads (UpdateNotification "Download" button);
  *  - quitAndInstall is preceded by arming the is_updating grace (5s sidecar

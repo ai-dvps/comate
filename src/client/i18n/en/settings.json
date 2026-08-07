@@ -128,7 +128,9 @@
       "failed": "Could not capture your session. Finish logging in, then try again.",
       "retry": "Try again",
       "capture": "I've logged in — capture",
-      "startFailed": "Failed to start login"
+      "startFailed": "Failed to start login",
+      "needsDesktopTitle": "Login capture needs the desktop app",
+      "needsDesktopDetail": "The in-app browser is only available in the Comate desktop app. Open this page there to log in."
     }
   },
   "appearance": {

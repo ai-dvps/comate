@@ -33,7 +33,6 @@ vi.mock('../../../lib/websocket-client.js', () => ({
 
 import {
   useBrowserPaneStore,
-  sanitizeViewerUrl,
   selectHandoffPending,
   selectHasInFlightBrowserTool,
   selectBrowserStartPhase,
@@ -44,14 +43,11 @@ import {
 } from '../../../stores/browser-pane-store'
 import type { BrowserPaneControlState } from '../../../stores/browser-pane-store'
 
-const VIEWER_URL =
-  'http://127.0.0.1:43210/s/abcdefghijklmnopqrstuvwxyzabcdef/v1/sessions/debug?interactive=true&theme=dark&showControls=true'
-
-function mockViewerUrlFetch(url: string | null) {
+function mockFetchOk() {
   global.fetch = vi.fn(() =>
     Promise.resolve({
       ok: true,
-      json: () => Promise.resolve({ url }),
+      json: () => Promise.resolve({ ok: true }),
     } as unknown as Response),
   )
 }
@@ -65,6 +61,7 @@ function resetPaneStore() {
     activeWorkspaceId: null,
     activeSessionId: null,
     sessions: {},
+    nativeViewOccluded: false,
   })
 }
 
@@ -89,7 +86,7 @@ describe('browser-pane-store', () => {
     useBrowserPaneStore.getState().setActiveSession(null, null)
     resetPaneStore()
     vi.clearAllMocks()
-    mockViewerUrlFetch(null)
+    mockFetchOk()
   })
 
   // -- persistence ----------------------------------------------------------
@@ -115,7 +112,7 @@ describe('browser-pane-store', () => {
     expect(useBrowserPaneStore.getState().width).toBe(320)
   })
 
-  it('marks hasOpened on first open so the iframe may mount', () => {
+  it('marks hasOpened on first open so the viewer surface may mount', () => {
     expect(useBrowserPaneStore.getState().hasOpened).toBe(false)
     useBrowserPaneStore.getState().setPaneOpen('sess-1', true)
     expect(useBrowserPaneStore.getState().hasOpened).toBe(true)
@@ -235,60 +232,26 @@ describe('browser-pane-store', () => {
     )
   })
 
-  // -- viewer URL channel + injection fixture --------------------------------
+  // -- U9: no viewer URL exists client-side anymore ---------------------------
 
-  it('fetches the server-constructed viewer URL on live transitions', async () => {
-    mockViewerUrlFetch(VIEWER_URL)
-    useBrowserPaneStore.getState()._applyBrowserState('sess-1', {
-      state: 'agent_in_control',
-      port: 4001,
-    })
-    await waitFor(() =>
-      expect(global.fetch).toHaveBeenCalledWith('/api/browser/sess-1/viewer-url'),
-    )
-    await waitFor(() =>
-      expect(useBrowserPaneStore.getState().sessions['sess-1']?.viewerUrl).toBe(VIEWER_URL),
-    )
+  it('never fetches a viewer URL — state transitions perform no client fetch at all', () => {
+    const store = useBrowserPaneStore.getState()
+    // The iframe viewer and its /viewer-url endpoint left with the legacy
+    // browser stack (U9): applying any transition, live or not, must not hit
+    // the network from the store.
+    store._applyBrowserState('sess-1', { state: 'agent_in_control', port: 4001 })
+    store._applyBrowserState('sess-1', { state: 'handoff_pending', port: 4001 })
+    store._applyBrowserState('sess-1', { state: 'user_in_control', port: 4001 })
+    store._applyBrowserState('sess-1', { state: 'session_lost' })
+    store._applyClosed('sess-1')
+    expect(global.fetch).not.toHaveBeenCalled()
   })
 
-  it('sanitizeViewerUrl accepts only the exact viewer-proxy shape', () => {
-    expect(sanitizeViewerUrl(VIEWER_URL)).toBe(VIEWER_URL)
-    // Injection fixture: nothing agent/user-constructed may pass.
-    expect(sanitizeViewerUrl('https://evil.com/s/abcdefghijklmnopqrstuvwxyzabcdef/v1/sessions/debug?x=1')).toBeNull()
-    expect(sanitizeViewerUrl('http://127.0.0.1.evil.com:1/s/abcdefghijklmnopqrstuvwxyzabcdef/v1/sessions/debug?x=1')).toBeNull()
-    expect(sanitizeViewerUrl('http://localhost:43210/s/abcdefghijklmnopqrstuvwxyzabcdef/v1/sessions/debug?x=1')).toBeNull()
-    expect(sanitizeViewerUrl('http://127.0.0.1:43210/s/short/v1/sessions/debug?x=1')).toBeNull()
-    expect(sanitizeViewerUrl('http://127.0.0.1:43210/s/abcdefghijklmnopqrstuvwxyzabcdef/v1/sessions/cast')).toBeNull()
-    expect(sanitizeViewerUrl('javascript:alert(1)')).toBeNull()
-    expect(sanitizeViewerUrl('')).toBeNull()
-    expect(sanitizeViewerUrl(null)).toBeNull()
-    expect(sanitizeViewerUrl(42)).toBeNull()
-    expect(sanitizeViewerUrl(undefined)).toBeNull()
-  })
-
-  it('rejects a forged viewer-url REST response — the iframe src never comes from injected input', async () => {
-    mockViewerUrlFetch('https://evil.com/pwned' as unknown as string)
-    useBrowserPaneStore.getState()._applyBrowserState('sess-1', {
-      state: 'agent_in_control',
-      port: 4001,
-    })
-    await waitFor(() =>
-      expect(global.fetch).toHaveBeenCalledWith('/api/browser/sess-1/viewer-url'),
-    )
-    await waitFor(() =>
-      expect(useBrowserPaneStore.getState().sessions['sess-1']?.viewerUrl).toBeNull(),
-    )
-  })
-
-  it('clears the viewer URL when the session is lost or closed', async () => {
-    mockViewerUrlFetch(VIEWER_URL)
+  it('closing a session resets it to the empty browser state', () => {
     const store = useBrowserPaneStore.getState()
     store._applyBrowserState('sess-1', { state: 'agent_in_control', port: 4001 })
-    await waitFor(() =>
-      expect(useBrowserPaneStore.getState().sessions['sess-1']?.viewerUrl).toBe(VIEWER_URL),
-    )
     store._applyBrowserState('sess-1', { state: 'session_lost' })
-    expect(useBrowserPaneStore.getState().sessions['sess-1']?.viewerUrl).toBeNull()
+    expect(useBrowserPaneStore.getState().sessions['sess-1']?.controlState).toBe('session_lost')
     store._applyClosed('sess-1')
     expect(useBrowserPaneStore.getState().sessions['sess-1']?.controlState).toBe('none')
   })
@@ -426,19 +389,13 @@ describe('browser-pane-store', () => {
     await store.retryUnavailable('sess-1')
     expect(useBrowserPaneStore.getState().sessions['sess-1']?.unavailable?.reason).toBe('still missing')
 
-    // Retry after recovery: banner clears and the viewer URL is refetched.
-    global.fetch = vi.fn((input) => {
-      const url = String(input)
-      if (url === '/api/health/browser') {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) } as unknown as Response)
-      }
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ url: null }),
-      } as unknown as Response)
-    }) as unknown as typeof global.fetch
+    // Retry after recovery: the banner clears. U9 removed the viewer URL, so
+    // the health probe is the only fetch the recovery path makes.
+    mockFetchOk()
     await store.retryUnavailable('sess-1')
     expect(useBrowserPaneStore.getState().sessions['sess-1']?.unavailable).toBeNull()
+    const calls = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])
+    expect(calls).toEqual(['/api/health/browser'])
   })
 
   it('a live browser_state transition supersedes a stale unavailable banner', () => {
@@ -448,27 +405,27 @@ describe('browser-pane-store', () => {
     expect(useBrowserPaneStore.getState().sessions['sess-1']?.unavailable).toBeNull()
   })
 
-  // -- session_lost manual retry ----------------------------------------------
+  // -- session_lost manual retry (native rebuild, U8/U9) -----------------------
 
-  it('retryViewer bumps the iframe nonce when the browser is live again', async () => {
+  it('retrySession POSTs the rebuild route and leaves the state flip to the channel', async () => {
     const store = useBrowserPaneStore.getState()
     store._applyBrowserState('sess-1', { state: 'session_lost' })
-    mockViewerUrlFetch(VIEWER_URL)
-    await store.retryViewer('sess-1')
-    const session = useBrowserPaneStore.getState().sessions['sess-1']
-    expect(session?.viewerUrl).toBe(VIEWER_URL)
-    expect(session?.viewerNonce).toBe(1)
+    await store.retrySession('sess-1')
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+    const [url, init] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]!
+    expect(url).toBe('/api/browser/sess-1/retry')
+    expect((init as RequestInit).method).toBe('POST')
+    // The rebuild is reported over the browser_state channel; the local state
+    // stays session_lost until that event lands.
+    expect(useBrowserPaneStore.getState().sessions['sess-1']?.controlState).toBe('session_lost')
   })
 
-  it('retryViewer leaves the lost state untouched while the browser is still dead', async () => {
+  it('retrySession swallows a failed rebuild POST (the state bar copy carries expectations)', async () => {
     const store = useBrowserPaneStore.getState()
     store._applyBrowserState('sess-1', { state: 'session_lost' })
-    mockViewerUrlFetch(null)
-    await store.retryViewer('sess-1')
-    const session = useBrowserPaneStore.getState().sessions['sess-1']
-    expect(session?.viewerUrl).toBeNull()
-    expect(session?.viewerNonce).toBe(0)
-    expect(session?.controlState).toBe('session_lost')
+    global.fetch = vi.fn(() => Promise.reject(new Error('offline')))
+    await expect(store.retrySession('sess-1')).resolves.toBeUndefined()
+    expect(useBrowserPaneStore.getState().sessions['sess-1']?.controlState).toBe('session_lost')
   })
 
   // -- activity ping ------------------------------------------------------------
@@ -495,13 +452,23 @@ describe('browser-pane-store', () => {
     const base = initialSessionBrowserState()
     expect(selectBrowserStartPhase(base, false)).toBeNull()
     expect(selectBrowserStartPhase(base, true)).toBe('preparing')
+    // Live control states are always 'starting' — the shell is attaching the
+    // native view; there is no viewerUrl signal anymore (U9).
     expect(
       selectBrowserStartPhase({ ...base, controlState: 'agent_in_control' }, true),
     ).toBe('starting')
     expect(
+      selectBrowserStartPhase({ ...base, controlState: 'agent_in_control' }, false),
+    ).toBe('starting')
+    expect(
+      selectBrowserStartPhase({ ...base, controlState: 'handoff_pending' }, false),
+    ).toBe('starting')
+    expect(
+      selectBrowserStartPhase({ ...base, controlState: 'user_in_control' }, false),
+    ).toBe('starting')
+    expect(
       selectBrowserStartPhase({ ...base, controlState: 'session_lost' }, true),
     ).toBeNull()
-    expect(selectBrowserStartPhase({ ...base, viewerUrl: VIEWER_URL }, true)).toBeNull()
     expect(BROWSER_START_PHASE_PERCENT.preparing).toBeLessThan(BROWSER_START_PHASE_PERCENT.starting)
   })
 

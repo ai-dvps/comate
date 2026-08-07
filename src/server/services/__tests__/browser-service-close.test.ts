@@ -6,6 +6,11 @@ import { tmpdir } from 'os';
 import path from 'path';
 
 import { createIsolatedStore } from '../../test-utils/test-store.js';
+import {
+  startFakeBrowserShell,
+  fakeViewBaseUrl,
+  type FakeBrowserShell,
+} from '../../test-utils/fake-browser-shell.js';
 import type { SqliteStore } from '../../storage/sqlite-store.js';
 import {
   BrowserService,
@@ -13,54 +18,21 @@ import {
   type BrowserServiceEvent,
   type CloseSessionResult,
 } from '../browser-service.js';
-import type { SteelExitInfo, SteelProcessHandle, SteelProcessOptions } from '../browser-steel-process.js';
 
 /**
  * U1 — closeSession: the explicit-close sink. Covers the explicit-remember
  * contract, source-tagged audit, and idempotency. The registry runs against
- * an injected fake Steel handle; persistence is driven only by a separate
- * Remember action against an isolated store.
+ * the fake shell harness (fake control client + fake /json debug port);
+ * persistence is driven only by a separate Remember action against an
+ * isolated store.
  */
-
-class FakeSteelHandle implements SteelProcessHandle {
-  readonly baseUrl: string;
-  stopped = false;
-  private exitListeners = new Set<(info: SteelExitInfo) => void>();
-
-  constructor(private readonly options: SteelProcessOptions) {
-    this.baseUrl = `http://127.0.0.1:${options.port}`;
-  }
-
-  get sessionId(): string {
-    return this.options.sessionId;
-  }
-  get port(): number {
-    return this.options.port;
-  }
-  get userDataDir(): string {
-    return this.options.userDataDir;
-  }
-  get pid(): number | undefined {
-    return this.stopped ? undefined : 20_000 + this.options.port;
-  }
-
-  async start(): Promise<void> {
-    /* no-op */
-  }
-  async stop(): Promise<void> {
-    this.stopped = true;
-  }
-  onExit(listener: (info: SteelExitInfo) => void): void {
-    this.exitListeners.add(listener);
-  }
-}
 
 interface Harness {
   service: BrowserService;
+  shell: FakeBrowserShell;
   store: SqliteStore;
   storageDir: string;
   workspaceId: string;
-  handles: FakeSteelHandle[];
   events: BrowserServiceEvent[];
   auditCalls: { method: 'logSiteAuth' | 'logControl'; input: Record<string, unknown> }[];
   exportedBaseUrls: string[];
@@ -68,20 +40,19 @@ interface Harness {
   context: unknown;
 }
 
-function makeHarness(): Harness {
+async function makeHarness(): Promise<Harness> {
   const store = createIsolatedStore();
-  const handles: FakeSteelHandle[] = [];
+  const shell = await startFakeBrowserShell();
   const events: BrowserServiceEvent[] = [];
   const auditCalls: Harness['auditCalls'] = [];
   const exportedBaseUrls: string[] = [];
-  let nextPort = 41_000;
   const storageDir = mkdtempSync(path.join(tmpdir(), 'browser-close-'));
 
   const harness: Harness = {
     store,
+    shell,
     storageDir,
     workspaceId: '',
-    handles,
     events,
     auditCalls,
     exportedBaseUrls,
@@ -97,15 +68,10 @@ function makeHarness(): Harness {
   harness.service = new BrowserService({
     storageDir,
     maxSessions: 4,
-    allocatePort: async () => nextPort++,
-    resolveChromiumPath: async () => '/fake/chrome',
-    createProcess: (options: SteelProcessOptions) => {
-      const handle = new FakeSteelHandle(options);
-      handles.push(handle);
-      return handle;
-    },
-    cleanupStale: async () => ({ scanned: 0, killed: 0, removed: 0, skipped: 0 }),
-    now: () => Date.now(),
+    resolveTarget: shell.resolveTarget,
+    createControlClient: shell.createControlClient,
+    cdpRetry: { budgetMs: 400, intervalMs: 40 },
+    listKnownSessionIds: () => [],
     // No-op timer: this suite tests closeSession, not idle behavior, so the
     // spawn-armed idle timer never needs to fire (and must not hold the process).
     timer: { set: () => 0, clear: () => undefined },
@@ -134,19 +100,29 @@ describe('BrowserService.closeSession (U1)', () => {
   let h: Harness;
 
   beforeEach(async () => {
-    h = makeHarness();
+    h = await makeHarness();
     const ws = await h.store.create({ name: 'Test', folderPath: '/tmp/ws' });
     h.workspaceId = ws.id;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await h.service.shutdown().catch(() => undefined);
+    await h.shell.close();
     h.store.resetData();
     rmSync(h.storageDir, { recursive: true, force: true });
   });
 
+  /** destroyView + wipePartition over the control channel = the teardown ran. */
+  function tornDown(sessionId: string): boolean {
+    return (
+      h.shell.client.callsFor('destroyView', sessionId).length === 1 &&
+      h.shell.client.callsFor('wipePartition', sessionId).length === 1
+    );
+  }
+
   it('preserves a site only when Remember was explicitly requested before close', async () => {
     await h.service.ensureSession({ sessionId: 'sess-1', workspaceId: h.workspaceId });
-    const liveBaseUrl = h.handles[0].baseUrl;
+    const liveBaseUrl = fakeViewBaseUrl(h.shell.debugPort);
     const remembered = await h.service.rememberCurrentSite('sess-1');
 
     const result: CloseSessionResult = await h.service.closeSession('sess-1', 'agent');
@@ -156,8 +132,8 @@ describe('BrowserService.closeSession (U1)', () => {
     assert.strictEqual(remembered.cookieCount, 1);
     assert.deepStrictEqual(h.exportedBaseUrls, [liveBaseUrl]);
 
-    // Teardown ran: handle stopped, browser_closed emitted.
-    assert.strictEqual(h.handles[0].stopped, true);
+    // Teardown ran: view destroyed + partition wiped, browser_closed emitted.
+    assert.ok(tornDown('sess-1'), 'expected destroyView + wipePartition for sess-1');
     assert.ok(h.events.some((e) => e.type === 'browser_closed' && e.sessionId === 'sess-1'));
 
     // The explicit action, not close, produced exactly one remember row.
@@ -182,7 +158,7 @@ describe('BrowserService.closeSession (U1)', () => {
     assert.strictEqual(result.closed, true);
     assert.deepStrictEqual(h.exportedBaseUrls, []);
     assert.strictEqual(h.auditCalls.filter((c) => c.method === 'logSiteAuth').length, 0);
-    assert.strictEqual(h.handles[0].stopped, true);
+    assert.ok(tornDown('sess-1'), 'expected destroyView + wipePartition for sess-1');
     const closeAudit = h.auditCalls.find(
       (c) => c.method === 'logControl' && String(c.input.verb) === 'browser_closed_human',
     );
@@ -198,7 +174,7 @@ describe('BrowserService.closeSession (U1)', () => {
 
     assert.strictEqual(result.closed, true);
     assert.deepStrictEqual(h.exportedBaseUrls, []);
-    assert.strictEqual(h.handles[0].stopped, true);
+    assert.ok(tornDown('sess-1'), 'expected destroyView + wipePartition for sess-1');
   });
 
   it('is idempotent on a session with no live browser', async () => {

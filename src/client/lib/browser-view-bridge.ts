@@ -1,24 +1,28 @@
 /**
  * browser-view-bridge (U8, KTD-14) — the client half of the native browser
  * view panel. When the Electron shell exposes `window.comate.browserView`,
- * the panel is backed by a native WebContentsView instead of the Steel
- * iframe viewer (which stays as the dev-web fallback until U9):
+ * the panel is backed by a native WebContentsView (U9 removed the iframe
+ * viewer with the legacy browser stack — outside the shell the panel shows
+ * its degraded 'needs desktop' state):
  *
- *  - rect reporting: the hosting surface (pane body or popout) measures its
- *    container and reports window-relative CSS pixels; null hides the view;
+ *  - rect reporting: the hosting surface (pane body, popout, or the
+ *    usage-login modal) measures its container and reports window-relative
+ *    CSS pixels; null hides the view;
  *  - input gating: the control state maps to `user`/`agent` shell-side;
  *  - occlusion: a MutationObserver watches for modal-level overlays (the
  *    `data-modal-overlay` marker carried by every full-screen dialog/modal —
  *    the decision recorded in the migration plan: dropdowns/tooltips/
  *    notifications and inline cards like the approval surface deliberately do
  *    NOT hide the view, modal dialogs do) and flips a single flag; the shell
- *    hides every browser view while it is set;
+ *    hides every browser view while it is set — except one explicitly
+ *    exempted session (the usage-login modal hosts its capture view INSIDE
+ *    the modal, U9);
  *  - Esc: the shell intercepts Esc on a user-driven view and notifies here so
  *    the panel can reclaim focus and announce the release.
  *
  * All shell calls are fire-and-forget: a missing bridge (plain browser) or a
- * lost IPC race must never break the panel — the native host simply stays
- * blank and the degraded/iframe paths keep working.
+ * lost IPC race must never break the panel — the degraded state covers every
+ * non-shell environment.
  */
 
 import { getDesktopBridge, type BrowserViewRect, type BrowserViewInputMode } from './desktop-api'
@@ -78,6 +82,14 @@ export function setBrowserViewOccluded(occluded: boolean): void {
   void getDesktopBridge()?.browserView?.setOccluded?.(occluded)?.catch(() => {})
 }
 
+/**
+ * U9: exempt one session's view from modal occlusion (the usage-login modal
+ * hosts its capture session's view inside the modal). Pass null on cleanup.
+ */
+export function setBrowserViewOcclusionExemption(sessionId: string | null): void {
+  void getDesktopBridge()?.browserView?.setOcclusionExemption?.(sessionId)?.catch(() => {})
+}
+
 // ---------------------------------------------------------------------------
 // Esc notifications (shell → renderer)
 // ---------------------------------------------------------------------------
@@ -122,8 +134,7 @@ function setOccludedState(next: boolean): void {
 
 /**
  * Subscribe to the modal-occlusion flag. The watcher starts lazily and only
- * in native mode (a plain browser keeps the iframe viewer, which composes
- * overlays correctly on its own).
+ * in native mode (outside the shell there is no view to hide).
  */
 export function onBrowserViewOcclusionChange(listener: (occluded: boolean) => void): () => void {
   occlusionListeners.add(listener)

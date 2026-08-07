@@ -9,8 +9,11 @@ import type { Options, SDKSessionInfo, SessionMessage } from '@anthropic-ai/clau
 import { sharedContractFixtures } from '@comate/api-contracts';
 import { BrowserService } from '../browser-service.js';
 import { BrowserControlService } from '../browser-control.js';
-import type { SteelExitInfo, SteelProcessHandle, SteelProcessOptions } from '../browser-steel-process.js';
-import type { SteelCdpSession } from '../browser-cdp.js';
+import type { BrowserCdpSession } from '../browser-cdp.js';
+import {
+  startFakeBrowserShell,
+  type FakeBrowserShell,
+} from '../../test-utils/fake-browser-shell.js';
 import type { BrowserNetworkCaptureTransport, CdpEventEnvelope } from '../browser-network-capture.js';
 import {
   BROWSER_MCP_SERVER_KEY,
@@ -39,39 +42,6 @@ import { SESSION_TOKEN_ENV } from '../session-capability-service.js';
 // ---------------------------------------------------------------------------
 // Fakes
 // ---------------------------------------------------------------------------
-
-class FakeSteelHandle implements SteelProcessHandle {
-  readonly baseUrl: string;
-  private readonly exitListeners = new Set<(info: SteelExitInfo) => void>();
-
-  constructor(private readonly options: SteelProcessOptions) {
-    this.baseUrl = `http://127.0.0.1:${options.port}`;
-  }
-
-  get sessionId(): string {
-    return this.options.sessionId;
-  }
-  get port(): number {
-    return this.options.port;
-  }
-  get userDataDir(): string {
-    return this.options.userDataDir;
-  }
-  get pid(): number | undefined {
-    return 4242;
-  }
-  async start(): Promise<void> {}
-  async stop(): Promise<void> {}
-  async probeHealth(): Promise<boolean> {
-    return true;
-  }
-  onExit(listener: (info: SteelExitInfo) => void): () => void {
-    this.exitListeners.add(listener);
-    return () => {
-      this.exitListeners.delete(listener);
-    };
-  }
-}
 
 interface FakePageOptions {
   extraction: RawPageExtraction;
@@ -112,7 +82,7 @@ class FakeNetworkTransport implements BrowserNetworkCaptureTransport {
   }
 }
 
-class FakePage implements SteelCdpSession {
+class FakePage implements BrowserCdpSession {
   closed = false;
   navigated: string[] = [];
   screenshots = 0;
@@ -299,27 +269,44 @@ interface Harness {
   tools: Map<string, BrowserToolDefinition>;
   call: (name: string, args: Record<string, unknown>, extra?: unknown) => Promise<CallToolResult>;
   storageDir: string;
+  shell: FakeBrowserShell;
 }
 
-function makeHarness(options: {
+/** Fake-shell cleanup for every harness a test built (afterEach drain). */
+const shellCleanups: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  for (const close of shellCleanups.splice(0)) {
+    await close();
+  }
+});
+
+async function makeHarness(options: {
   page: FakePage;
   approvalDecisions?: BrowserApprovalDecision[];
   withApprovalRequester?: boolean;
   maxSessions?: number;
-  resolveChromium?: boolean;
+  /** Resolve to a misconfigured target (no shell, no external endpoint). */
+  misconfigured?: boolean;
   currentPageUrl?: (baseUrl: string) => Promise<string | null>;
   exportContext?: (baseUrl: string) => Promise<unknown>;
-}): Harness {
+}): Promise<Harness> {
   const storageDir = mkdtempSync(path.join(tmpdir(), 'comate-browser-mcp-'));
-  let port = 9300;
+  const shell = await startFakeBrowserShell();
+  shellCleanups.push(shell.close);
   const browserService = new BrowserService({
     storageDir,
     maxSessions: options.maxSessions ?? 4,
-    allocatePort: async () => (port += 1),
-    resolveChromiumPath: async () =>
-      options.resolveChromium === false ? undefined : '/fake/chromium',
-    createProcess: (processOptions) => new FakeSteelHandle(processOptions),
-    cleanupStale: async () => ({ scanned: 0, killed: 0, removed: 0, skipped: 0 }),
+    resolveTarget: options.misconfigured
+      ? () => ({
+          kind: 'misconfigured',
+          reason:
+            'The embedded browser requires the desktop app. Start it, or point ' +
+            'COMATE_BROWSER_CDP_TARGET at an external Chromium debug endpoint.',
+        })
+      : shell.resolveTarget,
+    createControlClient: shell.createControlClient,
+    cdpRetry: { budgetMs: 400, intervalMs: 40 },
+    listKnownSessionIds: () => [],
     now: () => Date.now(),
     // Fast site-auth fakes for focused MCP tests. Close never implicitly
     // remembers state; explicit Remember behavior has service-level tests.
@@ -360,6 +347,7 @@ function makeHarness(options: {
       return definition.handler(args, extra ?? {});
     },
     storageDir,
+    shell,
   };
 }
 
@@ -374,8 +362,8 @@ function resultPayload(result: CallToolResult): Record<string, unknown> {
 // ---------------------------------------------------------------------------
 
 describe('browser-mcp tool surface (KTD-3)', () => {
-  it('registers the first-class tools with the comate-browser server key', () => {
-    const harness = makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+  it('registers the first-class tools with the comate-browser server key', async () => {
+    const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.deepStrictEqual(
       [...harness.tools.keys()].sort(),
       ['act', 'authenticatedRequest', 'close', 'extract', 'inspectElement', 'open', 'requestHandoff', 'snapshot', 'startNetworkCapture', 'stopNetworkCapture', 'submit'],
@@ -383,8 +371,8 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
 
-  it('annotates snapshot/extract read-only and marks submit destructive + requiresUserInteraction', () => {
-    const harness = makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+  it('annotates snapshot/extract read-only and marks submit destructive + requiresUserInteraction', async () => {
+    const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.strictEqual(harness.tools.get('snapshot')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('extract')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('inspectElement')?.annotations?.readOnlyHint, true);
@@ -425,7 +413,7 @@ describe('browser-mcp open/snapshot', () => {
   });
 
   it('open navigates and returns the first distilled model with refs', async () => {
-    harness = makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+    harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     const result = await harness.call('open', { url: 'https://shop.example/checkout' });
     assert.strictEqual(result.isError, undefined);
     const payload = resultPayload(result);
@@ -442,7 +430,7 @@ describe('browser-mcp open/snapshot', () => {
   });
 
   it('open rejects non-http(s) and malformed URLs', async () => {
-    harness = makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+    harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     const jsResult = await harness.call('open', { url: 'javascript:alert(1)' });
     assert.strictEqual(jsResult.isError, true);
     assert.strictEqual((resultPayload(jsResult).error as { code: string }).code, 'browser_url_scheme');
@@ -454,20 +442,20 @@ describe('browser-mcp open/snapshot', () => {
   });
 
   it('maps browser unavailability to a loud structured error', async () => {
-    harness = makeHarness({
+    harness = await makeHarness({
       page: new FakePage({ extraction: makeExtraction() }),
-      resolveChromium: false,
+      misconfigured: true,
     });
     const result = await harness.call('open', { url: 'https://shop.example/' });
     assert.strictEqual(result.isError, true);
     const error = resultPayload(result).error as { code: string; stage: string; resolution: string };
-    assert.strictEqual(error.code, 'browser_chromium_missing');
+    assert.strictEqual(error.code, 'browser_start_failed');
     assert.strictEqual(error.stage, 'session_start');
-    assert.ok(error.resolution.length > 0, 'resolution path present');
+    assert.match(error.resolution, /health\/browser|desktop app|COMATE_BROWSER_CDP_TARGET/);
   });
 
   it('snapshot returns a fresh model and an image block when requested', async () => {
-    harness = makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+    harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     await harness.call('open', { url: 'https://shop.example/checkout' });
     const result = await harness.call('snapshot', { screenshot: true });
     assert.strictEqual(result.isError, undefined);
@@ -508,7 +496,7 @@ describe('browser-mcp act', () => {
   }
 
   it('fills a field ref and returns the delta + fresh model', async () => {
-    harness = makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+    harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     const { emailRef } = await openAndGetRefs(harness);
     const result = await harness.call('act', { ref: emailRef, action: 'fill', value: 'me@example.com' });
     assert.strictEqual(result.isError, undefined);
@@ -528,7 +516,7 @@ describe('browser-mcp act', () => {
         { nodeId: '1', role: { value: 'button' }, name: { value: 'Apply coupon' }, backendDOMNodeId: 77 },
       ],
     });
-    harness = makeHarness({ page });
+    harness = await makeHarness({ page });
     const result = await harness.call('open', { url: 'https://shop.example/checkout' });
     const model = resultPayload(result).model as { actions: Array<{ ref: string }> };
     const clickResult = await harness.call('act', { ref: model.actions[0].ref, action: 'click' });
@@ -541,7 +529,7 @@ describe('browser-mcp act', () => {
       extraction: makeExtraction(),
       probe: { docId: 'doc-1', domEpoch: 9 }, // DOM moved on since the distill
     });
-    harness = makeHarness({ page });
+    harness = await makeHarness({ page });
     const { emailRef } = await openAndGetRefs(harness);
 
     const unknown = await harness.call('act', { ref: 'e999-zz', action: 'click' });
@@ -557,7 +545,7 @@ describe('browser-mcp act', () => {
   });
 
   it('routes submit-semantics clicks to the submit tool', async () => {
-    harness = makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+    harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     const { payRef } = await openAndGetRefs(harness);
     const result = await harness.call('act', { ref: payRef, action: 'click' });
     assert.strictEqual(result.isError, true);
@@ -568,7 +556,7 @@ describe('browser-mcp act', () => {
   });
 
   it('blocks act while the user is in control (recoverable)', async () => {
-    harness = makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+    harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     const { emailRef } = await openAndGetRefs(harness);
     harness.ctx.browserService.setControlState('chat-session-1', 'user_in_control', 'test takeover');
     const result = await harness.call('act', { ref: emailRef, action: 'fill', value: 'x' });
@@ -601,7 +589,7 @@ describe('browser-mcp submit handler-level gate', () => {
       extraction: makeExtraction(),
       submitSnapshots: [makeSubmitSnapshot()],
     });
-    harness = makeHarness({ page });
+    harness = await makeHarness({ page });
     const { formRef } = await openAndGetFormRef(harness);
 
     // NOTE (settings short-circuit property, KTD-4 ②): this gate fires
@@ -641,7 +629,7 @@ describe('browser-mcp submit handler-level gate', () => {
       extraction: makeExtraction(),
       submitSnapshots: [makeSubmitSnapshot()],
     });
-    harness = makeHarness({
+    harness = await makeHarness({
       page,
       approvalDecisions: [{ behavior: 'deny', message: 'not today' }],
     });
@@ -659,7 +647,7 @@ describe('browser-mcp submit handler-level gate', () => {
       extraction: makeExtraction(),
       submitSnapshots: [makeSubmitSnapshot()],
     });
-    harness = makeHarness({ page, withApprovalRequester: false });
+    harness = await makeHarness({ page, withApprovalRequester: false });
     const { formRef } = await openAndGetFormRef(harness);
     const result = await harness.call('submit', { ref: formRef });
     assert.strictEqual(result.isError, true);
@@ -680,7 +668,7 @@ describe('browser-mcp submit handler-level gate', () => {
         makeSubmitSnapshot({ action: 'https://shop.example/pay?rewritten=1' }),
       ],
     });
-    harness = makeHarness({ page });
+    harness = await makeHarness({ page });
     const { formRef } = await openAndGetFormRef(harness);
     const result = await harness.call('submit', { ref: formRef });
     assert.strictEqual(result.isError, undefined);
@@ -703,7 +691,7 @@ describe('browser-mcp submit handler-level gate', () => {
         makeSubmitSnapshot({ action: 'https://evil.example/collect-2' }),
       ],
     });
-    harness = makeHarness({ page });
+    harness = await makeHarness({ page });
     const { formRef } = await openAndGetFormRef(harness);
     const result = await harness.call('submit', { ref: formRef });
     assert.strictEqual(result.isError, true);
@@ -718,7 +706,7 @@ describe('browser-mcp submit handler-level gate', () => {
       extraction: makeExtraction(),
       submitSnapshots: [makeSubmitSnapshot()],
     });
-    harness = makeHarness({ page });
+    harness = await makeHarness({ page });
     const { payRef } = await openAndGetFormRef(harness);
     const result = await harness.call('submit', { ref: payRef });
     assert.strictEqual(result.isError, undefined);
@@ -734,7 +722,7 @@ describe('browser-mcp submit handler-level gate', () => {
       extraction: makeExtraction(),
       submitSnapshots: [makeSubmitSnapshot()],
     });
-    harness = makeHarness({ page });
+    harness = await makeHarness({ page });
     const { formRef } = await openAndGetFormRef(harness);
     harness.ctx.browserService.setControlState('chat-session-1', 'user_in_control', 'test takeover');
     const result = await harness.call('submit', { ref: formRef });
@@ -762,7 +750,7 @@ describe('browser-mcp extract', () => {
       extraction: makeExtraction(),
       extractResults: { heading: 'Checkout', items: ['anvil'] },
     });
-    harness = makeHarness({ page });
+    harness = await makeHarness({ page });
     await harness.call('open', { url: 'https://shop.example/checkout' });
     const result = await harness.call('extract', {
       schema: {
@@ -794,7 +782,7 @@ describe('browser-mcp extract', () => {
   });
 
   it('rejects an empty schema', async () => {
-    harness = makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+    harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     await harness.call('open', { url: 'https://shop.example/checkout' });
     const result = await harness.call('extract', { schema: {} });
     assert.strictEqual(result.isError, true);
@@ -811,7 +799,7 @@ describe('browser-mcp extract', () => {
 
 describe('browser-mcp requestHandoff', () => {
   it('fails closed when no approval channel is wired, leaving no stuck handoff', async () => {
-    const harness = makeHarness({
+    const harness = await makeHarness({
       page: new FakePage({ extraction: makeExtraction() }),
       withApprovalRequester: false,
     });
@@ -830,7 +818,7 @@ describe('browser-mcp requestHandoff', () => {
 
 describe('browser-mcp close (U2)', () => {
   it('asks the user to confirm, then tears down on allow', async () => {
-    const harness = makeHarness({
+    const harness = await makeHarness({
       page: new FakePage({ extraction: makeExtraction() }),
       approvalDecisions: [{ behavior: 'allow' }],
     });
@@ -851,7 +839,7 @@ describe('browser-mcp close (U2)', () => {
   });
 
   it('returns closed:false and leaves the browser live when the user denies', async () => {
-    const harness = makeHarness({
+    const harness = await makeHarness({
       page: new FakePage({ extraction: makeExtraction() }),
       approvalDecisions: [{ behavior: 'deny', message: 'not yet' }],
     });
@@ -865,7 +853,7 @@ describe('browser-mcp close (U2)', () => {
   });
 
   it('fails closed with browser_approval_unavailable when no approval channel is wired', async () => {
-    const harness = makeHarness({
+    const harness = await makeHarness({
       page: new FakePage({ extraction: makeExtraction() }),
       withApprovalRequester: false,
     });
@@ -882,7 +870,7 @@ describe('browser-mcp close (U2)', () => {
   });
 
   it('is an ok-noop with no approval card when there is no live browser', async () => {
-    const harness = makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+    const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     const result = await harness.call('close', { reason: 'done' });
     const payload = resultPayload(result);
     assert.strictEqual(payload.ok, true);
@@ -902,24 +890,25 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
     rmSync(storageDir, { recursive: true, force: true });
   });
 
-  function makeService(options: { exportContext?: (baseUrl: string) => Promise<unknown> } = {}): BrowserService {
+  async function makeService(options: { exportContext?: (baseUrl: string) => Promise<unknown> } = {}): Promise<BrowserService> {
     storageDir = mkdtempSync(path.join(tmpdir(), 'comate-browser-registry-'));
-    let port = 9400;
+    const shell = await startFakeBrowserShell();
+    shellCleanups.push(shell.close);
     return new BrowserService({
       storageDir,
       maxSessions: 4,
-      allocatePort: async () => (port += 1),
-      resolveChromiumPath: async () => '/fake/chromium',
-      createProcess: (processOptions) => new FakeSteelHandle(processOptions),
-      cleanupStale: async () => ({ scanned: 0, killed: 0, removed: 0, skipped: 0 }),
+      resolveTarget: shell.resolveTarget,
+      createControlClient: shell.createControlClient,
+      cdpRetry: { budgetMs: 400, intervalMs: 40 },
+      listKnownSessionIds: () => [],
       now: () => Date.now(),
       exportContext: options.exportContext,
     });
   }
 
   it('two server instances for the same session share one CDP connection', async () => {
-    const service = makeService();
-    const registry = new Map<string, Promise<SteelCdpSession>>();
+    const service = await makeService();
+    const registry = new Map<string, Promise<BrowserCdpSession>>();
     const page = new FakePage({ extraction: makeExtraction() });
     let dials = 0;
     const connectPage = async () => {
@@ -937,8 +926,8 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
   });
 
   it('a closed page is evicted and the next call reconnects', async () => {
-    const service = makeService();
-    const registry = new Map<string, Promise<SteelCdpSession>>();
+    const service = await makeService();
+    const registry = new Map<string, Promise<BrowserCdpSession>>();
     const pages = [
       new FakePage({ extraction: makeExtraction() }),
       new FakePage({ extraction: makeExtraction() }),
@@ -954,14 +943,14 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
     const open = defs.find((definition) => definition.name === 'open');
     const snapshot = defs.find((definition) => definition.name === 'snapshot');
     await open?.handler({ url: 'https://shop.example/' }, {});
-    pages[0].close(); // steel crash / socket drop
+    pages[0].close(); // view crash / socket drop
     const result = await snapshot?.handler({}, {});
     assert.strictEqual(result?.isError, undefined);
     assert.strictEqual(dials, 2, 'dead connection evicted, fresh dial made');
   });
 
   it('preserves current refs across stateless definition builds and rejects stale/forged refs', async () => {
-    const service = makeService();
+    const service = await makeService();
     const contextRegistry = new Map();
     const page = new FakePage({
       extraction: makeExtraction(),
@@ -1007,7 +996,7 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
 
   it('preserves capture across stateless builds, ranks APIs, and removes credential sentinels', async () => {
     let contextExports = 0;
-    const service = makeService({ exportContext: async () => {
+    const service = await makeService({ exportContext: async () => {
       contextExports += 1;
       return {};
     } });
@@ -1074,7 +1063,7 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
   });
 
   it('runtime disposal aborts capture drains and removes the task context', async () => {
-    const service = makeService();
+    const service = await makeService();
     const transport = new FakeNetworkTransport();
     const page = new FakePage({ extraction: makeExtraction(), networkTransport: transport });
     const deps: BrowserMcpDeps = {

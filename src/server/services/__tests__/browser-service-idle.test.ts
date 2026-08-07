@@ -6,56 +6,24 @@ import { tmpdir } from 'os';
 import path from 'path';
 
 import { createIsolatedStore } from '../../test-utils/test-store.js';
+import {
+  startFakeBrowserShell,
+  type FakeBrowserShell,
+} from '../../test-utils/fake-browser-shell.js';
 import type { SqliteStore } from '../../storage/sqlite-store.js';
 import {
   BrowserService,
   type BrowserServiceEvent,
   type BrowserServiceTimer,
 } from '../browser-service.js';
-import type { SteelExitInfo, SteelProcessHandle, SteelProcessOptions } from '../browser-steel-process.js';
 
 /**
  * U3 — idle reclaim: a per-session idle timer that prompts then auto-closes.
- * Drives a deterministic fake timer (no real waits), covering: prompt→close,
- * activity reset, snooze, human confirm, handoff_pending suppression, and
- * timer cleanup on teardown/crash.
+ * Drives a deterministic fake timer (no real waits) against the fake shell
+ * harness (fake control client + fake /json debug port), covering:
+ * prompt→close, activity reset, snooze, human confirm, handoff_pending
+ * suppression, and timer cleanup on teardown/crash.
  */
-
-class FakeSteelHandle implements SteelProcessHandle {
-  readonly baseUrl: string;
-  stopped = false;
-  private exitListeners = new Set<(info: SteelExitInfo) => void>();
-
-  constructor(private readonly options: SteelProcessOptions) {
-    this.baseUrl = `http://127.0.0.1:${options.port}`;
-  }
-  get sessionId(): string {
-    return this.options.sessionId;
-  }
-  get port(): number {
-    return this.options.port;
-  }
-  get userDataDir(): string {
-    return this.options.userDataDir;
-  }
-  get pid(): number | undefined {
-    return this.stopped ? undefined : 20_000 + this.options.port;
-  }
-  async start(): Promise<void> {
-    /* no-op */
-  }
-  async stop(): Promise<void> {
-    this.stopped = true;
-  }
-  onExit(listener: (info: SteelExitInfo) => void): void {
-    this.exitListeners.add(listener);
-  }
-  fireExit(): void {
-    for (const listener of this.exitListeners) {
-      listener({ code: 1, signal: null });
-    }
-  }
-}
 
 /** Deterministic FIFO timer: set/clear track live handles; fireOldest fires in order. */
 class FakeTimer implements BrowserServiceTimer {
@@ -88,36 +56,30 @@ class FakeTimer implements BrowserServiceTimer {
 
 interface Harness {
   service: BrowserService;
+  shell: FakeBrowserShell;
   store: SqliteStore;
   storageDir: string;
   workspaceId: string;
   timer: FakeTimer;
-  handles: FakeSteelHandle[];
   events: BrowserServiceEvent[];
   auditVerbs: string[];
 }
 
-function makeHarness(): Harness {
+async function makeHarness(): Promise<Harness> {
   const store = createIsolatedStore();
+  const shell = await startFakeBrowserShell();
   const timer = new FakeTimer();
-  const handles: FakeSteelHandle[] = [];
   const events: BrowserServiceEvent[] = [];
   const auditVerbs: string[] = [];
-  let nextPort = 42_000;
   const storageDir = mkdtempSync(path.join(tmpdir(), 'browser-idle-'));
 
   const service = new BrowserService({
     storageDir,
     maxSessions: 4,
-    allocatePort: async () => nextPort++,
-    resolveChromiumPath: async () => '/fake/chrome',
-    createProcess: (options: SteelProcessOptions) => {
-      const handle = new FakeSteelHandle(options);
-      handles.push(handle);
-      return handle;
-    },
-    cleanupStale: async () => ({ scanned: 0, killed: 0, removed: 0, skipped: 0 }),
-    now: () => Date.now(),
+    resolveTarget: shell.resolveTarget,
+    createControlClient: shell.createControlClient,
+    cdpRetry: { budgetMs: 400, intervalMs: 40 },
+    listKnownSessionIds: () => [],
     store,
     currentPageUrl: async () => null,
     exportContext: async () => ({}),
@@ -134,7 +96,7 @@ function makeHarness(): Harness {
   });
   service.onEvent((event) => events.push(event));
 
-  return { service, store, storageDir, workspaceId: '', timer, handles, events, auditVerbs };
+  return { service, shell, store, storageDir, workspaceId: '', timer, events, auditVerbs };
 }
 
 function idlePromptEvents(h: Harness): BrowserServiceEvent[] {
@@ -143,9 +105,9 @@ function idlePromptEvents(h: Harness): BrowserServiceEvent[] {
 
 /**
  * The idle auto-close is fire-and-forget from the timer callback
- * (onIdleCloseFire -> void closeSession). The teardown's profile-wipe (`rm`)
- * is async I/O, so poll for the real completion signal (browser_closed)
- * rather than assuming a single microtask flush is enough.
+ * (onIdleCloseFire -> void closeSession). The teardown's destroy/wipe round
+ * trips are async I/O, so poll for the real completion signal
+ * (browser_closed) rather than assuming a single microtask flush is enough.
  */
 async function waitForClosed(h: Harness, attempts = 100): Promise<void> {
   for (let i = 0; i < attempts; i++) {
@@ -159,12 +121,14 @@ describe('BrowserService idle reclaim (U3)', () => {
   let h: Harness;
 
   beforeEach(async () => {
-    h = makeHarness();
+    h = await makeHarness();
     const ws = await h.store.create({ name: 'Test', folderPath: '/tmp/ws' });
     h.workspaceId = ws.id;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await h.service.shutdown().catch(() => undefined);
+    await h.shell.close();
     h.store.resetData();
     rmSync(h.storageDir, { recursive: true, force: true });
   });
@@ -187,6 +151,11 @@ describe('BrowserService idle reclaim (U3)', () => {
     assert.strictEqual(h.service.getSession('s1'), undefined, 'session torn down');
     assert.ok(h.events.some((e) => e.type === 'browser_closed'));
     assert.ok(h.auditVerbs.includes('browser_closed_timeout'), 'timeout close audited');
+    assert.strictEqual(
+      h.shell.client.callsFor('wipePartition', 's1').length,
+      1,
+      'idle close wipes the partition',
+    );
   });
 
   it('agent activity (resetIdle) re-arms the prompt timer and dismisses any in-flight prompt', async () => {
@@ -255,7 +224,7 @@ describe('BrowserService idle reclaim (U3)', () => {
     await h.service.ensureSession({ sessionId: 's1', workspaceId: h.workspaceId });
     assert.ok(h.timer.pending >= 1);
 
-    h.handles[0].fireExit();
+    h.shell.client.emit({ type: 'view-crashed', sessionId: 's1', reason: 'killed' });
     assert.strictEqual(h.service.getControlState('s1'), 'session_lost');
     assert.strictEqual(h.timer.pending, 0, 'timers cleared on crash');
   });

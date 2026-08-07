@@ -13,8 +13,15 @@
  * tools driven through BrowserToolContext + BrowserService against the same
  * endpoint via COMATE_BROWSER_CDP_TARGET (AE2 mechanism, R8).
  *
- * Skips with a message unless the pinned CfT bundle is present; --required
- * (or COMATE_REQUIRE_SHELL_CDP=1) turns a skip into a failure (release gate).
+ * The Chromium binary comes from the Playwright dev dependency (U9: the pinned
+ * Chrome for Testing bundle left the repo with the legacy browser stack; the
+ * contract under test is version-agnostic — version assertions derive from
+ * the resolved binary itself). The suite drives the chrome-headless-shell
+ * binary: the full Chromium's headless mode never answers
+ * Page.captureScreenshot over raw CDP (Playwright itself launches the
+ * headless shell for headless work). Skips with a message when no Chromium
+ * is installed; --required (or COMATE_REQUIRE_SHELL_CDP=1) turns a skip into
+ * a failure (release gate).
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -23,19 +30,10 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import {
-  CFT_PLATFORMS,
-  CHROME_FOR_TESTING_VERSION,
-  bundledCftZipRel,
-  publishCftFromZip,
-} from '../src/server/utils/cft-spec.js';
+import { chromium as playwrightChromium } from 'playwright';
 
 const required =
   process.env.COMATE_REQUIRE_SHELL_CDP === '1' || process.argv.includes('--required');
-const platformKey = `${process.platform}-${process.arch}`;
-const spec = CFT_PLATFORMS[platformKey];
-const zipRel = bundledCftZipRel(platformKey);
-const zipPath = zipRel ? path.resolve('src-tauri/resources', zipRel) : undefined;
 
 function unavailable(reason: string): never {
   if (required) throw new Error(`Shell CDP contract suite required but unavailable: ${reason}`);
@@ -43,13 +41,44 @@ function unavailable(reason: string): never {
   process.exit(0);
 }
 
-if (!spec) unavailable(`no pinned CfT spec for ${platformKey}`);
-if (!zipPath || !existsSync(zipPath)) unavailable(`pinned CfT ${CHROME_FOR_TESTING_VERSION} bundle is absent`);
+/**
+ * Resolve Playwright's chrome-headless-shell next to the full chromium
+ * executable: <cache>/chromium-<rev>/<platform-dir>/<binary> →
+ * <cache>/chromium_headless_shell-<rev>/chrome-headless-shell-<platform>/<bin>.
+ * `npx playwright install chromium` installs both.
+ */
+function resolveHeadlessShellExecutable(): string | undefined {
+  let full: string;
+  try {
+    full = playwrightChromium.executablePath();
+  } catch {
+    return undefined;
+  }
+  const match = /^(.*[/\\]chromium)-(\d+)[/\\]/.exec(full);
+  if (!match) return undefined;
+  const [, cacheRoot, rev] = match;
+  const platformDir =
+    process.platform === 'darwin'
+      ? `chrome-headless-shell-mac${process.arch === 'arm64' ? '-arm64' : ''}`
+      : process.platform === 'win32'
+        ? 'chrome-headless-shell-win64'
+        : `chrome-headless-shell-linux${process.arch === 'arm64' ? '-arm64' : '64'}`;
+  const binary = `chrome-headless-shell${process.platform === 'win32' ? '.exe' : ''}`;
+  const candidate = path.join(
+    `${cacheRoot}_headless_shell-${rev}`,
+    platformDir,
+    binary,
+  );
+  return existsSync(candidate) ? candidate : undefined;
+}
+
+const chromiumPath = resolveHeadlessShellExecutable();
+if (!chromiumPath) {
+  unavailable('no Playwright Chromium installed (run `npx playwright install chromium`)');
+}
 
 const tempDir = mkdtempSync(path.join(tmpdir(), 'comate-shell-cdp-'));
 process.env.COMATE_DATA_DIR = tempDir;
-
-const chromiumPath = await publishCftFromZip(zipPath, tempDir, spec, CHROME_FOR_TESTING_VERSION);
 
 // ---------------------------------------------------------------------------
 // Fixture origin
@@ -144,19 +173,26 @@ const fixtureOrigin = `http://127.0.0.1:${fixtureAddress.port}`;
 const fixtureHttp = `http://localhost:${fixtureAddress.port}`;
 
 // ---------------------------------------------------------------------------
-// CfT with a debug port (the shell's CDP peer shape: loopback only, no
+// Chromium with a debug port (the shell's CDP peer shape: loopback only, no
 // --remote-allow-origins, OS-assigned port discovered via DevToolsActivePort)
 // ---------------------------------------------------------------------------
 
 const chromeUserData = mkdtempSync(path.join(tmpdir(), 'comate-shell-cdp-profile-'));
+// SHELL_CDP_HEADED=1 swaps in the full Chromium for a visible debugging run;
+// the default headless-shell binary is headless by itself (no flag needed —
+// and the full Chromium's --headless=new never answers Page.captureScreenshot
+// over raw CDP). --site-per-process forces real OOPIFs (the headless shell
+// otherwise keeps cross-site iframes in-process) so the flattened iframe
+// session capture in A6 exercises the production code path.
 const headed = process.env.SHELL_CDP_HEADED === '1';
+const executable = headed ? playwrightChromium.executablePath() : chromiumPath;
 const chrome: ChildProcess = spawn(
-  chromiumPath,
+  executable,
   [
     '--remote-debugging-port=0',
     '--remote-debugging-address=127.0.0.1',
     `--user-data-dir=${chromeUserData}`,
-    ...(headed ? [] : ['--headless=new']),
+    '--site-per-process',
     '--no-first-run',
     '--disable-extensions',
     'about:blank',
@@ -202,6 +238,13 @@ const { BrowserNetworkCaptureManager } = await import(
   '../src/server/services/browser-network-capture.js'
 );
 
+// Version assertions derive from the resolved binary itself (the contract is
+// version-agnostic): "Chrome/141.0.…" → "141.0.…".
+const chromeVersion = (await fetchCdpBrowserInfo({ port: debugPort })).product?.split('/')[1];
+if (!chromeVersion) {
+  throw new Error('could not determine the Chromium version from /json/version');
+}
+
 const results: Array<{ name: string; ok: boolean; detail?: string }> = [];
 async function check(name: string, fn: () => Promise<void>): Promise<void> {
   try {
@@ -222,7 +265,7 @@ const markerA = `comate-view-${Math.random().toString(36).slice(2)}`;
 const targetA = await createShellTarget({ port: debugPort, url: `about:blank#${markerA}` });
 
 try {
-  console.log(`shell CDP contract suite: CfT ${CHROME_FOR_TESTING_VERSION} on 127.0.0.1:${debugPort}`);
+  console.log(`shell CDP contract suite: Chromium ${chromeVersion} on 127.0.0.1:${debugPort}`);
 
   await check('A1 browser info + marker target resolution via /json', async () => {
     const info = await fetchCdpBrowserInfo({ port: debugPort });
@@ -238,7 +281,7 @@ try {
       buildCdpPageBaseUrl({ host: '127.0.0.1', port: debugPort, urlMarker: markerA }),
     );
     assert(parsedMarker?.urlMarker === markerA, 'base-url round-trip lost the marker');
-    assert(parseCdpPageBaseUrl('http://127.0.0.1:8080/') === null, 'Steel baseUrl must not parse as CDP page');
+    assert(parseCdpPageBaseUrl('http://127.0.0.1:8080/') === null, 'plain baseUrl must not parse as CDP page');
   });
 
   await check('A2 attach by targetId: evaluate / navigate / AX tree / screenshot / backend click', async () => {
@@ -308,7 +351,7 @@ try {
         const surface = JSON.parse(raw) as Record<string, string | number>;
         assert(
           typeof surface.ua === 'string' &&
-            surface.ua.includes(`Chrome/${CHROME_FOR_TESTING_VERSION}`) &&
+            surface.ua.includes(`Chrome/${chromeVersion}`) &&
             !surface.ua.includes('HeadlessChrome') &&
             !surface.ua.includes('Electron'),
           `${where}: UA not synthetic desktop Chrome: ${surface.ua}`,
@@ -324,8 +367,8 @@ try {
         assert(surface.vendor === 'Google Inc.', `${where}: vendor wrong: ${surface.vendor}`);
       };
       // The target's initial about:blank predates script registration (a
-      // registered init script only covers documents created afterwards —
-      // same semantics as Steel's evaluateOnNewDocument); navigate first.
+      // registered init script only covers documents created afterwards);
+      // navigate first.
       await page.navigate(`${fixtureOrigin}/form`);
       assertSurface(await page.evaluate<string>(readSurface), 'after navigation');
       await page.navigate(`${fixtureOrigin}/echo`);
@@ -334,9 +377,9 @@ try {
         `navigator.userAgentData.getHighEntropyValues(['architecture','bitness','platformVersion','uaFullVersion','fullVersionList']).then(JSON.stringify)`,
       );
       const entropy = JSON.parse(highEntropy) as { uaFullVersion?: string; fullVersionList?: Array<{ brand: string; version: string }> };
-      assert(entropy.uaFullVersion === CHROME_FOR_TESTING_VERSION, `uaFullVersion ${entropy.uaFullVersion}`);
+      assert(entropy.uaFullVersion === chromeVersion, `uaFullVersion ${entropy.uaFullVersion}`);
       assert(
-        entropy.fullVersionList?.some((b) => b.brand === 'Google Chrome' && b.version === CHROME_FOR_TESTING_VERSION),
+        entropy.fullVersionList?.some((b) => b.brand === 'Google Chrome' && b.version === chromeVersion),
         'fullVersionList missing real engine version',
       );
     } finally {
@@ -446,7 +489,7 @@ try {
     }
   });
 
-  await check('A10 session-context export (cookies + hostname-keyed storage, Steel shape)', async () => {
+  await check('A10 session-context export (cookies + hostname-keyed storage)', async () => {
     const target = await createShellTarget({ port: debugPort, url: 'about:blank', isolate: true });
     const page = await connectShellPage({ port: debugPort, targetId: target.targetId });
     try {
@@ -475,8 +518,8 @@ try {
   // -------------------------------------------------------------------------
   // PART B — tool parity (AE2 mechanism): the 11 comate-browser tools driven
   // through BrowserToolContext + BrowserService against this same Chromium as
-  // an EXTERNAL CDP endpoint (COMATE_BROWSER_CDP_TARGET, R8). No release, no
-  // Steel — the tools keep serving off a plain debug-port Chromium.
+  // an EXTERNAL CDP endpoint (COMATE_BROWSER_CDP_TARGET, R8). No release —
+  // the tools keep serving off a plain debug-port Chromium.
   // -------------------------------------------------------------------------
 
   process.env.COMATE_BROWSER_CDP_TARGET = `http://127.0.0.1:${debugPort}`;
@@ -690,4 +733,4 @@ if (failed.length > 0) {
   console.error(`\nFAIL shell CDP contract suite: ${failed.length}/${results.length} failed`);
   process.exit(1);
 }
-console.log(`\nPASS shell CDP contract suite: ${results.length} checks, CfT ${CHROME_FOR_TESTING_VERSION}`);
+console.log(`\nPASS shell CDP contract suite: ${results.length} checks, Chromium ${chromeVersion}`);

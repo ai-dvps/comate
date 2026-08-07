@@ -12,8 +12,8 @@ import { useChatStore } from '../../stores/chat-store'
  * only renders the state bar and viewer body, filling its container.
  *
  * Keep-alive: RightPanel renders BrowserPane instances for all open workspaces
- * and only shows the active one, so the iframe is never unmounted on workspace
- * switches or panel collapse/expand.
+ * and only shows the active one, so the native view surface is never
+ * unmounted on workspace switches or panel collapse/expand.
  */
 
 export interface BrowserPaneProps {
@@ -21,7 +21,7 @@ export interface BrowserPaneProps {
   /**
    * U8: false while this pane is keep-alive mounted but off screen (another
    * workspace's surface or another right-panel tab is showing). The native
-   * view must stop reporting its rect then; the iframe stack does not care.
+   * view must stop reporting its rect then.
    */
   surfaceVisible?: boolean
 }

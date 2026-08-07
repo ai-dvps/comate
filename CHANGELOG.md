@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Desktop shell migrated from Tauri to Electron** — The app now ships on an Electron shell (same React UI, same Express sidecar, same data directory). The embedded browser no longer downloads or bundles its own Chrome for Testing runtime; browser sessions run as native, per-session isolated views inside the shell itself, which makes the app roughly 267 MB lighter. Linux (AppImage, plus deb) joins macOS and Windows as a supported desktop target. Behavior notes for existing installs:
+  - UI preferences kept in webview storage (panel open/closed, pane widths) reset once on first launch of the Electron build.
+  - Site logins in the embedded browser do not carry over from the old browser runtime; sites saved via "Remember this site" sign back in automatically on first use, other sites need one fresh login.
+  - On first launch the app deletes the legacy browser residue (old profiles, pidfiles, and the downloaded browser cache); remembered-site login data is preserved.
+  - On Windows, the old Tauri installation is cleaned up automatically by the bridge installer (由桥接安装包承担).
+  - For support and enterprise-ops scenarios, the browser tools can be pointed at an operator-supplied Chromium without a client release via `COMATE_BROWSER_CDP_TARGET` (see development.md).
+
 ### Added
 
 - Nothing yet.

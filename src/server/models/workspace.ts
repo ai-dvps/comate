@@ -8,18 +8,17 @@ export interface WeComBotIsolationSettings {
 }
 
 /**
- * The Steel session-context shape ("sessionContext"): a replayable login
+ * The browser session-context shape ("sessionContext"): a replayable login
  * snapshot for one site. Cookie entries pass through CDP's Network.Cookie
- * shape verbatim (the vendored Steel export and our Network.setCookies
- * injection speak the same protocol shape). Storage maps are keyed by page
+ * shape verbatim (the context export and our Network.setCookies injection
+ * speak the same protocol shape). Storage maps are keyed by page
  * hostname (the export shape); values are string maps.
  *
  * SECURITY (KTD-8): this is a live, replayable session token — it must never
  * leave the server. GET workspace responses strip `sessionContext` (keys and
  * metadata only); it is consumed exclusively by the server-side injection
- * path. IndexedDB is deliberately absent: the vendored export captures it
- * for open pages, but v1 reinjection does not support it (R15 scope note —
- * cookie-primary auth plus web storage).
+ * path. IndexedDB is deliberately absent: v1 reinjection does not support it
+ * (R15 scope note — cookie-primary auth plus web storage).
  */
 export interface BrowserSessionContext {
   cookies: Array<Record<string, unknown>>;

@@ -128,7 +128,9 @@
       "failed": "无法获取会话。请完成登录后重试。",
       "retry": "重试",
       "capture": "我已登录 — 获取",
-      "startFailed": "启动登录失败"
+      "startFailed": "启动登录失败",
+      "needsDesktopTitle": "登录获取需要桌面端应用",
+      "needsDesktopDetail": "应用内浏览器仅在 Comate 桌面端可用。请在桌面端打开此页面完成登录。"
     }
   },
   "appearance": {

@@ -16,15 +16,15 @@ tags:
 ## Context
 
 The real Comate SQLite database is `data.db`, located inside the directory that
-`COMATE_DATA_DIR` points to. The Tauri shell launches the Node sidecar with
-`COMATE_DATA_DIR` set to Tauri's `app_data_dir()`:
+`COMATE_DATA_DIR` points to. The Electron shell launches the Node sidecar with
+`COMATE_DATA_DIR` set to the legacy pinned data dir:
 
-- `src-tauri/src/lib.rs:384-409` spawns `sidecar-node` with
-  `.env("COMATE_DATA_DIR", &data_dir)`.
-- `src-tauri/tauri.conf.json:5` sets the bundle identifier to
-  `com.comate.app`.
-- On macOS, Tauri's `app_data_dir()` resolves to
-  `~/Library/Application Support/<bundle-identifier>`.
+- `electron/main.ts` spawns `sidecar-node` with `COMATE_DATA_DIR` from
+  `resolveLegacyDataDir` (`electron/paths.ts`) via `buildSidecarEnv`
+  (`electron/sidecar.ts`).
+- `electron-builder.config.ts` sets the app id to `com.comate.app`.
+- On macOS, the pinned data dir resolves to
+  `~/Library/Application Support/<app-id>`.
 
 So on a Mac the production database is:
 
@@ -129,5 +129,6 @@ public mutators or `resetData()`.
   `:memory:` support, and `resetData()`
 - `.eslintrc.cjs` — `no-restricted-syntax` override requiring `test-env` as the
   first import in server tests
-- `src-tauri/src/lib.rs:384-409` — sidecar spawn that sets `COMATE_DATA_DIR`
-- `src-tauri/tauri.conf.json:5` — bundle identifier `com.comate.app`
+- `electron/main.ts` + `electron/sidecar.ts` — sidecar spawn that sets
+  `COMATE_DATA_DIR`
+- `electron-builder.config.ts` — app id `com.comate.app`

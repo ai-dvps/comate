@@ -1,15 +1,29 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { X, Loader2 } from 'lucide-react'
+import { X, Loader2, MonitorOff } from 'lucide-react'
 import { useProviderUsageStore } from '../stores/provider-usage-store'
+import {
+  isNativeBrowserView,
+  onBrowserViewEscape,
+  reportBrowserViewRect,
+  setBrowserViewInputMode,
+  setBrowserViewOcclusionExemption,
+} from '../lib/browser-view-bridge'
 import { cn } from './ui/utils'
 
 /**
- * Root-level login-capture modal for Kimi usage (KTD1/U4). Reachable from both
- * the provider selector and Provider settings, it hosts the transient capture
- * session's viewer-url iframe and walks the capture state machine. Esc / Cancel
- * tears the capture session down (no token written); "I've logged in" finalizes
- * (server verifies origin, extracts, encrypts, and tears down).
+ * Root-level login-capture modal for provider usage (KTD1/U4). Reachable from
+ * both the provider selector and Provider settings, it walks the capture
+ * state machine. Esc / Cancel tears the capture session down (no token
+ * written); "I've logged in" finalizes (server verifies origin, extracts,
+ * encrypts, and tears down).
+ *
+ * U9: the capture session's page is hosted as a native shell view INSIDE the
+ * modal — the modal reports its content rect for the capture session and
+ * exempts that one session from modal occlusion (every other browser view
+ * still hides behind the overlay). Outside the Electron shell there is no
+ * viewer backend (the iframe viewer left with the legacy browser stack), so
+ * the modal degrades to a 'needs the desktop app' state (KTD-15).
  */
 export default function UsageLoginModal() {
   const { t } = useTranslation('settings')
@@ -17,37 +31,75 @@ export default function UsageLoginModal() {
   const finalize = useProviderUsageStore((s) => s.finalizeUsageLogin)
   const cancel = useProviderUsageStore((s) => s.cancelUsageLogin)
   const start = useProviderUsageStore((s) => s.startUsageLogin)
-  const [viewerUrl, setViewerUrl] = useState<string | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const restoreRef = useRef<HTMLElement | null>(null)
+  const viewHostRef = useRef<HTMLDivElement | null>(null)
+  const native = isNativeBrowserView()
+  const captureSessionId = login?.sessionId ?? null
+  const hostNativeView = native && captureSessionId !== null
 
-  // Fetch the capture session's viewer-url when a new capture begins; manage
-  // focus + restore on open/close.
+  // Focus + restore on open/close.
   useEffect(() => {
-    if (!login) {
-      setViewerUrl(null)
-      return
-    }
+    if (!login) return
     restoreRef.current = document.activeElement as HTMLElement | null
     rootRef.current?.focus()
-    let cancelled = false
-    setViewerUrl(null)
-    if (login.sessionId) {
-      fetch(`/api/browser/${encodeURIComponent(login.sessionId)}/viewer-url`)
-        .then((r) => r.json())
-        .then((d: { url?: string | null }) => {
-          if (!cancelled && d.url) setViewerUrl(d.url)
-        })
-        .catch(() => {})
-    }
     return () => {
-      cancelled = true
       restoreRef.current?.focus?.()
       restoreRef.current = null
     }
     // Re-run when a new capture (sessionId) starts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [login?.sessionId, login?.providerId])
+
+  // Native view hosting: report the modal content rect for the capture
+  // session, let the user drive it, and exempt it from the modal-occlusion
+  // flag this very modal raises. Cleanup hides the view and clears the
+  // exemption.
+  useEffect(() => {
+    if (!hostNativeView || !captureSessionId) return
+    const sessionId = captureSessionId
+    setBrowserViewOcclusionExemption(sessionId)
+    setBrowserViewInputMode(sessionId, 'user')
+    const el = viewHostRef.current
+    if (!el) return
+    let raf = 0
+    const report = () => {
+      raf = 0
+      const rect = el.getBoundingClientRect()
+      reportBrowserViewRect(
+        sessionId,
+        rect.width > 0 && rect.height > 0
+          ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+          : null,
+      )
+    }
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(report)
+    }
+    report()
+    let observer: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(schedule)
+      observer.observe(el)
+    }
+    window.addEventListener('resize', schedule)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', schedule)
+      if (raf) cancelAnimationFrame(raf)
+      reportBrowserViewRect(sessionId, null)
+      setBrowserViewOcclusionExemption(null)
+    }
+  }, [hostNativeView, captureSessionId])
+
+  // Esc intercepted by the shell while the user drives the view returns focus
+  // to the modal (the next Esc then cancels via the keydown handler below).
+  useEffect(() => {
+    if (!hostNativeView || !captureSessionId) return
+    return onBrowserViewEscape((escapedSessionId) => {
+      if (escapedSessionId === captureSessionId) rootRef.current?.focus()
+    })
+  }, [hostNativeView, captureSessionId])
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -62,7 +114,8 @@ export default function UsageLoginModal() {
 
   if (!login) return null
   const { phase, providerId } = login
-  const showIframe = viewerUrl && (phase === 'ready' || phase === 'connecting' || phase === 'capturing')
+  const showCaptureSurface =
+    phase === 'ready' || phase === 'connecting' || phase === 'capturing'
 
   return (
     <div
@@ -95,13 +148,34 @@ export default function UsageLoginModal() {
         </div>
 
         <div className="relative min-h-0 flex-1 bg-surface">
-          {showIframe ? (
-            <iframe src={viewerUrl!} title="Login" className="h-full w-full border-0" />
-          ) : (
-            <div className="flex h-full items-center justify-center gap-2 text-text-tertiary">
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              <span className="text-sm">{t('providers.usageLogin.connecting', 'Preparing login…')}</span>
+          {!native ? (
+            // KTD-15 degraded state: no shell, no viewer backend at all.
+            <div
+              data-testid="usage-login-needs-desktop"
+              className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center"
+            >
+              <MonitorOff className="h-8 w-8 text-text-tertiary" aria-hidden="true" />
+              <p className="text-sm font-medium text-text-primary">
+                {t('providers.usageLogin.needsDesktopTitle', 'Login capture needs the desktop app')}
+              </p>
+              <p className="text-xs text-text-secondary">
+                {t(
+                  'providers.usageLogin.needsDesktopDetail',
+                  'The in-app browser is only available in the Comate desktop app. Open this page there to log in.',
+                )}
+              </p>
             </div>
+          ) : (
+            <>
+              {/* The native view paints over this box at the reported rect. */}
+              <div ref={viewHostRef} data-testid="usage-login-view-host" className="h-full w-full bg-black" />
+              {(!showCaptureSurface || phase === 'connecting') && (
+                <div className="absolute inset-0 flex items-center justify-center gap-2 text-text-tertiary">
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  <span className="text-sm">{t('providers.usageLogin.connecting', 'Preparing login…')}</span>
+                </div>
+              )}
+            </>
           )}
 
           {phase === 'capturing' && (
@@ -150,7 +224,7 @@ export default function UsageLoginModal() {
           <button
             type="button"
             onClick={() => finalize()}
-            disabled={phase !== 'ready'}
+            disabled={!native || phase !== 'ready'}
             className="rounded-md bg-primary px-3 py-1.5 text-sm text-text-on-primary disabled:opacity-50"
           >
             {t('providers.usageLogin.capture', "I've logged in — capture")}

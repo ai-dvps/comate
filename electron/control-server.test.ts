@@ -44,7 +44,17 @@ async function startServer(overrides?: {
     },
     getViewState(sessionId) {
       calls.push({ method: 'getViewState', args: [sessionId] });
-      return sessionId === 'live' ? { attached: true, visible: true } : null;
+      return sessionId === 'live'
+        ? {
+            attached: true,
+            visible: true,
+            bounds: null,
+            inputMode: 'agent' as const,
+            pointerGated: true,
+            popupCount: 0,
+            lastUrl: null,
+          }
+        : null;
     },
     async reconcilePartitions(keep) {
       calls.push({ method: 'reconcilePartitions', args: [keep] });
@@ -221,7 +231,18 @@ describe('control server auth + lifecycle endpoints (KTD-11)', () => {
     try {
       const live = await authed(h.base, '/views/live');
       assert.equal(live.status, 200);
-      assert.deepEqual(await live.json(), { ok: true, state: { attached: true, visible: true } });
+      assert.deepEqual(await live.json(), {
+        ok: true,
+        state: {
+          attached: true,
+          visible: true,
+          bounds: null,
+          inputMode: 'agent',
+          pointerGated: true,
+          popupCount: 0,
+          lastUrl: null,
+        },
+      });
       const missing = await authed(h.base, '/views/nope');
       assert.equal(missing.status, 404);
       assert.deepEqual(

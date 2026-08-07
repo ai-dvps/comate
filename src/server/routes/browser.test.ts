@@ -4,15 +4,14 @@ import assert from 'node:assert';
 import { createBrowserRouter, type BrowserRouteDeps } from './browser.js';
 
 /**
- * /api/browser/:sessionId/viewer-url contract (U6, KTD-7): the viewer URL is
- * constructed server-side only. Sessions without a live browser (unknown,
- * starting, session_lost) get `{ url: null }` so the panel renders its
- * empty/starting/lost states; a live session gets the proxy URL verbatim.
+ * /api/browser/:sessionId/retry contract (U8/U9): manual retry for a lost
+ * native browser session. The viewer-url endpoint left with the iframe
+ * viewer in U9 — the panel is backed by the shell's WebContentsView.
  */
 
 type Handler = (req: unknown, res: unknown) => void;
 
-function getViewerUrlHandler(deps: Partial<BrowserRouteDeps>): Handler {
+function getRetryHandler(deps: Partial<BrowserRouteDeps>): Handler {
   const router = createBrowserRouter(deps);
   const layers = (
     router as unknown as {
@@ -26,14 +25,14 @@ function getViewerUrlHandler(deps: Partial<BrowserRouteDeps>): Handler {
     }
   ).stack;
   for (const layer of layers) {
-    if (layer.route && layer.route.path === '/:sessionId/viewer-url' && layer.route.methods.get) {
+    if (layer.route && layer.route.path === '/:sessionId/retry' && layer.route.methods.post) {
       return layer.route.stack[0].handle;
     }
   }
-  throw new Error('viewer-url handler not found');
+  throw new Error('retry handler not found');
 }
 
-function createMockReq(sessionId: string) {
+function createMockReq(sessionId: string | undefined) {
   return { params: { sessionId } };
 }
 
@@ -51,51 +50,62 @@ function createMockRes() {
   };
 }
 
-const VIEWER_URL =
-  'http://127.0.0.1:43210/s/abcdefghijklmnopqrstuvwxyzabcdef/v1/sessions/debug?interactive=true&theme=dark&showControls=true';
+async function flush(): Promise<void> {
+  // The handler resolves via .then/.catch — let the microtask queue drain.
+  await new Promise((resolve) => setImmediate(resolve));
+}
 
-describe('browser viewer-url route', { concurrency: false }, () => {
-  it('returns the server-constructed URL for a live session', () => {
-    const handler = getViewerUrlHandler({
-      hasLiveSession: () => true,
-      getViewerUrl: () => VIEWER_URL,
-    });
-    const res = createMockRes();
-    handler(createMockReq('sess-1'), res);
-    assert.equal(res.statusCode, 200);
-    assert.deepEqual(res.jsonBody, { url: VIEWER_URL });
-  });
-
-  it('returns { url: null } when the session is unknown', () => {
-    const handler = getViewerUrlHandler({
-      hasLiveSession: () => false,
-      getViewerUrl: () => {
-        throw new Error('must not be called for a dead session');
+describe('browser retry route', { concurrency: false }, () => {
+  it('answers { ok: true, rebuilding } from the service result', async () => {
+    let seen: string | undefined;
+    const handler = getRetryHandler({
+      retrySession: async (sessionId) => {
+        seen = sessionId;
+        return { rebuilding: true };
       },
     });
     const res = createMockRes();
-    handler(createMockReq('nope'), res);
-    assert.deepEqual(res.jsonBody, { url: null });
+    handler(createMockReq('sess-1'), res);
+    await flush();
+    assert.equal(seen, 'sess-1');
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.jsonBody, { ok: true, rebuilding: true });
   });
 
-  it('returns { url: null } when the proxy has no URL for a live session', () => {
-    const handler = getViewerUrlHandler({
-      hasLiveSession: () => true,
-      getViewerUrl: () => undefined,
+  it('answers rebuilding: false for a live or unknown session (idempotent no-op)', async () => {
+    const handler = getRetryHandler({
+      retrySession: async () => ({ rebuilding: false }),
+    });
+    const res = createMockRes();
+    handler(createMockReq('sess-live'), res);
+    await flush();
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.jsonBody, { ok: true, rebuilding: false });
+  });
+
+  it('answers 400 when the session id is missing', async () => {
+    const handler = getRetryHandler({
+      retrySession: async () => {
+        throw new Error('must not be called without a session id');
+      },
+    });
+    const res = createMockRes();
+    handler(createMockReq(undefined), res);
+    await flush();
+    assert.equal(res.statusCode, 400);
+    assert.deepEqual(res.jsonBody, { ok: false, error: 'session id required' });
+  });
+
+  it('answers 500 with the error message when the rebuild fails', async () => {
+    const handler = getRetryHandler({
+      retrySession: async () => {
+        throw new Error('control channel is unreachable');
+      },
     });
     const res = createMockRes();
     handler(createMockReq('sess-2'), res);
-    assert.deepEqual(res.jsonBody, { url: null });
-  });
-
-  it('never logs or mutates the URL — it passes the token-bearing string through verbatim', () => {
-    const handler = getViewerUrlHandler({
-      hasLiveSession: () => true,
-      getViewerUrl: (sessionId) => `http://127.0.0.1:1/s/token-for-${sessionId}/v1/sessions/debug?x=1`,
-    });
-    const res = createMockRes();
-    handler(createMockReq('sess-3'), res);
-    const body = res.jsonBody as { url: string };
-    assert.equal(body.url, 'http://127.0.0.1:1/s/token-for-sess-3/v1/sessions/debug?x=1');
+    await flush();
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(res.jsonBody, { ok: false, error: 'control channel is unreachable' });
   });
 });

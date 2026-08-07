@@ -3,16 +3,20 @@
  *
  * Resolution order from the sidecar's environment:
  *  - `COMATE_BROWSER_CDP_TARGET` unset / empty / `auto`:
- *      shell env complete → the in-shell Chromium (U7 default when the
- *      Electron shell spawned this sidecar); otherwise `steel` (dev-web and
- *      the pre-U9 legacy path).
- *  - `steel`  → force the legacy vendored-Steel child-process stack.
+ *      shell env complete → the in-shell Chromium (the default when the
+ *      Electron shell spawned this sidecar); otherwise `misconfigured`
+ *      (dev-web has no shell — U9 removed the bundled child-process stack;
+ *      the operator remedy is an external endpoint, below).
  *  - `shell`  → force the in-shell Chromium; `misconfigured` when the shell
  *               env is incomplete (fail loud, never silently drift).
  *  - an endpoint (`http://host:port`, `ws://host:port/…`, `host:port`, or a
  *    bare port) → external debug-port Chromium (AE2: operators point the
  *    tools at a manually started Chromium WITHOUT a client release; each
  *    session gets an isolated throwaway browser context, KTD-10 semantics).
+ *
+ * U9 decision (R8 open question): the external endpoint IS the rollback
+ * landing spot going forward — no bundled Chromium, no system-Chrome
+ * resolution; the fallback targets support/enterprise-ops scenarios.
  *
  * The shell coordinates themselves arrive via spawn env (KTD-6/KTD-11):
  * `COMATE_SHELL_DEBUG_PORT`, `COMATE_SHELL_CONTROL_PORT`,
@@ -22,7 +26,6 @@
 export type BrowserCdpTarget =
   | { kind: 'shell'; debugPort: number; controlPort: number; controlToken: string }
   | { kind: 'external'; host: string; port: number }
-  | { kind: 'steel' }
   | { kind: 'misconfigured'; reason: string };
 
 export const BROWSER_CDP_TARGET_ENV = 'COMATE_BROWSER_CDP_TARGET';
@@ -72,9 +75,17 @@ export function resolveBrowserCdpTarget(env: Env = process.env): BrowserCdpTarge
   const override = env[BROWSER_CDP_TARGET_ENV]?.trim();
   const shell = shellTargetFromEnv(env);
   if (!override || override === 'auto') {
-    return shell ?? { kind: 'steel' };
+    return (
+      shell ?? {
+        kind: 'misconfigured',
+        reason:
+          'The embedded browser requires the desktop app (this sidecar has no shell CDP ' +
+          'coordinates). Start the desktop app, or point ' +
+          `${BROWSER_CDP_TARGET_ENV} at an external Chromium debug endpoint ` +
+          '(http://host:port, ws://host:port/…, host:port, or a bare port).',
+      }
+    );
   }
-  if (override === 'steel') return { kind: 'steel' };
   if (override === 'shell') {
     return (
       shell ?? {
@@ -92,6 +103,6 @@ export function resolveBrowserCdpTarget(env: Env = process.env): BrowserCdpTarge
     kind: 'misconfigured',
     reason:
       `Unparseable ${BROWSER_CDP_TARGET_ENV}=${JSON.stringify(override)}. ` +
-      'Use auto | steel | shell | http://host:port | ws://host:port/… | host:port.',
+      'Use auto | shell | http://host:port | ws://host:port/… | host:port.',
   };
 }
