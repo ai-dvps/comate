@@ -81,6 +81,30 @@ describe('buildSidecarEnv (lib.rs:534-538 env set, names pinned by KTD-1/KTD-13)
       COMATE_SIDECAR: '1',
     });
   });
+
+  it('adds the U7 shell debug/control env keys when the shell options are passed', () => {
+    const env = buildSidecarEnv({
+      dataDir: '/data',
+      resourceDir: '/res',
+      shellDebugPort: 9222,
+      shellControlPort: 4333,
+      shellControlToken: 'tok',
+    });
+    assert.strictEqual(env.COMATE_SHELL_DEBUG_PORT, '9222');
+    assert.strictEqual(env.COMATE_SHELL_CONTROL_PORT, '4333');
+    assert.strictEqual(env.COMATE_SHELL_CONTROL_TOKEN, 'tok');
+  });
+
+  it('omits the control-port/token keys when only shellDebugPort is set', () => {
+    const env = buildSidecarEnv({
+      dataDir: '/data',
+      resourceDir: '/res',
+      shellDebugPort: 9222,
+    });
+    assert.strictEqual(env.COMATE_SHELL_DEBUG_PORT, '9222');
+    assert.ok(!('COMATE_SHELL_CONTROL_PORT' in env), 'COMATE_SHELL_CONTROL_PORT must be absent');
+    assert.ok(!('COMATE_SHELL_CONTROL_TOKEN' in env), 'COMATE_SHELL_CONTROL_TOKEN must be absent');
+  });
 });
 
 describe('sidecar binary / resource path resolution', () => {
@@ -203,6 +227,32 @@ describe('spawnSidecar / shutdownSidecar (integration, fake sidecar over node -e
     } finally {
       await shutdownSidecar(handle, { port: null, graceMs: 0, logger });
       assert.ok(handle.child === null || handle.child.killed || handle.child.exitCode !== null || true);
+    }
+  });
+
+  it('never logs the shellControlToken passed via env (U7 control channel)', async () => {
+    const logger = createCapturingLogger();
+    const CONTROL_TOKEN = 'tok-control-secret';
+    const handle = spawnSidecar({
+      binaryPath: process.execPath,
+      args: ['-e', fakeSidecarScript('graceful')],
+      env: buildSidecarEnv({
+        dataDir: '/tmp/comate-test',
+        resourceDir: '/tmp/comate-res',
+        shellControlToken: CONTROL_TOKEN,
+      }),
+      logger,
+      readyTimeoutMs: 5000,
+      debugStdout: true,
+    });
+    try {
+      await handle.ready;
+      assert.ok(
+        !logger.lines.some((line) => line.includes(CONTROL_TOKEN)),
+        `shellControlToken leaked into logs: ${logger.lines.join('\n')}`,
+      );
+    } finally {
+      await shutdownSidecar(handle, { port: null, graceMs: 0, logger });
     }
   });
 

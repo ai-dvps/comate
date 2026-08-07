@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { waitFor } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, beforeAll, afterEach } from 'vitest'
+import { render, waitFor } from '@testing-library/react'
+import { createElement, useRef } from 'react'
 
 import type { ComateBridge } from './desktop-api'
 import {
@@ -9,6 +10,7 @@ import {
   setBrowserViewInputMode,
   setBrowserViewOccluded,
   setBrowserViewOcclusionExemption,
+  useBrowserViewRectReport,
   onBrowserViewEscape,
   onBrowserViewOcclusionChange,
 } from './browser-view-bridge'
@@ -113,6 +115,116 @@ describe('browser-view-bridge — input gating + escape', () => {
     captured!('s1')
     expect(seen).toEqual(['s1'])
     unsub()
+  })
+})
+
+describe('useBrowserViewRectReport — real hook effect contract', () => {
+  beforeAll(() => {
+    globalThis.ResizeObserver = class ResizeObserverMock {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  interface HostProps {
+    sessionId: string | null
+    active: boolean
+    occlusionExempt?: boolean
+  }
+
+  function RectReportHost({ sessionId, active, occlusionExempt }: HostProps) {
+    const ref = useRef<HTMLDivElement>(null)
+    useBrowserViewRectReport(ref, sessionId, active, { occlusionExempt })
+    return createElement('div', { ref })
+  }
+
+  function renderHost(props: HostProps) {
+    return render(createElement(RectReportHost, props))
+  }
+
+  function domRect(x: number, y: number, width: number, height: number): DOMRect {
+    return {
+      x,
+      y,
+      width,
+      height,
+      top: y,
+      left: x,
+      right: x + width,
+      bottom: y + height,
+      toJSON: () => ({}),
+    } as DOMRect
+  }
+
+  function stubElementRect(rect: DOMRect) {
+    return vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(rect)
+  }
+
+  it('reports the element rect while active (jsdom zero-area rects report null)', () => {
+    installBridge()
+    renderHost({ sessionId: 's1', active: true })
+    expect(browserView.reportRect).toHaveBeenCalledTimes(1)
+    expect(browserView.reportRect).toHaveBeenCalledWith('s1', null)
+  })
+
+  it('forwards a measured rect on mount and re-reports on window resize', async () => {
+    installBridge()
+    const rectSpy = stubElementRect(domRect(10, 20, 480, 600))
+    renderHost({ sessionId: 's1', active: true })
+    expect(browserView.reportRect).toHaveBeenCalledWith('s1', {
+      x: 10,
+      y: 20,
+      width: 480,
+      height: 600,
+    })
+
+    // A layout nudge schedules an rAF-throttled re-report; a changed rect
+    // clears the dedup and reaches the shell.
+    rectSpy.mockReturnValue(domRect(12, 22, 500, 620))
+    window.dispatchEvent(new Event('resize'))
+    await waitFor(() =>
+      expect(browserView.reportRect).toHaveBeenLastCalledWith('s1', {
+        x: 12,
+        y: 22,
+        width: 500,
+        height: 620,
+      }),
+    )
+  })
+
+  it('hides the view on unmount with a final null report', () => {
+    installBridge()
+    stubElementRect(domRect(0, 0, 100, 100))
+    const { unmount } = renderHost({ sessionId: 's1', active: true })
+    expect(browserView.reportRect).toHaveBeenCalledTimes(1)
+    unmount()
+    expect(browserView.reportRect).toHaveBeenCalledTimes(2)
+    expect(browserView.reportRect).toHaveBeenLastCalledWith('s1', null)
+  })
+
+  it('sets the occlusion exemption on mount and clears it on unmount (U9)', () => {
+    installBridge()
+    const { unmount } = renderHost({ sessionId: 's1', active: true, occlusionExempt: true })
+    expect(browserView.setOcclusionExemption).toHaveBeenCalledWith('s1')
+    expect(browserView.setOcclusionExemption).toHaveBeenCalledTimes(1)
+    unmount()
+    expect(browserView.setOcclusionExemption).toHaveBeenCalledTimes(2)
+    expect(browserView.setOcclusionExemption).toHaveBeenLastCalledWith(null)
+  })
+
+  it('an inactive hook reports nothing at all', () => {
+    installBridge()
+    const { unmount } = renderHost({ sessionId: 's1', active: false, occlusionExempt: true })
+    expect(browserView.reportRect).not.toHaveBeenCalled()
+    expect(browserView.setOcclusionExemption).not.toHaveBeenCalled()
+    unmount()
+    expect(browserView.reportRect).not.toHaveBeenCalled()
+    expect(browserView.setOcclusionExemption).not.toHaveBeenCalled()
   })
 })
 

@@ -136,6 +136,25 @@ jobs:
       - name: Build shell bundle
         run: npm run build:electron
 
+      # Version-consistency guard: electron-builder derives the app version,
+      # artifact names and latest*.yml from package.json, while the bridge
+      # steps derive everything from the git tag. A tag pushed without the
+      # package.json bump would ship Comate-<pkg-version> artifacts under a
+      # latest.json claiming the TAG version — passing the floor check while
+      # electron-updater offers nothing. This workflow only runs on tag
+      # pushes (on.push.tags: 'v*'), so the check is unconditional.
+      - name: Guard tag matches package.json version
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} (version ${TAG_VERSION}) does not match package.json version ${PKG_VERSION} — bump package.json before tagging"
+            exit 1
+          fi
+          echo "tag ${GITHUB_REF_NAME} matches package.json version ${PKG_VERSION}"
+
       - name: Determine signing readiness
         id: signing
         shell: bash
@@ -391,10 +410,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p bridge-assets
+          mkdir -p bridge-assets bridge-yml
           gh release download "$GITHUB_REF_NAME" --dir bridge-assets --clobber \
             -p '*-mac-arm64.app.tar.gz' -p '*-mac-x64.app.tar.gz' -p '*-win-*.exe'
-          ls -la bridge-assets bridge-sigs
+          # The Electron-line update manifests carry the package.json version;
+          # generate/check below cross-check them against the tag-derived
+          # bridge version so a tag/package.json mismatch fails loudly.
+          gh release download "$GITHUB_REF_NAME" --dir bridge-yml --clobber \
+            -p 'latest.yml' -p 'latest-mac.yml' -p 'latest-linux.yml'
+          ls -la bridge-assets bridge-sigs bridge-yml
 
       - name: Generate + verify + upload latest.json
         if: env.TAURI_SIGNING_PRIVATE_KEY != ''
@@ -405,18 +429,23 @@ jobs:
           mac_arm64="$(basename bridge-assets/*-mac-arm64.app.tar.gz)"
           mac_x64="$(basename bridge-assets/*-mac-x64.app.tar.gz)"
           win_x64="$(basename bridge-assets/*-win-*.exe)"
+          yml_args=()
+          for y in bridge-yml/latest*.yml; do yml_args+=(--yml "$y"); done
+          [ "${#yml_args[@]}" -gt 0 ] || { echo "::error::no latest*.yml downloaded from the draft release"; exit 1; }
           tsx scripts/build-bridge-manifest.ts generate \
             --version "$VERSION" \
             --release-base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}" \
             --asset "darwin-aarch64=${mac_arm64}=@bridge-sigs/${mac_arm64}.sig" \
             --asset "darwin-x86_64=${mac_x64}=@bridge-sigs/${mac_x64}.sig" \
             --asset "windows-x86_64=${win_x64}=@bridge-sigs/${win_x64}.sig" \
+            "${yml_args[@]}" \
             --out bridge/latest.json
           # KTD-9 order guard: every platform signature must verify against
           # the RELEASED bytes. minisign-before-Authenticode (or any artifact
           # mutation after signing) fails here — anti-regression for the
-          # signing order.
-          tsx scripts/build-bridge-manifest.ts check bridge/latest.json --assets-dir bridge-assets
+          # signing order. The --yml cross-check re-verifies that the bridge
+          # version equals the Electron-line latest*.yml version.
+          tsx scripts/build-bridge-manifest.ts check bridge/latest.json --assets-dir bridge-assets "${yml_args[@]}"
           gh release upload "$GITHUB_REF_NAME" bridge/latest.json --clobber
 
       # KTD-3 guard: the draft release must serve BOTH manifest families —

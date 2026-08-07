@@ -215,7 +215,11 @@ function createElectronUpdaterAdapter(): UpdaterAdapter {
   return {
     async checkForUpdates() {
       const result = await autoUpdater.checkForUpdates();
-      if (!result) return null; // dev without dev-app-update.yml, or unsupported
+      // electron-updater resolves a non-null { isUpdateAvailable: false,
+      // updateInfo } when already up-to-date — map that to null, otherwise
+      // the controller reports an available update whose download always
+      // rejects with 'Please check update first' (AppUpdater.doCheckForUpdates).
+      if (!result || result.isUpdateAvailable === false) return null;
       const { updateInfo } = result;
       const notes = updateInfo.releaseNotes;
       return {
@@ -325,12 +329,42 @@ function createMainWindow(): BrowserWindow {
     minHeight: 600,
     center: true,
     icon: nativeImage.createFromPath(shellIconPath()),
+    // macOS parity with the Tauri shell (Overlay + hiddenTitle): the client
+    // reserves pl-20 for the traffic lights and drags via -webkit-app-region.
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 14, y: 22 } }
+      : {}),
     webPreferences: {
       preload: join(__dirname, '..', 'preload', 'preload.cjs'),
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
     },
+  });
+
+  // Trust boundary: this window's preload exposes the sidecar desktop token
+  // (comate:get-api-info), so the main frame must never navigate away from
+  // the app UI origins — a remote document would own the bridge. Pin to
+  // app.comate://localhost (plus the Vite dev origin in dev) and push
+  // everything else to the system browser. Popups are deny-by-default
+  // (mirrors the browser-view-manager policy): a default-allowed
+  // window.open child would inherit the privileged preload.
+  const isAllowedUiUrl = (url: string): boolean => {
+    if (url.startsWith(`${UI_SCHEME}://localhost`)) return true;
+    return !app.isPackaged && url.startsWith('http://localhost:5173');
+  };
+  win.webContents.on('will-navigate', (event, url) => {
+    if (isAllowedUiUrl(url)) return;
+    event.preventDefault();
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      void shell.openExternal(url);
+    }
+  });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      void shell.openExternal(url);
+    }
+    return { action: 'deny' };
   });
 
   // Close-to-tray: hide instead of closing, unless an explicit quit path

@@ -45,8 +45,12 @@ export type UpdaterDownloadEvent =
 /**
  * Thin seam over electron-updater. `checkForUpdates` resolves null when no
  * update is available and REJECTS on transport/manifest/signature errors.
- * `downloadUpdate` rejects on download/signature errors; progress is pushed
- * through `onDownloadProgress` with cumulative byte counts.
+ * Note: electron-updater's raw checkForUpdates resolves a NON-NULL
+ * `{ isUpdateAvailable: false, updateInfo }` when already up-to-date — the
+ * real adapter (createElectronUpdaterAdapter in main.ts) maps that to null
+ * so this contract holds. `downloadUpdate` rejects on download/signature
+ * errors; progress is pushed through `onDownloadProgress` with cumulative
+ * byte counts.
  */
 export interface UpdaterAdapter {
   checkForUpdates(): Promise<UpdaterCheckInfo | null>;

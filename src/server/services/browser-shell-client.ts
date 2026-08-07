@@ -123,6 +123,24 @@ export class ShellControlClient {
     return res.destroyed === true;
   }
 
+  /**
+   * View liveness probe (GET /views/:id/state): true when the shell still
+   * hosts the view, false on a definite 404 (no such view). Transport and
+   * unexpected HTTP failures throw so callers can skip instead of misreading
+   * them as a lost view.
+   */
+  async viewExists(sessionId: string): Promise<boolean> {
+    try {
+      await this.request('GET', `/views/${encodeURIComponent(sessionId)}/state`);
+      return true;
+    } catch (err) {
+      if (err instanceof ControlChannelError && err.kind === 'http' && err.status === 404) {
+        return false;
+      }
+      throw err;
+    }
+  }
+
   wipePartition(sessionId: string): Promise<unknown> {
     return this.request('POST', `/partitions/${encodeURIComponent(sessionId)}/wipe`);
   }
@@ -140,10 +158,13 @@ export class ShellControlClient {
   /**
    * Subscribe to the shell's view event stream. Reconnects with a 1s delay
    * after drops (the stream is the session_lost signal path — a transient
-   * reconnect must not lose the subscription permanently). Returns an
+   * reconnect must not lose the subscription permanently). `onConnect` fires
+   * after every successful /events (re)subscription — events emitted while
+   * the stream was down are lost (no replay), so subscribers use it to
+   * reconcile state that may have drifted during the gap. Returns an
    * unsubscribe function.
    */
-  subscribeEvents(onEvent: (event: ShellViewEvent) => void): () => void {
+  subscribeEvents(onEvent: (event: ShellViewEvent) => void, onConnect?: () => void): () => void {
     let stopped = false;
     let active: http.ClientRequest | null = null;
     let retry: NodeJS.Timeout | null = null;
@@ -163,6 +184,7 @@ export class ShellControlClient {
           scheduleRetry();
           return;
         }
+        onConnect?.();
         res.setEncoding('utf8');
         let buffer = '';
         res.on('data', (chunk: string) => {
@@ -236,7 +258,8 @@ export class ShellViewHandle {
   readonly userDataDir: string;
   private readonly host?: string;
   private readonly targetId: string;
-  private readonly partition?: string;
+  /** Shell mode only — how browser-service tells shell views from external targets. */
+  readonly partition?: string;
   private readonly client?: ShellControlClient;
   private readonly browserContextId?: string;
   private readonly exitListeners = new Set<(info: BrowserExitInfo) => void>();

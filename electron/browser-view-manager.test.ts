@@ -206,17 +206,39 @@ describe('browser view manager — creation contract (KTD-10/KTD-16)', () => {
     await assert.rejects(() => manager.createView({ sessionId: 's1', marker: 'm2' }), /already exists/);
   });
 
-  it('emits view-crashed on render-process-gone and view-destroyed on destroy', async () => {
+  it('emits view-crashed on render-process-gone and reaps the crashed record shell-side', async () => {
     const { manager, events, views } = setup();
     await manager.createView({ sessionId: 's1', marker: 'm' });
     emit(views[0]!.webContents, 'render-process-gone', {}, { reason: 'killed' });
     assert.deepEqual(events[0], { type: 'view-crashed', sessionId: 's1', reason: 'killed', at: events[0]!.at });
-    await manager.destroyView('s1');
+    // Electron never auto-destroys a crashed webContents, so the manager
+    // reaps the record itself — otherwise every rebuild would 409 on the
+    // duplicate guard until app restart.
     assert.equal(views[0]!.webContents.destroyed, true);
     assert.equal(views[1]!.webContents.destroyed, true, 'shield destroyed with the page');
     assert.equal(events.at(-1)?.type, 'view-destroyed');
     assert.equal(manager.size(), 0);
     assert.equal(await manager.destroyView('s1'), false);
+  });
+
+  it('a crashed view rebuilds for the same session (no 409) with popups reaped and partition kept', async () => {
+    const { manager, events, views, sessions } = setup();
+    await manager.createView({ sessionId: 's1', marker: 'm1' });
+    await manager.setViewBounds('s1', RECT);
+    views[0]!.webContents.openHandler!({ url: 'https://accounts.example.com/oauth' });
+    const popup = views[2]!;
+    emit(views[0]!.webContents, 'render-process-gone', {}, { reason: 'crashed' });
+    assert.equal(events[0]!.type, 'view-crashed');
+    assert.equal(manager.size(), 0, 'crashed record is reaped, not left for a 409');
+    assert.equal(popup.webContents.destroyed, true, 'popups of the crashed view are reaped too');
+    const ses = sessions.get('persist:comate-browser-s1')!;
+    assert.equal(ses.clearedStorage, 0, 'partition preserved — login state survives the crash');
+    assert.equal(ses.clearedCache, 0);
+    // The session_lost rebuild POSTs /views for the same sessionId.
+    const rebuilt = await manager.createView({ sessionId: 's1', marker: 'm2' });
+    assert.equal(rebuilt.partition, 'persist:comate-browser-s1');
+    assert.equal(manager.getViewState('s1')?.attached, true, 'rebuild reattaches to the still-reported rect');
+    assert.equal(manager.size(), 1);
   });
 
   it('wipes a partition: destroys the live view and clears storage + cache', async () => {
@@ -451,6 +473,27 @@ describe('browser view manager — managed popup overlays (U8 OAuth decision)', 
     assert.equal(popup.visibleSet.at(-1), true);
     await manager.destroyView('s1');
     assert.equal(popup.webContents.destroyed, true, 'parent destroy takes popups down');
+  });
+
+  it('refuses popups beyond the per-session cap (untrusted pages can loop window.open)', async () => {
+    const { manager, views } = setup();
+    await manager.createView({ sessionId: 's1', marker: 'm' });
+    await manager.setViewBounds('s1', RECT);
+    const handler = views[0]!.webContents.openHandler!;
+    for (let i = 0; i < 8; i += 1) {
+      handler({ url: `https://example.com/popup-${i}` });
+    }
+    assert.equal(views.length, 2 + 8, 'page + shield + 8 popups');
+    assert.equal(manager.getViewState('s1')?.popupCount, 8);
+    const result = handler({ url: 'https://example.com/popup-9' }) as { action: string };
+    assert.equal(result.action, 'deny', 'default window creation is still denied');
+    assert.equal(views.length, 2 + 8, 'the (N+1)th popup is refused — no new view');
+    assert.equal(manager.getViewState('s1')?.popupCount, 8);
+    // A closed popup frees its slot.
+    views[2]!.webContents.destroy();
+    handler({ url: 'https://example.com/popup-10' });
+    assert.equal(views.length, 2 + 9);
+    assert.equal(manager.getViewState('s1')?.popupCount, 8);
   });
 });
 
