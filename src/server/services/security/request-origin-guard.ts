@@ -27,6 +27,8 @@ import { diagLog } from '../../utils/diag-logger.js';
  *  - `tauri://localhost`        macOS/Linux production webview (Tauri custom scheme)
  *  - `http://tauri.localhost`   Windows production (WebView2)
  *  - `https://tauri.localhost`  Windows production (https variant)
+ *  - `app.comate://localhost`   Electron production webview (U1 privileged
+ *                               custom scheme, registered via protocol.handle)
  *  - `http://localhost:5173`    dev vite origin (forwarded as-is through the
  *                               vite proxy, which only rewrites Host)
  *  - self origin (`http://localhost:<port>` / `http://127.0.0.1:<port>`) — the
@@ -81,6 +83,7 @@ const ALLOWED_APP_ORIGINS: readonly string[] = [
   'tauri://localhost',
   'http://tauri.localhost',
   'https://tauri.localhost',
+  'app.comate://localhost',
   'http://localhost:5173',
 ];
 

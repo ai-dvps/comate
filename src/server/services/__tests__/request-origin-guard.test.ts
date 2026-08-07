@@ -82,6 +82,7 @@ describe('isAllowedAppOrigin', () => {
       'tauri://localhost', // macOS/Linux production webview
       'http://tauri.localhost', // Windows production WebView2
       'https://tauri.localhost', // Windows production (https variant)
+      'app.comate://localhost', // Electron production webview (U1 custom scheme)
       'http://localhost:5173', // dev vite origin
     ]) {
       assert.ok(isAllowedAppOrigin(origin), `expected ${origin} to be allowed`);
@@ -103,6 +104,8 @@ describe('isAllowedAppOrigin', () => {
       'null',
       'file://',
       'tauri://localhost.evil.com',
+      'app.comate://localhost.evil.com',
+      'app.comate://evil.com',
       'http://localhost:5173.evil.com',
     ]) {
       assert.ok(!isAllowedAppOrigin(origin, 3000), `expected ${origin} to be rejected`);
@@ -121,6 +124,13 @@ describe('evaluateRequestSource', () => {
       3000,
     );
     assert.deepStrictEqual(decision, { allowed: true });
+    // The Electron shell's privileged scheme is cross-site to loopback in the
+    // same way (U1): Origin present + Sec-Fetch-Site: cross-site must pass.
+    const electronDecision = evaluateRequestSource(
+      { origin: 'app.comate://localhost', host: HOST, secFetchSite: 'cross-site' },
+      3000,
+    );
+    assert.deepStrictEqual(electronDecision, { allowed: true });
   });
 
   it('rejects cross-origin browser sources', () => {
@@ -260,6 +270,14 @@ describe('express middleware stack (same wiring as server-main)', { concurrency:
     });
     assert.strictEqual(res.status, 200);
     assert.strictEqual(res.headers['access-control-allow-origin'], 'tauri://localhost');
+
+    const electronRes = await rawRequest(port, {
+      method: 'GET',
+      path: '/api/ping',
+      headers: { Origin: 'app.comate://localhost' },
+    });
+    assert.strictEqual(electronRes.status, 200);
+    assert.strictEqual(electronRes.headers['access-control-allow-origin'], 'app.comate://localhost');
   });
 
   it('fails preflight for foreign origins and passes it for matrix origins', async () => {
@@ -388,6 +406,7 @@ describe('createWsUpgradeVerifier', () => {
 
   it('accepts matrix origins, header-less local clients, and rejects the rest', () => {
     assert.ok(verify({ origin: 'tauri://localhost', host: 'localhost:3000' }, 3000));
+    assert.ok(verify({ origin: 'app.comate://localhost', host: 'localhost:3000' }, 3000));
     assert.ok(verify({ origin: 'http://tauri.localhost', host: 'localhost:3000' }, 3000));
     assert.ok(verify({ origin: 'http://localhost:5173', host: 'localhost:3000' }, 3000));
     assert.ok(verify({ host: 'localhost:3000' }, 3000)); // node ws / Rust clients send no Origin
@@ -445,6 +464,7 @@ describe('ComateWebSocketServer upgrade enforcement (integration)', { concurrenc
 
   it('accepts WS upgrades from the app origin matrix', async () => {
     assert.strictEqual(await tryConnect({ Origin: 'tauri://localhost' }), 'open');
+    assert.strictEqual(await tryConnect({ Origin: 'app.comate://localhost' }), 'open');
     assert.strictEqual(await tryConnect({ Origin: 'http://tauri.localhost' }), 'open');
     assert.strictEqual(await tryConnect({ Origin: 'http://localhost:5173' }), 'open');
   });
