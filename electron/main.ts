@@ -26,11 +26,14 @@ import { APP_ID, resolveLegacyDataDir } from './paths';
 import { createShellLogger, type ShellLogger } from './logger';
 import {
   createControlServer,
-  createElectronViewManager,
+  SESSION_ID_PATTERN,
   type ControlEvent,
   type ControlServerHandle,
-  type ElectronViewManager,
 } from './control-server';
+import {
+  createBrowserViewManager,
+  type BrowserViewManager,
+} from './browser-view-manager';
 import {
   buildSidecarEnv,
   resolveResourceDir,
@@ -166,7 +169,7 @@ let updaterController: UpdaterController | null = null;
 // sidecar via spawn env. Null when the channel failed to start — the sidecar
 // then serves the browser stack from its legacy fallback (KTD-15 degradation).
 let controlServer: ControlServerHandle | null = null;
-let viewManager: ElectronViewManager | null = null;
+let viewManager: BrowserViewManager | null = null;
 let shellDebugPort: number | null = null;
 let shellControlPort: number | null = null;
 let shellControlToken: string | null = null;
@@ -444,6 +447,36 @@ function registerIpcHandlers(): void {
   ipcMain.handle('comate:updater-check', () => updaterController?.check() ?? null);
   ipcMain.handle('comate:updater-download', () => updaterController?.download());
   ipcMain.handle('comate:updater-relaunch', () => updaterController?.relaunch());
+
+  // U8 (KTD-14): panel-driven browser view control. The renderer reports the
+  // panel rect (window-relative CSS pixels — the UI view fills the window),
+  // the control-state input gating, and the modal-occlusion flag; the view
+  // manager applies them to the native WebContentsView. All inputs are
+  // validated main-side; the view manager may not exist yet (control channel
+  // still starting) — calls are then no-ops and the next rect report wins.
+  ipcMain.handle('comate:browser-view-report-rect', (_event, sessionId: unknown, rect: unknown) => {
+    if (typeof sessionId !== 'string' || !SESSION_ID_PATTERN.test(sessionId)) return;
+    if (rect === null) {
+      void viewManager?.setViewBounds(sessionId, null);
+      return;
+    }
+    const { x, y, width, height } = (rect ?? {}) as Record<string, unknown>;
+    if (![x, y, width, height].every((v) => typeof v === 'number' && Number.isFinite(v))) return;
+    void viewManager?.setViewBounds(sessionId, {
+      x: Math.round(x as number),
+      y: Math.round(y as number),
+      width: Math.round(width as number),
+      height: Math.round(height as number),
+    });
+  });
+  ipcMain.handle('comate:browser-view-input-mode', (_event, sessionId: unknown, mode: unknown) => {
+    if (typeof sessionId !== 'string' || !SESSION_ID_PATTERN.test(sessionId)) return;
+    if (mode !== 'user' && mode !== 'agent') return;
+    viewManager?.setInputMode(sessionId, mode);
+  });
+  ipcMain.handle('comate:browser-view-occluded', (_event, occluded: unknown) => {
+    viewManager?.setOccluded(occluded === true);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -539,11 +572,20 @@ async function setupControlChannel(): Promise<void> {
   shellControlToken = process.env['COMATE_SHELL_CONTROL_TOKEN'] || randomBytes(24).toString('base64url');
   const buffered: ControlEvent[] = [];
   let emit: (event: ControlEvent) => void = (event) => buffered.push(event);
-  viewManager = createElectronViewManager({
+  viewManager = createBrowserViewManager({
     createViewImpl: (options) =>
       new WebContentsView(options as Electron.WebContentsViewConstructorOptions) as unknown as never,
     sessionFromPartition: (partition) => session.fromPartition(partition) as never,
     onEvent: (event) => emit(event),
+    // U8: views attach to the main window's contentView once the panel
+    // reports its rect; partitions live under <userData>/Partitions.
+    hostWindow: () => mainWindow as never,
+    partitionsDir: () => join(app.getPath('userData'), 'Partitions'),
+    onEscape: (sessionId) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('comate:browser-view-escape', sessionId);
+      }
+    },
     logger,
   });
   const controlPortOverride = process.env['COMATE_SHELL_CONTROL_PORT'];

@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { WsEventMessage } from '@server/websocket/types'
 import { VIEWER_TOKEN_PATTERN } from '@server/services/browser-viewer-token'
 import { wsClient } from '../lib/websocket-client.js'
+import { isNativeBrowserView, onBrowserViewOcclusionChange } from '../lib/browser-view-bridge'
 import type { ChatState } from './chat-store'
 
 /**
@@ -76,6 +77,12 @@ export interface BrowserPaneState {
   activeWorkspaceId: string | null
   activeSessionId: string | null
   sessions: Record<string, SessionBrowserState>
+  /**
+   * U8 (KTD-14): single modal-occlusion flag — true while a modal-level
+   * overlay (dialog/alertdialog) covers the panel area and the shell has
+   * hidden every native browser view. Driven by the bridge's watcher.
+   */
+  nativeViewOccluded: boolean
 
   togglePane: (sessionId: string) => void
   setPaneOpen: (sessionId: string, open: boolean) => void
@@ -107,6 +114,8 @@ export interface BrowserPaneState {
   _applyUnavailable: (sessionId: string, info: BrowserUnavailableInfo) => void
   _applyClosed: (sessionId: string) => void
   _applyIdlePrompt: (sessionId: string, pending: boolean) => void
+  /** Bridge watcher → store flag (U8 native occlusion). */
+  _setNativeViewOccluded: (occluded: boolean) => void
 }
 
 export const BROWSER_PANE_MIN_WIDTH = 320
@@ -217,7 +226,7 @@ function getSessionState(
 }
 
 /** True while the control state describes a live (or starting) browser. */
-function isLiveControlState(state: BrowserPaneControlState): boolean {
+export function isLiveControlState(state: BrowserPaneControlState): boolean {
   return state === 'agent_in_control' || state === 'handoff_pending' || state === 'user_in_control'
 }
 
@@ -351,6 +360,7 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
     activeWorkspaceId: null,
     activeSessionId: null,
     sessions: {},
+    nativeViewOccluded: false,
 
     togglePane: (sessionId: string) => {
       get().setPaneOpen(sessionId, !selectSessionOpen(get(), sessionId))
@@ -434,6 +444,19 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
     },
 
     retryViewer: async (sessionId: string) => {
+      if (isNativeBrowserView()) {
+        // Native stack (U8): the server rebuilds the view over the control
+        // channel and navigates back to the session's last URL (the
+        // partition survives, so login state is kept). The browser_state
+        // event flips the panel out of session_lost.
+        try {
+          await fetch(`/api/browser/${encodeURIComponent(sessionId)}/retry`, { method: 'POST' })
+        } catch {
+          // A failed retry leaves the session_lost copy up; the state bar
+          // copy already sets expectations ("next tool call also rebuilds").
+        }
+        return
+      }
       await refreshViewerUrl(sessionId)
       const session = getSessionState(get(), sessionId)
       if (session.viewerUrl) {
@@ -457,7 +480,10 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
       const current = getSessionState(get(), sessionId)
       if (healthy) {
         patchSession(sessionId, { unavailable: null })
-        await refreshViewerUrl(sessionId)
+        // Native stack renders no iframe — there is no viewer URL to refetch.
+        if (!isNativeBrowserView()) {
+          await refreshViewerUrl(sessionId)
+        }
       } else {
         patchSession(sessionId, {
           unavailable: {
@@ -494,7 +520,12 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
       }
       // Fetch the server-constructed viewer URL once the browser is (or may
       // be) live; the REST route answers null while it is still starting.
-      if (isLiveControlState(next) && (current.viewerUrl === null || data.port !== current.port)) {
+      // The native stack (U8) renders no iframe, so it never fetches one.
+      if (
+        !isNativeBrowserView() &&
+        isLiveControlState(next) &&
+        (current.viewerUrl === null || data.port !== current.port)
+      ) {
         void refreshViewerUrl(sessionId)
       }
     },
@@ -516,6 +547,10 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
     },
     _applyIdlePrompt: (sessionId, pending) => {
       patchSession(sessionId, { idlePrompt: pending })
+    },
+    _setNativeViewOccluded: (occluded) => {
+      if (get().nativeViewOccluded === occluded) return
+      set({ nativeViewOccluded: occluded })
     },
   }
 })
@@ -569,6 +604,12 @@ wsClient.onReconnect(() => {
     unsubscribeCurrent()
     void subscribeTo(activeWorkspaceId, activeSessionId)
   }
+})
+
+// U8 (KTD-14): modal-occlusion flag — the bridge watcher is a no-op outside
+// the Electron shell, so this subscription is safe in every environment.
+onBrowserViewOcclusionChange((occluded) => {
+  useBrowserPaneStore.getState()._setNativeViewOccluded(occluded)
 })
 
 // ---------------------------------------------------------------------------

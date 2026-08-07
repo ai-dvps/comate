@@ -309,7 +309,7 @@ export default function RightPanel({
               )}
               aria-hidden={wsId !== workspaceId || !showBrowser}
             >
-              <BrowserPane workspaceId={wsId} />
+              <BrowserPane workspaceId={wsId} surfaceVisible={wsId === workspaceId && showBrowser} />
             </div>
           ))}
 

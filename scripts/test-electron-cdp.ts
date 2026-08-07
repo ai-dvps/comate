@@ -15,9 +15,15 @@
  *     about:blank#<marker> convention and attachable (flatten) — the exact
  *     path browser-service takes;
  *  4. core tool mechanics work against the in-shell view: navigate, evaluate,
- *     screenshot, AX tree, and the KTD-12 fingerprint (no Electron UA, no
+ *     AX tree, and the KTD-12 fingerprint (no Electron UA, no
  *     navigator.webdriver) on every new document;
- *  5. view teardown via the control channel removes the CDP target.
+ *  5. view teardown via the control channel removes the CDP target;
+ *  6. U8 panel wiring: a rect report attaches the view to the window and
+ *     applies bounds (following resize), the attached view produces real
+ *     Page.captureScreenshot output, window.open becomes a managed
+ *     same-partition overlay view (never an OS window), open/close cycles
+ *     return the page-target count to baseline (render-process leak soak),
+ *     and orphan partitions are reconciled against the sidecar's keep list.
  *
  * Skips with a message when Electron cannot launch in the environment (no GUI
  * / sandboxed CI); --required (or COMATE_REQUIRE_ELECTRON_CDP=1) turns a skip
@@ -25,7 +31,7 @@
  */
 
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -81,6 +87,11 @@ async function allocatePort(): Promise<number> {
 }
 
 const dataDir = mkdtempSync(path.join(tmpdir(), 'comate-electron-gate-'));
+// U8: pre-seed an orphan partition dir (a "previous boot" leftover) so the
+// reconciliation check can watch it being swept.
+const orphanPartitionDir = path.join(dataDir, 'shell', 'Partitions', 'comate-browser-orphan-e2e');
+mkdirSync(orphanPartitionDir, { recursive: true });
+writeFileSync(path.join(orphanPartitionDir, 'leftover'), 'x');
 const controlPort = await allocatePort();
 const debugPort = await allocatePort();
 const token = randomBytes(24).toString('base64url');
@@ -208,11 +219,8 @@ try {
       assert((await page.evaluate<string>('document.title')) === 'gate', 'evaluate failed');
       const tree = await page.getFullAXTree();
       assert(tree.length > 0, 'empty AX tree');
-      // NOTE: Page.captureScreenshot is intentionally NOT asserted here — an
-      // unattached WebContentsView has no compositor surface in U7 (plan:
-      // views stay unattached until U8 wires panel bounds). Screenshot parity
-      // is proven against the external endpoint in test-shell-cdp.ts (B8) and
-      // lands in-shell with U8's attach.
+      // NOTE: Page.captureScreenshot is asserted on an ATTACHED view in E8 —
+      // this first view is still unattached (no panel rect reported yet).
       // nodeIntegration-off, from the renderer's own perspective.
       assert(
         (await page.evaluate<string>('typeof process')) === 'undefined' &&
@@ -264,11 +272,182 @@ try {
     }
     throw new Error('view target still listed after destroy');
   });
+
+  // ------------------------------------------------------------------
+  // U8: native panel wiring — attach/bounds, screenshot on the attached
+  // view, managed popup overlays, open/close leak soak, orphan reconcile.
+  // ------------------------------------------------------------------
+
+  // Popup target for E9: the managed-overlay path only accepts http(s).
+  const popupServer = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(`<!doctype html><title>${req.url === '/b' ? 'popup-b' : 'popup-a'}</title><body>${req.url}</body>`);
+  });
+  await new Promise<void>((resolve) => popupServer.listen(0, '127.0.0.1', () => resolve()));
+  const popupAddress = popupServer.address();
+  const popupPort = popupAddress && typeof popupAddress === 'object' ? popupAddress.port : 0;
+
+  const marker2 = `comate-view-gate2-${randomBytes(6).toString('hex')}`;
+  let gate2TargetId: string | undefined;
+  const GATE2_RECT = { x: 64, y: 48, width: 640, height: 480 };
+
+  await check('E7 rect report attaches the view to the window and applies bounds', async () => {
+    const create = await controlFetch('/views', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'gate-2', marker: marker2 }),
+    });
+    assert(create.status === 201, `create gate-2 returned ${create.status}`);
+    // Before any rect: unattached (the panel is not showing).
+    const before = (await (await controlFetch('/views/gate-2')).json()) as {
+      state: { attached: boolean; visible: boolean };
+    };
+    assert(before.state.attached === false && before.state.visible === false, JSON.stringify(before));
+    const bounds = await controlFetch('/views/gate-2/bounds', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(GATE2_RECT),
+    });
+    assert(bounds.ok, `bounds report returned ${bounds.status}`);
+    const after = (await (await controlFetch('/views/gate-2')).json()) as {
+      state: { attached: boolean; visible: boolean; bounds: typeof GATE2_RECT; inputMode: string; pointerGated: boolean };
+    };
+    assert(after.state.attached === true, `not attached: ${JSON.stringify(after.state)}`);
+    assert(after.state.visible === true, 'not visible after rect report');
+    assert(
+      after.state.bounds && after.state.bounds.width === GATE2_RECT.width && after.state.bounds.x === GATE2_RECT.x,
+      `bounds not applied: ${JSON.stringify(after.state.bounds)}`,
+    );
+    // Safe default gating until the panel reports user_in_control.
+    assert(after.state.inputMode === 'agent' && after.state.pointerGated === true, 'default gating wrong');
+    // Bounds follow a resize.
+    await controlFetch('/views/gate-2/bounds', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...GATE2_RECT, width: 700 }),
+    });
+    const resized = (await (await controlFetch('/views/gate-2')).json()) as {
+      state: { bounds: { width: number } };
+    };
+    assert(resized.state.bounds.width === 700, 'bounds did not follow resize');
+    for (let attempt = 0; attempt < 50 && !gate2TargetId; attempt += 1) {
+      const targets = await listCdpTargets({ port: debugPort });
+      gate2TargetId = targets.find((t) => t.type === 'page' && t.url.includes(marker2))?.id;
+      if (!gate2TargetId) await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    assert(gate2TargetId, 'gate-2 target never appeared in /json/list');
+  });
+
+  await check('E8 Page.captureScreenshot works on the attached view (U7 leftover fix)', async () => {
+    assert(gate2TargetId, 'no gate-2 target');
+    const page = await connectShellPage({ port: debugPort, targetId: gate2TargetId });
+    try {
+      await page.navigate('data:text/html,<title>shot</title><body style="background:#123">pixels</body>');
+      const shot = await page.captureScreenshot();
+      assert(typeof shot === 'string' && shot.length > 500, `screenshot too small: ${shot.length}`);
+    } finally {
+      page.close();
+    }
+  });
+
+  await check('E9 window.open becomes a managed same-partition overlay (OAuth decision)', async () => {
+    assert(gate2TargetId, 'no gate-2 target');
+    const page = await connectShellPage({ port: debugPort, targetId: gate2TargetId });
+    let popupTargetId: string | undefined;
+    try {
+      await page.navigate(`http://127.0.0.1:${popupPort}/a`);
+      const opened = await page.evaluate<string>(
+        `(() => { window.open('http://127.0.0.1:${popupPort}/b'); return 'opened'; })()`,
+      );
+      assert(opened === 'opened', 'window.open evaluate failed');
+      for (let attempt = 0; attempt < 50 && !popupTargetId; attempt += 1) {
+        const targets = await listCdpTargets({ port: debugPort });
+        popupTargetId = targets.find(
+          (t) => t.type === 'page' && t.url.includes(`127.0.0.1:${popupPort}/b`),
+        )?.id;
+        if (!popupTargetId) await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      assert(popupTargetId, 'popup target never appeared on the debug port (no OS window allowed)');
+      const state = (await (await controlFetch('/views/gate-2')).json()) as {
+        state: { popupCount: number };
+      };
+      assert(state.state.popupCount === 1, `expected one managed popup: ${JSON.stringify(state.state)}`);
+      // OAuth-style self-close: the popup page's window.close() must reap the
+      // overlay view (no orphan windows over the panel).
+      const popupPage = await connectShellPage({ port: debugPort, targetId: popupTargetId });
+      try {
+        await popupPage.evaluate<string>('(() => { window.close(); return "closing"; })()');
+      } finally {
+        popupPage.close();
+      }
+      let popupGone = false;
+      for (let attempt = 0; attempt < 25 && !popupGone; attempt += 1) {
+        const s = (await (await controlFetch('/views/gate-2')).json()) as {
+          state: { popupCount: number };
+        };
+        popupGone = s.state.popupCount === 0;
+        if (!popupGone) await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      assert(popupGone, 'popup overlay did not self-close on window.close()');
+      popupTargetId = undefined; // already reaped — skip the teardown watch below
+    } finally {
+      page.close();
+    }
+    // Destroying the parent takes the overlay down with it.
+    const del = await controlFetch('/views/gate-2', { method: 'DELETE' });
+    assert((await del.json()).destroyed === true, 'gate-2 destroy failed');
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      const targets = await listCdpTargets({ port: debugPort });
+      if (!targets.some((t) => t.id === popupTargetId) && !targets.some((t) => t.id === gate2TargetId)) return;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    throw new Error('popup/parent target still listed after parent destroy');
+  });
+
+  await check('E10 open/close cycles return the render-process count to baseline (leak soak)', async () => {
+    const baseline = (await listCdpTargets({ port: debugPort })).filter((t) => t.type === 'page').length;
+    for (let cycle = 0; cycle < 5; cycle += 1) {
+      const sessionId = `soak-${cycle}`;
+      const create = await controlFetch('/views', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId, marker: `comate-view-${sessionId}` }),
+      });
+      assert(create.status === 201, `soak create ${cycle} returned ${create.status}`);
+      await controlFetch(`/views/${sessionId}/bounds`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(GATE2_RECT),
+      });
+      const del = await controlFetch(`/views/${sessionId}`, { method: 'DELETE' });
+      assert((await del.json()).destroyed === true, `soak destroy ${cycle} failed`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    const after = (await listCdpTargets({ port: debugPort })).filter((t) => t.type === 'page').length;
+    assert(after === baseline, `page target count drifted: baseline=${baseline} after=${after}`);
+  });
+
+  await check('E11 orphan partition reconciliation sweeps unlisted partitions (KTD-11)', async () => {
+    assert(existsSync(orphanPartitionDir), 'pre-seeded orphan partition missing before reconcile');
+    const res = await controlFetch('/partitions/reconcile', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ keep: [] }),
+    });
+    const body = (await res.json()) as { ok: boolean; removed: string[]; errors: string[] };
+    assert(body.ok === true, `reconcile failed: ${JSON.stringify(body)}`);
+    assert(
+      body.removed.includes('orphan-e2e'),
+      `orphan partition not swept: ${JSON.stringify(body)}`,
+    );
+    assert(!existsSync(orphanPartitionDir), 'orphan partition dir still on disk');
+  });
+
+  popupServer.close();
 } finally {
   await electronApp.close().catch(() => undefined);
   rmSync(dataDir, { recursive: true, force: true });
 }
-
 const failed = results.filter((r) => !r.ok);
 if (failed.length > 0) {
   console.error(`\nFAIL electron shell CDP gate: ${failed.length}/${results.length} failed`);

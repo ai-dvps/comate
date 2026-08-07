@@ -69,6 +69,7 @@ export default function BotDangerSection({ botName, onDelete, isLoading, error }
         <div
           role="dialog"
           aria-modal="true"
+          data-modal-overlay=""
           className="fixed top-11 inset-x-0 bottom-0 z-[60] flex items-start justify-center pt-16"
         >
           <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={() => setShowDialog(false)} />

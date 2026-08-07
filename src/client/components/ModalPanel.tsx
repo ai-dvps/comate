@@ -76,6 +76,9 @@ export default function ModalPanel({
 
   return (
     <div
+      role="dialog"
+      aria-modal={open}
+      data-modal-overlay={open ? '' : undefined}
       className={cn(
         // Keep the desktop title bar uncovered so macOS users can still drag
         // the window while a panel is open.

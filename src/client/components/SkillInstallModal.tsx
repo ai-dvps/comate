@@ -215,6 +215,7 @@ export default function SkillInstallModal({
       className="fixed inset-0 z-[60] flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
+      data-modal-overlay=""
       aria-label={t('skills.installTitle')}
     >
       <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={phase === 'installing' ? undefined : handleCancel} />

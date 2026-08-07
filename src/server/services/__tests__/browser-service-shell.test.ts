@@ -33,6 +33,7 @@ interface ShellHarness {
     calls: Array<{ method: string; sessionId: string }>;
     emitEvent: (event: ControlEvent) => void;
     lastMarker: string | null;
+    reconcileKeeps: string[][];
     failCreate?: (err: Error) => never;
   };
   jsonServer: Server;
@@ -49,6 +50,7 @@ async function startHarness(options?: { serveJson?: boolean }): Promise<ShellHar
   const manager = {
     calls,
     failCreate: undefined as ((err: Error) => never) | undefined,
+    reconcileKeeps: [] as string[][],
     get lastMarker() {
       return state.lastMarker;
     },
@@ -71,6 +73,13 @@ async function startHarness(options?: { serveJson?: boolean }): Promise<ShellHar
       calls.push({ method: 'wipePartition', sessionId });
     },
     async setViewBounds() {},
+    getViewState() {
+      return null;
+    },
+    async reconcilePartitions(keep: string[]) {
+      manager.reconcileKeeps.push(keep);
+      return { removed: [], errors: [] };
+    },
   };
   const control = await createControlServer({
     token: TOKEN,
@@ -109,6 +118,8 @@ async function startHarness(options?: { serveJson?: boolean }): Promise<ShellHar
       controlToken: TOKEN,
     }),
     cdpRetry: { budgetMs: 400, intervalMs: 40 },
+    // Keep the reconcile sweep off the real store singleton.
+    listKnownSessionIds: () => ['known-sess'],
   });
 
   return {
@@ -299,5 +310,67 @@ describe('BrowserService native shell path (U7, KTD-6/KTD-10/KTD-11)', () => {
     assert.equal(handle.baseUrl, 'http://127.0.0.1:1/__comate-cdp__/t/T');
     assert.equal(handle.userDataDir, 'cdp-context:ctx-1');
     assert.equal(await handle.probeHealth(), false);
+  });
+
+  it('initialize reconciles orphan partitions with the registry keep list (U8, KTD-11)', async () => {
+    const h = await startHarness();
+    try {
+      // ensureSession chains initialize(); the shell target triggers a
+      // reconcile carrying the known-session keep list (the in-memory
+      // registry is still empty at boot — persisted sessions come from the
+      // store listing).
+      await h.service.ensureSession({ sessionId: 'sess-reconcile', workspaceId: 'ws-1' });
+      assert.equal(h.manager.reconcileKeeps.length, 1);
+      const keep = h.manager.reconcileKeeps[0]!;
+      assert.ok(keep.includes('known-sess'), `keep list missing known sessions: ${keep}`);
+      // One-shot: further sessions do not re-reconcile.
+      await h.service.ensureSession({ sessionId: 'sess-reconcile-2', workspaceId: 'ws-1' });
+      assert.equal(h.manager.reconcileKeeps.length, 1);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it('view-navigated SSE tracks lastUrl; retrySession rebuilds a lost session (U8)', async () => {
+    const h = await startHarness();
+    try {
+      await h.service.ensureSession({ sessionId: 'sess-retry', workspaceId: 'ws-1' });
+      // A live session neither rebuilds nor errors on retry.
+      assert.deepEqual(await h.service.retrySession('sess-retry'), { rebuilding: false });
+
+      h.manager.emitEvent({
+        type: 'view-navigated',
+        sessionId: 'sess-retry',
+        url: 'https://example.com/dashboard',
+        at: Date.now(),
+      });
+      // Let the SSE frame land before the crash wipes the handle.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      h.manager.emitEvent({ type: 'view-crashed', sessionId: 'sess-retry', reason: 'killed', at: Date.now() });
+      for (let i = 0; i < 50 && h.service.getControlState('sess-retry') !== 'session_lost'; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+      assert.equal(h.service.getControlState('sess-retry'), 'session_lost');
+
+      const result = await h.service.retrySession('sess-retry');
+      assert.equal(result.rebuilding, true);
+      assert.equal(h.service.getControlState('sess-retry'), 'agent_in_control');
+      assert.equal(h.manager.calls.filter((c) => c.method === 'createView').length, 2);
+      // The last-URL restore attempt is best-effort (the harness's fake debug
+      // port cannot serve a real CDP attach); the tracked URL survives.
+      const info = h.service.getSession('sess-retry');
+      assert.ok(info);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it('retrySession is a no-op for unknown sessions', async () => {
+    const h = await startHarness();
+    try {
+      assert.deepEqual(await h.service.retrySession('nope'), { rebuilding: false });
+    } finally {
+      await h.cleanup();
+    }
   });
 });

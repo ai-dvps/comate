@@ -39,11 +39,22 @@ export interface DesktopUpdate extends DesktopUpdateInfo {
   downloadAndInstall(onEvent?: (event: DownloadEvent) => void): Promise<void>;
 }
 
+/** U8: panel rect in window-relative CSS pixels (mirrors electron/preload.ts). */
+export interface BrowserViewRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export type BrowserViewInputMode = 'user' | 'agent';
+
 /**
  * The `window.comate` surface exposed by electron/preload.ts. Everything
  * except getApiInfo is optional: the preload exposes capabilities as the
  * Electron shell units land (dialog/notification in lockstep with U2,
- * updater in U5), and the client must keep working in the meantime.
+ * updater in U5, browserView in U8), and the client must keep working in the
+ * meantime.
  */
 export interface ComateBridge {
   getApiInfo: () => Promise<ComateApiInfo>;
@@ -70,6 +81,16 @@ export interface ComateBridge {
     /** Subscribes to shell-pushed download events; returns an unsubscribe. */
     onDownloadEvent?: (handler: (event: DownloadEvent) => void) => () => void;
   };
+  browserView?: {
+    /** Panel rect report; null hides the view (collapsed / not hosted here). */
+    reportRect?: (sessionId: string, rect: BrowserViewRect | null) => Promise<void>;
+    /** KTD-14 input gating driven by the panel's control state. */
+    setInputMode?: (sessionId: string, mode: BrowserViewInputMode) => Promise<void>;
+    /** Global modal-occlusion flag: shell hides every browser view while set. */
+    setOccluded?: (occluded: boolean) => Promise<void>;
+    /** Esc intercepted on a user-driven view; returns an unsubscribe. */
+    onEscape?: (handler: (sessionId: string) => void) => () => void;
+  };
 }
 
 interface ComateWindow extends Window {
@@ -79,6 +100,11 @@ interface ComateWindow extends Window {
 function getBridge(): ComateBridge | null {
   if (typeof window === 'undefined') return null;
   return (window as ComateWindow).comate ?? null;
+}
+
+/** Raw bridge accessor for capability-specific modules (browser-view-bridge). */
+export function getDesktopBridge(): ComateBridge | null {
+  return getBridge();
 }
 
 /** Bridge detection: true inside the Electron shell, false in a plain browser. */

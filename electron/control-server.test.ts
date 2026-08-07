@@ -2,11 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import {
   createControlServer,
-  createElectronViewManager,
   type ControlEvent,
   type ControlServerHandle,
   type ControlViewManager,
-  type ViewRect,
 } from './control-server';
 
 const TOKEN = 'test-boot-token';
@@ -20,12 +18,12 @@ interface Harness {
 }
 
 async function startServer(overrides?: {
-  views?: ControlViewManager;
+  views?: Partial<ControlViewManager>;
   quitting?: { value: boolean };
 }): Promise<Harness> {
   const calls: Harness['calls'] = [];
   const quitting = overrides?.quitting ?? { value: false };
-  const manager: ControlViewManager = overrides?.views ?? {
+  const manager: ControlViewManager = {
     async createView({ sessionId, marker }) {
       calls.push({ method: 'createView', args: [sessionId, marker] });
       return {
@@ -44,6 +42,15 @@ async function startServer(overrides?: {
     async setViewBounds(sessionId, rect) {
       calls.push({ method: 'setViewBounds', args: [sessionId, rect] });
     },
+    getViewState(sessionId) {
+      calls.push({ method: 'getViewState', args: [sessionId] });
+      return sessionId === 'live' ? { attached: true, visible: true } : null;
+    },
+    async reconcilePartitions(keep) {
+      calls.push({ method: 'reconcilePartitions', args: [keep] });
+      return { removed: ['orphan-1'], errors: [] };
+    },
+    ...overrides?.views,
   };
   const server = await createControlServer({
     token: TOKEN,
@@ -208,164 +215,49 @@ describe('control server auth + lifecycle endpoints (KTD-11)', () => {
       await h.server.close();
     }
   });
-});
 
-// ---------------------------------------------------------------------------
-// Electron view manager (fake view/session factories — no electron import)
-// ---------------------------------------------------------------------------
-
-interface FakeWebContents extends Record<string, unknown> {
-  handlers: Map<string, Array<(...args: never[]) => void>>;
-  openHandler: ((details: { url: string }) => unknown) | null;
-  loadedUrls: string[];
-  destroyed: boolean;
-}
-
-function makeFakeView(prefs: Record<string, unknown>) {
-  const webContents: FakeWebContents = {
-    handlers: new Map(),
-    openHandler: null,
-    loadedUrls: [],
-    destroyed: false,
-    async loadURL(url: string) {
-      webContents.loadedUrls.push(url);
-    },
-    on(event: string, listener: (...args: never[]) => void) {
-      const list = webContents.handlers.get(event) ?? [];
-      list.push(listener);
-      webContents.handlers.set(event, list);
-    },
-    destroy() {
-      webContents.destroyed = true;
-      for (const listener of webContents.handlers.get('destroyed') ?? []) listener();
-    },
-    isDestroyed: () => webContents.destroyed,
-    setWindowOpenHandler(handler: never) {
-      webContents.openHandler = handler as FakeWebContents['openHandler'];
-    },
-    getLastWebPreferences: () => prefs,
-  };
-  const view = {
-    webContents,
-    boundsSet: [] as ViewRect[],
-    setBounds(rect: ViewRect) {
-      view.boundsSet.push(rect);
-    },
-  };
-  return view;
-}
-
-describe('electron view manager (KTD-10/KTD-16)', () => {
-  function setup() {
-    const events: ControlEvent[] = [];
-    const sessions = new Map<string, { clearedStorage: number; clearedCache: number; permissionHandler: unknown }>();
-    const views: ReturnType<typeof makeFakeView>[] = [];
-    const manager = createElectronViewManager({
-      createViewImpl: (options) => {
-        const view = makeFakeView(options.webPreferences);
-        views.push(view);
-        return view as never;
-      },
-      sessionFromPartition: (partition) => {
-        let ses = sessions.get(partition);
-        if (!ses) {
-          ses = { clearedStorage: 0, clearedCache: 0, permissionHandler: null };
-          sessions.set(partition, ses);
-        }
-        return {
-          setPermissionRequestHandler(handler: never) {
-            ses!.permissionHandler = handler;
-          },
-          setPermissionCheckHandler() {},
-          async clearStorageData() {
-            ses!.clearedStorage += 1;
-          },
-          async clearCache() {
-            ses!.clearedCache += 1;
-          },
-        } as never;
-      },
-      onEvent: (event) => events.push(event),
-    });
-    return { manager, events, sessions, views };
-  }
-
-  it('creates an unattached sized view on a per-session partition and loads the marker', async () => {
-    const { manager, views } = setup();
-    const created = await manager.createView({ sessionId: 's1', marker: 'comate-view-x' });
-    assert.equal(created.partition, 'persist:comate-browser-s1');
-    assert.deepEqual(views[0]!.webContents.loadedUrls, ['about:blank#comate-view-x']);
-    assert.deepEqual(views[0]!.boundsSet, [{ x: 0, y: 0, width: 1280, height: 800 }]);
-    assert.equal(manager.size(), 1);
-    // KTD-16 attestation straight from getLastWebPreferences.
-    assert.deepEqual(created.webPreferences, {
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      preload: null,
-    });
-    const prefs = (views[0]!.webContents.getLastWebPreferences as () => Record<string, unknown>)();
-    assert.equal(prefs['sandbox'], true);
-    assert.equal(prefs['contextIsolation'], true);
-    assert.equal(prefs['nodeIntegration'], false);
-    assert.equal(prefs['preload'], undefined);
-    assert.equal(prefs['partition'], 'persist:comate-browser-s1');
-  });
-
-  it('rejects a duplicate view for the same session', async () => {
-    const { manager } = setup();
-    await manager.createView({ sessionId: 's1', marker: 'm1' });
-    await assert.rejects(() => manager.createView({ sessionId: 's1', marker: 'm2' }), /already exists/);
-  });
-
-  it('locks same-partition popups to the same webPreferences and denies non-web schemes', async () => {
-    const { manager, views } = setup();
-    await manager.createView({ sessionId: 's1', marker: 'm' });
-    const handler = views[0]!.webContents.openHandler!;
-    const popup = handler({ url: 'https://accounts.example.com/oauth' }) as {
-      action: string;
-      overrideBrowserWindowOptions: { webPreferences: Record<string, unknown> };
-    };
-    assert.equal(popup.action, 'allow');
-    const popupPrefs = popup.overrideBrowserWindowOptions.webPreferences;
-    assert.equal(popupPrefs['sandbox'], true);
-    assert.equal(popupPrefs['nodeIntegration'], false);
-    assert.equal(popupPrefs['partition'], 'persist:comate-browser-s1');
-    assert.equal(popupPrefs['preload'], undefined);
-    assert.equal((handler({ url: 'file:///etc/passwd' }) as { action: string }).action, 'deny');
-  });
-
-  it('emits view-crashed on render-process-gone and view-destroyed on destroy', async () => {
-    const { manager, events, views } = setup();
-    await manager.createView({ sessionId: 's1', marker: 'm' });
-    for (const listener of views[0]!.webContents.handlers.get('render-process-gone') ?? []) {
-      (listener as (...a: unknown[]) => void)({}, { reason: 'killed' });
+  it('serves the U8 view-state attestation (404 for unknown sessions)', async () => {
+    const h = await startServer();
+    try {
+      const live = await authed(h.base, '/views/live');
+      assert.equal(live.status, 200);
+      assert.deepEqual(await live.json(), { ok: true, state: { attached: true, visible: true } });
+      const missing = await authed(h.base, '/views/nope');
+      assert.equal(missing.status, 404);
+      assert.deepEqual(
+        h.calls.map((c) => c.method),
+        ['getViewState', 'getViewState'],
+      );
+    } finally {
+      await h.server.close();
     }
-    assert.deepEqual(events[0], { type: 'view-crashed', sessionId: 's1', reason: 'killed', at: events[0]!.at });
-    await manager.destroyView('s1');
-    assert.equal(views[0]!.webContents.destroyed, true);
-    assert.equal(events.at(-1)?.type, 'view-destroyed');
-    assert.equal(manager.size(), 0);
-    assert.equal(await manager.destroyView('s1'), false);
   });
 
-  it('wipes a partition: destroys the live view and clears storage + cache', async () => {
-    const { manager, sessions, views } = setup();
-    await manager.createView({ sessionId: 's1', marker: 'm' });
-    await manager.wipePartition('s1');
-    assert.equal(views[0]!.webContents.destroyed, true);
-    const ses = sessions.get('persist:comate-browser-s1')!;
-    assert.equal(ses.clearedStorage, 1);
-    assert.equal(ses.clearedCache, 1);
-    assert.notEqual(ses.permissionHandler, null, 'deny-by-default permission handler installed');
-  });
+  it('reconciles partitions against a validated keep list (KTD-11)', async () => {
+    const h = await startServer();
+    try {
+      const res = await authed(h.base, '/partitions/reconcile', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ keep: ['sess-1', 'sess-2'] }),
+      });
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), { ok: true, removed: ['orphan-1'], errors: [] });
+      assert.deepEqual(h.calls[0], { method: 'reconcilePartitions', args: [['sess-1', 'sess-2']] });
 
-  it('destroyAll tears down every live view', async () => {
-    const { manager, views } = setup();
-    await manager.createView({ sessionId: 's1', marker: 'a' });
-    await manager.createView({ sessionId: 's2', marker: 'b' });
-    await manager.destroyAll();
-    assert.equal(manager.size(), 0);
-    assert.ok(views.every((v) => v.webContents.destroyed));
+      for (const bad of [{ keep: ['../evil'] }, { keep: 'sess-1' }, {}, { keep: ['ok', 42] }]) {
+        const rejected = await authed(h.base, '/partitions/reconcile', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(bad),
+        });
+        assert.equal(rejected.status, 400, JSON.stringify(bad));
+      }
+      assert.equal(h.calls.length, 1, 'invalid keep lists never reach the manager');
+    } finally {
+      await h.server.close();
+    }
   });
 });
+
+// The Electron view manager tests moved to browser-view-manager.test.ts in U8.

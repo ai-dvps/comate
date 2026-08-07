@@ -70,6 +70,7 @@ export default function UsageLoginModal() {
       data-testid="usage-login-modal"
       role="dialog"
       aria-modal="true"
+      data-modal-overlay=""
       aria-label={t('providers.usageLogin.title', 'Log in to your account')}
       tabIndex={-1}
       onKeyDown={onKeyDown}

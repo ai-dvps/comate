@@ -1,13 +1,15 @@
 import { useTranslation } from 'react-i18next'
 import { Globe, XCircle } from 'lucide-react'
-import BrowserViewer from './BrowserViewer'
+import BrowserViewer, { NativeBrowserView } from './BrowserViewer'
 import {
   BROWSER_START_PHASE_PERCENT,
   EMPTY_SESSION_BROWSER_STATE,
+  isLiveControlState,
   selectBrowserStartPhase,
   selectHasInFlightBrowserTool,
   useBrowserPaneStore,
 } from '../../stores/browser-pane-store'
+import { isNativeBrowserView } from '../../lib/browser-view-bridge'
 import { useChatStore } from '../../stores/chat-store'
 import { cn } from '../ui/utils'
 import { FOCUS_CLASSES } from './focus-classes'
@@ -16,7 +18,9 @@ import { FOCUS_CLASSES } from './focus-classes'
  * BrowserBody — the pane/popout body derivation shared by both surfaces:
  *
  *   session_lost           → crash copy (manual retry lives in the state bar)
- *   viewerUrl + viewerHere → the keep-alive viewer iframe
+ *   live + native + here   → the native view host (React renders only the
+ *                            backdrop; the shell's WebContentsView paints on top)
+ *   viewerUrl + viewerHere → the keep-alive viewer iframe (dev-web fallback)
  *   viewerUrl + !viewerHere→ placeholder (the view lives in the other surface)
  *   startPhase             → F5 determinate progress (percent + cancel)
  *   otherwise              → the pure explanatory empty state (no primary CTA)
@@ -27,17 +31,20 @@ export interface BrowserBodyProps {
   sessionId: string
   /** False while the other surface (popout) hosts the viewer. */
   viewerHere: boolean
+  /** False while this surface is keep-alive mounted but off screen. */
+  surfaceVisible?: boolean
 }
 
 const EMPTY_SESSION = EMPTY_SESSION_BROWSER_STATE
 
-export default function BrowserBody({ workspaceId, sessionId, viewerHere }: BrowserBodyProps) {
+export default function BrowserBody({ workspaceId, sessionId, viewerHere, surfaceVisible = true }: BrowserBodyProps) {
   const { t } = useTranslation('browser')
   const session = useBrowserPaneStore((s) => s.sessions[sessionId] ?? EMPTY_SESSION)
   const hasInFlightBrowserTool = useChatStore((s) =>
     selectHasInFlightBrowserTool(s, sessionId),
   )
   const interruptSession = useChatStore((s) => s.interruptSession)
+  const native = isNativeBrowserView()
 
   if (session.controlState === 'session_lost') {
     return (
@@ -52,7 +59,10 @@ export default function BrowserBody({ workspaceId, sessionId, viewerHere }: Brow
     )
   }
 
-  if (session.viewerUrl) {
+  // Native stack: a live control state means the shell holds the view; the
+  // iframe stack keys off the server-constructed viewer URL instead.
+  const hasView = native ? isLiveControlState(session.controlState) : session.viewerUrl !== null
+  if (hasView) {
     if (!viewerHere) {
       return (
         <div
@@ -64,10 +74,19 @@ export default function BrowserBody({ workspaceId, sessionId, viewerHere }: Brow
         </div>
       )
     }
+    if (native) {
+      return (
+        <NativeBrowserView
+          sessionId={sessionId}
+          controlState={session.controlState}
+          surfaceVisible={surfaceVisible}
+        />
+      )
+    }
     return (
       <BrowserViewer
         sessionId={sessionId}
-        viewerUrl={session.viewerUrl}
+        viewerUrl={session.viewerUrl!}
         viewerNonce={session.viewerNonce}
         controlState={session.controlState}
       />

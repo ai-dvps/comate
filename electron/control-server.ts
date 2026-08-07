@@ -15,17 +15,23 @@
  *  - DELETE /views/:sessionId            destroy the view
  *  - POST /partitions/:sessionId/wipe    wipe the partition (session/workspace
  *                                        deletion — the wipeProfile semantic)
- *  - POST /views/:sessionId/bounds       panel rect report (stored only in U7;
- *                                        U8 wires it to setBounds)
+ *  - POST /views/:sessionId/bounds       panel rect report (U8: applies
+ *                                        setBounds + window attach)
+ *  - GET  /views/:sessionId/state        U8 attestation snapshot (attached /
+ *                                        visible / bounds / gating / popups)
+ *  - POST /partitions/reconcile  {keep}  U8 orphan-partition sweep: partition
+ *                                        dirs absent from the sidecar's
+ *                                        session registry are deleted (KTD-11)
  *  - GET  /events                        SSE stream: view-crashed /
- *                                        view-destroyed (U7) and view-activity
- *                                        (surface designed now, emitted by U8)
+ *                                        view-destroyed (U7), view-activity
+ *                                        and view-navigated (U8)
  *
  * Quitting state: while the app is quitting, POST /views is rejected (409) so
  * no view outlives the shutdown path.
  *
  * This module stays electron-free (like sidecar.ts): the Electron view
- * manager is created via injected factories so node:test can drive fakes.
+ * manager (electron/browser-view-manager.ts) is injected via the
+ * ControlViewManager interface so node:test can drive fakes.
  */
 
 import { createHash, timingSafeEqual } from 'node:crypto';
@@ -56,19 +62,36 @@ export interface ViewRect {
   height: number;
 }
 
+/** U8 attestation snapshot of a live view (GET /views/:id/state). */
+export interface ControlViewState {
+  attached: boolean;
+  visible: boolean;
+  bounds: ViewRect | null;
+  inputMode: 'user' | 'agent';
+  /** True while the transparent shield swallows pointer input (agent mode). */
+  pointerGated: boolean;
+  popupCount: number;
+  lastUrl: string | null;
+}
+
 export interface ControlViewManager {
   createView(input: { sessionId: string; marker: string }): Promise<CreateViewResult>;
   /** Returns whether a live view was destroyed. */
   destroyView(sessionId: string): Promise<boolean>;
   wipePartition(sessionId: string): Promise<void>;
-  /** U8 surface: store the panel rect for the view (no window attach in U7). */
-  setViewBounds(sessionId: string, rect: ViewRect): Promise<void>;
+  /** U8: stores the panel rect and applies bounds/attach to the live view. */
+  setViewBounds(sessionId: string, rect: ViewRect | null): Promise<void>;
+  /** U8 attestation snapshot; null when the session has no live view. */
+  getViewState(sessionId: string): unknown;
+  /** U8 orphan-partition reconciliation (KTD-11). */
+  reconcilePartitions(keep: string[]): Promise<{ removed: string[]; errors: string[] }>;
 }
 
 export type ControlEvent =
   | { type: 'view-crashed'; sessionId: string; reason: string; at: number }
   | { type: 'view-destroyed'; sessionId: string; at: number }
-  | { type: 'view-activity'; sessionId: string; at: number };
+  | { type: 'view-activity'; sessionId: string; at: number }
+  | { type: 'view-navigated'; sessionId: string; url: string; at: number };
 
 export interface ControlServerLogger {
   debug?(message: string): void;
@@ -97,7 +120,7 @@ export interface ControlServerHandle {
 }
 
 /** sessionId safety: the id becomes a partition name — never path material. */
-const SESSION_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
+export const SESSION_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 
 function tokenMatches(expected: string, presented: string | undefined): boolean {
   if (!presented) return false;
@@ -210,6 +233,16 @@ export function createControlServer(deps: ControlServerDeps): Promise<ControlSer
         return;
       }
 
+      if (req.method === 'GET' && viewMatch) {
+        const state = deps.views.getViewState(viewMatch[1]!);
+        if (state === null || state === undefined) {
+          sendJson(res, 404, { ok: false, error: 'no_view' });
+          return;
+        }
+        sendJson(res, 200, { ok: true, state });
+        return;
+      }
+
       const boundsMatch = /^\/views\/([a-zA-Z0-9_-]+)\/bounds$/.exec(url.pathname);
       if (req.method === 'POST' && boundsMatch) {
         let rect: ViewRect;
@@ -234,6 +267,27 @@ export function createControlServer(deps: ControlServerDeps): Promise<ControlSer
       if (req.method === 'POST' && wipeMatch) {
         await deps.views.wipePartition(wipeMatch[1]!);
         sendJson(res, 200, { ok: true });
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/partitions/reconcile') {
+        let body: { keep?: unknown };
+        try {
+          body = JSON.parse(await readBody(req, 256 * 1024)) as { keep?: unknown };
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid_json' });
+          return;
+        }
+        if (
+          !Array.isArray(body.keep) ||
+          body.keep.length > 10_000 ||
+          !body.keep.every((id) => typeof id === 'string' && SESSION_ID_PATTERN.test(id))
+        ) {
+          sendJson(res, 400, { ok: false, error: 'invalid_keep_list' });
+          return;
+        }
+        const result = await deps.views.reconcilePartitions(body.keep);
+        sendJson(res, 200, { ok: true, ...result });
         return;
       }
 
@@ -274,197 +328,7 @@ export function createControlServer(deps: ControlServerDeps): Promise<ControlSer
 }
 
 // ---------------------------------------------------------------------------
-// Electron view manager (real implementation; factories injected so this file
-// stays importable under plain node:test — the tray.ts pattern)
+// The Electron view manager implementation moved to
+// electron/browser-view-manager.ts in U8 (window attach, bounds, occlusion,
+// input gating, managed popups, activity/navigated events, reconciliation).
 // ---------------------------------------------------------------------------
-
-interface ElectronSessionLike {
-  setPermissionRequestHandler(
-    handler: ((webContents: unknown, permission: string, callback: (granted: boolean) => void) => void) | null,
-  ): void;
-  setPermissionCheckHandler(
-    handler: ((webContents: unknown, permission: string, requestingOrigin: string, details: unknown) => boolean) | null,
-  ): void;
-  clearStorageData(): Promise<void>;
-  clearCache(): Promise<void>;
-}
-
-interface ElectronWebContentsLike {
-  loadURL(url: string): Promise<void>;
-  on(event: string, listener: (...args: never[]) => void): void;
-  destroy(): void;
-  isDestroyed(): boolean;
-  setWindowOpenHandler(
-    handler: (details: { url: string }) => {
-      action: 'allow' | 'deny';
-      overrideBrowserWindowOptions?: { webPreferences?: Record<string, unknown> };
-    },
-  ): void;
-  getLastWebPreferences(): Record<string, unknown>;
-}
-
-interface ElectronViewLike {
-  webContents: ElectronWebContentsLike;
-  setBounds(rect: ViewRect): void;
-}
-
-export interface ElectronViewManagerDeps {
-  /** `(opts) => new WebContentsView(opts)` — injected to keep electron out of unit tests. */
-  createViewImpl: (options: { webPreferences: Record<string, unknown> }) => ElectronViewLike;
-  /** `session.fromPartition` equivalent. */
-  sessionFromPartition: (partition: string) => ElectronSessionLike;
-  /** Sink for view lifecycle events (wired to the control server's SSE emit). */
-  onEvent: (event: ControlEvent) => void;
-  logger?: ControlServerLogger;
-}
-
-export type ElectronViewManager = ControlViewManager & {
-  /** Quit path: destroy every live view (best-effort). */
-  destroyAll(): Promise<void>;
-  /** Test/attestation hook: live view count. */
-  size(): number;
-};
-
-/** Locked webPreferences for browser views AND their same-partition popups (KTD-16). */
-const VIEW_WEB_PREFERENCES = {
-  sandbox: true,
-  contextIsolation: true,
-  nodeIntegration: false,
-  // No preload — ever. A preload would bridge Node/Electron into untrusted pages.
-} as const;
-
-/**
- * Per-session browser views (KTD-10): one WebContentsView per chat session on
- * `persist:comate-browser-<sessionId>`. Views are created UNATTACHED with
- * zero bounds in U7 — U8 wires them into the panel. Each view loads
- * `about:blank#<marker>` so the sidecar can find its CDP page target on the
- * debug port before the first real navigation (marker verified to survive in
- * /json/list on CfT 151 / Electron 43).
- */
-export function createElectronViewManager(deps: ElectronViewManagerDeps): ElectronViewManager {
-  const views = new Map<string, ElectronViewLike>();
-  const bounds = new Map<string, ViewRect>();
-  const partitions = new Map<string, ElectronSessionLike>();
-
-  const partitionName = (sessionId: string): string => `persist:comate-browser-${sessionId}`;
-  const sessionFor = (sessionId: string): ElectronSessionLike => {
-    let ses = partitions.get(sessionId);
-    if (!ses) {
-      ses = deps.sessionFromPartition(partitionName(sessionId));
-      // Deny-by-default permission policy for untrusted web content (plan
-      // System-Wide Impact auth boundary).
-      ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
-      ses.setPermissionCheckHandler(() => false);
-      partitions.set(sessionId, ses);
-    }
-    return ses;
-  };
-
-  return {
-    size: () => views.size,
-
-    async createView({ sessionId, marker }) {
-      if (views.has(sessionId)) {
-        throw new Error(`browser view already exists for session ${sessionId}`);
-      }
-      const partition = partitionName(sessionId);
-      // Install the deny-by-default permission policy on the partition before
-      // any document loads in it.
-      sessionFor(sessionId);
-      const view = deps.createViewImpl({
-        webPreferences: { ...VIEW_WEB_PREFERENCES, partition },
-      });
-      const { webContents } = view;
-      // Unattached but sized: a zero-area view cannot produce screenshots
-      // (no compositor surface) and several CDP layout paths misbehave; U8
-      // re-bounds the view to the panel rect when it wires attach.
-      view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
-      webContents.setWindowOpenHandler(({ url }) => {
-        // KTD-14: browser views allow same-partition popups (OAuth login
-        // flows); the popup gets the same locked webPreferences (KTD-16).
-        // Non-web schemes are denied outright.
-        if (!/^https?:\/\//.test(url)) return { action: 'deny' };
-        return {
-          action: 'allow',
-          overrideBrowserWindowOptions: {
-            webPreferences: { ...VIEW_WEB_PREFERENCES, partition },
-          },
-        };
-      });
-      webContents.on('render-process-gone', (_event: unknown, details: { reason?: string }) => {
-        deps.onEvent({
-          type: 'view-crashed',
-          sessionId,
-          reason: details?.reason ?? 'unknown',
-          at: Date.now(),
-        });
-      });
-      webContents.on('destroyed', () => {
-        views.delete(sessionId);
-        deps.onEvent({ type: 'view-destroyed', sessionId, at: Date.now() });
-      });
-      views.set(sessionId, view);
-      try {
-        await webContents.loadURL(`about:blank#${marker}`);
-      } catch (err) {
-        views.delete(sessionId);
-        if (!webContents.isDestroyed()) webContents.destroy();
-        throw err;
-      }
-      const lastPrefs = webContents.getLastWebPreferences();
-      return {
-        partition,
-        targetMarker: marker,
-        webPreferences: {
-          sandbox: lastPrefs['sandbox'] === true,
-          contextIsolation: lastPrefs['contextIsolation'] === true,
-          nodeIntegration: lastPrefs['nodeIntegration'] === true,
-          preload: typeof lastPrefs['preload'] === 'string' ? (lastPrefs['preload'] as string) : null,
-        },
-      };
-    },
-
-    async destroyView(sessionId) {
-      const view = views.get(sessionId);
-      if (!view) return false;
-      views.delete(sessionId);
-      bounds.delete(sessionId);
-      if (!view.webContents.isDestroyed()) {
-        view.webContents.destroy();
-      }
-      return true;
-    },
-
-    async wipePartition(sessionId) {
-      // Login state must not outlive the session: destroy any live view, then
-      // clear the partition's storage + cache (the wipeProfile semantic).
-      const view = views.get(sessionId);
-      if (view) {
-        views.delete(sessionId);
-        if (!view.webContents.isDestroyed()) view.webContents.destroy();
-      }
-      const ses = partitions.get(sessionId) ?? deps.sessionFromPartition(partitionName(sessionId));
-      await ses.clearStorageData();
-      await ses.clearCache();
-      partitions.delete(sessionId);
-    },
-
-    async setViewBounds(sessionId, rect) {
-      bounds.set(sessionId, rect);
-      // U8 wires this to the panel: views stay unattached in U7.
-    },
-
-    async destroyAll() {
-      for (const [sessionId, view] of [...views]) {
-        views.delete(sessionId);
-        try {
-          if (!view.webContents.isDestroyed()) view.webContents.destroy();
-        } catch (err) {
-          deps.logger?.warn?.(
-            `[control] failed to destroy view ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }
-    },
-  };
-}
