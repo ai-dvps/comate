@@ -124,6 +124,20 @@ export function runTrayStatusPoller(options: TrayStatusPollerOptions): TrayStatu
   };
 }
 
+export type WindowCloseAction = 'close' | 'hide-to-tray' | 'quit';
+
+/**
+ * Decide what closing the main window does (U10). Close-to-tray hiding is
+ * the default (lib.rs close-to-hide), but with no tray — creation failed,
+ * realistic on Linux desktops without a status notifier host — a hidden
+ * window could only be recovered via a second-instance relaunch, so close
+ * degrades to quitting the app and the app stays usable on minimal WMs.
+ */
+export function resolveWindowCloseAction(quitting: boolean, hasTray: boolean): WindowCloseAction {
+  if (quitting) return 'close';
+  return hasTray ? 'hide-to-tray' : 'quit';
+}
+
 // ---------------------------------------------------------------------------
 // Electron wiring (constructors injected by main.ts so this module stays
 // importable from node:test)

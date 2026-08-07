@@ -5,6 +5,7 @@ import {
   botStatusLabel,
   buildTrayMenuModel,
   fetchTrayStatus,
+  resolveWindowCloseAction,
   runTrayStatusPoller,
 } from './tray';
 
@@ -65,8 +66,22 @@ describe('fetchTrayStatus', () => {
   });
 });
 
-describe('runTrayStatusPoller', () => {
-  it('polls while running, skips when port/token are unknown, stops on shutdown', async () => {
+describe('resolveWindowCloseAction', () => {
+  it('hides to the tray on a plain close when the tray exists', () => {
+    assert.strictEqual(resolveWindowCloseAction(false, true), 'hide-to-tray');
+  });
+
+  it('lets explicit quit paths close the window', () => {
+    assert.strictEqual(resolveWindowCloseAction(true, true), 'close');
+    assert.strictEqual(resolveWindowCloseAction(true, false), 'close');
+  });
+
+  it('degrades close to quit when the tray is unavailable (U10 minimal-WM edge)', () => {
+    assert.strictEqual(resolveWindowCloseAction(false, false), 'quit');
+  });
+});
+
+describe('runTrayStatusPoller', () => {  it('polls while running, skips when port/token are unknown, stops on shutdown', async () => {
     let fetchCalls = 0;
     const updates: string[] = [];
     let port: number | null = null;

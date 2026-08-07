@@ -101,15 +101,15 @@ and point a test build of the old client at it. Record which route was used.
 
 ### 1c. Linux
 
-Clean-install smoke only — covered by U10 (no Tauri Linux install base to
-bridge: the old line shipped macOS+Windows only).
+Clean-install smoke only — covered by `linux-smoke.md` (no Tauri Linux
+install base to bridge: the old line shipped macOS+Windows only).
 
 ### 1d. Dual-family serving (integration)
 
 - [ ] With the release published: `GET /releases/latest/download/latest.json`
   returns the tauri manifest pointing at Electron assets (old line), and
-  `latest.yml` / `latest-mac.yml` resolve for the new line — both families
-  served from the same release.
+  `latest.yml` / `latest-mac.yml` / `latest-linux.yml` resolve for the new
+  line — both families served from the same release.
 
 ## 2. Rollback
 

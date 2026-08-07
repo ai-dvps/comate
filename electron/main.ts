@@ -45,7 +45,7 @@ import {
   type ShutdownReason,
   type SidecarHandle,
 } from './sidecar';
-import { createTray, runTrayStatusPoller, type TrayHandle, type TrayStatusPoller } from './tray';
+import { createTray, resolveWindowCloseAction, runTrayStatusPoller, type TrayHandle, type TrayStatusPoller } from './tray';
 import { runFirstRunCleanup } from './first-run-cleanup';
 import { installAppMenu } from './menu';
 import { autoUpdater } from 'electron-updater';
@@ -329,10 +329,18 @@ function createMainWindow(): BrowserWindow {
   });
 
   // Close-to-tray: hide instead of closing, unless an explicit quit path
-  // (tray Quit / Cmd+Q / update install) armed isQuitting first.
+  // (tray Quit / Cmd+Q / update install) armed isQuitting first. U10: with
+  // no tray (creation failed — realistic on Linux desktops lacking a status
+  // notifier host) close-to-hide is a trap, so close degrades to quitting
+  // (resolveWindowCloseAction in tray.ts).
   win.on('close', (event) => {
-    if (isQuitting || isShuttingDown) return;
+    const action = resolveWindowCloseAction(isQuitting || isShuttingDown, trayHandle !== null);
+    if (action === 'close') return;
     event.preventDefault();
+    if (action === 'quit') {
+      initiateQuit('window-destroyed');
+      return;
+    }
     win.hide();
     if (process.platform === 'darwin' && badgeCount === 0) {
       app.setActivationPolicy('accessory');
@@ -380,7 +388,12 @@ function registerIpcHandlers(): void {
   });
 
   // lib.rs reveal_in_file_manager. shell.showItemInFolder reveals the item
-  // selected in its parent on all platforms (≈ open -R / explorer /select).
+  // selected in its parent (≈ open -R / explorer /select). Linux caveat
+  // (U10): the item highlight rides the org.freedesktop.FileManager1 DBus
+  // API — file managers without ShowItems support still open the parent
+  // folder but don't select the item; on minimal setups without any portal
+  // the call is a silent no-op. Accepted platform difference, verified in
+  // the Linux smoke checklist (docs/runbooks/linux-smoke.md).
   ipcMain.handle('comate:reveal-in-file-manager', (_event, targetPath: unknown) => {
     if (typeof targetPath !== 'string' || targetPath.length === 0) {
       throw new Error('reveal-in-file-manager: path is required');

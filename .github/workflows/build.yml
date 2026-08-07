@@ -17,11 +17,13 @@ name: Build
 #
 # Signing readiness contract (mirrors electron-builder.config.ts):
 #  - Credentials present → signed/notarized build, update manifests
-#    (latest.yml / latest-mac.yml + blockmaps) emitted, draft release published.
+#    (latest.yml / latest-mac.yml / latest-linux.yml + blockmaps) emitted,
+#    draft release published.
 #  - Credentials absent → UNSIGNED smoke build with publish: null (no
 #    manifests, nothing uploaded); the signature/manifest/endpoint guards key
 #    off the same variables and skip in lockstep, so an unsigned run can never
-#    half-publish.
+#    half-publish. Linux has no signing credentials of its own (KTD-9) — its
+#    readiness keys off the tauri bridge key as the release-run sentinel.
 #
 # FOOTGUN (KTD-1): electron-builder does NOT auto-discover
 # electron-builder.config.ts — the --config flag below is load-bearing. A bare
@@ -50,10 +52,11 @@ jobs:
             builder-args: '--mac --x64 --arm64'
           - platform: windows-2022
             builder-args: '--win'
-          # TODO(U10): Linux targets (AppImage + deb) are configured in
-          # electron-builder.config.ts but join the matrix only in U10:
-          # - platform: ubuntu-22.04
-          #   builder-args: '--linux'
+          # U10 (R3, KTD-5): AppImage (auto-updatable) + deb in one build.
+          # 22.04 keeps the AppImage's glibc floor compatible with the oldest
+          # supported Ubuntu LTS; AppImage/deb need no extra apt packages.
+          - platform: ubuntu-22.04
+            builder-args: '--linux'
 
     runs-on: ${{ matrix.platform }}
     env:
@@ -120,9 +123,15 @@ jobs:
       # Shell-path (in-app Chromium) CDP e2e gate — drives a real Electron
       # shell via Playwright, creates a view over the control channel, and
       # exercises core tools. This is the release prerequisite (plan U7
-      # Verification).
-      - name: Shell-path CDP gate
+      # Verification). Linux runners are headless: xvfb provides the X server
+      # Electron needs (ubuntu-22.04's unprivileged user namespaces cover the
+      # Chromium sandbox, so no --no-sandbox is required).
+      - name: Shell-path CDP gate (macOS/Windows)
+        if: runner.os != 'Linux'
         run: npm run test:electron-cdp:required
+      - name: Shell-path CDP gate (Linux, under Xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:electron-cdp:required
 
       - name: Build shell bundle
         run: npm run build:electron
@@ -134,12 +143,17 @@ jobs:
           set -euo pipefail
           # Must match the releaseReady logic in electron-builder.config.ts:
           # macOS requires signature AND notarization, Windows requires the
-          # Azure Trusted Signing profile.
+          # Azure Trusted Signing profile. Linux has no signing credentials of
+          # its own (KTD-9) — the tauri bridge key doubles as the release-run
+          # sentinel (same gating the bridge-manifest job uses), so an
+          # unsigned smoke run stays publish-free on every leg in lockstep.
           ready=false
           if [ "${{ runner.os }}" = 'macOS' ] && [ -n "$CSC_LINK" ] \
              && [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_KEY_ID" ] && [ -n "$APPLE_API_ISSUER" ]; then
             ready=true
           elif [ "${{ runner.os }}" = 'Windows' ] && [ -n "$AZURE_TRUSTED_SIGNING_ACCOUNT" ]; then
+            ready=true
+          elif [ "${{ runner.os }}" = 'Linux' ] && [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             ready=true
           fi
           echo "ready=$ready" >> "$GITHUB_OUTPUT"
@@ -263,8 +277,10 @@ jobs:
 
       # Signatures also flow to the bridge-manifest job via workflow artifacts
       # (the job regenerates + verifies latest.json against the released bytes).
+      # Linux never produces bridge signatures — the tauri line had no Linux
+      # clients, so latest.json carries no linux targets (U10).
       - name: Upload bridge signatures (workflow artifact)
-        if: steps.signing.outputs.ready == 'true' && env.TAURI_SIGNING_PRIVATE_KEY != ''
+        if: runner.os != 'Linux' && steps.signing.outputs.ready == 'true' && env.TAURI_SIGNING_PRIVATE_KEY != ''
         uses: actions/upload-artifact@v4
         with:
           name: bridge-signatures-${{ runner.os }}
@@ -289,8 +305,13 @@ jobs:
             grep -q 'x64' release/latest-mac.yml || { echo "::error::latest-mac.yml missing x64 asset"; exit 1; }
           elif [ "${{ runner.os }}" = 'Windows' ]; then
             [ -s release/latest.yml ] || { echo "::error::missing release/latest.yml"; exit 1; }
+          elif [ "${{ runner.os }}" = 'Linux' ]; then
+            # U10: AppImage auto-update manifest (KTD-5 primary artifact).
+            [ -s release/latest-linux.yml ] || { echo "::error::missing release/latest-linux.yml"; exit 1; }
+            grep -q 'AppImage' release/latest-linux.yml || { echo "::error::latest-linux.yml missing AppImage asset"; exit 1; }
+            compgen -G 'release/*.AppImage' > /dev/null || { echo "::error::no AppImage artifact under release/"; exit 1; }
+            compgen -G 'release/*.deb' > /dev/null || { echo "::error::no deb artifact under release/"; exit 1; }
           fi
-          # TODO(U10): linux job → guard release/latest-linux.yml here.
           echo "Update manifests + blockmaps present"
 
       # Draft-first-then-test-endpoints (ported from the tauri-era guard):
@@ -311,6 +332,8 @@ jobs:
             manifest=latest-mac.yml
           elif [ "${{ runner.os }}" = 'Windows' ]; then
             manifest=latest.yml
+          elif [ "${{ runner.os }}" = 'Linux' ]; then
+            manifest=latest-linux.yml
           fi
           echo "$assets" | grep -Fxq "$manifest" || { echo "::error::draft release missing $manifest asset"; exit 1; }
           echo "Draft release carries $manifest"
@@ -407,5 +430,5 @@ jobs:
           assets="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" --jq '.assets[].name')"
           echo "$assets"
           echo "$assets" | grep -Fxq 'latest.json' || { echo "::error::draft release missing latest.json (tauri bridge manifest)"; exit 1; }
-          echo "$assets" | grep -Eq '^latest(-mac)?\.yml$' || { echo "::error::draft release missing latest*.yml (electron-updater manifests)"; exit 1; }
+          echo "$assets" | grep -Eq '^latest(-mac|-linux)?\.yml$' || { echo "::error::draft release missing latest*.yml (electron-updater manifests)"; exit 1; }
           echo "Draft release serves both manifest families (latest.json + latest*.yml)"
