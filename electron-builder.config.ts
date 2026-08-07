@@ -188,9 +188,10 @@ const config: Configuration = {
     oneClick: true,
     perMachine: false,
     allowToChangeInstallationDirectory: false,
-    // TODO(KTD-8, bridge release): nsis.include script that detects a legacy
-    // per-machine Tauri MSI install and offers a UI msiexec /x uninstall,
-    // neutralizing old shortcuts/update entry on refusal. Owned by U4/U9.
+    // KTD-8 bridge cleanup (U6): detects a legacy per-machine Tauri MSI and
+    // uninstalls it via UI msiexec /x (one UAC prompt); on refusal/failure it
+    // neutralizes the old all-users entry points and shows a one-time notice.
+    include: 'build/nsis-include.nsh',
   },
 
   // Linux targets configured now (R3) but kept OUT of the CI matrix until U10.

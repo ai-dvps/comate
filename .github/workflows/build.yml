@@ -4,7 +4,13 @@ name: Build
 #
 # Flow per platform: sidecar → shell-path CDP gate → shell bundle →
 # electron-builder package → signature verification → update-manifest guard →
-# draft-release endpoint test. Guards ported from the tauri-era pipeline
+# bridge artifact repack + tauri-signer sign (U6) → draft-release endpoint
+# test. A final bridge-manifest job (U6, KTD-3) then generates the tauri-format
+# latest.json pointing at the Electron installers, verifies every platform
+# signature against the RELEASED bytes (KTD-9 order guard: minisign runs
+# AFTER Authenticode/notarize), uploads it to the same draft release, and
+# fails the build when latest.json is absent. Guards ported from the
+# tauri-era pipeline
 # (docs/solutions/workflow-issues/tauri-v2-signed-auto-updater-ci-release.md):
 # conditional signing config, draft-first-then-test-endpoints, and
 # missing-manifest = build failure.
@@ -74,6 +80,11 @@ jobs:
       AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
       AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
       AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+      # U6 bridge (KTD-3): minisign keypair of the OLD tauri line, used by the
+      # tauri-signer steps to sign the bridge artifacts for latest.json. Same
+      # secrets the tauri-era pipeline consumed (see the solutions doc).
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
     steps:
       - uses: actions/checkout@v4
@@ -196,6 +207,71 @@ jobs:
             }
           }
 
+      # --- U6 bridge steps (KTD-3, KTD-9) -----------------------------------
+      # Ordered AFTER electron-builder packaging + signature verification:
+      # Authenticode/notarize first, tauri signer (minisign) LAST, over the
+      # final bytes. The .app.tar.gz is repacked from the unpacked, stapled
+      # Comate.app (same signed content the zip was made from — the verify
+      # step above already validated it), producing the exact layout the
+      # tauri macOS updater expects (Comate.app/Contents/... at tar root).
+
+      - name: Repack + sign macOS bridge artifacts (.app.tar.gz)
+        if: runner.os == 'macOS' && steps.signing.outputs.ready == 'true' && env.TAURI_SIGNING_PRIVATE_KEY != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          for arch in x64 arm64; do
+            if [ "$arch" = x64 ]; then appdir=release/mac; else appdir=release/mac-arm64; fi
+            [ -d "$appdir/Comate.app" ] || { echo "::error::$appdir/Comate.app missing"; exit 1; }
+            out="release/Comate-${VERSION}-mac-${arch}.app.tar.gz"
+            COPYFILE_DISABLE=1 tar -czf "$out" -C "$appdir" Comate.app
+            # TAURI-EXEMPTION (KTD-3): the tauri CLI signer produces the exact
+            # .sig format old-line clients verify; consumes the same
+            # TAURI_SIGNING_PRIVATE_KEY(+_PASSWORD) env as the old pipeline.
+            npx --yes "@tauri-apps/cli@^2" signer sign "$out"
+          done
+          ls -la release/*.app.tar.gz release/*.sig
+
+      - name: Upload macOS bridge artifacts to the draft release
+        if: runner.os == 'macOS' && steps.signing.outputs.ready == 'true' && env.TAURI_SIGNING_PRIVATE_KEY != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "$GITHUB_REF_NAME" release/*.app.tar.gz release/*.sig --clobber
+
+      - name: Sign Windows bridge artifact (NSIS exe)
+        if: runner.os == 'Windows' && steps.signing.outputs.ready == 'true' && env.TAURI_SIGNING_PRIVATE_KEY != ''
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The NSIS setup exe was Authenticode-signed during the Package
+          # step; minisign now runs over the FINAL bytes (KTD-9).
+          $exe = Get-ChildItem 'release/Comate-*-win-*.exe' | Select-Object -First 1
+          if (-not $exe) { throw 'NSIS setup exe not found under release/' }
+          npx --yes "@tauri-apps/cli@^2" signer sign $exe.FullName
+          Get-Item "$($exe.FullName).sig" | Out-Null
+
+      - name: Upload Windows bridge signature to the draft release
+        if: runner.os == 'Windows' && steps.signing.outputs.ready == 'true' && env.TAURI_SIGNING_PRIVATE_KEY != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload $env:GITHUB_REF_NAME (Get-Item 'release/*.sig').FullName --clobber
+
+      # Signatures also flow to the bridge-manifest job via workflow artifacts
+      # (the job regenerates + verifies latest.json against the released bytes).
+      - name: Upload bridge signatures (workflow artifact)
+        if: steps.signing.outputs.ready == 'true' && env.TAURI_SIGNING_PRIVATE_KEY != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: bridge-signatures-${{ runner.os }}
+          path: release/*.sig
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Guard update manifests (signed builds)
         if: steps.signing.outputs.ready == 'true'
         shell: bash
@@ -239,9 +315,97 @@ jobs:
           echo "$assets" | grep -Fxq "$manifest" || { echo "::error::draft release missing $manifest asset"; exit 1; }
           echo "Draft release carries $manifest"
 
-      # TODO(U6): tauri-format latest.json bridge manifest (KTD-3 dual
-      # manifest families). U6's generator produces latest.json pointing at
-      # the Electron installers and uploads it to this same draft release;
-      # extend the endpoint test above to fail when latest.json is absent
-      # (KTD-3: from the bridge release onward, missing latest.json = build
-      # failure). Until U6 lands, latest.json is intentionally unchecked.
+      # U6 (KTD-3): the tauri-format latest.json is generated by the
+      # bridge-manifest job below — it needs artifacts from ALL matrix legs,
+      # so the "missing latest.json = build failure" guard lives there, not
+      # in this per-platform endpoint test.
+
+  # ---------------------------------------------------------------------------
+  # U6 bridge manifest (KTD-3 dual manifest families). Generates the
+  # tauri-format latest.json — pointing at the Electron installers — uploads
+  # it to the same draft release, and guards that BOTH manifest families are
+  # present. From the bridge release onward every release must carry
+  # latest.json until the Tauri install base drains to zero; a missing or
+  # badly-signed latest.json fails this job (and thus the build).
+  # ---------------------------------------------------------------------------
+  bridge-manifest:
+    name: Bridge manifest (tauri latest.json)
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Unsigned run notice
+        if: env.TAURI_SIGNING_PRIVATE_KEY == ''
+        shell: bash
+        run: |
+          echo "::notice::TAURI_SIGNING_PRIVATE_KEY absent — unsigned smoke run; skipping bridge manifest (lockstep with the unsigned matrix legs)."
+
+      - name: Download bridge signatures
+        if: env.TAURI_SIGNING_PRIVATE_KEY != ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bridge-signatures-*
+          path: bridge-sigs
+          merge-multiple: true
+
+      # Download the FINAL bridge assets from the draft release itself, so the
+      # signature check below verifies exactly the bytes users will get.
+      - name: Download bridge assets from the draft release
+        if: env.TAURI_SIGNING_PRIVATE_KEY != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p bridge-assets
+          gh release download "$GITHUB_REF_NAME" --dir bridge-assets --clobber \
+            -p '*-mac-arm64.app.tar.gz' -p '*-mac-x64.app.tar.gz' -p '*-win-*.exe'
+          ls -la bridge-assets bridge-sigs
+
+      - name: Generate + verify + upload latest.json
+        if: env.TAURI_SIGNING_PRIVATE_KEY != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          mac_arm64="$(basename bridge-assets/*-mac-arm64.app.tar.gz)"
+          mac_x64="$(basename bridge-assets/*-mac-x64.app.tar.gz)"
+          win_x64="$(basename bridge-assets/*-win-*.exe)"
+          tsx scripts/build-bridge-manifest.ts generate \
+            --version "$VERSION" \
+            --release-base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}" \
+            --asset "darwin-aarch64=${mac_arm64}=@bridge-sigs/${mac_arm64}.sig" \
+            --asset "darwin-x86_64=${mac_x64}=@bridge-sigs/${mac_x64}.sig" \
+            --asset "windows-x86_64=${win_x64}=@bridge-sigs/${win_x64}.sig" \
+            --out bridge/latest.json
+          # KTD-9 order guard: every platform signature must verify against
+          # the RELEASED bytes. minisign-before-Authenticode (or any artifact
+          # mutation after signing) fails here — anti-regression for the
+          # signing order.
+          tsx scripts/build-bridge-manifest.ts check bridge/latest.json --assets-dir bridge-assets
+          gh release upload "$GITHUB_REF_NAME" bridge/latest.json --clobber
+
+      # KTD-3 guard: the draft release must serve BOTH manifest families —
+      # latest.json (old line) and latest*.yml (new line). Missing
+      # latest.json = build failure, from the bridge release onward.
+      - name: Guard dual manifest families on the draft release
+        if: env.TAURI_SIGNING_PRIVATE_KEY != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" --jq '.assets[].name')"
+          echo "$assets"
+          echo "$assets" | grep -Fxq 'latest.json' || { echo "::error::draft release missing latest.json (tauri bridge manifest)"; exit 1; }
+          echo "$assets" | grep -Eq '^latest(-mac)?\.yml$' || { echo "::error::draft release missing latest*.yml (electron-updater manifests)"; exit 1; }
+          echo "Draft release serves both manifest families (latest.json + latest*.yml)"
