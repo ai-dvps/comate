@@ -2,13 +2,20 @@ import { readdirSync, readFileSync, statSync, existsSync } from 'fs';
 import { join, relative } from 'path';
 
 /**
- * Build-time supply-chain gate for the vendored Steel tree (KTD-2): the tree
- * must be pure JS. Any `.node` / Mach-O / PE / ELF artifact fails the build —
- * macOS universal shares one resources directory across architectures, so a
- * stray native binary would silently break one architecture.
+ * Build-time supply-chain gates over staged resource trees.
+ *
+ * Consumers:
+ *  - scripts/build-steel-bundle.ts: the pure-JS gate (assertNoNativeArtifacts)
+ *    and the size budget (assertSizeBudget) over the vendored Steel tree
+ *    (KTD-2) — macOS dual-arch builds share one resources directory across
+ *    architectures, so a stray native binary would silently break one arch.
+ *  - scripts/build-sidecar.ts: the dangling-symlink and non-ASCII-path gates
+ *    over the ENTIRE src-tauri/resources tree at the end of resource staging
+ *    (re-homed here per KTD-13; electron-builder ships that whole tree via
+ *    extraResources).
  *
  * Pure functions over a directory, unit-tested in
- * native-artifact-audit.test.ts; consumed by scripts/build-steel-bundle.ts.
+ * native-artifact-audit.test.ts.
  */
 
 const MAGIC_SIGNATURES: Array<{ name: string; bytes: number[] }> = [
@@ -74,12 +81,15 @@ export function assertNoNativeArtifacts(dir: string): void {
 }
 
 /**
- * Build gate for symlinks: the Tauri bundler walks the vendored tree and
- * aborts with `resource path ... doesn't exist` on any symlink whose target
- * is missing. The classic offender is an npm `.bin` link that fs.cpSync
- * rewrote from relative to absolute-into-the-temp-build-dir (its default
- * resolves link targets against the source tree; verbatimSymlinks: true
- * preserves them). Symlinked directories are not recursed into, matching
+ * Build gate for symlinks: a dangling symlink anywhere in the staged resource
+ * tree must fail the build before packaging. Historically the Tauri bundler
+ * walked the tree and aborted with `resource path ... doesn't exist` (the
+ * error message below keeps that string); under electron-builder the whole
+ * tree ships via extraResources and a broken link would be silently copied
+ * into the installed app. The classic offender is an npm `.bin` link that
+ * fs.cpSync rewrote from relative to absolute-into-the-temp-build-dir (its
+ * default resolves link targets against the source tree; verbatimSymlinks:
+ * true preserves them). Symlinked directories are not recursed into, matching
  * walkFiles.
  */
 export function findDanglingSymlinks(dir: string): string[] {
@@ -114,14 +124,16 @@ export function assertNoDanglingSymlinks(dir: string): void {
 }
 
 /**
- * Build gate for non-ASCII paths. The Windows MSI bundler (WiX light.exe)
- * defaults to database code page 1252 (Latin-1) and aborts with LGHT0311 on any
- * harvested path whose name contains a character outside that code page (e.g.
- * CJK, emoji — @fastify/send ships a `test/fixtures/snow ☃` fixture). Tauri
- * swallows light.exe's stderr, so without this gate the failure surfaces only
- * as a cryptic remote "failed to run light.exe". Checking the full relative
- * path (not just the basename) also catches non-ASCII directory names, since
- * they appear in every descendant's path.
+ * Build gate for non-ASCII paths. Origin: the Windows MSI bundler (WiX
+ * light.exe) defaulted to database code page 1252 (Latin-1) and aborted with
+ * LGHT0311 on any harvested path outside that code page (e.g. CJK, emoji —
+ * @fastify/send ships a `test/fixtures/snow ☃` fixture). The MSI target is
+ * retired (KTD-8: NSIS is the Windows primary), but the gate is retained as a
+ * conservative cross-platform packaging guard: non-ASCII names in shipped
+ * resources are almost always leaked test fixtures, never runtime files, and
+ * they keep tripping archiving/signing tooling in hard-to-diagnose ways.
+ * Checking the full relative path (not just the basename) also catches
+ * non-ASCII directory names, since they appear in every descendant's path.
  */
 const NON_ASCII = /[^\x20-\x7E]/;
 

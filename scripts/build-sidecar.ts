@@ -13,6 +13,10 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { buildSteelBundle } from './build-steel-bundle.js';
 import { buildChromiumBundle } from './build-chromium-bundle.js';
+import {
+  assertNoDanglingSymlinks,
+  assertNoNonAsciiPaths,
+} from '../src/server/utils/native-artifact-audit.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -22,6 +26,9 @@ const sidecarDir = join(distDir, 'sidecar');
 const tauriDir = join(rootDir, 'src-tauri');
 const binariesDir = join(tauriDir, 'binaries');
 const resourcesDir = join(tauriDir, 'resources');
+// Electron packaging staging area (U3): consumed by electron-builder.config.ts
+// extraResources. Gitignored (build output), like src-tauri/binaries.
+const electronSidecarDir = join(rootDir, 'build', 'sidecar');
 
 function run(cmd: string, opts?: { cwd?: string; env?: NodeJS.ProcessEnv }) {
   console.log(`> ${cmd}`);
@@ -92,6 +99,21 @@ function buildSidecarTriple(triple: string, bundlePath: string) {
   const destBinary = join(binariesDir, binaryName);
   copyFileSync(sourceBinary, destBinary);
   console.log(`Copied to ${destBinary}`);
+
+  // Electron resource layout (U3): also stage a copy named by
+  // electron-builder's `${arch}` macro (arm64/x64), so the functional
+  // electron-builder.config.ts extraResources entry
+  // `build/sidecar/sidecar-node-${arch}` resolves the right binary for each
+  // arch of the single-runner dual-arch mac build. Dev mode keeps resolving
+  // the triple-named binary under src-tauri/binaries (electron/sidecar.ts).
+  const electronArch = triple.includes('aarch64') ? 'arm64' : 'x64';
+  const stagedBinary = join(
+    electronSidecarDir,
+    `sidecar-node-${electronArch}${triple.includes('windows') ? '.exe' : ''}`,
+  );
+  mkdirSync(electronSidecarDir, { recursive: true });
+  copyFileSync(sourceBinary, stagedBinary);
+  console.log(`Staged for electron-builder at ${stagedBinary}`);
 }
 
 async function build() {
@@ -378,6 +400,24 @@ async function build() {
   copyFileSync(nativeModuleSource, nativeModuleDest);
   console.log(`Copied to ${nativeModuleDest}`);
 
+  // ABI guard (KTD-1, U3): the pkg sidecar targets `node${getNodeMajor()}` —
+  // derived from this same process — so the staged .node must load under the
+  // current Node. node_modules can silently hold a foreign-ABI prebuild (an
+  // npm install under a different Node major, or an Electron-ABI rebuild
+  // flow); without this probe the defect only surfaces in the packaged app as
+  // ERR_DLOPEN_FAILED at the first database open.
+  try {
+    execFileSync(process.execPath, ['-e', `require(${JSON.stringify(nativeModuleDest)})`], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+  } catch (error) {
+    throw new Error(
+      `better_sqlite3.node ABI mismatch: it does not load under the build Node ` +
+        `(${process.version}, modules ${process.versions.modules}). Run \`npm rebuild better-sqlite3\` ` +
+        `with the same Node that runs this script, then rebuild. Cause: ${String((error as { stderr?: Buffer }).stderr ?? error)}`,
+    );
+  }
+
   // 9. Copy built-in Claude Code marketplace to src-tauri/resources/
   console.log('\n--- Copying built-in Claude Code marketplace ---');
   const marketplaceSource = join(rootDir, 'claude-code-plugin');
@@ -399,6 +439,19 @@ async function build() {
   // 11. Vendor the pinned Chrome for Testing zip into src-tauri/resources/chromium/
   console.log('\n--- Vendoring Chrome for Testing bundle ---');
   await buildChromiumBundle();
+
+  // 12. Whole-tree resource audit — the re-homed gates (KTD-13). The
+  // dangling-symlink and non-ASCII-path gates used to run inside
+  // build-steel-bundle.ts over the Steel subtree only; electron-builder ships
+  // the ENTIRE src-tauri/resources tree via extraResources, so the gates now
+  // run once here, at the end of resource staging, over everything that will
+  // reach process.resourcesPath. The Steel-specific gates (pure-JS native
+  // artifact audit, size budget) stay in build-steel-bundle.ts.
+  console.log('\n--- Resource tree audit (re-homed gates, KTD-13) ---');
+  assertNoDanglingSymlinks(resourcesDir);
+  console.log('clean (no dangling symlinks)');
+  assertNoNonAsciiPaths(resourcesDir);
+  console.log('clean (no non-ASCII paths)');
 
   console.log('\n=== Sidecar build complete ===');
 }

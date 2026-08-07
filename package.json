@@ -32,6 +32,7 @@
     "tauri:build": "tauri build",
     "dev:electron": "concurrently \"npm run dev:client\" \"electron-vite dev\"",
     "build:electron": "electron-vite build",
+    "dist:electron": "npm run build:electron && electron-builder --config electron-builder.config.ts",
     "test:electron": "tsx --test electron/*.test.ts",
     "release": "npm run build:sidecar && npm run test:browser-cdp:required && npm run tauri:build"
   },
@@ -135,6 +136,8 @@
     "autoprefixer": "^10.4.19",
     "concurrently": "^8.2.2",
     "electron": "43.3.0",
+    "electron-builder": "26.12.1",
+    "electron-updater": "6.8.9",
     "electron-vite": "5.0.0",
     "esbuild": "^0.28.1",
     "eslint": "^8.57.0",

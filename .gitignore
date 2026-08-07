@@ -18,6 +18,10 @@ src-tauri/binaries/*
 !src-tauri/binaries/.gitkeep
 src-tauri/resources/*
 !src-tauri/resources/.gitkeep
+# electron-builder output + staged sidecar binaries (build output; build/ also
+# holds tracked icons/entitlements, so ignore only the staging subdir)
+release/
+build/sidecar/
 *.tsbuildinfo
 __screenshots__/
 .vitest-attachments/
