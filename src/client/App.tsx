@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getCurrentWindow } from '@tauri-apps/api/window'
+import { showWindow, startWindowDrag } from './lib/desktop-api'
 import { AlertCircle, X } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 import { useSidebarWidth } from './hooks/use-sidebar-width'
@@ -132,10 +132,7 @@ function App() {
 
   const handleForceShowWindow = useCallback(async () => {
     try {
-      const window = getCurrentWindow()
-      await window.show()
-      await window.unminimize()
-      await window.setFocus()
+      await showWindow()
     } catch {
       // ignore
     }
@@ -193,7 +190,7 @@ function App() {
 
   const handleDrag = (e: React.MouseEvent) => {
     if (!isMac || e.button !== 0) return
-    getCurrentWindow().startDragging().catch(() => {})
+    startWindowDrag().catch(() => {})
   }
 
   if (claudeCheck.checking) {

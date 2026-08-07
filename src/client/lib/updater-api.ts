@@ -1,15 +1,19 @@
-import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updater'
-import { relaunch } from '@tauri-apps/plugin-process'
-import { invoke } from '@tauri-apps/api/core'
-import { isTauri } from './tauri-api'
+import {
+  isDesktop,
+  checkForUpdate,
+  prepareUpdaterRelaunch,
+  relaunchApp,
+  getAppVersion as getBridgeAppVersion,
+  type DesktopUpdate,
+  type DownloadEvent,
+} from './desktop-api'
 import { useUpdaterStore, type UpdaterStatus } from '../stores/updater-store'
-import { getVersion } from '@tauri-apps/api/app'
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000 // 4 hours
 const JITTER_MAX_MS = 5 * 60 * 1000 // 5 minutes
 
 let checkIntervalId: ReturnType<typeof setInterval> | null = null
-let currentUpdate: Update | null = null
+let currentUpdate: DesktopUpdate | null = null
 let downloadedBytes = 0
 let totalContentLength = 0
 
@@ -21,7 +25,7 @@ function getIntervalWithJitter(): number {
   return CHECK_INTERVAL_MS + Math.floor(Math.random() * JITTER_MAX_MS)
 }
 
-function mapUpdate(update: Update): { currentVersion: string; version: string; body?: string; date?: string } {
+function mapUpdate(update: DesktopUpdate): { currentVersion: string; version: string; body?: string; date?: string } {
   return {
     currentVersion: update.currentVersion,
     version: update.version,
@@ -58,7 +62,7 @@ export function handleDownloadEvent(event: DownloadEvent): void {
 }
 
 export async function checkForUpdates(): Promise<void> {
-  if (!isTauri()) return
+  if (!isDesktop()) return
 
   const store = useUpdaterStore.getState()
   if (store.status === 'downloading' || store.status === 'ready' || store.status === 'restarting') {
@@ -68,7 +72,7 @@ export async function checkForUpdates(): Promise<void> {
   store.setChecking()
 
   try {
-    const update = await check()
+    const update = await checkForUpdate()
     if (update) {
       currentUpdate = update
       store.setAvailable(mapUpdate(update))
@@ -83,7 +87,7 @@ export async function checkForUpdates(): Promise<void> {
 }
 
 export async function downloadAndInstallUpdate(): Promise<void> {
-  if (!isTauri() || !currentUpdate) return
+  if (!isDesktop() || !currentUpdate) return
 
   const store = useUpdaterStore.getState()
   if (!canStartDownload(store.status)) return
@@ -99,7 +103,7 @@ export async function downloadAndInstallUpdate(): Promise<void> {
 }
 
 export async function restartToUpdate(): Promise<void> {
-  if (!isTauri()) return
+  if (!isDesktop()) return
 
   const store = useUpdaterStore.getState()
   if (!canRestart(store.status)) return
@@ -107,8 +111,8 @@ export async function restartToUpdate(): Promise<void> {
   store.setRestarting()
 
   try {
-    await invoke('prepare_updater_relaunch')
-    await relaunch()
+    await prepareUpdaterRelaunch()
+    await relaunchApp()
   } catch (err) {
     store.setError(err instanceof Error ? err.message : 'Restart failed')
   }
@@ -123,7 +127,7 @@ export function startPeriodicUpdateChecks(
   getPreferences: () => UpdaterPreferences,
   onCheck?: () => void
 ): void {
-  if (!isTauri()) return
+  if (!isDesktop()) return
   if (checkIntervalId) return
 
   void checkForUpdates().then(() => onCheck?.())
@@ -146,10 +150,6 @@ export function stopPeriodicUpdateChecks(): void {
 }
 
 export async function getAppVersion(): Promise<string | null> {
-  if (!isTauri()) return null
-  try {
-    return await getVersion()
-  } catch {
-    return null
-  }
+  if (!isDesktop()) return null
+  return getBridgeAppVersion()
 }

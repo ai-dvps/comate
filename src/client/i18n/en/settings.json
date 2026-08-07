@@ -878,6 +878,7 @@
     "folderLabel": "Folder Path",
     "folderPlaceholder": "/path/to/project",
     "browse": "Browse",
+    "browseDesktopOnly": "Folder browsing is only available in the desktop app. Enter the path manually.",
     "descriptionLabel": "Description",
     "descriptionPlaceholder": "Optional description...",
     "cancel": "Cancel",

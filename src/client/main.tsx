@@ -3,9 +3,9 @@ import ReactDOM from 'react-dom/client'
 import App from './App'
 import './index.css'
 import './i18n'
-import { initTauriApi } from './lib/tauri-api'
+import { initDesktopApi } from './lib/desktop-api'
 
-initTauriApi()
+initDesktopApi()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

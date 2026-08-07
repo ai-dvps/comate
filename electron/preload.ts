@@ -1,10 +1,11 @@
 /**
- * U1: preload bridge. Sandboxed (sandbox: true) and context-isolated, so this
- * file must stay CJS-compatible and self-contained (only the `electron`
+ * U1/U2: preload bridge. Sandboxed (sandbox: true) and context-isolated, so
+ * this file must stay CJS-compatible and self-contained (only the `electron`
  * module is available). Exposes a whitelisted bridge — never raw ipcRenderer.
  *
- * U2 will build the client-side `desktop-api.ts` bridge on top of this
- * surface and migrate all `@tauri-apps/*` consumers onto it.
+ * The client-side `desktop-api.ts` bridge (U2) consumes exactly this surface;
+ * every member must stay camelCase-aligned with the `ComateBridge` interface
+ * there. Main-process handlers live in electron/main.ts.
  */
 
 import { contextBridge, ipcRenderer } from 'electron';
@@ -14,27 +15,78 @@ export interface ComateApiInfo {
   token: string;
 }
 
+export interface DesktopNotificationOptions {
+  title: string;
+  body?: string;
+}
+
+/**
+ * Renderer→main notification click relay. The main process re-emits
+ * 'comate:notification-action' on the webContents when a notification is
+ * clicked; the renderer handler is wrapped here so raw ipcRenderer never
+ * crosses the contextBridge.
+ */
+function onNotificationAction(handler: () => void): Promise<void> {
+  ipcRenderer.on('comate:notification-action', () => handler());
+  return Promise.resolve();
+}
+
 const api = {
   /**
    * Port + per-boot desktop credential of the sidecar, captured from the
    * ready handshake. Rejects until the sidecar is up — the client bridge
-   * keeps the 50×200ms retry semantics (tauri-api.ts) in U2.
+   * keeps the 50×200ms retry semantics from tauri-api.ts.
    */
   getApiInfo: (): Promise<ComateApiInfo> => ipcRenderer.invoke('comate:get-api-info'),
 
   /** App.tsx parity: show + unminimize + focus the main window. */
   showWindow: (): Promise<void> => ipcRenderer.invoke('comate:show-window'),
 
-  // TODO(U2): expose the remaining shell commands once the client bridge
-  // layer lands — the main-process handlers already exist:
-  //   updateBadgeState(count)            -> 'comate:update-badge-state'
-  //   revealInFileManager(path, itemType)-> 'comate:reveal-in-file-manager'
-  //   openUrl(url)                       -> 'comate:open-url'
-  //   prepareUpdaterRelaunch()           -> 'comate:prepare-updater-relaunch'
-  // TODO(U2): custom titlebar dragging — Tauri's startDragging() has no IPC
-  // equivalent; Electron uses CSS `-webkit-app-region: drag`.
-  // TODO(U5): updater methods (check/download/install) once electron-updater
-  // is wired.
+  // Custom titlebar dragging has no IPC equivalent: Electron drags via CSS
+  // `-webkit-app-region: drag` on the data-tauri-drag-region elements (see
+  // src/client/index.css), so `startDragging` is intentionally not exposed.
+
+  /** Dock badge / macOS accessory-policy toggle / Windows taskbar flash. */
+  updateBadgeState: (count: number): Promise<void> =>
+    ipcRenderer.invoke('comate:update-badge-state', count),
+
+  /** Reveal a file or folder in the OS file manager. */
+  revealInFileManager: (path: string, itemType: 'file' | 'folder'): Promise<void> =>
+    ipcRenderer.invoke('comate:reveal-in-file-manager', path, itemType),
+
+  /** Open an http/https URL in the system browser (validated main-side). */
+  openUrl: (url: string): Promise<void> => ipcRenderer.invoke('comate:open-url', url),
+
+  /** Arms the shell's update quit grace before a relaunch. */
+  prepareUpdaterRelaunch: (): Promise<void> =>
+    ipcRenderer.invoke('comate:prepare-updater-relaunch'),
+
+  /** package.json version of the shell. */
+  getVersion: (): Promise<string> => ipcRenderer.invoke('comate:get-app-version'),
+
+  dialog: {
+    /** Native folder picker; resolves null when cancelled. */
+    openDirectory: (): Promise<string | null> =>
+      ipcRenderer.invoke('comate:open-directory-dialog'),
+  },
+
+  notifications: {
+    isPermissionGranted: (): Promise<boolean> =>
+      ipcRenderer.invoke('comate:notification-is-permission-granted'),
+    requestPermission: (): Promise<boolean> =>
+      ipcRenderer.invoke('comate:notification-request-permission'),
+    send: (options: DesktopNotificationOptions): void => {
+      void ipcRenderer.invoke('comate:notification-send', options);
+    },
+    onAction: onNotificationAction,
+  },
+
+  updater: {
+    // TODO(U5): wire electron-updater; the main-process handlers are benign
+    // stubs until then (check resolves null = "no update available").
+    check: (): Promise<unknown | null> => ipcRenderer.invoke('comate:updater-check'),
+    relaunch: (): Promise<void> => ipcRenderer.invoke('comate:updater-relaunch'),
+  },
 };
 
 contextBridge.exposeInMainWorld('comate', api);

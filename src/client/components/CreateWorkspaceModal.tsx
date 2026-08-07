@@ -1,8 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useWorkspaceStore } from '../stores/workspace-store'
-import { open } from '@tauri-apps/plugin-dialog'
-import { isTauri } from '@tauri-apps/api/core'
+import { isDesktop, openDirectoryDialog } from '../lib/desktop-api'
 import { X, Plus, FolderOpen } from 'lucide-react'
 
 interface CreateWorkspaceModalProps {
@@ -49,13 +48,15 @@ export default function CreateWorkspaceModal({ onClose }: CreateWorkspaceModalPr
   }, [name, folderPath, description, isValid, isCreating, createWorkspace, openWorkspace, onClose, t])
 
   const handleBrowse = useCallback(async () => {
-    if (!isTauri()) return
+    if (!isDesktop()) {
+      // Degraded (plain browser): no native folder picker — tell the user to
+      // type the path instead of silently doing nothing.
+      setError(t('createWorkspace.browseDesktopOnly'))
+      return
+    }
     try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-      })
-      if (selected && typeof selected === 'string') {
+      const selected = await openDirectoryDialog()
+      if (selected) {
         setFolderPath(selected)
         if (!name.trim()) {
           const basename = selected.split(/[\\/]/).pop() || ''
@@ -65,7 +66,7 @@ export default function CreateWorkspaceModal({ onClose }: CreateWorkspaceModalPr
     } catch {
       // Dialog cancelled or failed — leave input unchanged
     }
-  }, [name])
+  }, [name, t])
 
   // Keyboard shortcuts
   useEffect(() => {

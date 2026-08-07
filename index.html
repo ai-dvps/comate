@@ -2,6 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      U2: CSP delivered via meta (Tauri's tauri.conf.json csp is gone with the
+      Electron shell). connect-src allows both loopback spellings over
+      http/ws — the bridge rewrites /api/* to http://localhost:<port> while
+      the browser viewer proxy may use 127.0.0.1. script-src keeps
+      'unsafe-inline' for the inline theme bootstrap below.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* wss://localhost:* wss://127.0.0.1:*; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' https://oneid-private-prod-1258344699.cos.ap-guangzhou.myqcloud.com; frame-src 'self' http://localhost:* http://127.0.0.1:*"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Comate</title>
     <script>
