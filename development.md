@@ -32,13 +32,13 @@ Tauri CLI is installed automatically as a devDependency via `npm install`. You d
    npm run dev:server
    ```
 
-3. Start the Tauri desktop app in another terminal:
+3. Start the Electron desktop app in another terminal:
    ```bash
-   npm run tauri:dev
+   npm run dev:electron
    ```
-   This automatically launches the Vite dev client via `beforeDevCommand`.
+   This starts the Vite dev client and the Electron shell together.
 
-> **Note:** Do not run `npm run dev` (which starts both server and client via `concurrently`) alongside `npm run tauri:dev`, as both would try to start the Vite client and cause a port conflict.
+> **Note:** Do not run `npm run dev` (which starts both server and client via `concurrently`) alongside `npm run dev:electron`, as both would try to start the Vite client and cause a port conflict.
 
 ## Key Directories
 
@@ -64,7 +64,7 @@ Run the release pipeline:
 npm run release
 ```
 
-This bundles the sidecar server and builds the Tauri application. Output artifacts land in `src-tauri/target/release/bundle/`.
+This bundles the sidecar server, runs the CDP gate, and packages the app with electron-builder. Output artifacts land in `release/`.
 
 ## WeCom Plugin
 

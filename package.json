@@ -2,6 +2,7 @@
   "name": "comate",
   "version": "0.0.33",
   "description": "Your friendly AI workspace companion",
+  "author": "ai-dvps",
   "type": "module",
   "main": "dist-electron/main/main.cjs",
   "workspaces": [
@@ -27,14 +28,11 @@
     "test:browser-cdp:required": "tsx scripts/test-browser-cdp.ts --required",
     "test:server": "npm run build:contracts && tsx --test-isolation=process --test-concurrency=1 -r ./src/server/test-utils/test-env.ts --test --test-force-exit $(find src/server -name '*.test.ts' -not -path '*/vendor/*')",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
     "dev:electron": "concurrently \"npm run dev:client\" \"electron-vite dev\"",
     "build:electron": "electron-vite build",
     "dist:electron": "npm run build:electron && electron-builder --config electron-builder.config.ts",
     "test:electron": "tsx --test electron/*.test.ts",
-    "release": "npm run build:sidecar && npm run test:browser-cdp:required && npm run tauri:build"
+    "release": "npm run build:sidecar && npm run test:browser-cdp:required && npm run dist:electron"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.220",

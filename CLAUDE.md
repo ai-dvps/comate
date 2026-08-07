@@ -8,14 +8,14 @@ Comate is a desktop AI workspace that wraps Claude Code in a native Tauri app. I
 |---------|---------|
 | `npm run dev:server` | Start the Express backend with hot reload |
 | `npm run dev:client` | Start the Vite dev server (port 5173) |
-| `npm run tauri:dev` | Start the Tauri desktop app (also launches Vite) |
+| `npm run dev:electron` | Start the Electron desktop app (Vite dev client + shell) |
 | `npm run lint` | Run ESLint on `.ts`/`.tsx` |
 | `npm run test:client` | Run jsdom-based component/hook tests |
 | `npm run test:server` | Run `node:test` server tests (excludes `src/server/vendor/`) |
 | `npm run test:browser` | Run Playwright browser tests |
-| `npm run release` | Build sidecar + Tauri production bundle |
+| `npm run release` | Build sidecar + CDP gate + Electron production bundle (electron-builder) |
 
-> Do **not** run `npm run dev` alongside `npm run tauri:dev` — both start Vite and will conflict on port 5173.
+> Do **not** run `npm run dev` alongside `npm run dev:electron` — both start Vite and will conflict on port 5173.
 
 ## Architecture
 
@@ -169,7 +169,7 @@ Comate is a desktop AI workspace that wraps Claude Code in a native Tauri app. I
 
 ## Common Pitfalls
 
-- **Port conflicts**: `npm run dev` and `npm run tauri:dev` both want Vite's port. Use only one.
+- **Port conflicts**: `npm run dev` and `npm run dev:electron` both want Vite's port. Use only one.
 - **Server `.js` imports**: TypeScript source files import each other with `.js` extensions so compiled ESM works.
 - **Tauri resource paths**: Resources move in production; use Tauri APIs or `src/server/utils/path-config.ts` rather than hardcoding paths.
 - **Zustand subscriptions**: Selecting whole stores causes re-renders; select only needed fields.
