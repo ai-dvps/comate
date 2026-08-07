@@ -106,11 +106,12 @@ jobs:
       - name: Build sidecar
         run: npm run build:sidecar
 
-      # TODO(U7): 壳径 CDP 门禁占位 — U7 delivers the shell-path (in-app
-      # Chromium) CDP e2e gate and wires it into the `release` script; until
-      # then the existing Steel-path required gate stands in.
-      - name: Shell-path CDP gate (U7 placeholder)
-        run: npm run test:browser-cdp:required
+      # Shell-path (in-app Chromium) CDP e2e gate — drives a real Electron
+      # shell via Playwright, creates a view over the control channel, and
+      # exercises core tools. Replaces the Steel-path gate as release
+      # prerequisite (plan U7 Verification).
+      - name: Shell-path CDP gate
+        run: npm run test:electron-cdp:required
 
       - name: Build shell bundle
         run: npm run build:electron
