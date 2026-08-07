@@ -18,9 +18,15 @@ import { useChatStore } from '../../stores/chat-store'
 
 export interface BrowserPaneProps {
   workspaceId: string
+  /**
+   * U8: false while this pane is keep-alive mounted but off screen (another
+   * workspace's surface or another right-panel tab is showing). The native
+   * view must stop reporting its rect then; the iframe stack does not care.
+   */
+  surfaceVisible?: boolean
 }
 
-export default function BrowserPane({ workspaceId }: BrowserPaneProps) {
+export default function BrowserPane({ workspaceId, surfaceVisible = true }: BrowserPaneProps) {
   const { t } = useTranslation('browser')
   const sessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
   const hasOpened = useBrowserPaneStore((s) => s.hasOpened)
@@ -44,7 +50,12 @@ export default function BrowserPane({ workspaceId }: BrowserPaneProps) {
       <BrowserStateBar sessionId={sessionId} onPopout={() => setPopoutOpen(true)} />
       <div className="flex-1 min-h-0 relative">
         {hasOpened ? (
-          <BrowserBody workspaceId={workspaceId} sessionId={sessionId} viewerHere={!popoutOpen} />
+          <BrowserBody
+            workspaceId={workspaceId}
+            sessionId={sessionId}
+            viewerHere={!popoutOpen}
+            surfaceVisible={surfaceVisible}
+          />
         ) : (
           <div data-testid="browser-pane-dormant" className="h-full" />
         )}

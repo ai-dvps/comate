@@ -28,7 +28,7 @@ export default function UpdateRestartDialog({ onForceShowWindow }: UpdateRestart
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-16">
+    <div data-modal-overlay="" className="fixed inset-0 z-50 flex items-start justify-center pt-16">
       <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={handleLater} />
       <div
         role="dialog"

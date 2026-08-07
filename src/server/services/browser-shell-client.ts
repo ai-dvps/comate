@@ -52,7 +52,8 @@ export interface CreateViewResponse {
 export type ShellViewEvent =
   | { type: 'view-crashed'; sessionId: string; reason?: string }
   | { type: 'view-destroyed'; sessionId: string }
-  | { type: 'view-activity'; sessionId: string };
+  | { type: 'view-activity'; sessionId: string }
+  | { type: 'view-navigated'; sessionId: string; url?: string };
 
 export class ShellControlClient {
   private readonly host: string;
@@ -116,6 +117,16 @@ export class ShellControlClient {
 
   wipePartition(sessionId: string): Promise<unknown> {
     return this.request('POST', `/partitions/${encodeURIComponent(sessionId)}/wipe`);
+  }
+
+  /**
+   * KTD-11 orphan reconciliation (U8): the shell deletes every
+   * persist:comate-browser-* partition dir whose session is absent from
+   * `keep` (the sidecar's session registry) — the pidfile/SingletonLock
+   * cleanup semantic translated to Electron partitions.
+   */
+  reconcilePartitions(keep: string[]): Promise<{ removed?: string[]; errors?: string[] }> {
+    return this.request('POST', '/partitions/reconcile', { keep });
   }
 
   /**

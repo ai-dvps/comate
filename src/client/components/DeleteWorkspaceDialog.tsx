@@ -51,6 +51,7 @@ export default function DeleteWorkspaceDialog({
     <div
       role="dialog"
       aria-modal="true"
+      data-modal-overlay=""
       aria-labelledby="delete-workspace-title"
       aria-describedby="delete-workspace-description"
       className="fixed inset-0 z-50 flex items-start justify-center pt-16"

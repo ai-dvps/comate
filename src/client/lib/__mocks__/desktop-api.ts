@@ -26,3 +26,4 @@ export const checkForUpdate = vi.fn(() => Promise.resolve(null));
 export const prepareUpdaterRelaunch = vi.fn(() => Promise.resolve());
 export const relaunchApp = vi.fn(() => Promise.resolve());
 export const getAppVersion = vi.fn((): Promise<string | null> => Promise.resolve(null));
+export const getDesktopBridge = vi.fn(() => null);

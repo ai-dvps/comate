@@ -18,7 +18,7 @@
     "userDrivingHint": "你操作期间 Claude 已暂停",
     "transitioning": "正在切换控制权…",
     "sessionLost": "浏览器会话已丢失",
-    "sessionLostDetail": "浏览器进程崩溃了。Claude 的下一次浏览器操作会自动重建——也可以现在手动重试。",
+    "sessionLostDetail": "浏览器视图崩溃或被关闭了。Claude 的下一次浏览器操作会自动重建——也可以现在手动重试（登录态会保留）。",
     "unavailable": "浏览器不可用",
     "idlePrompt": "这个浏览器已闲置一段时间。关闭以释放资源？登录态会保留。",
     "starting": "正在启动浏览器…",

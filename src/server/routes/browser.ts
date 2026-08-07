@@ -23,12 +23,18 @@ export interface BrowserRouteDeps {
   hasLiveSession: (sessionId: string) => boolean;
   /** Server-constructed viewer URL; undefined when the proxy is down. */
   getViewerUrl: (sessionId: string) => string | undefined;
+  /**
+   * U8 (native stack): session_lost manual retry — rebuild the view over the
+   * control channel and navigate back to the session's last URL.
+   */
+  retrySession: (sessionId: string) => Promise<{ rebuilding: boolean }>;
 }
 
 export function createBrowserRouter(overrides?: Partial<BrowserRouteDeps>): Router {
   const deps: BrowserRouteDeps = {
     hasLiveSession: (sessionId) => browserService.getSession(sessionId) !== undefined,
     getViewerUrl: (sessionId) => browserViewerProxy.getViewerUrl(sessionId),
+    retrySession: (sessionId) => browserService.retrySession(sessionId),
     ...overrides,
   };
 
@@ -41,6 +47,27 @@ export function createBrowserRouter(overrides?: Partial<BrowserRouteDeps>): Rout
       return;
     }
     res.json({ url: deps.getViewerUrl(sessionId) ?? null });
+  });
+
+  // U8: manual retry for a lost native browser session. Idempotent — a live
+  // or already-rebuilding session answers { rebuilding: false }.
+  router.post('/:sessionId/retry', (req, res) => {
+    const sessionId = req.params.sessionId;
+    if (!sessionId) {
+      res.status(400).json({ ok: false, error: 'session id required' });
+      return;
+    }
+    deps
+      .retrySession(sessionId)
+      .then((result) => {
+        res.json({ ok: true, rebuilding: result.rebuilding });
+      })
+      .catch((err: unknown) => {
+        res.status(500).json({
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
   });
 
   return router;

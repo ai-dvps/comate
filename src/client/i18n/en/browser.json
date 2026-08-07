@@ -18,7 +18,7 @@
     "userDrivingHint": "Claude is paused while you drive",
     "transitioning": "Switching control…",
     "sessionLost": "Browser session lost",
-    "sessionLostDetail": "The browser process crashed. Claude's next browser action rebuilds it automatically — or retry now.",
+    "sessionLostDetail": "The browser view crashed or was closed. Claude's next browser action rebuilds it automatically — or retry now (your login is kept).",
     "unavailable": "Browser unavailable",
     "idlePrompt": "This browser has been idle. Close it to free its resources? Your login is preserved.",
     "starting": "Starting the browser…",

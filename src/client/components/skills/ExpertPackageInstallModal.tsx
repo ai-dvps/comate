@@ -56,7 +56,7 @@ export default function ExpertPackageInstallModal({
   const hasResults = installResults.length > 0
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={t('skills.expertPackages.installDialog')}>
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true" data-modal-overlay="" aria-label={t('skills.expertPackages.installDialog')}>
       <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={isInstalling ? undefined : onClose} />
       <div className="relative flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl">
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-5">

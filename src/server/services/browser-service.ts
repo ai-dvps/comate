@@ -255,6 +255,12 @@ interface RegistryEntry {
    * false; chat browser sessions are unaffected.
    */
   transient: boolean;
+  /**
+   * Last http(s) URL the view navigated to (shell view-navigated events /
+   * navigateInSession). The session_lost manual retry rebuilds the view and
+   * navigates back here — the partition survives, so login state is kept.
+   */
+  lastUrl: string | null;
 }
 
 export interface BrowserServiceDeps {
@@ -322,6 +328,12 @@ export interface BrowserServiceDeps {
   createControlClient?: (endpoint: { controlPort: number; controlToken: string }) => ShellControlClient;
   /** U7: cold-start retry budget for native target discovery; tests shrink it. */
   cdpRetry?: { budgetMs: number; intervalMs: number };
+  /**
+   * U8 (KTD-11): every session id the sidecar considers live-ish (persisted
+   * chat sessions) — the keep list for shell orphan-partition reconciliation.
+   * Defaults to the store's full session listing; tests inject a stub.
+   */
+  listKnownSessionIds?: () => string[];
 }
 
 /** Constructor-resolved deps: the U8 + U3 additions have defaults, so internally
@@ -339,6 +351,7 @@ type ResolvedBrowserServiceDeps = Omit<
   | 'authBindings'
   | 'resolveTarget'
   | 'createControlClient'
+  | 'listKnownSessionIds'
 > &
   Required<
     Pick<
@@ -355,6 +368,7 @@ type ResolvedBrowserServiceDeps = Omit<
       | 'resolveTarget'
       | 'createControlClient'
       | 'cdpRetry'
+      | 'listKnownSessionIds'
     >
   >;
 
@@ -463,6 +477,9 @@ export class BrowserService {
         deps?.createControlClient ??
         ((endpoint) => new ShellControlClient({ port: endpoint.controlPort, token: endpoint.controlToken })),
       cdpRetry: deps?.cdpRetry ?? { budgetMs: 10_000, intervalMs: 300 },
+      listKnownSessionIds:
+        deps?.listKnownSessionIds ??
+        (() => (deps?.store ?? defaultStore).listLocalSessions().map((session) => session.id)),
       authBindings: deps?.authBindings ?? new BrowserAuthBindingVault({
         readRemembered: (taskId, siteKey) => {
           const workspaceId = this.authWorkspaceByTask.get(taskId);
@@ -495,11 +512,40 @@ export class BrowserService {
             );
           }
         })
+        .then(() => this.reconcileShellPartitions())
         .catch((err) => {
           diagWarn('[browser] startup residue cleanup failed:', err);
         });
     }
     return this.initPromise;
+  }
+
+  /**
+   * U8 (KTD-11): orphan-partition reconciliation — the shell deletes every
+   * persist:comate-browser-* partition dir whose session is unknown to the
+   * sidecar (persisted session registry + live in-memory entries). Mirrors
+   * the pidfile/SingletonLock cleanup above; shell target only, best-effort.
+   */
+  private async reconcileShellPartitions(): Promise<void> {
+    const target = this.deps.resolveTarget();
+    if (target.kind !== 'shell') return;
+    const keep = new Set(this.deps.listKnownSessionIds());
+    for (const sessionId of this.registry.keys()) keep.add(sessionId);
+    const client = this.deps.createControlClient({
+      controlPort: target.controlPort,
+      controlToken: target.controlToken,
+    });
+    try {
+      const result = await client.reconcilePartitions([...keep]);
+      if ((result.removed?.length ?? 0) > 0 || (result.errors?.length ?? 0) > 0) {
+        diagLog(
+          `[browser] orphan partition reconcile: removed=${result.removed?.length ?? 0} ` +
+            `errors=${result.errors?.length ?? 0}`,
+        );
+      }
+    } catch (err) {
+      diagWarn('[browser] orphan partition reconcile failed:', err);
+    }
   }
 
   /** Chainable event subscription (browser_state / browser_closed / browser_unavailable). */
@@ -610,6 +656,30 @@ export class BrowserService {
     }
     const page = await connectBrowserPage(entry.handle.baseUrl, { commandTimeoutMs: 5_000 });
     await page.navigate(url);
+    if (/^https?:\/\//.test(url)) {
+      entry.lastUrl = url;
+    }
+  }
+
+  /**
+   * U8 session_lost manual retry (native stack): rebuild the view over the
+   * control channel and navigate back to the session's last URL — the
+   * partition survives the crash, so the login state is kept. A no-op when
+   * the session is unknown, live, or already rebuilding.
+   */
+  async retrySession(sessionId: string): Promise<{ rebuilding: boolean }> {
+    const entry = this.registry.get(sessionId);
+    if (!entry || entry.handle || entry.starting) {
+      return { rebuilding: false };
+    }
+    await this.ensureSession({ sessionId, workspaceId: entry.workspaceId });
+    const lastUrl = this.registry.get(sessionId)?.lastUrl;
+    if (lastUrl) {
+      await this.navigateInSession(sessionId, lastUrl).catch((err) => {
+        diagWarn(`[browser] retry rebuild of ${sessionId} could not restore ${lastUrl}:`, err);
+      });
+    }
+    return { rebuilding: true };
   }
 
   listSessions(): BrowserSessionInfo[] {
@@ -703,6 +773,7 @@ export class BrowserService {
       idleCloseTimerHandle: null,
       closeCardPending: false,
       transient,
+      lastUrl: null,
     };
     entry.starting = starting;
     if (!existing) {
@@ -1624,6 +1695,15 @@ export class BrowserService {
     this.shellEventUnsubscribe = client.subscribeEvents((event: ShellViewEvent) => {
       if (event.type === 'view-activity') {
         this.resetIdle(event.sessionId);
+        return;
+      }
+      if (event.type === 'view-navigated') {
+        // U8: track the view's last page so a session_lost manual retry can
+        // rebuild the view onto it (the partition keeps the login state).
+        const entry = this.registry.get(event.sessionId);
+        if (entry && typeof event.url === 'string' && /^https?:\/\//.test(event.url)) {
+          entry.lastUrl = event.url;
+        }
         return;
       }
       const entry = this.registry.get(event.sessionId);

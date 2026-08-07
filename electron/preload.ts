@@ -20,6 +20,14 @@ export interface DesktopNotificationOptions {
   body?: string;
 }
 
+/** U8: panel rect in window-relative CSS pixels (the UI view fills the window). */
+export interface BrowserViewRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 /**
  * Renderer→main notification click relay. The main process re-emits
  * 'comate:notification-action' on the webContents when a notification is
@@ -98,6 +106,31 @@ const api = {
       ipcRenderer.on('comate:updater-download-event', listener);
       return () => {
         ipcRenderer.removeListener('comate:updater-download-event', listener);
+      };
+    },
+  },
+
+  // U8 (KTD-14): native browser view panel control. reportRect(null) hides
+  // the view (pane collapsed / another surface hosts it); setOccluded hides
+  // every browser view while a modal-level overlay covers the panel area;
+  // onEscape fires when the shell intercepts Esc on a user-driven view and
+  // returns focus to the panel frame.
+  browserView: {
+    reportRect: (sessionId: string, rect: BrowserViewRect | null): Promise<void> =>
+      ipcRenderer.invoke('comate:browser-view-report-rect', sessionId, rect),
+    setInputMode: (sessionId: string, mode: 'user' | 'agent'): Promise<void> =>
+      ipcRenderer.invoke('comate:browser-view-input-mode', sessionId, mode),
+    setOccluded: (occluded: boolean): Promise<void> =>
+      ipcRenderer.invoke('comate:browser-view-occluded', occluded),
+    // Same wrapper pattern as notifications.onAction: raw ipcRenderer never
+    // crosses the contextBridge; returns an unsubscribe function.
+    onEscape: (handler: (sessionId: string) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, sessionId: unknown): void => {
+        if (typeof sessionId === 'string') handler(sessionId);
+      };
+      ipcRenderer.on('comate:browser-view-escape', listener);
+      return () => {
+        ipcRenderer.removeListener('comate:browser-view-escape', listener);
       };
     },
   },
