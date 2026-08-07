@@ -21,19 +21,46 @@ vi.mock('../../../lib/websocket-client.js', () => ({
   DEFAULT_TIMEOUT: 30000,
 }))
 
-vi.mock('../../../lib/browser-view-bridge', () => ({
-  reportBrowserViewRect: bridgeMock.reportBrowserViewRect,
-  setBrowserViewInputMode: bridgeMock.setBrowserViewInputMode,
-  onBrowserViewEscape: vi.fn((handler: (sessionId: string) => void) => {
-    bridgeMock.escapeHandler = handler
-    return () => {
-      bridgeMock.escapeHandler = null
-    }
-  }),
-  // The pane store subscribes at module scope; the occlusion watcher is not
-  // under test here.
-  onBrowserViewOcclusionChange: vi.fn(() => () => {}),
-}))
+vi.mock('../../../lib/browser-view-bridge', async () => {
+  const { useEffect } = await import('react')
+  // Faithful stand-in for the shared hook: an immediate report while active,
+  // null on cleanup (rAF/ResizeObserver re-reports are not under test here).
+  function useMockRectReport(
+    ref: { current: HTMLElement | null },
+    sessionId: string | null,
+    active: boolean,
+  ): void {
+    useEffect(() => {
+      if (!active || !sessionId) return
+      const el = ref.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      bridgeMock.reportBrowserViewRect(
+        sessionId,
+        rect.width > 0 && rect.height > 0
+          ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+          : null,
+      )
+      return () => {
+        bridgeMock.reportBrowserViewRect(sessionId, null)
+      }
+    }, [ref, sessionId, active])
+  }
+  return {
+    reportBrowserViewRect: bridgeMock.reportBrowserViewRect,
+    setBrowserViewInputMode: bridgeMock.setBrowserViewInputMode,
+    useBrowserViewRectReport: useMockRectReport,
+    onBrowserViewEscape: vi.fn((handler: (sessionId: string) => void) => {
+      bridgeMock.escapeHandler = handler
+      return () => {
+        bridgeMock.escapeHandler = null
+      }
+    }),
+    // The pane store subscribes at module scope; the occlusion watcher is not
+    // under test here.
+    onBrowserViewOcclusionChange: vi.fn(() => () => {}),
+  }
+})
 
 import { NativeBrowserView } from '../BrowserViewer'
 import { useBrowserPaneStore } from '../../../stores/browser-pane-store'
@@ -87,8 +114,18 @@ describe('NativeBrowserView (U8, KTD-14)', () => {
   })
 
   it('hides the view while the surface is off screen and on unmount', () => {
-    const { unmount } = renderNative('agent_in_control', false)
+    const { rerender, unmount } = renderNative('agent_in_control', false)
+    // Off-screen surface reports nothing at all (no rect ⇒ hidden shell-side).
+    expect(bridgeMock.reportBrowserViewRect).not.toHaveBeenCalled()
+
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <NativeBrowserView sessionId="sess-1" controlState="agent_in_control" surfaceVisible />
+      </I18nextProvider>,
+    )
+    // jsdom rects are zero-area → hidden report once visible-but-empty.
     expect(bridgeMock.reportBrowserViewRect).toHaveBeenCalledWith('sess-1', null)
+
     bridgeMock.reportBrowserViewRect.mockClear()
     unmount()
     expect(bridgeMock.reportBrowserViewRect).toHaveBeenCalledWith('sess-1', null)

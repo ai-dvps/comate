@@ -184,6 +184,16 @@ let shellControlToken: string | null = null;
 // Updater (U5: electron-updater behind the pure state machine in updater.ts)
 // ---------------------------------------------------------------------------
 
+/** electron-updater releaseNotes: string, per-version array, or absent. */
+function releaseNotesToBody(notes: unknown): string | undefined {
+  if (typeof notes === 'string') return notes;
+  if (!Array.isArray(notes)) return undefined;
+  return notes
+    .map((n) => n.note)
+    .filter((n): n is string => typeof n === 'string')
+    .join('\n\n');
+}
+
 /**
  * Real adapter over electron-updater. Channel selection is build-time: the
  * enterprise flavor bakes `channel: latest-enterprise` into app-update.yml
@@ -210,15 +220,7 @@ function createElectronUpdaterAdapter(): UpdaterAdapter {
       const notes = updateInfo.releaseNotes;
       return {
         version: updateInfo.version,
-        body:
-          typeof notes === 'string'
-            ? notes
-            : Array.isArray(notes)
-              ? notes
-                  .map((n) => n.note)
-                  .filter((n): n is string => typeof n === 'string')
-                  .join('\n\n')
-              : undefined,
+        body: releaseNotesToBody(notes),
         date: updateInfo.releaseDate,
       };
     },
@@ -307,11 +309,14 @@ function loadUi(win: BrowserWindow): void {
   });
 }
 
-function createMainWindow(): BrowserWindow {
-  const iconPath = app.isPackaged
+/** Window/tray icon: staged at resources root packaged, build/ in dev. */
+function shellIconPath(): string {
+  return app.isPackaged
     ? join(process.resourcesPath, 'icon.png')
     : join(app.getAppPath(), 'build', 'icon.png');
+}
 
+function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
     title: 'Comate',
     width: 1280,
@@ -319,7 +324,7 @@ function createMainWindow(): BrowserWindow {
     minWidth: 800,
     minHeight: 600,
     center: true,
-    icon: nativeImage.createFromPath(iconPath),
+    icon: nativeImage.createFromPath(shellIconPath()),
     webPreferences: {
       preload: join(__dirname, '..', 'preload', 'preload.cjs'),
       contextIsolation: true,
@@ -534,15 +539,11 @@ function registerUiProtocol(): void {
 // ---------------------------------------------------------------------------
 
 function setupTray(): void {
-  const iconPath = app.isPackaged
-    ? join(process.resourcesPath, 'icon.png')
-    : join(app.getAppPath(), 'build', 'icon.png');
-
   try {
     trayHandle = createTray({
       TrayClass: Tray,
       MenuClass: Menu,
-      icon: nativeImage.createFromPath(iconPath),
+      icon: nativeImage.createFromPath(shellIconPath()),
       onOpen: showMainWindow,
       onQuit: () => initiateQuit('tray-quit'),
       logger,

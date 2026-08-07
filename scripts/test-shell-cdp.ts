@@ -32,14 +32,12 @@ import path from 'node:path';
 
 import { chromium as playwrightChromium } from 'playwright';
 
-const required =
-  process.env.COMATE_REQUIRE_SHELL_CDP === '1' || process.argv.includes('--required');
+import { createGateHarness } from './lib/gate-harness.js';
 
-function unavailable(reason: string): never {
-  if (required) throw new Error(`Shell CDP contract suite required but unavailable: ${reason}`);
-  console.log(`SKIP shell CDP contract suite: ${reason}`);
-  process.exit(0);
-}
+const { unavailable, check, assert, results } = createGateHarness({
+  gateName: 'shell CDP contract suite',
+  requiredEnvVar: 'COMATE_REQUIRE_SHELL_CDP',
+});
 
 /**
  * Resolve Playwright's chrome-headless-shell next to the full chromium
@@ -243,22 +241,6 @@ const { BrowserNetworkCaptureManager } = await import(
 const chromeVersion = (await fetchCdpBrowserInfo({ port: debugPort })).product?.split('/')[1];
 if (!chromeVersion) {
   throw new Error('could not determine the Chromium version from /json/version');
-}
-
-const results: Array<{ name: string; ok: boolean; detail?: string }> = [];
-async function check(name: string, fn: () => Promise<void>): Promise<void> {
-  try {
-    await fn();
-    results.push({ name, ok: true });
-    console.log(`  ok  ${name}`);
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    results.push({ name, ok: false, detail });
-    console.error(`FAIL  ${name}: ${detail}`);
-  }
-}
-function assert(cond: unknown, message: string): asserts cond {
-  if (!cond) throw new Error(message);
 }
 
 const markerA = `comate-view-${Math.random().toString(36).slice(2)}`;

@@ -241,7 +241,7 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFileClick }
     const absolutePath = resolveAbsolutePath(contextMenu.itemPath)
     setContextMenu(null)
     try {
-      await revealInFileManager(absolutePath, contextMenu.itemType)
+      await revealInFileManager(absolutePath)
     } catch (err) {
       console.error('Failed to reveal file:', err)
     }

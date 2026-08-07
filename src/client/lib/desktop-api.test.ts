@@ -175,17 +175,17 @@ describe('shell capabilities through the bridge', () => {
     await expect(api.updateBadgeState(0)).resolves.toBeUndefined()
   })
 
-  it('revealInFileManager forwards path and itemType', async () => {
+  it('revealInFileManager forwards the path', async () => {
     const revealInFileManager = vi.fn(() => Promise.resolve())
     installBridge({ getApiInfo: vi.fn(), revealInFileManager })
     const api = await importBridge()
-    await api.revealInFileManager('/project/README.md', 'file')
-    expect(revealInFileManager).toHaveBeenCalledWith('/project/README.md', 'file')
+    await api.revealInFileManager('/project/README.md')
+    expect(revealInFileManager).toHaveBeenCalledWith('/project/README.md')
   })
 
   it('revealInFileManager rejects without the bridge (degraded)', async () => {
     const api = await importBridge()
-    await expect(api.revealInFileManager('/x', 'folder')).rejects.toThrow(/unavailable/)
+    await expect(api.revealInFileManager('/x')).rejects.toThrow(/unavailable/)
   })
 
   it('openExternal forwards the URL and rejects without the bridge', async () => {

@@ -15,6 +15,7 @@ import {
   assertNoDanglingSymlinks,
   assertNoNonAsciiPaths,
 } from '../src/server/utils/native-artifact-audit.js';
+import { parseBundleBackends, resolveHostTriple } from './lib/host-config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -57,22 +58,6 @@ function getPkgTarget(triple: string): string {
     return `node${nodeMajor}-linux-arm64`;
   }
   throw new Error(`Unsupported target triple: ${triple}`);
-}
-
-function getHostTriple(): string {
-  const platform = process.platform;
-  const arch = process.arch;
-
-  if (platform === 'darwin') {
-    return arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin';
-  }
-  if (platform === 'win32') {
-    return 'x86_64-pc-windows-msvc';
-  }
-  if (platform === 'linux') {
-    return arch === 'arm64' ? 'aarch64-unknown-linux-gnu' : 'x86_64-unknown-linux-gnu';
-  }
-  throw new Error(`Unsupported platform: ${platform}-${arch}`);
 }
 
 function getBinaryName(triple: string): string {
@@ -178,7 +163,7 @@ async function build() {
   }
 
   // 4. Package with pkg for host platform
-  const hostTriple = getHostTriple();
+  const hostTriple = resolveHostTriple(process.platform, process.arch);
   buildSidecarTriple(hostTriple, bundlePath);
 
   // On macOS, also build the other architecture for universal support
@@ -194,12 +179,7 @@ async function build() {
   // 'claude,opencode' produces the dual-backend flavor; 'opencode' produces
   // the claude-free enterprise flavor (R12) — no claude binary is copied and
   // the assertion below fails the build if one slipped in anyway.
-  const bundleBackends = new Set(
-    (process.env.COMATE_BUNDLE_BACKENDS ?? 'claude,opencode')
-      .split(',')
-      .map((entry) => entry.trim())
-      .filter(Boolean),
-  );
+  const bundleBackends = parseBundleBackends(process.env.COMATE_BUNDLE_BACKENDS);
   console.log(`\n--- Copying agent backend binaries (backends: ${[...bundleBackends].join(', ')}) ---`);
   const platform = process.platform;
   const arch = process.arch;

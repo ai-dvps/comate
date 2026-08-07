@@ -38,6 +38,13 @@ export interface ShellErrorRecord {
   at: number;
 }
 
+/** lastError.kind → failure code (exhaustive over the closed union). */
+const SHELL_ERROR_KIND_TO_CODE: Record<ShellErrorRecord['kind'], BrowserHealthFailureCode> = {
+  view_creation: 'view_creation_failed',
+  control_channel: 'control_channel_unreachable',
+  debug_port: 'debug_port_unreachable',
+};
+
 export interface HealthBrowserDeps {
   /** U7: which CDP target is active (defaults to env resolution). */
   resolveTarget: () => BrowserCdpTarget;
@@ -148,12 +155,7 @@ export function createHealthBrowserRouter(overrides?: Partial<HealthBrowserDeps>
 
     const lastError = deps.lastShellError();
     if (lastError) {
-      const code: BrowserHealthFailureCode =
-        lastError.kind === 'view_creation'
-          ? 'view_creation_failed'
-          : lastError.kind === 'control_channel'
-            ? 'control_channel_unreachable'
-            : 'debug_port_unreachable';
+      const code: BrowserHealthFailureCode = SHELL_ERROR_KIND_TO_CODE[lastError.kind];
       fail(
         code,
         `Browser views are failing in the desktop shell (${lastError.kind}): ${lastError.message}. ` +

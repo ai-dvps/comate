@@ -5,9 +5,7 @@ import { useProviderUsageStore } from '../stores/provider-usage-store'
 import {
   isNativeBrowserView,
   onBrowserViewEscape,
-  reportBrowserViewRect,
-  setBrowserViewInputMode,
-  setBrowserViewOcclusionExemption,
+  useBrowserViewRectReport,
 } from '../lib/browser-view-bridge'
 import { cn } from './ui/utils'
 
@@ -55,42 +53,10 @@ export default function UsageLoginModal() {
   // session, let the user drive it, and exempt it from the modal-occlusion
   // flag this very modal raises. Cleanup hides the view and clears the
   // exemption.
-  useEffect(() => {
-    if (!hostNativeView || !captureSessionId) return
-    const sessionId = captureSessionId
-    setBrowserViewOcclusionExemption(sessionId)
-    setBrowserViewInputMode(sessionId, 'user')
-    const el = viewHostRef.current
-    if (!el) return
-    let raf = 0
-    const report = () => {
-      raf = 0
-      const rect = el.getBoundingClientRect()
-      reportBrowserViewRect(
-        sessionId,
-        rect.width > 0 && rect.height > 0
-          ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-          : null,
-      )
-    }
-    const schedule = () => {
-      if (!raf) raf = requestAnimationFrame(report)
-    }
-    report()
-    let observer: ResizeObserver | null = null
-    if (typeof ResizeObserver !== 'undefined') {
-      observer = new ResizeObserver(schedule)
-      observer.observe(el)
-    }
-    window.addEventListener('resize', schedule)
-    return () => {
-      observer?.disconnect()
-      window.removeEventListener('resize', schedule)
-      if (raf) cancelAnimationFrame(raf)
-      reportBrowserViewRect(sessionId, null)
-      setBrowserViewOcclusionExemption(null)
-    }
-  }, [hostNativeView, captureSessionId])
+  useBrowserViewRectReport(viewHostRef, captureSessionId, hostNativeView, {
+    inputMode: 'user',
+    occlusionExempt: true,
+  })
 
   // Esc intercepted by the shell while the user drives the view returns focus
   // to the modal (the next Esc then cancels via the keydown handler below).

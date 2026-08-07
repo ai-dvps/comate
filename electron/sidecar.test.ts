@@ -6,11 +6,11 @@ import {
   parseSidecarReadyLine,
   resolveResourceDir,
   resolveSidecarBinaryPath,
-  resolveSidecarTriple,
   selectShutdownGraceMs,
   shutdownSidecar,
   spawnSidecar,
 } from './sidecar';
+import { resolveHostTriple } from '../scripts/lib/host-config.js';
 
 /** Captures log lines so tests can assert on them (and on token secrecy). */
 function createCapturingLogger() {
@@ -90,12 +90,12 @@ describe('sidecar binary / resource path resolution', () => {
   };
 
   it('maps platform/arch to the Rust target triples used by build-sidecar.ts', () => {
-    assert.strictEqual(resolveSidecarTriple('darwin', 'arm64'), 'aarch64-apple-darwin');
-    assert.strictEqual(resolveSidecarTriple('darwin', 'x64'), 'x86_64-apple-darwin');
-    assert.strictEqual(resolveSidecarTriple('win32', 'x64'), 'x86_64-pc-windows-msvc');
-    assert.strictEqual(resolveSidecarTriple('linux', 'x64'), 'x86_64-unknown-linux-gnu');
-    assert.strictEqual(resolveSidecarTriple('linux', 'arm64'), 'aarch64-unknown-linux-gnu');
-    assert.throws(() => resolveSidecarTriple('freebsd', 'x64'), /Unsupported/);
+    assert.strictEqual(resolveHostTriple('darwin', 'arm64'), 'aarch64-apple-darwin');
+    assert.strictEqual(resolveHostTriple('darwin', 'x64'), 'x86_64-apple-darwin');
+    assert.strictEqual(resolveHostTriple('win32', 'x64'), 'x86_64-pc-windows-msvc');
+    assert.strictEqual(resolveHostTriple('linux', 'x64'), 'x86_64-unknown-linux-gnu');
+    assert.strictEqual(resolveHostTriple('linux', 'arm64'), 'aarch64-unknown-linux-gnu');
+    assert.throws(() => resolveHostTriple('freebsd', 'x64'), /Unsupported/);
   });
 
   it('resolves the dev binary from build/sidecar (build-sidecar staging layout)', () => {

@@ -53,13 +53,14 @@ function parseExternalEndpoint(raw: string): { host: string; port: number } | un
     const port = parsePort(raw);
     return port ? { host: '127.0.0.1', port } : undefined;
   }
-  const candidate = /^wss?:\/\//.test(raw)
-    ? raw.replace(/^ws/i, 'http')
-    : /^https?:\/\//.test(raw)
-      ? raw
-      : /^[\d.:\w-]+$/.test(raw)
-        ? `http://${raw}`
-        : undefined;
+  let candidate: string | undefined;
+  if (/^wss?:\/\//.test(raw)) {
+    candidate = raw.replace(/^ws/i, 'http');
+  } else if (/^https?:\/\//.test(raw)) {
+    candidate = raw;
+  } else if (/^[\d.:\w-]+$/.test(raw)) {
+    candidate = `http://${raw}`;
+  }
   if (!candidate) return undefined;
   try {
     const url = new URL(candidate);
