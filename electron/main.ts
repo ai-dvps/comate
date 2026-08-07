@@ -15,13 +15,22 @@
  *    the Vite dev server), macOS Edit menu for Cmd+C/V, main.log file logging.
  */
 
-import { app, BrowserWindow, Menu, Notification, Tray, dialog, ipcMain, nativeImage, net, protocol, shell } from 'electron';
+import { app, BrowserWindow, Menu, Notification, Tray, WebContentsView, dialog, ipcMain, nativeImage, net, protocol, session, shell } from 'electron';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { createServer as createNetServer } from 'node:net';
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { APP_ID, resolveLegacyDataDir } from './paths';
 import { createShellLogger, type ShellLogger } from './logger';
+import {
+  createControlServer,
+  createElectronViewManager,
+  type ControlEvent,
+  type ControlServerHandle,
+  type ElectronViewManager,
+} from './control-server';
 import {
   buildSidecarEnv,
   resolveResourceDir,
@@ -52,12 +61,17 @@ app.setName('Comate');
 // KTD-7: pin the data dir to the exact legacy Tauri path per platform, and
 // pin Electron's userData (Chromium profile/caches) to a `shell/` subdir
 // under the same root so bridged installs share one data root.
-const legacyDataDir = resolveLegacyDataDir({
-  platform: process.platform,
-  home: homedir(),
-  appData: process.env['APPDATA'],
-  xdgDataHome: process.env['XDG_DATA_HOME'],
-});
+// COMATE_DATA_DIR overrides the pin — the sidecar contract's own variable —
+// so dev loops and the U7 e2e gate (scripts/test-electron-cdp.ts) can run a
+// fully isolated shell without touching real user data.
+const legacyDataDir =
+  process.env['COMATE_DATA_DIR'] ||
+  resolveLegacyDataDir({
+    platform: process.platform,
+    home: homedir(),
+    appData: process.env['APPDATA'],
+    xdgDataHome: process.env['XDG_DATA_HOME'],
+  });
 app.setPath('userData', join(legacyDataDir, 'shell'));
 
 // Privileged UI scheme (production). Registered pre-ready; handled post-ready.
@@ -68,6 +82,65 @@ protocol.registerSchemesAsPrivileged([
     privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
   },
 ]);
+
+// ---------------------------------------------------------------------------
+// U7 (KTD-6): debug port for the in-shell Chromium browser views.
+//
+// Lockdown (hard requirements, plan Risks "debug-port trust boundary"):
+//  - random port: pre-allocated from the OS ephemeral range BEFORE app ready
+//    (Chromium needs the switch up front; Electron never writes
+//    DevToolsActivePort, so `--remote-debugging-port=0` would leave the port
+//    undiscoverable). The listen/close TOCTOU window is accepted and covered
+//    by a post-ready /json/version probe — a lost race surfaces as
+//    debug_port_unreachable in /api/health/browser, never a silent fallback
+//    to a guessable port. An env override exists as a test/dev hook;
+//  - loopback only (`--remote-debugging-address=127.0.0.1`);
+//  - NEVER `--remote-allow-origins` (the sidecar's `ws` client sends no Origin
+//    header, verified against CfT 151 — no origin wildcard is needed);
+//  - dev-web mode has no shell process at all, so no debug port exists there
+//    (the sidecar then serves the browser stack from its legacy fallback).
+// ---------------------------------------------------------------------------
+const shellDebugPortOverride = process.env['COMATE_SHELL_DEBUG_PORT'];
+/** The concrete port Chromium was told to bind; null = debug port disabled. */
+let shellDebugPortSetting: number | null = null;
+
+function allocateLoopbackPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createNetServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = address && typeof address === 'object' ? address.port : 0;
+      server.close(() => {
+        if (port > 0) resolve(port);
+        else reject(new Error('loopback port allocation returned no port'));
+      });
+    });
+  });
+}
+
+/**
+ * Resolves once the debug-port switch is in place. ALL app-ready wiring
+ * awaits this: appendSwitch is a no-op after Chromium init, so registration
+ * order matters more than the ~1ms allocation latency (ready physically
+ * cannot fire before the first macrotask turn completes).
+ */
+const debugPortConfigured: Promise<void> = (async () => {
+  try {
+    shellDebugPortSetting = shellDebugPortOverride
+      ? Number(shellDebugPortOverride)
+      : await allocateLoopbackPort();
+    if (!Number.isInteger(shellDebugPortSetting) || shellDebugPortSetting <= 0) {
+      shellDebugPortSetting = null;
+    }
+  } catch {
+    shellDebugPortSetting = null;
+  }
+  if (shellDebugPortSetting !== null) {
+    app.commandLine.appendSwitch('remote-debugging-port', String(shellDebugPortSetting));
+    app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
+  }
+})();
 
 const logger: ShellLogger = createShellLogger(join(legacyDataDir, 'logs'), {
   mirrorToConsole: !app.isPackaged,
@@ -89,6 +162,14 @@ let isShuttingDown = false;
 let isUpdating = false;
 let pendingQuitReason: ShutdownReason = 'exit-requested';
 let updaterController: UpdaterController | null = null;
+// U7: control channel (KTD-11) + debug port (KTD-6) coordinates handed to the
+// sidecar via spawn env. Null when the channel failed to start — the sidecar
+// then serves the browser stack from its legacy fallback (KTD-15 degradation).
+let controlServer: ControlServerHandle | null = null;
+let viewManager: ElectronViewManager | null = null;
+let shellDebugPort: number | null = null;
+let shellControlPort: number | null = null;
+let shellControlToken: string | null = null;
 
 // ---------------------------------------------------------------------------
 // Updater (U5: electron-updater behind the pure state machine in updater.ts)
@@ -426,6 +507,64 @@ function setupTray(): void {
 // Sidecar lifecycle
 // ---------------------------------------------------------------------------
 
+/**
+ * Verify the pre-allocated debug port actually came up (post-ready probe of
+ * /json/version). Returns null when the devtools server lost the bind race or
+ * never started — the sidecar then degrades to its fallback stack and
+ * /api/health/browser reports debug_port_unreachable.
+ */
+async function readShellDebugPort(): Promise<number | null> {
+  if (shellDebugPortSetting === null) return null;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${shellDebugPortSetting}/json/version`, {
+        signal: AbortSignal.timeout(1_000),
+      });
+      if (res.ok) return shellDebugPortSetting;
+    } catch {
+      // devtools server not up yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return null;
+}
+
+/**
+ * U7 (KTD-11): per-boot-token control channel + browser view manager. Runs
+ * before the sidecar spawn so the ready env carries live coordinates. Failure
+ * is non-fatal: the app runs, the browser stack reports its failure class via
+ * /api/health/browser.
+ */
+async function setupControlChannel(): Promise<void> {
+  shellControlToken = process.env['COMATE_SHELL_CONTROL_TOKEN'] || randomBytes(24).toString('base64url');
+  const buffered: ControlEvent[] = [];
+  let emit: (event: ControlEvent) => void = (event) => buffered.push(event);
+  viewManager = createElectronViewManager({
+    createViewImpl: (options) =>
+      new WebContentsView(options as Electron.WebContentsViewConstructorOptions) as unknown as never,
+    sessionFromPartition: (partition) => session.fromPartition(partition) as never,
+    onEvent: (event) => emit(event),
+    logger,
+  });
+  const controlPortOverride = process.env['COMATE_SHELL_CONTROL_PORT'];
+  controlServer = await createControlServer({
+    token: shellControlToken,
+    views: viewManager,
+    isQuitting: () => isQuitting || isShuttingDown,
+    logger,
+    ...(controlPortOverride ? { port: Number(controlPortOverride) } : {}),
+  });
+  shellControlPort = controlServer.port;
+  emit = (event) => controlServer?.emit(event);
+  for (const event of buffered) emit(event);
+
+  shellDebugPort = await readShellDebugPort();
+  if (shellDebugPort === null) {
+    logger.error('Chromium debug port never materialized (DevToolsActivePort missing)');
+  }
+  logger.info(`Control channel on 127.0.0.1:${shellControlPort} (debug port: ${shellDebugPort ?? 'unavailable'})`);
+}
+
 function startSidecar(): void {
   const pathEnv = {
     isPackaged: app.isPackaged,
@@ -449,7 +588,13 @@ function startSidecar(): void {
   logger.info(`Spawning sidecar: ${binaryPath} (resources: ${resourceDir})`);
   sidecar = spawnSidecar({
     binaryPath,
-    env: buildSidecarEnv({ dataDir: legacyDataDir, resourceDir }),
+    env: buildSidecarEnv({
+      dataDir: legacyDataDir,
+      resourceDir,
+      shellDebugPort: shellDebugPort ?? undefined,
+      shellControlPort: shellControlPort ?? undefined,
+      shellControlToken: shellControlToken ?? undefined,
+    }),
     logger,
     debugStdout: !app.isPackaged,
     onExit: (code, signal) => {
@@ -496,6 +641,16 @@ async function performShutdown(): Promise<void> {
   if (sidecar) {
     await shutdownSidecar(sidecar, { port: apiPort, graceMs, logger });
   }
+  // Keep the control channel up until the sidecar is down — its teardown may
+  // still destroy views/wipe partitions through it (KTD-11).
+  if (viewManager) {
+    await viewManager.destroyAll().catch(() => undefined);
+    viewManager = null;
+  }
+  if (controlServer) {
+    await controlServer.close().catch(() => undefined);
+    controlServer = null;
+  }
 }
 
 function initiateQuit(reason: ShutdownReason): void {
@@ -508,12 +663,16 @@ function initiateQuit(reason: ShutdownReason): void {
 // App event wiring
 // ---------------------------------------------------------------------------
 
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
-if (!gotSingleInstanceLock) {
-  // A second launch focuses the existing window and exits (lib.rs
-  // tauri_plugin_single_instance).
-  app.quit();
-} else {
+// The debug-port switch must land before Chromium init, so every app handler
+// registration waits out the (sub-millisecond) port allocation (KTD-6).
+void debugPortConfigured.then(() => {
+  const gotSingleInstanceLock = app.requestSingleInstanceLock();
+  if (!gotSingleInstanceLock) {
+    // A second launch focuses the existing window and exits (lib.rs
+    // tauri_plugin_single_instance).
+    app.quit();
+    return;
+  }
   app.on('second-instance', () => {
     showMainWindow();
   });
@@ -539,7 +698,7 @@ if (!gotSingleInstanceLock) {
     }
   });
 
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
     logger.info(`Comate shell starting (data dir: ${legacyDataDir})`);
     installAppMenu();
     registerUiProtocol();
@@ -547,6 +706,18 @@ if (!gotSingleInstanceLock) {
     registerIpcHandlers();
     mainWindow = createMainWindow();
     setupTray();
+    try {
+      await setupControlChannel();
+    } catch (err) {
+      // Non-fatal: the app runs without the native browser stack; the sidecar
+      // degrades to its fallback and /api/health/browser reports the class.
+      logger.error(`Control channel failed to start: ${err instanceof Error ? err.message : String(err)}`);
+      controlServer = null;
+      viewManager = null;
+      shellDebugPort = null;
+      shellControlPort = null;
+      shellControlToken = null;
+    }
     startSidecar();
   });
-}
+});

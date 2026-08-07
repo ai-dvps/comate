@@ -48,7 +48,7 @@ import {
   type HandoffEndReason,
   type HandoffPhase,
 } from './browser-control.js';
-import { connectSteelPage, type SteelCdpSession } from './browser-cdp.js';
+import { connectBrowserPage, type SteelCdpSession } from './browser-cdp.js';
 import {
   READ_PROBE_SCRIPT,
   RefTable,
@@ -639,7 +639,9 @@ export class BrowserToolContext {
   constructor(private readonly deps: BrowserMcpDeps) {
     this.svc = deps.browserService ?? browserService;
     this.handoffCtl = deps.handoffControl ?? browserControlService;
-    this.connectPage = deps.connectPage ?? connectSteelPage;
+    // U7 (AE2): the dispatcher routes Steel baseUrls to Steel and the
+    // __comate-cdp__ convention to the native shell/external CDP target.
+    this.connectPage = deps.connectPage ?? connectBrowserPage;
     this.pageRegistry = deps.pageRegistry ?? defaultPageRegistry;
     this.settleMs = deps.settleMs ?? 300;
     this.audit = deps.audit ?? browserAuditService;

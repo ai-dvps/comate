@@ -64,7 +64,22 @@ Run the release pipeline:
 npm run release
 ```
 
-This bundles the sidecar server, runs the CDP gate, and packages the app with electron-builder. Output artifacts land in `release/`.
+This bundles the sidecar server, runs the CDP gates (the native shell-CDP parity suite `test:shell-cdp:required` and the real-Electron shell-path gate `test:electron-cdp:required`), and packages the app with electron-builder. Output artifacts land in `release/`.
+
+## Embedded browser: CDP targets
+
+Inside the Electron shell the browser tools drive in-shell Chromium views: the main process opens a loopback-only random debug port and a per-boot-token control channel, and hands both to the sidecar via spawn env (`COMATE_SHELL_DEBUG_PORT` / `COMATE_SHELL_CONTROL_PORT` / `COMATE_SHELL_CONTROL_TOKEN`).
+
+`COMATE_BROWSER_CDP_TARGET` selects the CDP target without a release (R8):
+
+| Value | Behavior |
+|-------|----------|
+| unset / `auto` | shell when the shell env is present, otherwise the legacy Steel stack |
+| `steel` | force the legacy vendored-Steel child-process stack |
+| `shell` | force the in-shell Chromium (fails loud when the shell env is missing) |
+| `http://host:port`, `ws://host:port/…`, `host:port`, or a bare port | external debug-port Chromium; each session gets an isolated throwaway browser context |
+
+For server-side browser debugging, start any Chromium with `--remote-debugging-port=<port> --remote-debugging-address=127.0.0.1` and point the sidecar at it. `/api/health/browser` classifies shell-side failures (`control_channel_unreachable` / `debug_port_unreachable` / `view_creation_failed`) with remediation guidance.
 
 ## WeCom Plugin
 

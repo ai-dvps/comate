@@ -137,3 +137,112 @@ describe('health-browser route', { concurrency: false }, () => {
     assert.match(body.error, /failed to execute/);
   });
 });
+
+describe('health-browser native classification (U7)', () => {
+  const shellTarget = {
+    kind: 'shell' as const,
+    debugPort: 49200,
+    controlPort: 49300,
+    controlToken: 'tok',
+  };
+
+  it('200 when control channel and debug port both answer (shell)', async () => {
+    const handler = getHandler({
+      resolveTarget: () => shellTarget,
+      probeControlChannel: async () => ({ ok: true, quitting: false }),
+      probeDebugPort: async () => ({ product: 'Chrome/151.0.7922.34' }),
+      lastShellError: () => undefined,
+    });
+    const res = createMockRes();
+    await handler({}, res);
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { ok: boolean; details: Record<string, unknown> };
+    assert.strictEqual(body.ok, true);
+    assert.strictEqual(body.details['target'], 'shell');
+  });
+
+  it('503 control_channel_unreachable with restart guidance', async () => {
+    const handler = getHandler({
+      resolveTarget: () => shellTarget,
+      probeControlChannel: async () => {
+        throw new Error('fetch failed');
+      },
+      probeDebugPort: async () => ({ product: 'x' }),
+      lastShellError: () => undefined,
+    });
+    const res = createMockRes();
+    await handler({}, res);
+    assert.strictEqual(res.statusCode, 503);
+    const body = res.jsonBody as { code: string; error: string };
+    assert.strictEqual(body.code, 'control_channel_unreachable');
+    assert.match(body.error, /Restart the desktop app/);
+    assert.match(body.error, /dev-web/);
+  });
+
+  it('503 debug_port_unreachable when the debug port does not answer', async () => {
+    const handler = getHandler({
+      resolveTarget: () => shellTarget,
+      probeControlChannel: async () => ({ ok: true }),
+      probeDebugPort: async () => {
+        throw new Error('ECONNREFUSED');
+      },
+      lastShellError: () => undefined,
+    });
+    const res = createMockRes();
+    await handler({}, res);
+    assert.strictEqual(res.statusCode, 503);
+    const body = res.jsonBody as { code: string; error: string };
+    assert.strictEqual(body.code, 'debug_port_unreachable');
+    assert.match(body.error, /COMATE_BROWSER_CDP_TARGET=steel/);
+  });
+
+  it('503 view_creation_failed surfaces the recorded spawn failure', async () => {
+    const handler = getHandler({
+      resolveTarget: () => shellTarget,
+      probeControlChannel: async () => ({ ok: true }),
+      probeDebugPort: async () => ({ product: 'x' }),
+      lastShellError: () => ({ kind: 'view_creation', message: 'renderer exploded', at: 1 }),
+    });
+    const res = createMockRes();
+    await handler({}, res);
+    assert.strictEqual(res.statusCode, 503);
+    const body = res.jsonBody as { code: string; error: string };
+    assert.strictEqual(body.code, 'view_creation_failed');
+    assert.match(body.error, /renderer exploded/);
+  });
+
+  it('503 target_misconfigured for a bad override', async () => {
+    const handler = getHandler({
+      resolveTarget: () => ({ kind: 'misconfigured', reason: 'bad COMATE_BROWSER_CDP_TARGET' }),
+    });
+    const res = createMockRes();
+    await handler({}, res);
+    assert.strictEqual(res.statusCode, 503);
+    assert.strictEqual((res.jsonBody as { code: string }).code, 'target_misconfigured');
+  });
+
+  it('external target: 200 when the endpoint answers, 503 debug_port_unreachable otherwise', async () => {
+    const external = { kind: 'external' as const, host: '127.0.0.1', port: 9222 };
+    const okHandler = getHandler({
+      resolveTarget: () => external,
+      probeDebugPort: async () => ({ product: 'Chrome/151' }),
+    });
+    const okRes = createMockRes();
+    await okHandler({}, okRes);
+    assert.strictEqual(okRes.statusCode, 200);
+    assert.strictEqual((okRes.jsonBody as { details: { target: string } }).details.target, 'external');
+
+    const downHandler = getHandler({
+      resolveTarget: () => external,
+      probeDebugPort: async () => {
+        throw new Error('gone');
+      },
+    });
+    const downRes = createMockRes();
+    await downHandler({}, downRes);
+    assert.strictEqual(downRes.statusCode, 503);
+    const body = downRes.jsonBody as { code: string; error: string };
+    assert.strictEqual(body.code, 'debug_port_unreachable');
+    assert.match(body.error, /external CDP endpoint/);
+  });
+});
