@@ -33,6 +33,7 @@
     "build:electron": "electron-vite build",
     "dist:electron": "npm run build:electron && electron-builder --config electron-builder.config.ts",
     "test:electron": "tsx --test electron/*.test.ts",
+    "test:bridge-manifest": "tsx --test scripts/build-bridge-manifest.test.ts",
     "release": "npm run build:sidecar && npm run test:shell-cdp:required && npm run test:electron-cdp:required && npm run dist:electron"
   },
   "dependencies": {
