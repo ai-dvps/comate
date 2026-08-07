@@ -21,12 +21,15 @@ export class FakeControlClient {
   readonly reconcileKeeps: string[][] = [];
   lastMarker: string | null = null;
   failCreate: Error | null = null;
+  private readonly liveViews = new Set<string>();
   private listener: ((event: ShellViewEvent) => void) | null = null;
+  private connectListener: (() => void) | null = null;
 
   async createView({ sessionId, marker }: { sessionId: string; marker: string }) {
     this.calls.push({ method: 'createView', sessionId });
     if (this.failCreate) throw this.failCreate;
     this.lastMarker = marker;
+    this.liveViews.add(sessionId);
     return {
       partition: `persist:comate-browser-${sessionId}`,
       targetMarker: marker,
@@ -41,7 +44,13 @@ export class FakeControlClient {
 
   async destroyView(sessionId: string) {
     this.calls.push({ method: 'destroyView', sessionId });
+    this.liveViews.delete(sessionId);
     return true;
+  }
+
+  /** GET /views/:id/state equivalent: definite answer, never throws. */
+  async viewExists(sessionId: string) {
+    return this.liveViews.has(sessionId);
   }
 
   async wipePartition(sessionId: string) {
@@ -53,16 +62,30 @@ export class FakeControlClient {
     return { removed: [], errors: [] };
   }
 
-  subscribeEvents(listener: (event: ShellViewEvent) => void): () => void {
+  subscribeEvents(listener: (event: ShellViewEvent) => void, onConnect?: () => void): () => void {
     this.listener = listener;
+    this.connectListener = onConnect ?? null;
+    // The fake "connects" synchronously, like the real client's initial 200.
+    this.connectListener?.();
     return () => {
       this.listener = null;
+      this.connectListener = null;
     };
   }
 
   /** Synchronous stand-in for the shell's SSE stream. */
   emit(event: ShellViewEvent): void {
     this.listener?.(event);
+  }
+
+  /** The view vanished shell-side without any event (SSE outage window). */
+  vanishView(sessionId: string): void {
+    this.liveViews.delete(sessionId);
+  }
+
+  /** Simulates the SSE stream re-establishing after a drop. */
+  simulateReconnect(): void {
+    this.connectListener?.();
   }
 
   callsFor(method: string, sessionId?: string): Array<{ method: string; sessionId?: string }> {

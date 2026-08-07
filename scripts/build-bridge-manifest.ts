@@ -53,6 +53,11 @@
  *   # Check an existing manifest (schema + version floor; with --assets-dir
  *   # also cryptographically verifies every platform signature):
  *   tsx scripts/build-bridge-manifest.ts check latest.json --assets-dir ./bridge-assets
+ *
+ * `--yml <latest*.yml>` (generate + check, repeatable) cross-checks each
+ * Electron-line update-manifest version against the bridge version, failing
+ * loudly on a tag/package.json mismatch (electron-builder versions artifacts
+ * from package.json; the bridge derives its version from the git tag).
  */
 
 import crypto from 'node:crypto';
@@ -242,6 +247,52 @@ export function verifyAssetSignature(asset: Buffer, signatureB64: string, pubkey
 }
 
 // ---------------------------------------------------------------------------
+// Electron-line latest*.yml version cross-check
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract the top-level `version:` field from an electron-updater latest*.yml.
+ * Minimal parse on purpose — electron-builder always emits it as a plain
+ * top-level scalar (`version: 0.1.0`); a quoted form is accepted too.
+ */
+export function readYmlVersion(ymlText: string): string | null {
+  const m = /^version:\s*['"]?([^\s'"]+)['"]?\s*$/m.exec(ymlText);
+  return m ? m[1] : null;
+}
+
+/**
+ * Cross-check the bridge (tag-derived) version against the Electron-line
+ * latest*.yml manifests. electron-builder derives app version, artifact names
+ * and latest*.yml from package.json, while the bridge manifest derives
+ * everything from the git tag — a tag pushed without the package.json bump
+ * otherwise ships a latest.json claiming the TAG version next to latest*.yml
+ * files claiming the package.json version, with every other guard green.
+ * Returns a list of problems (empty = consistent).
+ */
+export function checkYmlVersions(version: string, ymlPaths: string[]): string[] {
+  const problems: string[] = [];
+  for (const ymlPath of ymlPaths) {
+    let text: string;
+    try {
+      text = fs.readFileSync(ymlPath, 'utf8');
+    } catch (err) {
+      problems.push(`${ymlPath}: cannot read — ${(err as Error).message}`);
+      continue;
+    }
+    const ymlVersion = readYmlVersion(text);
+    if (!ymlVersion) {
+      problems.push(`${ymlPath}: no top-level version field`);
+    } else if (ymlVersion !== version) {
+      problems.push(
+        `${path.basename(ymlPath)} declares version ${ymlVersion} but the bridge manifest version is ${version} ` +
+          '(tag/package.json mismatch — bump package.json to the tag version before releasing)',
+      );
+    }
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
 // Manifest build + validation
 // ---------------------------------------------------------------------------
 
@@ -376,12 +427,14 @@ const USAGE = `Usage:
   tsx scripts/build-bridge-manifest.ts generate --version <semver> \
     (--release-base-url <url> | --tag <vX.Y.Z>) \
     --asset <platform>=<release-file>=<signature-base64|@sig-file> [--asset ...] \
-    [--notes <text>] [--pub-date <rfc3339>] [--out <path>]
-  tsx scripts/build-bridge-manifest.ts check <latest.json> [--assets-dir <dir>] [--pubkey <base64>]
+    [--yml <latest*.yml path> ...] [--notes <text>] [--pub-date <rfc3339>] [--out <path>]
+  tsx scripts/build-bridge-manifest.ts check <latest.json> [--assets-dir <dir>] [--yml <latest*.yml path> ...] [--pubkey <base64>]
 
 Defaults: --tag derives https://github.com/${DEFAULT_REPO}/releases/download/<tag>;
 --out defaults to stdout; check verifies signatures cryptographically when
---assets-dir is given (asset file = basename of the platform URL).`;
+--assets-dir is given (asset file = basename of the platform URL). --yml
+cross-checks each Electron-line latest*.yml version against the manifest
+version (tag/package.json mismatch guard).`;
 
 function fail(message: string): never {
   console.error(`error: ${message}`);
@@ -448,6 +501,12 @@ function runGenerate(args: string[]): void {
     notes: oneFlag(flags, 'notes'),
     pubDate: oneFlag(flags, 'pub-date'),
   });
+  // Tag/package.json mismatch guard: fail loudly when any Electron-line
+  // latest*.yml disagrees with the tag-derived bridge version.
+  const ymlProblems = checkYmlVersions(manifest.version, flags.get('yml') ?? []);
+  if (ymlProblems.length > 0) {
+    fail(`latest*.yml version mismatch:\n - ${ymlProblems.join('\n - ')}`);
+  }
   const json = `${JSON.stringify(manifest, null, 2)}\n`;
   const out = oneFlag(flags, 'out');
   if (out) {
@@ -473,6 +532,13 @@ function runCheck(args: string[]): void {
   }
 
   const problems = validateManifest(manifest);
+  // Mirror of the generate-side guard: any Electron-line latest*.yml handed
+  // in via --yml must agree with the manifest version. Skipped when the
+  // manifest has no usable version (already flagged by validateManifest).
+  const manifestVersion = (manifest as BridgeManifest).version;
+  if (typeof manifestVersion === 'string') {
+    problems.push(...checkYmlVersions(manifestVersion, flags.get('yml') ?? []));
+  }
   const assetsDir = oneFlag(flags, 'assets-dir');
   if (problems.length === 0 && assetsDir) {
     const { platforms } = manifest as BridgeManifest;

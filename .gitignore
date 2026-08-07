@@ -17,9 +17,11 @@ dist-electron
 resources/*
 !resources/.gitkeep
 # electron-builder output + staged sidecar binaries (build output; build/ also
-# holds tracked icons/entitlements, so ignore only the staging subdir)
+# holds tracked icons/entitlements, so ignore only the staging subdirs)
 release/
 build/sidecar/
+# Per-arch macOS resource trees staged by scripts/build-sidecar.ts (step 11)
+build/resources-darwin-*/
 *.tsbuildinfo
 __screenshots__/
 .vitest-attachments/

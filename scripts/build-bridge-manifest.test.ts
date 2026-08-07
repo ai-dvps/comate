@@ -22,10 +22,12 @@ import { fileURLToPath } from 'node:url';
 
 import {
   buildManifest,
+  checkYmlVersions,
   compareSemver,
   parsePublicKey,
   parseSemver,
   parseSignatureBox,
+  readYmlVersion,
   REQUIRED_PLATFORMS,
   validateManifest,
   verifyAssetSignature,
@@ -179,6 +181,74 @@ test('generate: rejects unknown platforms, bad asset names, malformed signatures
       releaseBaseUrl: BASE_URL,
       assets: [{ platform: 'windows-x86_64', file: 'a.exe', signature: 'AAAA' }],
     }),
+  );
+});
+
+// --- latest*.yml version cross-check (tag/package.json mismatch guard) ------
+
+test('readYmlVersion parses the electron-builder latest*.yml version field', () => {
+  assert.equal(readYmlVersion('version: 0.1.0\nfiles: []\n'), '0.1.0');
+  assert.equal(readYmlVersion("version: '1.2.3'\n"), '1.2.3');
+  assert.equal(readYmlVersion('files: []\n'), null);
+});
+
+test('checkYmlVersions: matching versions pass', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-yml-'));
+  const mac = path.join(dir, 'latest-mac.yml');
+  const win = path.join(dir, 'latest.yml');
+  fs.writeFileSync(mac, 'version: 0.1.0\nfiles:\n  - url: Comate-0.1.0-mac.zip\n');
+  fs.writeFileSync(win, 'version: 0.1.0\nfiles:\n  - url: Comate-0.1.0-win-x64.exe\n');
+  assert.deepEqual(checkYmlVersions('0.1.0', [mac, win]), []);
+});
+
+test('checkYmlVersions: mismatched versions fail with a clear error', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-yml-'));
+  const good = path.join(dir, 'latest-mac.yml');
+  const bad = path.join(dir, 'latest.yml');
+  fs.writeFileSync(good, 'version: 0.1.0\n');
+  fs.writeFileSync(bad, 'version: 0.0.33\n');
+  const problems = checkYmlVersions('0.1.0', [good, bad]);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /latest\.yml declares version 0\.0\.33/);
+  assert.match(problems[0], /bridge manifest version is 0\.1\.0/);
+  // Unreadable files and missing version fields are reported, not thrown.
+  const missing = checkYmlVersions('0.1.0', [path.join(dir, 'nope.yml')]);
+  assert.equal(missing.length, 1);
+  assert.match(missing[0], /cannot read/);
+  fs.writeFileSync(bad, 'files: []\n');
+  assert.match(checkYmlVersions('0.1.0', [bad])[0], /no top-level version field/);
+});
+
+test('CLI: generate --yml fails loudly on a tag/package.json version mismatch', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-manifest-'));
+  const script = path.join(__dirname, 'build-bridge-manifest.ts');
+  const yml = path.join(dir, 'latest-mac.yml');
+  fs.writeFileSync(yml, 'version: 0.0.33\n'); // package.json not bumped
+  const assetArgs: string[] = [];
+  for (const { platform, file, signature } of validAssets()) {
+    assetArgs.push('--asset', `${platform}=${file}=${signature}`);
+  }
+  // Matching yml → generate succeeds.
+  fs.writeFileSync(yml, 'version: 0.1.0\n');
+  const ok = execFileSync(
+    TSX,
+    [script, 'generate', '--version', '0.1.0', '--release-base-url', BASE_URL, ...assetArgs, '--yml', yml],
+    { stdio: 'pipe', encoding: 'utf8' },
+  );
+  assert.match(ok, /"version": "0\.1\.0"/);
+  // Mismatched yml → generate exits non-zero and names both versions.
+  fs.writeFileSync(yml, 'version: 0.0.33\n');
+  assert.throws(
+    () =>
+      execFileSync(
+        TSX,
+        [script, 'generate', '--version', '0.1.0', '--release-base-url', BASE_URL, ...assetArgs, '--yml', yml],
+        { stdio: 'pipe' },
+      ),
+    (err: { status?: number; stderr?: string }) =>
+      err.status === 1 &&
+      String(err.stderr).includes('version mismatch') &&
+      String(err.stderr).includes('0.0.33'),
   );
 });
 

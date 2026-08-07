@@ -649,7 +649,6 @@ export class BrowserService {
 
     // Mint (or reuse, on crash rebuild) the per-session view marker token.
     const viewerToken = existing?.viewerToken ?? mintViewerToken();
-    const starting = this.spawnForSession(sessionId, workspaceId, viewerToken);
     const entry: RegistryEntry = existing ?? {
       sessionId,
       workspaceId,
@@ -668,6 +667,11 @@ export class BrowserService {
       transient,
       lastUrl: null,
     };
+    // The spawn captures THIS entry object: its continuation verifies entry
+    // identity (not just the sessionId key) so a spawn orphaned by a
+    // concurrent teardown + re-ensure is never adopted into the replacement
+    // entry.
+    const starting = this.spawnForSession(sessionId, workspaceId, viewerToken, entry);
     entry.starting = starting;
     if (!existing) {
       this.registry.set(sessionId, entry);
@@ -1252,12 +1256,13 @@ export class BrowserService {
     sessionId: string,
     workspaceId: string,
     viewerToken: string,
+    entry: RegistryEntry,
   ): Promise<BrowserSessionInfo> {
     const target = this.deps.resolveTarget();
     if (target.kind === 'misconfigured') {
       throw this.unavailable(sessionId, workspaceId, 'browser_start_failed', target.reason);
     }
-    return this.spawnNativeForSession(sessionId, workspaceId, viewerToken, target);
+    return this.spawnNativeForSession(sessionId, workspaceId, viewerToken, target, entry);
   }
 
   /**
@@ -1266,12 +1271,16 @@ export class BrowserService {
    * targetDestroyed all land in handleProcessExit).
    */
   private adoptHandle(
+    entry: RegistryEntry,
     sessionId: string,
     workspaceId: string,
     handle: ShellViewHandle,
   ): BrowserSessionInfo {
+    // Identity check, not a key lookup: a replacement entry minted by a
+    // concurrent ensureSession under the same sessionId must not absorb
+    // this handle.
     const current = this.registry.get(sessionId);
-    if (!current) {
+    if (current !== entry || entry.expectingExit) {
       throw new BrowserUnavailableError(
         'browser_start_failed',
         `Browser session ${sessionId} was torn down while starting.`,
@@ -1313,6 +1322,7 @@ export class BrowserService {
     workspaceId: string,
     viewerToken: string,
     target: BrowserCdpTarget & { kind: 'shell' | 'external' },
+    entry: RegistryEntry,
   ): Promise<BrowserSessionInfo> {
     const task = this.spawnQueue.then(async (): Promise<ShellViewHandle> => {
       // Cap rule: count OTHER live/starting sessions inside the spawn mutex.
@@ -1332,20 +1342,23 @@ export class BrowserService {
       if (target.kind === 'shell') {
         return this.spawnShellView(sessionId, workspaceId, marker, target);
       }
-      return this.spawnExternalTarget(sessionId, workspaceId, marker, target);
+      return this.spawnExternalTarget(sessionId, workspaceId, marker, target, entry);
     });
     const handleTask = task.then(async (handle) => {
-      // Teardown raced the spawn — destroy the fresh view/target instead of
-      // registering it.
-      const current = this.registry.get(sessionId);
-      if (!current || current.expectingExit) {
+      // Teardown raced the spawn — and a concurrent ensureSession may already
+      // have minted a replacement entry under the same sessionId key. Verify
+      // the captured entry's identity (not just the key): an orphaned spawn
+      // stops its fresh view/target instead of being adopted into the
+      // replacement entry (adoption would orphan the view when the new
+      // entry's own spawn then fails on the shell's 409 view_exists).
+      if (this.registry.get(sessionId) !== entry || entry.expectingExit) {
         await handle.stop();
         throw new BrowserUnavailableError(
           'browser_start_failed',
           `Browser session ${sessionId} was torn down while starting.`,
         );
       }
-      return this.adoptHandle(sessionId, workspaceId, handle);
+      return this.adoptHandle(entry, sessionId, workspaceId, handle);
     });
     this.spawnQueue = handleTask.then(
       () => undefined,
@@ -1419,6 +1432,7 @@ export class BrowserService {
     workspaceId: string,
     marker: string,
     target: BrowserCdpTarget & { kind: 'external' },
+    entry: RegistryEntry,
   ): Promise<ShellViewHandle> {
     let created: { targetId: string; browserContextId?: string };
     try {
@@ -1463,8 +1477,10 @@ export class BrowserService {
         watcher.onClose(() => {
           if (!intentionalClose) handle.notifyExit({ code: null, signal: null });
         });
-        const entry = this.registry.get(sessionId);
-        if (entry) {
+        // Attach the watcher teardown only when the entry that queued this
+        // spawn is still the registered one — an orphaned spawn's watcher
+        // must not piggyback on a replacement entry.
+        if (this.registry.get(sessionId) === entry) {
           entry.closeWatcher = () => {
             intentionalClose = true;
             off();
@@ -1484,30 +1500,68 @@ export class BrowserService {
   /** One SSE subscription per service instance, lazily opened on first shell spawn. */
   private ensureShellEventStream(client: ShellControlClient): void {
     if (this.shellEventUnsubscribe) return;
-    this.shellEventUnsubscribe = client.subscribeEvents((event: ShellViewEvent) => {
-      if (event.type === 'view-activity') {
-        this.resetIdle(event.sessionId);
-        return;
-      }
-      if (event.type === 'view-navigated') {
-        // U8: track the view's last page so a session_lost manual retry can
-        // rebuild the view onto it (the partition keeps the login state).
-        const entry = this.registry.get(event.sessionId);
-        if (entry && typeof event.url === 'string' && /^https?:\/\//.test(event.url)) {
-          entry.lastUrl = event.url;
+    this.shellEventUnsubscribe = client.subscribeEvents(
+      (event: ShellViewEvent) => {
+        if (event.type === 'view-activity') {
+          this.resetIdle(event.sessionId);
+          return;
         }
-        return;
+        if (event.type === 'view-navigated') {
+          // U8: track the view's last page so a session_lost manual retry can
+          // rebuild the view onto it (the partition keeps the login state).
+          const entry = this.registry.get(event.sessionId);
+          if (entry && typeof event.url === 'string' && /^https?:\/\//.test(event.url)) {
+            entry.lastUrl = event.url;
+          }
+          return;
+        }
+        const entry = this.registry.get(event.sessionId);
+        if (!entry || entry.expectingExit) return;
+        if (entry.handle instanceof ShellViewHandle) {
+          diagWarn(
+            `[browser] shell reported ${event.type} for session ${event.sessionId}` +
+              (event.type === 'view-crashed' ? ` (reason=${event.reason ?? 'unknown'})` : ''),
+          );
+          entry.handle.notifyExit({ code: null, signal: null });
+        }
+      },
+      () => {
+        void this.reconcileLiveShellViews(client).catch((err) => {
+          diagWarn('[browser] post-reconnect view reconcile failed:', err);
+        });
+      },
+    );
+  }
+
+  /**
+   * The SSE stream is the only liveness signal for shell views and it is
+   * lossy: the shell emits only to currently connected clients (no replay),
+   * so a crash inside the reconnect gap (or before handle adoption) is
+   * dropped and the dead view would stay 'live' forever. After every
+   * successful /events (re)subscription, probe each live shell view once
+   * and drive the normal session_lost path for the ones that vanished.
+   * Cheap (one probe per live shell entry per reconnect) and best-effort
+   * (probe failures are logged and skipped — never read as a lost view).
+   */
+  private async reconcileLiveShellViews(client: ShellControlClient): Promise<void> {
+    for (const entry of [...this.registry.values()]) {
+      const handle = entry.handle;
+      // Shell views only — external targets are not hosted by the shell and
+      // have their own targetDestroyed watcher.
+      if (!(handle instanceof ShellViewHandle) || handle.partition === undefined) continue;
+      let exists: boolean;
+      try {
+        exists = await client.viewExists(entry.sessionId);
+      } catch (err) {
+        diagWarn(`[browser] post-reconnect view probe failed for ${entry.sessionId}:`, err);
+        continue;
       }
-      const entry = this.registry.get(event.sessionId);
-      if (!entry || entry.expectingExit) return;
-      if (entry.handle instanceof ShellViewHandle) {
-        diagWarn(
-          `[browser] shell reported ${event.type} for session ${event.sessionId}` +
-            (event.type === 'view-crashed' ? ` (reason=${event.reason ?? 'unknown'})` : ''),
-        );
-        entry.handle.notifyExit({ code: null, signal: null });
-      }
-    });
+      if (exists) continue;
+      diagWarn(
+        `[browser] shell view for session ${entry.sessionId} vanished while the event stream was down`,
+      );
+      handle.notifyExit({ code: null, signal: null });
+    }
   }
 
   private handleProcessExit(
@@ -1561,13 +1615,49 @@ export class BrowserService {
     if (handle) {
       await handle.stop();
     }
-    if (options.wipeProfile && handle) {
+    if (options.wipeProfile) {
       // The wipeProfile semantic is the partition wipe over the control
       // channel (KTD-11): session/workspace deletion must not leave on-disk
       // login state behind. External targets persist nothing (the throwaway
       // browser context is disposed on stop).
-      await handle.wipe();
+      if (handle) {
+        await handle.wipe();
+      } else if (entry.state === 'session_lost') {
+        // session_lost entry — the crash path already dropped the handle,
+        // but the on-disk partition (login state) must still be wiped. (A
+        // handle nulled any other way — e.g. a spawn torn down in flight —
+        // never exposed login state, so nothing extra is wiped.)
+        await this.wipeShellViewWithoutHandle(entry.sessionId);
+      }
     }
+  }
+
+  /**
+   * wipeProfile for an entry whose handle is already gone (session_lost):
+   * the on-disk persist:comate-browser-<id> partition (login cookies) must
+   * not survive session/workspace deletion just because there is no live
+   * view. Shell target only; fully best-effort — teardown must never fail
+   * or block on the control channel here.
+   */
+  private async wipeShellViewWithoutHandle(sessionId: string): Promise<void> {
+    let target: BrowserCdpTarget;
+    try {
+      target = this.deps.resolveTarget();
+    } catch (err) {
+      diagWarn(`[browser] could not resolve the CDP target to wipe ${sessionId}:`, err);
+      return;
+    }
+    if (target.kind !== 'shell') return;
+    const client = this.deps.createControlClient({
+      controlPort: target.controlPort,
+      controlToken: target.controlToken,
+    });
+    await client.destroyView(sessionId).catch((err) => {
+      diagWarn(`[browser] control-channel view destroy failed for ${sessionId}:`, err);
+    });
+    await client.wipePartition(sessionId).catch((err) => {
+      diagWarn(`[browser] control-channel partition wipe failed for ${sessionId}:`, err);
+    });
   }
 
   private unavailable(

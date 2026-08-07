@@ -142,6 +142,12 @@ const VIEW_WEB_PREFERENCES = {
 
 const DEFAULT_ACTIVITY_THROTTLE_MS = 15_000;
 const PARTITION_DIR_PREFIX = 'comate-browser-';
+/**
+ * Cap on concurrent managed popup overlays per session: agent-driven pages
+ * are untrusted and can loop window.open, and each popup is a full
+ * WebContentsView. 8 comfortably covers 1-2-deep OAuth chains.
+ */
+const MAX_POPUPS_PER_SESSION = 8;
 /** The agent-mode shield paints nothing — it only eats pointer events. */
 const SHIELD_BACKGROUND = '#00000000';
 /**
@@ -264,6 +270,14 @@ export function createBrowserViewManager(deps: BrowserViewManagerDeps): BrowserV
   const openPopup = (record: ViewRecord, sessionId: string, url: string): void => {
     const host = liveHost();
     if (!host) return; // no window — nothing to overlay onto
+    if (record.popups.size >= MAX_POPUPS_PER_SESSION) {
+      // Refuse past the cap (the window.open handler already denies the
+      // default action, so this is silent to the page).
+      deps.logger?.warn?.(
+        `[browser-view] refusing popup for session ${sessionId}: cap of ${MAX_POPUPS_PER_SESSION} reached`,
+      );
+      return;
+    }
     const popupView = deps.createViewImpl({
       webPreferences: { ...VIEW_WEB_PREFERENCES, partition: partitionName(sessionId) },
     });
@@ -431,6 +445,15 @@ export function createBrowserViewManager(deps: BrowserViewManagerDeps): BrowserV
           reason: details?.reason ?? 'unknown',
           at: Date.now(),
         });
+        // Electron never auto-destroys a crashed webContents, so without this
+        // reap the record would linger and every session_lost rebuild would
+        // hit the createView duplicate guard (409 view_exists) until app
+        // restart. Popups and the shield go down with it; the partition
+        // (login state) is preserved for the rebuild.
+        if (views.get(sessionId) === record) {
+          views.delete(sessionId);
+          destroyRecord(record);
+        }
       });
       webContents.on('destroyed', () => {
         views.delete(sessionId);

@@ -25,7 +25,10 @@
  *  - build/sidecar/sidecar-node-<arch>[.exe] (staged by build-sidecar.ts)
  *    → <resourcesPath>/sidecar-node[.exe]        (never inside the asar)
  *  - resources/ → <resourcesPath>/resources/  (TAURI_RESOURCE_DIR keeps its
- *    name — the server-side resolvers consume it, KTD-13)
+ *    name — the server-side resolvers consume it, KTD-13); on macOS the
+ *    per-arch tree build/resources-darwin-${arch} is used instead, so the
+ *    dual-arch single-runner build never ships host-arch native binaries in
+ *    the cross-arch app (staged by build-sidecar.ts step 11)
  *  - build/icon.png → <resourcesPath>/icon.png (window/tray icon, electron/main.ts)
  *
  * The updater endpoint (provider github / owner ai-dvps / repo comate) is
@@ -149,7 +152,19 @@ const config: Configuration = {
       ? { from: 'build/sidecar/sidecar-node-x64.exe', to: 'sidecar-node.exe' }
       : { from: 'build/sidecar/sidecar-node-${arch}', to: 'sidecar-node' },
     {
-      from: 'resources',
+      // macOS: the single-runner dual-arch build (--mac --x64 --arm64) must
+      // give each app its own resource tree — the tree carries native payloads
+      // (claude, opencode, rg, better_sqlite3.node), and the shared host-arch
+      // resources/ tree would put arm64-only Mach-O binaries into the x64 app.
+      // scripts/build-sidecar.ts (step 11) stages build/resources-darwin-{arm64,x64};
+      // electron-builder expands ${arch} per package, exactly like the sidecar
+      // binary above.
+      //
+      // Windows/Linux keep the shared host-arch tree: the Windows runner is
+      // x64-only so host arch == target arch, and Linux currently builds x64
+      // only. If an arm64 Linux runner ever joins the matrix, it needs the
+      // same per-arch treatment as darwin.
+      from: platform === 'darwin' ? 'build/resources-darwin-${arch}' : 'resources',
       to: 'resources',
       // Belt-and-suspenders on top of the build-sidecar assertion gate: the
       // enterprise flavor must not ship a claude binary even if a stale one

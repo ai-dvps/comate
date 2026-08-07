@@ -1,5 +1,6 @@
 import { execFileSync, execSync } from 'child_process';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   copyFileSync,
@@ -8,7 +9,9 @@ import {
   statSync,
   readFileSync,
   writeFileSync,
+  mkdtempSync,
 } from 'fs';
+import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -24,8 +27,9 @@ const distDir = join(rootDir, 'dist');
 const sidecarDir = join(distDir, 'sidecar');
 // Runtime resource staging area (U9: re-homed from the retired Tauri
 // resources tree). Consumed by electron-builder.config.ts
-// extraResources and by the dev shell (electron/sidecar.ts). Gitignored build
-// output, like build/sidecar.
+// extraResources (non-mac platforms; macOS consumes the per-arch trees in
+// build/resources-darwin-<arch> staged by step 11) and by the dev shell
+// (electron/sidecar.ts). Gitignored build output, like build/sidecar.
 const resourcesDir = join(rootDir, 'resources');
 // Sidecar binary staging area: consumed by electron-builder.config.ts
 // extraResources (arch-macro names) and by the dev shell (triple names).
@@ -416,7 +420,171 @@ async function build() {
   assertNoNonAsciiPaths(resourcesDir);
   console.log('clean (no non-ASCII paths)');
 
+  // 11. Per-arch macOS resource trees. The single-runner dual-arch mac build
+  // (build.yml: electron-builder --mac --x64 --arm64) packages BOTH apps from
+  // one host-arch node_modules, but the resources tree carries native payloads
+  // (claude, opencode, rg, better_sqlite3.node) — shipping the host tree into
+  // the cross-arch app puts arm64-only Mach-O binaries on Intel Macs
+  // (ERR_DLOPEN_FAILED / spawn failures). electron-builder.config.ts therefore
+  // maps build/resources-darwin-${arch} (like the sidecar binary already does),
+  // and we stage one tree per electron arch here:
+  //  - host tree: verbatim copy of the gated+audited resources/ tree;
+  //  - cross tree: same base with every native payload replaced by the other
+  //    arch's artifact. Cross-arch staging is deterministic and LOUD: any
+  //    payload that cannot be obtained fails the whole build rather than
+  //    silently shipping wrong-arch binaries.
+  if (process.platform === 'darwin') {
+    stageDarwinPerArchResources(bundleBackends, isFile);
+  }
+
   console.log('\n=== Sidecar build complete ===');
+}
+
+// ---------------------------------------------------------------------------
+// Step 11 helpers (macOS per-arch resource trees)
+// ---------------------------------------------------------------------------
+
+type ElectronArch = 'arm64' | 'x64';
+
+function readPkgJson(...segments: string[]): Record<string, unknown> {
+  return JSON.parse(readFileSync(join(...segments, 'package.json'), 'utf8'));
+}
+
+/**
+ * Fetch one file out of an npm platform package (e.g.
+ * `@anthropic-ai/claude-agent-sdk-darwin-x64`) without installing it: npm pack
+ * the exact pinned version, extract the single file from the tarball, copy it
+ * to dest with the executable bit. Throws on any failure.
+ */
+function stageNpmPackageFile(pkgName: string, version: string, pathInPkg: string, dest: string) {
+  const tmp = mkdtempSync(join(tmpdir(), 'sidecar-cross-npm-'));
+  try {
+    const spec = `${pkgName}@${version}`;
+    console.log(`> npm pack ${spec} (cross-arch payload)`);
+    const out = execFileSync('npm', ['pack', spec, '--pack-destination', tmp], {
+      cwd: tmp,
+      encoding: 'utf8',
+    });
+    const tgzName = out.trim().split('\n').pop()!.trim();
+    execFileSync('tar', ['-xzf', join(tmp, tgzName), '-C', tmp, `package/${pathInPkg}`]);
+    const extracted = join(tmp, 'package', pathInPkg);
+    if (!existsSync(extracted)) {
+      throw new Error(`${spec} does not contain ${pathInPkg}`);
+    }
+    copyFileSync(extracted, dest);
+    chmodSync(dest, 0o755);
+    console.log(`Staged ${spec}:${pathInPkg} -> ${dest}`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Obtain a better_sqlite3.node for the other macOS arch. A scratch
+ * `npm install better-sqlite3@<ver>` runs better-sqlite3's own install script
+ * (`prebuild-install || node-gyp rebuild --release`) with npm_config_arch/
+ * npm_config_platform pointing at the target arch: on Node >= 22 (CI) this
+ * downloads the official GitHub-releases prebuild (published from ABI v127);
+ * otherwise prebuild-install misses and node-gyp cross-compiles from source
+ * (clang -arch x86_64 works on arm64 hosts and vice versa). Either way the
+ * result is arch-asserted by the caller before it ships.
+ */
+function stageBetterSqlite3Cross(version: string, targetArch: ElectronArch, dest: string) {
+  const tmp = mkdtempSync(join(tmpdir(), 'sidecar-cross-bs3-'));
+  try {
+    run(`npm install better-sqlite3@${version} --no-save --no-audit --no-fund`, {
+      cwd: tmp,
+      env: { npm_config_arch: targetArch, npm_config_platform: 'darwin' },
+    });
+    const built = join(tmp, 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node');
+    if (!existsSync(built)) {
+      throw new Error(`cross-arch better-sqlite3 install produced no binary at ${built}`);
+    }
+    copyFileSync(built, dest);
+    chmodSync(dest, 0o755);
+    console.log(`Staged better-sqlite3@${version} (${targetArch}) -> ${dest}`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+/** Assert a Mach-O file is built for the expected electron arch (file(1)). */
+function assertMachOArch(filePath: string, expectedArch: ElectronArch) {
+  const needle = expectedArch === 'x64' ? 'x86_64' : 'arm64';
+  const desc = execFileSync('file', [filePath], { encoding: 'utf8' });
+  if (!desc.includes('Mach-O') || !desc.includes(needle)) {
+    throw new Error(`arch assertion failed for ${filePath}: expected ${needle}, got: ${desc.trim()}`);
+  }
+  console.log(`arch ok (${needle}): ${filePath}`);
+}
+
+function stageDarwinPerArchResources(bundleBackends: Set<string>, isFile: (p: string) => boolean) {
+  console.log('\n--- Staging per-arch macOS resource trees (darwin) ---');
+  const hostArch: ElectronArch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const crossArch: ElectronArch = hostArch === 'arm64' ? 'x64' : 'arm64';
+  const hostTree = join(rootDir, 'build', `resources-darwin-${hostArch}`);
+  const crossTree = join(rootDir, 'build', `resources-darwin-${crossArch}`);
+
+  // Host tree: the resources/ tree was already variant-gated (step 5) and
+  // audited (step 10), so the copy inherits both gates by construction.
+  rmSync(hostTree, { recursive: true, force: true });
+  cpSync(resourcesDir, hostTree, { recursive: true });
+  console.log(`Copied resources/ -> ${hostTree}`);
+
+  // Cross tree: same base (JS resources, marketplace, and the per-triple
+  // comate-cli subdirs are already arch-correct), then replace every native
+  // payload with the cross-arch artifact.
+  rmSync(crossTree, { recursive: true, force: true });
+  cpSync(resourcesDir, crossTree, { recursive: true });
+  console.log(`Copied resources/ -> ${crossTree}`);
+
+  if (bundleBackends.has('claude')) {
+    const pkg = `@anthropic-ai/claude-agent-sdk-darwin-${crossArch}`;
+    const sdkDeps = (readPkgJson(rootDir, 'node_modules', '@anthropic-ai', 'claude-agent-sdk')
+      .optionalDependencies ?? {}) as Record<string, string>;
+    if (!sdkDeps[pkg]) throw new Error(`${pkg} not pinned in @anthropic-ai/claude-agent-sdk optionalDependencies`);
+    stageNpmPackageFile(pkg, sdkDeps[pkg], 'claude', join(crossTree, 'claude'));
+  }
+
+  if (bundleBackends.has('opencode')) {
+    const pkg = `opencode-darwin-${crossArch}`;
+    const rootDeps = (readPkgJson(rootDir).optionalDependencies ?? {}) as Record<string, string>;
+    if (!rootDeps[pkg]) throw new Error(`${pkg} not pinned in package.json optionalDependencies`);
+    stageNpmPackageFile(pkg, rootDeps[pkg], join('bin', 'opencode'), join(crossTree, 'opencode'));
+  }
+
+  const rgPkg = `@vscode/ripgrep-darwin-${crossArch}`;
+  const rgDeps = (readPkgJson(rootDir, 'node_modules', '@vscode', 'ripgrep')
+    .optionalDependencies ?? {}) as Record<string, string>;
+  if (!rgDeps[rgPkg]) throw new Error(`${rgPkg} not pinned in @vscode/ripgrep optionalDependencies`);
+  stageNpmPackageFile(rgPkg, rgDeps[rgPkg], join('bin', 'rg'), join(crossTree, 'rg'));
+
+  const bs3Version = String(readPkgJson(rootDir, 'node_modules', 'better-sqlite3').version);
+  stageBetterSqlite3Cross(bs3Version, crossArch, join(crossTree, 'better_sqlite3.node'));
+
+  // Arch + audit gates over BOTH trees. The cross tree's .node cannot be
+  // ABI-probed by require() on this host (wrong-arch Mach-O), so the Mach-O
+  // arch assertion via file(1) is the executable check there; the host tree's
+  // ABI probe already ran in step 8 against resources/.
+  for (const [tree, treeArch] of [
+    [hostTree, hostArch],
+    [crossTree, crossArch],
+  ] as const) {
+    const nativePayloads = [
+      ...(bundleBackends.has('claude') ? ['claude'] : []),
+      ...(bundleBackends.has('opencode') ? ['opencode'] : []),
+      'rg',
+      'better_sqlite3.node',
+    ];
+    for (const name of nativePayloads) {
+      const p = join(tree, name);
+      if (!isFile(p)) throw new Error(`native payload missing from ${tree}: ${p}`);
+      assertMachOArch(p, treeArch);
+    }
+    assertNoDanglingSymlinks(tree);
+    assertNoNonAsciiPaths(tree);
+    console.log(`tree clean (symlinks, ASCII paths): ${tree}`);
+  }
 }
 
 build().catch((err) => {
