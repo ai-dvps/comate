@@ -149,7 +149,7 @@ export interface BrowserActivityPingPayload {
 /**
  * Explicit browser close (U1/U4): the state bar's "close browser" button.
  * Distinct from collapse-pane (a client-side hide) — this tears the server-side
- * Steel process down. Auto-remembers the current site's login first.
+ * browser view down. Auto-remembers the current site's login first.
  */
 export interface BrowserClosePayload {
   sessionId: string

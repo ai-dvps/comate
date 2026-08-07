@@ -4,19 +4,16 @@
 
 Comate is a hybrid desktop application:
 
-- **Tauri v2** provides the native desktop shell (Rust)
+- **Electron** provides the native desktop shell (`electron/`)
 - **React 18** + **Vite** powers the frontend UI
 - **Express.js** runs an embedded backend API that manages workspaces, sessions, file operations, and AI streaming
-- The Express server is bundled as a **sidecar Node.js process** alongside the Tauri app
+- The Express server is bundled as a **sidecar Node.js process** alongside the Electron app
 
 This architecture lets us ship a self-contained desktop app while keeping the UI layer fast and the backend flexible.
 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) — latest LTS version
-- [Rust](https://www.rust-lang.org/tools/install) — 1.77 or later
-
-Tauri CLI is installed automatically as a devDependency via `npm install`. You do not need a global installation.
 
 ## Getting Started
 
@@ -45,13 +42,14 @@ Tauri CLI is installed automatically as a devDependency via `npm install`. You d
 | Path | Description |
 |------|-------------|
 | `src/client/` | React frontend application |
-| `src/client/lib/` | Tauri API bridge and native integration helpers |
+| `src/client/lib/` | Desktop bridge (`window.comate`) and native integration helpers |
 | `src/client/i18n/` | Localization files (English, Simplified Chinese) |
 | `src/server/` | Express backend and API layer |
 | `src/server/routes/` | HTTP route handlers |
 | `src/server/services/` | Business logic and AI session management |
 | `src/server/storage/` | SQLite database layer |
-| `src-tauri/` | Rust Tauri desktop shell |
+| `electron/` | Electron desktop shell (main process, preload, sidecar lifecycle) |
+| `resources/` | Staged runtime resources (build output of `scripts/build-sidecar.ts`; shipped via electron-builder `extraResources`) |
 | `claude-code-plugin/` | Built-in local plugin marketplace (shipped with the app bundle) |
 | `packages/wecom-cli/` | WeChat Work (WeCom) CLI tool |
 | `scripts/` | Build scripts and code generation |
@@ -74,12 +72,15 @@ Inside the Electron shell the browser tools drive in-shell Chromium views: the m
 
 | Value | Behavior |
 |-------|----------|
-| unset / `auto` | shell when the shell env is present, otherwise the legacy Steel stack |
-| `steel` | force the legacy vendored-Steel child-process stack |
+| unset / `auto` | the in-shell Chromium when the shell env is present; otherwise `misconfigured` (dev-web has no browser stack of its own) |
 | `shell` | force the in-shell Chromium (fails loud when the shell env is missing) |
 | `http://host:port`, `ws://host:port/…`, `host:port`, or a bare port | external debug-port Chromium; each session gets an isolated throwaway browser context |
 
-For server-side browser debugging, start any Chromium with `--remote-debugging-port=<port> --remote-debugging-address=127.0.0.1` and point the sidecar at it. `/api/health/browser` classifies shell-side failures (`control_channel_unreachable` / `debug_port_unreachable` / `view_creation_failed`) with remediation guidance.
+**R8 rollback path (U9 decision):** the external endpoint IS the fallback landing spot — rollback means pointing `COMATE_BROWSER_CDP_TARGET` at an operator-supplied Chromium, with no client re-release (AE2 semantics preserved; aimed at support/enterprise-ops scenarios). The legacy bundled browser stack (vendored runtime + Chrome for Testing, `COMATE_CHROMIUM_PATH` / `COMATE_USE_SYSTEM_CHROME`) was removed in U9.
+
+For server-side browser debugging, start any Chromium with `--remote-debugging-port=<port> --remote-debugging-address=127.0.0.1` and point the sidecar at it. `/api/health/browser` classifies shell-side failures (`control_channel_unreachable` / `debug_port_unreachable` / `view_creation_failed` / `target_misconfigured`) with remediation guidance.
+
+The CDP contract suite (`npm run test:shell-cdp`) drives Playwright's `chrome-headless-shell` binary — run `npx playwright install chromium` once per checkout (the full Chromium's `--headless=new` never answers `Page.captureScreenshot` over raw CDP, so the suite deliberately uses the headless shell with `--site-per-process`).
 
 ## WeCom Plugin
 

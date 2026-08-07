@@ -1,37 +1,31 @@
 /**
- * browser-fingerprint — KTD-12 anti-detection parity for the native browser
- * stack (shell views and the external-CDP fallback, R8).
+ * browser-fingerprint — KTD-12 anti-detection for the native browser stack
+ * (shell views and the external-CDP fallback, R8).
  *
- * What Steel does by default today (vendored build, cdp.service.js
- * injectFingerprintSafely + scripts/fingerprint.js), and what this module
- * replicates field-by-field over raw CDP:
+ * Every session page presents a synthetic desktop-Chrome surface, applied
+ * over raw CDP:
  *
- *  | Steel default injector                          | Here                              |
- *  |-------------------------------------------------|-----------------------------------|
- *  | page.setUserAgent + Emulation.setUserAgentOverride | Emulation.setUserAgentOverride |
- *  |   (userAgent, acceptLanguage, platform,         |   (same params, derived per host  |
- *  |    userAgentMetadata: brands/fullVersionList/   |    OS + the REAL engine version)  |
- *  |    platform/platformVersion/architecture/model/ |                                   |
- *  |    mobile/bitness/wow64)                        |                                   |
- *  | init script via evaluateOnNewDocument fixing    | Page.addScriptToEvaluateOnNewDocument |
- *  |   navigator.platform/vendor/deviceMemory/       |   fixing the same navigator fields |
- *  |   hardwareConcurrency/userAgentData(+high-      |   + navigator.webdriver + cdc_*    |
- *  |   entropy values)                               |   driver-variable cleanup          |
- *  | Page.setDeviceMetricsOverride (1920x1080)       | intentionally OMITTED — our views |
- *  |                                                 |   are headful with real geometry  |
- *  | WebGL vendor/renderer spoof (videoCard)         | intentionally OMITTED — real GPU  |
- *  |                                                 |   strings are consistent headful  |
+ *  - `Emulation.setUserAgentOverride` (userAgent, acceptLanguage, platform,
+ *    userAgentMetadata: brands/fullVersionList/platform/platformVersion/
+ *    architecture/model/mobile/bitness/wow64), derived per host OS + the
+ *    REAL engine version;
+ *  - `Page.addScriptToEvaluateOnNewDocument` fixing navigator.platform /
+ *    vendor / deviceMemory / hardwareConcurrency / userAgentData (including
+ *    high-entropy values), deleting navigator.webdriver and the cdc_*
+ *    driver variables;
+ *  - intentionally OMITTED: device-metrics override (our views are headful
+ *    with real geometry) and WebGL vendor/renderer spoofing (real GPU
+ *    strings are consistent headful).
  *
- * Two deliberate deviations from Steel's generator (documented in the U7
- * report): (1) the OS matches the HOST platform instead of Steel's hardcoded
- * Linux desktop fingerprint — a visibly-macOS window claiming Linux UA-CH is
+ * Two deliberate properties (documented in the U7 report): (1) the OS
+ * matches the HOST platform — a visibly-macOS window claiming Linux UA-CH is
  * itself a detection signal; (2) the Chrome version is the attached engine's
- * real version (Browser.getVersion) instead of a random min-136 draw, so UA,
- * UA-CH fullVersionList and engine can never disagree.
+ * real version (Browser.getVersion), so UA, UA-CH fullVersionList and engine
+ * can never disagree.
  *
  * The init script is idempotent: connectShellPage re-registers it on every
  * attach (registered scripts persist per target, not per CDP session —
- * verified against CfT 151), so a re-attach would stack duplicates; the
+ * verified against Chromium 151), so a re-attach would stack duplicates; the
  * per-document guard makes re-registration a no-op.
  */
 
@@ -107,7 +101,7 @@ export interface BuildFingerprintOptions {
    * product field), e.g. '151.0.7922.34'. Keeps UA / UA-CH / engine in lockstep.
    */
   chromeVersion: string;
-  /** Defaults to 'en-US,en' (Steel's locales: ["en-US", "en"]). */
+  /** Defaults to 'en-US,en'. */
   acceptLanguage?: string;
 }
 
@@ -161,7 +155,7 @@ export function buildDesktopFingerprint(options: BuildFingerprintOptions): Deskt
   };
 }
 
-/** Params for CDP `Emulation.setUserAgentOverride` (Steel's override shape). */
+/** Params for CDP `Emulation.setUserAgentOverride`. */
 export function userAgentOverrideParams(
   fingerprint: DesktopFingerprint,
 ): Record<string, unknown> {
@@ -186,7 +180,7 @@ export function userAgentOverrideParams(
 
 /**
  * The new-document init script (Page.addScriptToEvaluateOnNewDocument). Pins
- * the navigator surface Steel's injector pins, removes the automation tells
+ * the navigator surface the fingerprint pins, removes the automation tells
  * (navigator.webdriver, chromedriver's cdc_ / $cdc_ globals), and mocks
  * navigator.userAgentData — Electron's renderer does not always expose
  * userAgentData consistent with the UA override, so the mock is unconditional
@@ -223,7 +217,7 @@ export function buildFingerprintInitScript(fingerprint: DesktopFingerprint): str
   var HIGH_ENTROPY = ${JSON.stringify(highEntropy)};
   var NAV = ${JSON.stringify(fingerprint.navigator)};
 
-  // chromedriver / automation leftovers (Steel's fingerprint.js deletes these).
+  // chromedriver / automation leftovers.
   var CDC = [
     'cdc_adoQpoAZQpn9p_Array', 'cdc_adoQpoAZQpn9p_Object', 'cdc_adoQpoAZQpn9p_String',
     'cdc_adoQpoAZQpn9p_Promise', 'cdc_adoQpoAZQpn9p_Proxy', 'cdc_adoQpoAZQpn9p_Symbol',

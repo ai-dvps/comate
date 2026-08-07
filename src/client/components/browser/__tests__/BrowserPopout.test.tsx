@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import i18n from '../../../i18n'
@@ -12,9 +12,25 @@ const wsClientMock = vi.hoisted(() => ({
   onDisconnect: vi.fn(() => () => {}),
 }))
 
+const bridgeMock = vi.hoisted(() => ({
+  isNativeBrowserView: vi.fn(() => true),
+  reportBrowserViewRect: vi.fn(),
+  setBrowserViewInputMode: vi.fn(),
+}))
+
 vi.mock('../../../lib/websocket-client.js', () => ({
   wsClient: wsClientMock,
   DEFAULT_TIMEOUT: 30000,
+}))
+
+vi.mock('../../../lib/browser-view-bridge', () => ({
+  isNativeBrowserView: bridgeMock.isNativeBrowserView,
+  reportBrowserViewRect: bridgeMock.reportBrowserViewRect,
+  setBrowserViewInputMode: bridgeMock.setBrowserViewInputMode,
+  onBrowserViewEscape: vi.fn(() => () => {}),
+  // The pane store subscribes at module scope; the occlusion watcher is not
+  // under test here.
+  onBrowserViewOcclusionChange: vi.fn(() => () => {}),
 }))
 
 import BrowserPopout from '../BrowserPopout'
@@ -26,8 +42,15 @@ import {
 } from '../../../stores/browser-pane-store'
 import { useChatStore } from '../../../stores/chat-store'
 
-const VIEWER_URL =
-  'http://127.0.0.1:43210/s/abcdefghijklmnopqrstuvwxyzabcdef/v1/sessions/debug?interactive=true&theme=dark&showControls=true'
+beforeAll(() => {
+  globalThis.ResizeObserver = class ResizeObserverMock {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver
+})
+
+const NATIVE_HOST = '[data-testid="browser-viewer-native"]'
 
 function renderBoth() {
   return render(
@@ -60,6 +83,7 @@ describe('BrowserPopout', () => {
     cleanup()
     localStorage.clear()
     vi.clearAllMocks()
+    bridgeMock.isNativeBrowserView.mockReturnValue(true)
     useBrowserPaneStore.setState({
       openBySession: { 'sess-1': true },
       width: 480,
@@ -73,7 +97,7 @@ describe('BrowserPopout', () => {
       useChatStore.setState({ activeSessionIds: { ws1: 'sess-1' } })
     })
     global.fetch = vi.fn(() =>
-      Promise.resolve({ ok: true, json: () => Promise.resolve({ url: null }) } as unknown as Response),
+      Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) } as unknown as Response),
     )
   })
 
@@ -82,20 +106,20 @@ describe('BrowserPopout', () => {
     expect(screen.queryByTestId('browser-popout')).not.toBeInTheDocument()
   })
 
-  it('hosts the viewer while open; the pane shows its placeholder (one iframe total)', () => {
-    setSession({ controlState: 'agent_in_control', port: 4001, viewerUrl: VIEWER_URL })
+  it('hosts the native view while open; the pane shows its placeholder (one surface at a time)', () => {
+    setSession({ controlState: 'agent_in_control', port: 4001 })
     const { container } = renderBoth()
 
     setPane({ popoutOpen: true })
     const popout = screen.getByTestId('browser-popout')
-    expect(popout.querySelector('iframe')?.getAttribute('src')).toBe(VIEWER_URL)
+    expect(popout.querySelector(NATIVE_HOST)).toBeInTheDocument()
     expect(screen.getByTestId('browser-popout-placeholder')).toBeInTheDocument()
     // The画面 lives in exactly one surface at a time.
-    expect(container.querySelectorAll('iframe')).toHaveLength(1)
+    expect(container.querySelectorAll(NATIVE_HOST)).toHaveLength(1)
   })
 
   it('mirrors the pane state machine: a verb from the popout drives the same store', async () => {
-    setSession({ controlState: 'handoff_pending', port: 4001, viewerUrl: VIEWER_URL })
+    setSession({ controlState: 'handoff_pending', port: 4001 })
     renderBoth()
     setPane({ popoutOpen: true })
 
@@ -114,20 +138,20 @@ describe('BrowserPopout', () => {
   })
 
   it('Esc closes the popout and returns the view to the pane', () => {
-    setSession({ controlState: 'agent_in_control', port: 4001, viewerUrl: VIEWER_URL })
+    setSession({ controlState: 'agent_in_control', port: 4001 })
     const { container } = renderBoth()
     setPane({ popoutOpen: true })
     expect(screen.getByTestId('browser-popout')).toBeInTheDocument()
 
     fireEvent.keyDown(screen.getByTestId('browser-popout'), { key: 'Escape' })
     expect(screen.queryByTestId('browser-popout')).not.toBeInTheDocument()
-    // 关闭即回面板：the pane hosts the viewer again.
-    expect(screen.getByTestId('browser-pane').querySelector('iframe')).toBeInTheDocument()
-    expect(container.querySelectorAll('iframe')).toHaveLength(1)
+    // 关闭即回面板：the pane hosts the view again.
+    expect(screen.getByTestId('browser-pane').querySelector(NATIVE_HOST)).toBeInTheDocument()
+    expect(container.querySelectorAll(NATIVE_HOST)).toHaveLength(1)
   })
 
   it('close button closes and restores focus to the previously focused element', () => {
-    setSession({ controlState: 'agent_in_control', port: 4001, viewerUrl: VIEWER_URL })
+    setSession({ controlState: 'agent_in_control', port: 4001 })
     renderBoth()
 
     const opener = screen.getByTestId('browser-popout-button')
@@ -144,8 +168,7 @@ describe('BrowserPopout', () => {
   })
 
   it('follows the active session switch', () => {
-    const otherUrl = VIEWER_URL.replace('43210', '54321')
-    setSession({ controlState: 'agent_in_control', port: 4001, viewerUrl: VIEWER_URL })
+    setSession({ controlState: 'agent_in_control', port: 4001 })
     act(() => {
       useBrowserPaneStore.setState((state) => ({
         sessions: {
@@ -155,25 +178,26 @@ describe('BrowserPopout', () => {
             hydrated: true,
             controlState: 'user_in_control',
             port: 4002,
-            viewerUrl: otherUrl,
           },
         },
       }))
     })
     renderBoth()
     setPane({ popoutOpen: true })
-    expect(screen.getByTestId('browser-popout').querySelector('iframe')?.getAttribute('src')).toBe(VIEWER_URL)
+    expect(bridgeMock.setBrowserViewInputMode).toHaveBeenLastCalledWith('sess-1', 'agent')
 
     act(() => {
       useBrowserPaneStore.setState({ activeSessionId: 'sess-2' })
       useChatStore.setState({ activeSessionIds: { ws1: 'sess-2' } })
     })
-    expect(screen.getByTestId('browser-popout').querySelector('iframe')?.getAttribute('src')).toBe(otherUrl)
+    // The popout now hosts sess-2's view with user-mode input gating.
+    expect(screen.getByTestId('browser-popout').querySelector(NATIVE_HOST)).toBeInTheDocument()
+    expect(bridgeMock.setBrowserViewInputMode).toHaveBeenLastCalledWith('sess-2', 'user')
     expect(screen.getByTestId('browser-popout')).toHaveTextContent('You are driving')
   })
 
   it('Tab wraps focus within the popout (focus trap)', () => {
-    setSession({ controlState: 'agent_in_control', port: 4001, viewerUrl: VIEWER_URL })
+    setSession({ controlState: 'agent_in_control', port: 4001 })
     renderBoth()
     setPane({ popoutOpen: true })
 

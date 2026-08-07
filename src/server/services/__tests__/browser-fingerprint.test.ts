@@ -40,12 +40,12 @@ describe('browser-fingerprint (KTD-12)', () => {
 
     const linux = buildDesktopFingerprint({ platform: 'linux', chromeVersion: '151.0.7922.34' });
     assert.match(linux.userAgent, /X11; Linux x86_64/);
-    // Unknown platforms fall back to the linux profile (Steel's default OS).
+    // Unknown platforms fall back to the linux profile.
     const weird = buildDesktopFingerprint({ platform: 'freebsd', chromeVersion: '151.0.7922.34' });
     assert.equal(weird.userAgentMetadata.platform, 'Linux');
   });
 
-  it('UA override params carry the Steel-shape userAgentMetadata', () => {
+  it('UA override params carry the desktop-Chrome userAgentMetadata', () => {
     const fp = buildDesktopFingerprint({ platform: 'darwin', arch: 'arm64', chromeVersion: '151.0.7922.34' });
     const params = userAgentOverrideParams(fp);
     assert.equal(params['userAgent'], fp.userAgent);

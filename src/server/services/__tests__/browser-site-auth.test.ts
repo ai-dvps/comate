@@ -1,10 +1,9 @@
 import '../../test-utils/test-env.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import express from 'express';
 import http from 'node:http';
 import { AddressInfo } from 'node:net';
@@ -42,17 +41,20 @@ import {
   type RememberSiteResult,
 } from '../browser-service.js';
 import { BrowserControlService } from '../browser-control.js';
-import type { SteelExitInfo, SteelProcessHandle, SteelProcessOptions } from '../browser-steel-process.js';
 import { BrowserToolContext, type BrowserMcpDeps } from '../browser-mcp.js';
+import {
+  startFakeBrowserShell,
+  type FakeBrowserShell,
+} from '../../test-utils/fake-browser-shell.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import type { SteelCdpSession } from '../browser-cdp.js';
+import type { BrowserCdpSession } from '../browser-cdp.js';
 import type { RawAxNode, RawPageExtraction, SubmitSnapshot } from '../browser-page-model.js';
 import workspacesRouter from '../../routes/workspaces.js';
 
 /**
  * browser-site-auth — U8 full-chain tests: the KTD-8 key rule (tldts/PSL),
- * the remember → value-only-in store → inject chain (fake Steel), the GET
- * strip + PUT field-level merge + revoke + workspace cascade, and the
+ * the remember → value-only-in store → inject chain (fake shell harness), the
+ * GET strip + PUT field-level merge + revoke + workspace cascade, and the
  * browser_audit discipline (positive shape; values never persisted).
  *
  * The secret marker below is asserted ABSENT from audit rows, stripped GET
@@ -61,9 +63,6 @@ import workspacesRouter from '../../routes/workspaces.js';
  */
 const SECRET_COOKIE_VALUE = 'SUPER-SECRET-SESSION-TOKEN-VALUE-do-not-leak';
 const SECRET_STORAGE_VALUE = 'SUPER-SECRET-STORAGE-TOKEN-do-not-leak';
-
-const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
-const STEEL_DIR = path.join(TEST_DIR, '..', '..', '..', '..', 'src-tauri', 'resources', 'steel');
 
 /** Narrowing helper for the key matrix — fails loudly when the key refused. */
 function keyOf(url: string): string {
@@ -271,44 +270,8 @@ describe('browser-site-auth storage discipline', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Fake Steel harness for the remember/inject chain
+// Fake shell harness for the remember/inject chain
 // ---------------------------------------------------------------------------
-
-class FakeSteelHandle implements SteelProcessHandle {
-  readonly baseUrl: string;
-  started = false;
-  stopped = false;
-  private exitListeners = new Set<(info: SteelExitInfo) => void>();
-
-  constructor(private readonly options: SteelProcessOptions) {
-    this.baseUrl = `http://127.0.0.1:${options.port}`;
-  }
-  get sessionId(): string {
-    return this.options.sessionId;
-  }
-  get port(): number {
-    return this.options.port;
-  }
-  get pid(): number | undefined {
-    return 20_000 + this.options.port;
-  }
-  get userDataDir(): string {
-    return this.options.userDataDir;
-  }
-  async start(): Promise<void> {
-    this.started = true;
-  }
-  async stop(): Promise<void> {
-    this.stopped = true;
-  }
-  async probeHealth(): Promise<boolean> {
-    return this.started && !this.stopped;
-  }
-  onExit(listener: (info: SteelExitInfo) => void): () => void {
-    this.exitListeners.add(listener);
-    return () => this.exitListeners.delete(listener);
-  }
-}
 
 interface FakePageOptions {
   extractions: RawPageExtraction[];
@@ -316,7 +279,7 @@ interface FakePageOptions {
   axNodes?: RawAxNode[];
 }
 
-class FakePage implements SteelCdpSession {
+class FakePage implements BrowserCdpSession {
   closed = false;
   navigated: string[] = [];
   cookieWrites: Array<Array<Record<string, unknown>>> = [];
@@ -489,26 +452,25 @@ interface ChainHarness {
   store: SqliteStore;
   audit: BrowserAuditService;
   browserService: BrowserService;
+  shell: FakeBrowserShell;
   storageDir: string;
-  handles: FakeSteelHandle[];
   currentUrl: string | null;
   exportPayload: unknown;
 }
 
-function makeChainHarness(overrides?: {
+async function makeChainHarness(overrides?: {
   currentUrl?: string | null;
   exportPayload?: unknown;
-}): ChainHarness {
+}): Promise<ChainHarness> {
   const store = createIsolatedStore();
   const audit = new BrowserAuditService(store);
   const storageDir = mkdtempSync(path.join(tmpdir(), 'comate-u8-chain-'));
-  const handles: FakeSteelHandle[] = [];
-  let nextPort = 51_000;
+  const shell = await startFakeBrowserShell();
   const harness: ChainHarness = {
     store,
     audit,
     storageDir,
-    handles,
+    shell,
     currentUrl: overrides?.currentUrl ?? 'https://app.example.com/account',
     exportPayload: overrides?.exportPayload ?? {
       cookies: [
@@ -526,14 +488,10 @@ function makeChainHarness(overrides?: {
   harness.browserService = new BrowserService({
     storageDir,
     maxSessions: 4,
-    allocatePort: async () => nextPort++,
-    resolveChromiumPath: async () => '/fake/chromium',
-    createProcess: (options) => {
-      const handle = new FakeSteelHandle(options);
-      handles.push(handle);
-      return handle;
-    },
-    cleanupStale: async () => ({ scanned: 0, killed: 0, removed: 0, skipped: 0 }),
+    resolveTarget: shell.resolveTarget,
+    createControlClient: shell.createControlClient,
+    cdpRetry: { budgetMs: 400, intervalMs: 40 },
+    listKnownSessionIds: () => [],
     now: () => Date.now(),
     store,
     audit,
@@ -557,11 +515,13 @@ describe('remember → store → inject chain (KTD-8)', () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    harness = makeChainHarness();
+    harness = await makeChainHarness();
     workspaceId = await createWorkspace(harness.store);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await harness.browserService.shutdown().catch(() => undefined);
+    await harness.shell.close();
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
 
@@ -891,7 +851,7 @@ describe('browser_audit table + service contract', () => {
   });
 
   it('act/submit/takeover/handback sequences land with the correct shapes', async () => {
-    const harness = makeChainHarness();
+    const harness = await makeChainHarness();
     const workspaceId = await createWorkspace(harness.store);
     try {
       const control = new BrowserControlService({
@@ -965,12 +925,14 @@ describe('browser_audit table + service contract', () => {
       assert.ok(byAction('control', 'handback'));
       assert.ok(!JSON.stringify(rows).includes(SECRET_COOKIE_VALUE));
     } finally {
+      await harness.browserService.shutdown().catch(() => undefined);
+      await harness.shell.close();
       rmSync(harness.storageDir, { recursive: true, force: true });
     }
   });
 
   it('flags a click followed by navigation as a potential submit (RISK-1)', async () => {
-    const harness = makeChainHarness();
+    const harness = await makeChainHarness();
     const workspaceId = await createWorkspace(harness.store);
     try {
       const axNodes: RawAxNode[] = [
@@ -1016,6 +978,8 @@ describe('browser_audit table + service contract', () => {
       assert.strictEqual(act!.potentialSubmit, true, 'click followed by navigation is flagged');
       assert.strictEqual(act!.origin, 'https://app.example.com');
     } finally {
+      await harness.browserService.shutdown().catch(() => undefined);
+      await harness.shell.close();
       rmSync(harness.storageDir, { recursive: true, force: true });
     }
   });
@@ -1183,50 +1147,4 @@ describe('chat session delete — browser teardown wiring', () => {
     assert.strictEqual(res.status, 200);
     assert.deepStrictEqual(getVisitedDomains(session.id), [], 'gate state cleared on delete');
   });
-});
-
-// ---------------------------------------------------------------------------
-// Entry criterion pin — the vendored artifact matches the documented R15 scope
-// ---------------------------------------------------------------------------
-
-describe('entry criterion: vendored Steel context endpoint (pinned SHA)', () => {
-  const manifestPath = path.join(STEEL_DIR, 'steel-manifest.json');
-  const bundlePresent = existsSync(manifestPath);
-
-  it(
-    'vendored build is the pinned SHA with classic-level stubbed (storage extraction is CDP-only)',
-    { skip: !bundlePresent },
-    () => {
-      const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as {
-        upstreamCommit: string;
-        stubbed: string[];
-      };
-      assert.strictEqual(
-        manifest.upstreamCommit,
-        'd6b15d5ba658eb748ebb376d9ea837043cad814b',
-      );
-      assert.ok(manifest.stubbed.includes('classic-level'));
-
-      // The stub throws on construction, so the LevelDB disk readers
-      // (ChromeContextService.getSessionData) degrade to {} — cookies come
-      // from CDP (complete), storage from open pages only.
-      const stub = readFileSync(
-        path.join(STEEL_DIR, 'node_modules', 'classic-level', 'index.js'),
-        'utf-8',
-      );
-      assert.ok(stub.includes('throw new Error'));
-
-      const cdpService = readFileSync(
-        path.join(STEEL_DIR, 'build', 'services', 'cdp', 'cdp.service.js'),
-        'utf-8',
-      );
-      // getBrowserState merges: CDP cookies + LevelDB session data (stubbed)
-      // + CDP per-page storage extraction. This pins the documented R15 scope:
-      // cookie-primary auth + web storage for the open pages.
-      assert.ok(cdpService.includes('this.getCookies()'));
-      assert.ok(cdpService.includes('chromeSessionService.getSessionData(userDataDir)'));
-      assert.ok(cdpService.includes('getExistingPageSessionData()'));
-      assert.ok(cdpService.includes('injectSessionContext'));
-    },
-  );
 });

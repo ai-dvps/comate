@@ -7,18 +7,16 @@ import { wecomUserResolver } from './services/wecom-user-resolver.js';
 import { gitChangesService } from './services/git-changes-service.js';
 import { chatService } from './services/chat-service.js';
 import { browserService } from './services/browser-service.js';
-import { browserViewerProxy } from './routes/browser-proxy.js';
 import { shutdown as shutdownGithubAuth } from './services/github-auth.js';
 
 /**
  * Graceful service teardown for sidecar shutdown (SIGTERM/SIGINT and the
- * loopback-only POST /shutdown endpoint the Tauri layer calls before
- * force-kill). Extracted from server-main so the sequence is unit-testable.
+ * loopback-only POST /shutdown endpoint the shell calls before force-kill).
+ * Extracted from server-main so the sequence is unit-testable.
  *
- * Ordering: the viewer proxy stops first (its in-flight viewer sockets are
- * destroyed, so dying Steel processes cannot hang the close), then every
- * Steel browser tree is SIGKILLed within browserService.shutdown's parallel
- * bounded stop (KTD-1 2s budget), and only then are chat runtimes closed.
+ * Ordering: every live browser view is destroyed within
+ * browserService.shutdown's parallel bounded stop (KTD-1 2s budget) before
+ * chat runtimes are closed.
  */
 export async function teardownServices(): Promise<void> {
   // Zero the GitHub token holder first (R13/KTD3) — cheap, and ensures the
@@ -31,7 +29,6 @@ export async function teardownServices(): Promise<void> {
   await runNotifier.shutdown();
   await wecomUserResolver.shutdown();
   await gitChangesService.dispose();
-  await browserViewerProxy.stop();
   await browserService.shutdown();
   await chatService.closeAllRuntimes();
 }

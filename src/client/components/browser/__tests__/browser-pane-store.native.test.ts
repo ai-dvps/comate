@@ -59,7 +59,7 @@ beforeEach(() => {
   global.fetch = vi.fn(() =>
     Promise.resolve({
       ok: true,
-      json: () => Promise.resolve({ url: 'http://127.0.0.1:1/should-never-be-fetched' }),
+      json: () => Promise.resolve({ ok: true }),
     } as unknown as Response),
   )
   useBrowserPaneStore.setState({
@@ -70,45 +70,38 @@ beforeEach(() => {
   })
 })
 
-describe('browser-pane-store — native view mode (U8)', () => {
-  it('never fetches the iframe viewer URL when the shell hosts the view', () => {
+describe('browser-pane-store — native view mode (U8/U9)', () => {
+  it('never fetches a viewer URL — the native stack has no iframe fallback', () => {
+    // U9 removed the iframe viewer with the legacy browser stack, so no
+    // transition ever constructs or fetches a viewer URL, in any environment.
     useBrowserPaneStore.getState()._applyBrowserState('sess-1', { state: 'agent_in_control', port: 1234 })
     const session = useBrowserPaneStore.getState().sessions['sess-1']!
     expect(session.controlState).toBe('agent_in_control')
-    expect(session.viewerUrl).toBeNull()
     expect(global.fetch).not.toHaveBeenCalled()
   })
 
-  it('session_lost manual retry POSTs the rebuild route instead of refetching a URL', async () => {
+  it('session_lost manual retry POSTs the rebuild route', async () => {
     setSession({ controlState: 'session_lost' })
-    await useBrowserPaneStore.getState().retryViewer('sess-1')
+    await useBrowserPaneStore.getState().retrySession('sess-1')
     expect(global.fetch).toHaveBeenCalledTimes(1)
     const [url, init] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]!
     expect(url).toBe('/api/browser/sess-1/retry')
     expect((init as RequestInit).method).toBe('POST')
-    // No iframe reload machinery touched.
-    expect(useBrowserPaneStore.getState().sessions['sess-1']!.viewerNonce).toBe(0)
   })
 
-  it('retryViewer swallows a failed rebuild POST (state bar copy carries expectations)', async () => {
+  it('retrySession swallows a failed rebuild POST (state bar copy carries expectations)', async () => {
     setSession({ controlState: 'session_lost' })
     global.fetch = vi.fn(() => Promise.reject(new Error('offline')))
-    await expect(useBrowserPaneStore.getState().retryViewer('sess-1')).resolves.toBeUndefined()
+    await expect(useBrowserPaneStore.getState().retrySession('sess-1')).resolves.toBeUndefined()
   })
 
-  it('retryUnavailable recovers the banner without a viewer-URL refetch', async () => {
+  it('retryUnavailable recovers the banner with only the health probe', async () => {
     setSession({ unavailable: { code: 'browser_start_failed', reason: 'x' } })
     await useBrowserPaneStore.getState().retryUnavailable('sess-1')
     const session = useBrowserPaneStore.getState().sessions['sess-1']!
     expect(session.unavailable).toBeNull()
     const calls = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])
     expect(calls).toEqual(['/api/health/browser'])
-  })
-
-  it('iframe mode still fetches the viewer URL (dev-web fallback preserved)', () => {
-    bridgeMock.isNativeBrowserView.mockReturnValue(false)
-    useBrowserPaneStore.getState()._applyBrowserState('sess-1', { state: 'agent_in_control', port: 1234 })
-    expect(global.fetch).toHaveBeenCalledWith('/api/browser/sess-1/viewer-url')
   })
 
   it('the occlusion watcher drives the single store flag', () => {

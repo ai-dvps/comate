@@ -48,7 +48,7 @@ import {
   type HandoffEndReason,
   type HandoffPhase,
 } from './browser-control.js';
-import { connectBrowserPage, type SteelCdpSession } from './browser-cdp.js';
+import { connectBrowserPage, type BrowserCdpSession } from './browser-cdp.js';
 import {
   READ_PROBE_SCRIPT,
   RefTable,
@@ -185,7 +185,7 @@ export interface BrowserMcpDeps {
   handoffControl?: BrowserControlService;
   approvalRequester?: BrowserApprovalRequester;
   /** CDP dial-out (tests inject a fake page). */
-  connectPage?: (baseUrl: string) => Promise<SteelCdpSession>;
+  connectPage?: (baseUrl: string) => Promise<BrowserCdpSession>;
   /** Audit sink (U8); defaults to the process singleton. */
   audit?: Pick<BrowserAuditService, 'logToolAction'>;
   /** Authenticated direct-request broker; tests may inject a deterministic one. */
@@ -194,10 +194,10 @@ export interface BrowserMcpDeps {
    * Shared page-connection registry keyed by chat sessionId. Runtime rebuilds
    * mint a fresh MCP server instance (and BrowserToolContext) for the same
    * session; without a shared registry each rebuild would leak the previous
-   * instance's CDP socket until the Steel process died. The default is a
+   * instance's CDP socket until the browser view died. The default is a
    * module-level map; tests inject a fresh one per harness.
    */
-  pageRegistry?: Map<string, Promise<SteelCdpSession>>;
+  pageRegistry?: Map<string, Promise<BrowserCdpSession>>;
   /** Session-owned contexts preserve refs/captures across stateless MCP POSTs. */
   contextRegistry?: Map<string, BrowserToolContext>;
   /** Injectable drain timing for focused capture tests. */
@@ -380,10 +380,8 @@ function isApprovalDecision(
 const UNAVAILABLE_RESOLUTIONS: Record<string, string> = {
   browser_limit_reached:
     'The concurrent browser limit is reached. Close another chat session\'s browser and retry.',
-  browser_chromium_missing:
-    'No Chromium executable is available. The bundled Chrome for Testing is missing — reinstall the app, set COMATE_CHROMIUM_PATH, or set COMATE_USE_SYSTEM_CHROME=1 to use your installed Chrome, then retry.',
   browser_start_failed:
-    'The embedded browser process failed to start. Retry the call; check /api/health/browser if it persists.',
+    'The embedded browser failed to start. Retry the call; check /api/health/browser if it persists. Outside the desktop app, the browser needs an external CDP endpoint (COMATE_BROWSER_CDP_TARGET).',
 };
 
 /**
@@ -610,7 +608,7 @@ function buildSanitizedCandidates(
 // (KTD-5). Browser lifecycle itself stays with browserService.
 // ---------------------------------------------------------------------------
 
-const defaultPageRegistry = new Map<string, Promise<SteelCdpSession>>();
+const defaultPageRegistry = new Map<string, Promise<BrowserCdpSession>>();
 const defaultContextRegistries = new WeakMap<BrowserService, Map<string, BrowserToolContext>>();
 
 function contextRegistryFor(service: BrowserService): Map<string, BrowserToolContext> {
@@ -627,8 +625,8 @@ export class BrowserToolContext {
   private lastModel: PageModel | null = null;
   private readonly svc: BrowserService;
   private readonly handoffCtl: BrowserControlService;
-  private readonly connectPage: (baseUrl: string) => Promise<SteelCdpSession>;
-  private readonly pageRegistry: Map<string, Promise<SteelCdpSession>>;
+  private readonly connectPage: (baseUrl: string) => Promise<BrowserCdpSession>;
+  private readonly pageRegistry: Map<string, Promise<BrowserCdpSession>>;
   private readonly settleMs: number;
   private readonly audit: Pick<BrowserAuditService, 'logToolAction'>;
   private readonly authenticatedRequestBroker: BrowserApiBrokerExecutor;
@@ -639,8 +637,8 @@ export class BrowserToolContext {
   constructor(private readonly deps: BrowserMcpDeps) {
     this.svc = deps.browserService ?? browserService;
     this.handoffCtl = deps.handoffControl ?? browserControlService;
-    // U7 (AE2): the dispatcher routes Steel baseUrls to Steel and the
-    // __comate-cdp__ convention to the native shell/external CDP target.
+    // U7 (AE2): the dispatcher routes the __comate-cdp__ convention to the
+    // native shell/external CDP target.
     this.connectPage = deps.connectPage ?? connectBrowserPage;
     this.pageRegistry = deps.pageRegistry ?? defaultPageRegistry;
     this.settleMs = deps.settleMs ?? 300;
@@ -658,7 +656,7 @@ export class BrowserToolContext {
     clearSubmitSemanticsRefs(this.deps.sessionId);
   }
 
-  private async ensurePage(): Promise<SteelCdpSession> {
+  private async ensurePage(): Promise<BrowserCdpSession> {
     // Any page-touching tool call (open/snapshot/act/submit/extract) plus
     // requestHandoff counts as browser activity — reset the idle-reclaim
     // timer (U3). handleClose does not route through here, so closing does
@@ -720,7 +718,7 @@ export class BrowserToolContext {
     return null;
   }
 
-  private async readProbe(page: SteelCdpSession): Promise<RefBatchKey | null> {
+  private async readProbe(page: BrowserCdpSession): Promise<RefBatchKey | null> {
     try {
       return await page.evaluate<RefBatchKey | null>(READ_PROBE_SCRIPT);
     } catch {
@@ -728,7 +726,7 @@ export class BrowserToolContext {
     }
   }
 
-  private async distill(page: SteelCdpSession): Promise<PageModel> {
+  private async distill(page: BrowserCdpSession): Promise<PageModel> {
     const model = await distillPageModel(page, this.refTable);
     this.lastModel = model;
     // Publish the session's submit-semantics refs for the canUseTool-layer
@@ -949,15 +947,12 @@ export class BrowserToolContext {
     const parsed = parsedResult.url;
     try {
       const page = await this.ensurePage();
-      // Remembered-site injection (U8, KTD-8): exactly once per Steel
-      // process, on the first open() whose site key has a stored context —
+      // Remembered-site injection (U8, KTD-8): exactly once per browser
+      // view, on the first open() whose site key has a stored context —
       // BEFORE the first navigation so the initial request already carries
-      // the cookies. Adaptation note: the plan called for Steel's
-      // POST /v1/sessions sessionContext path, but the vendored build's
-      // isSimilarConfig (deviceConfig/timezone equality) can answer a full
-      // browser RELAUNCH mid-flow, killing this page session; the same
-      // effect is achieved over our own CDP channel (Network.setCookies +
-      // addScriptToEvaluateOnNewDocument), with zero Steel session mutation.
+      // the cookies. Injection happens over our own CDP channel
+      // (Network.setCookies + addScriptToEvaluateOnNewDocument), with zero
+      // session mutation on the hosting browser.
       const injection = await this.svc.prepareSiteAuthInjection(
         this.deps.sessionId,
         parsed.toString(),
@@ -985,11 +980,11 @@ export class BrowserToolContext {
    * Replay a remembered context into the fresh browser (U8): cookies via
    * Network.setCookies (first request carries them), web storage via an
    * init script keyed by page hostname — registered before navigation, so it
-   * lands before any page script can read the stores (Steel's own
-   * framenavigated injection races page scripts; this does not).
+   * lands before any page script can read the stores (no framenavigated
+   * injection race).
    */
   private async injectSiteContext(
-    page: SteelCdpSession,
+    page: BrowserCdpSession,
     context: { cookies: Array<Record<string, unknown>>; localStorage?: Record<string, Record<string, string>>; sessionStorage?: Record<string, Record<string, string>> },
   ): Promise<void> {
     if (context.cookies.length > 0) {

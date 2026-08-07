@@ -27,6 +27,14 @@ related_components:
 
 # fs.cpSync rewrites relative symlinks to absolute paths — vendored npm trees dangle and break tauri build
 
+> **Status (2026-08-07, U9 Tauri→Electron migration): largely historical.** The
+> vendored Steel tree, the Tauri bundler, and `src-tauri/` were removed in U9,
+> so the specific failure below can no longer occur. The underlying lesson is
+> still load-bearing: the dangling-symlink gate survives as
+> `assertNoDanglingSymlinks` in `src/server/utils/native-artifact-audit.ts`,
+> run by `scripts/build-sidecar.ts` over the whole `resources/` staging tree
+> before electron-builder packages it.
+
 ## Problem
 
 `npm run release` aborted during Tauri bundling because two npm `.bin` symlinks inside the vendored Steel tree (`src-tauri/resources/steel/`) pointed at absolute paths in a temporary build directory that had already been deleted, and the Tauri bundler refuses to package a resource path that cannot be stat'ed.

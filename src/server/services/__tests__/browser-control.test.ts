@@ -13,8 +13,11 @@ import {
   type ApprovalCardResolver,
   type ApprovalCardTimeout,
 } from '../browser-control.js';
-import type { SteelExitInfo, SteelProcessHandle, SteelProcessOptions } from '../browser-steel-process.js';
-import type { SteelCdpSession } from '../browser-cdp.js';
+import type { BrowserCdpSession } from '../browser-cdp.js';
+import {
+  startFakeBrowserShell,
+  type FakeBrowserShell,
+} from '../../test-utils/fake-browser-shell.js';
 import {
   buildBrowserToolDefinitions,
   type BrowserApprovalDecision,
@@ -39,45 +42,7 @@ import { BrowserStateChannel } from '../../websocket/browser-state-channel.js';
 // Fakes
 // ---------------------------------------------------------------------------
 
-class FakeSteelHandle implements SteelProcessHandle {
-  readonly baseUrl: string;
-  private readonly exitListeners = new Set<(info: SteelExitInfo) => void>();
-
-  constructor(private readonly options: SteelProcessOptions) {
-    this.baseUrl = `http://127.0.0.1:${options.port}`;
-  }
-
-  get sessionId(): string {
-    return this.options.sessionId;
-  }
-  get port(): number {
-    return this.options.port;
-  }
-  get userDataDir(): string {
-    return this.options.userDataDir;
-  }
-  get pid(): number | undefined {
-    return 4242;
-  }
-  async start(): Promise<void> {}
-  async stop(): Promise<void> {}
-  async probeHealth(): Promise<boolean> {
-    return true;
-  }
-  onExit(listener: (info: SteelExitInfo) => void): () => void {
-    this.exitListeners.add(listener);
-    return () => {
-      this.exitListeners.delete(listener);
-    };
-  }
-  crash(info: SteelExitInfo = { code: 1, signal: null }): void {
-    for (const listener of [...this.exitListeners]) {
-      listener(info);
-    }
-  }
-}
-
-class FakePage implements SteelCdpSession {
+class FakePage implements BrowserCdpSession {
   closed = false;
   screenshots = 0;
   extraction: RawPageExtraction;
@@ -272,28 +237,23 @@ interface Harness {
   channel: FakeApprovalChannel;
   timer: FakeTimer;
   page: FakePage;
-  handles: FakeSteelHandle[];
+  shell: FakeBrowserShell;
   events: BrowserServiceEvent[];
   storageDir: string;
   call: (name: string, args: Record<string, unknown>, extra?: unknown) => Promise<CallToolResult>;
 }
 
-function makeHarness(): Harness {
+async function makeHarness(): Promise<Harness> {
   const storageDir = mkdtempSync(path.join(tmpdir(), 'comate-browser-control-'));
-  const handles: FakeSteelHandle[] = [];
+  const shell = await startFakeBrowserShell();
   const events: BrowserServiceEvent[] = [];
-  let port = 9700;
   const service = new BrowserService({
     storageDir,
     maxSessions: 4,
-    allocatePort: async () => (port += 1),
-    resolveChromiumPath: async () => '/fake/chromium',
-    createProcess: (options) => {
-      const handle = new FakeSteelHandle(options);
-      handles.push(handle);
-      return handle;
-    },
-    cleanupStale: async () => ({ scanned: 0, killed: 0, removed: 0, skipped: 0 }),
+    resolveTarget: shell.resolveTarget,
+    createControlClient: shell.createControlClient,
+    cdpRetry: { budgetMs: 400, intervalMs: 40 },
+    listKnownSessionIds: () => [],
     now: () => Date.now(),
   });
   service.onEvent((event) => events.push(event));
@@ -326,7 +286,7 @@ function makeHarness(): Harness {
     channel,
     timer,
     page,
-    handles,
+    shell,
     events,
     storageDir,
     call: async (name, args, extra) => {
@@ -365,9 +325,20 @@ const harnesses: Harness[] = [];
 afterEach(async () => {
   for (const harness of harnesses.splice(0)) {
     await harness.service.shutdown().catch(() => undefined);
+    await harness.shell.close();
     rmSync(harness.storageDir, { recursive: true, force: true });
   }
 });
+
+/** Crash the session's view over the fake shell event stream. */
+function crashView(h: Harness, sessionId = 'sess-1'): void {
+  h.shell.client.emit({ type: 'view-crashed', sessionId, reason: 'killed' });
+}
+
+/** How many views the fake shell created (one per spawn/rebuild). */
+function viewCount(h: Harness): number {
+  return h.shell.client.callsFor('createView').length;
+}
 
 function track(harness: Harness): Harness {
   harnesses.push(harness);
@@ -380,7 +351,7 @@ function track(harness: Harness): Harness {
 
 describe('browser-control state machine (transition table)', () => {
   it('agent_in_control: takeover_click -> user_in_control (F3), handback_click -> back', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     await h.service.ensureSession({ sessionId: 'sess-1', workspaceId: 'ws-1' });
     assert.strictEqual(h.service.getControlState('sess-1'), 'agent_in_control');
 
@@ -412,14 +383,14 @@ describe('browser-control state machine (transition table)', () => {
   });
 
   it('session_lost: takeover rejected, handback no-op, tool call rebuilds (table cells)', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     await h.service.ensureSession({ sessionId: 'sess-1', workspaceId: 'ws-1' });
 
     // Unknown session: no browser to drive.
     assert.strictEqual(h.control.takeover('nope').code, 'browser_no_session');
 
     // crash cell -> session_lost.
-    h.handles[0].crash();
+    crashView(h);
     assert.strictEqual(
       h.service.getControlState('sess-1'),
       BROWSER_CONTROL_TRANSITIONS.agent_in_control.crash.next,
@@ -436,7 +407,7 @@ describe('browser-control state machine (transition table)', () => {
     // agent_tool_call cell: the next tool call transparently rebuilds.
     const result = await h.call('open', { url: 'https://shop.example/' });
     assert.strictEqual(result.isError, undefined);
-    assert.strictEqual(h.handles.length, 2, 'a fresh Steel process was spawned');
+    assert.strictEqual(viewCount(h), 2, 'a fresh view was created');
     assert.strictEqual(
       h.service.getControlState('sess-1'),
       BROWSER_CONTROL_TRANSITIONS.session_lost.agent_tool_call.next,
@@ -450,7 +421,7 @@ describe('browser-control state machine (transition table)', () => {
 
 describe('browser-control handoff full cycle', () => {
   it('request → pending → takeover → handback → agent receives the sanitized state diff', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
 
     const pending = h.call('requestHandoff', { reason: 'Log in with your password' });
@@ -516,7 +487,7 @@ describe('browser-control handoff full cycle', () => {
   });
 
   it('takes over and hands back via the cards themselves (allow resolutions)', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
 
     const pending = h.call('requestHandoff', { reason: 'CAPTCHA' });
@@ -534,7 +505,7 @@ describe('browser-control handoff full cycle', () => {
   });
 
   it('AE1: a poisoned raw extraction still cannot leak a sensitive value into the tool result', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
 
     const pending = h.call('requestHandoff', { reason: 'Log in' });
@@ -566,7 +537,7 @@ describe('browser-control handoff full cycle', () => {
 
 describe('browser-control mutual exclusion', () => {
   it('user_in_control gates act/submit with a recoverable browser_user_in_control error', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
     h.control.takeover('sess-1');
     assert.strictEqual(h.service.getControlState('sess-1'), 'user_in_control');
@@ -588,7 +559,7 @@ describe('browser-control mutual exclusion', () => {
   });
 
   it('screenshot is hard-blocked during takeover; the sanitized model stays available', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
 
     const pending = h.call('requestHandoff', { reason: 'Log in' });
@@ -625,7 +596,7 @@ describe('browser-control mutual exclusion', () => {
 
 describe('browser-control handoff timeout (AE4)', () => {
   it('pending-phase timeout uses timeoutDeny semantics and stays recoverable; the user can take over afterwards', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
 
     const pending = h.call('requestHandoff', { reason: 'Log in' });
@@ -652,7 +623,7 @@ describe('browser-control handoff timeout (AE4)', () => {
   });
 
   it('takeover-phase timeout releases card #2 and still returns the state diff', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
 
     const pending = h.call('requestHandoff', { reason: 'Log in' });
@@ -677,7 +648,7 @@ describe('browser-control handoff timeout (AE4)', () => {
   });
 
   it('a content-free activity ping resets the server-fixed timer (KTD-6)', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
 
     const pending = h.call('requestHandoff', { reason: 'Log in' });
@@ -698,13 +669,14 @@ describe('browser-control handoff timeout (AE4)', () => {
 
   it('an activity ping writes NO browser_audit row (F15 — content-free churn)', async () => {
     const storageDir = mkdtempSync(path.join(tmpdir(), 'comate-browser-control-'));
+    const shell = await startFakeBrowserShell();
     const service = new BrowserService({
       storageDir,
       maxSessions: 4,
-      allocatePort: async () => 9876,
-      resolveChromiumPath: async () => '/fake/chromium',
-      createProcess: (options) => new FakeSteelHandle(options),
-      cleanupStale: async () => ({ scanned: 0, killed: 0, removed: 0, skipped: 0 }),
+      resolveTarget: shell.resolveTarget,
+      createControlClient: shell.createControlClient,
+      cdpRetry: { budgetMs: 400, intervalMs: 40 },
+      listKnownSessionIds: () => [],
       now: () => Date.now(),
     });
     const logged: string[] = [];
@@ -727,6 +699,8 @@ describe('browser-control handoff timeout (AE4)', () => {
       assert.deepStrictEqual(logged, [], 'activity_ping must not be audited');
       assert.strictEqual(timer.handles.length, 2, 'the timer was still reset');
     } finally {
+      await service.shutdown().catch(() => undefined);
+      await shell.close();
       rmSync(storageDir, { recursive: true, force: true });
     }
   });
@@ -738,7 +712,7 @@ describe('browser-control handoff timeout (AE4)', () => {
 
 describe('browser-control races and declines', () => {
   it('handoff requested during an F3 takeover: its card is the single active card', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
 
     // F3 proactive takeover first — no card, no timer.
@@ -762,7 +736,7 @@ describe('browser-control races and declines', () => {
   });
 
   it('a second handoff request while one is pending fails recoverably', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
 
     const first = h.call('requestHandoff', { reason: 'first' });
@@ -781,7 +755,7 @@ describe('browser-control races and declines', () => {
   });
 
   it('user denies the takeover card → declined, no diff, state restored', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
 
     const pending = h.call('requestHandoff', { reason: 'Log in' });
@@ -798,7 +772,7 @@ describe('browser-control races and declines', () => {
   });
 
   it('handback click while the takeover card is still pending declines the handoff (table cell)', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
 
     const pending = h.call('requestHandoff', { reason: 'Log in' });
@@ -831,12 +805,12 @@ describe('browser-control races and declines', () => {
 
 describe('browser-control crash and runtime close', () => {
   it('crash while the takeover card is pending releases the card and lands session_lost', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
 
     const pending = h.call('requestHandoff', { reason: 'Log in' });
     await flush();
-    h.handles[0].crash();
+    crashView(h);
 
     const result = await pending;
     assert.strictEqual(result.isError, true);
@@ -851,7 +825,7 @@ describe('browser-control crash and runtime close', () => {
   });
 
   it('crash mid-takeover releases the handback card and lands session_lost', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
 
     const pending = h.call('requestHandoff', { reason: 'Log in' });
@@ -860,7 +834,7 @@ describe('browser-control crash and runtime close', () => {
     await flush();
     assert.strictEqual(h.channel.cards.length, 2);
 
-    h.handles[0].crash();
+    crashView(h);
     const result = await pending;
     assert.strictEqual(result.isError, true);
     assert.strictEqual(errorCode(result), 'browser_session_lost');
@@ -873,7 +847,7 @@ describe('browser-control crash and runtime close', () => {
   });
 
   it('runtime close mid-handoff resolves recoverably; the browser survives (KTD-5)', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
 
     const pending = h.call('requestHandoff', { reason: 'Log in' });
@@ -893,13 +867,13 @@ describe('browser-control crash and runtime close', () => {
     assert.strictEqual(payload.reason, 'runtime_closed');
     assert.strictEqual(h.service.getControlState('sess-1'), 'agent_in_control');
     assert.strictEqual(h.control.getHandoff('sess-1'), undefined);
-    // The Steel process was never touched — the browser outlives the runtime.
-    assert.strictEqual(h.handles.length, 1);
+    // The view was never touched — the browser outlives the runtime.
+    assert.strictEqual(viewCount(h), 1);
     assert.strictEqual(h.service.getSession('sess-1') !== undefined, true);
   });
 
   it('session switching keeps the server-side control state (capture release is client-side)', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
     h.control.takeover('sess-1');
     assert.strictEqual(h.service.getControlState('sess-1'), 'user_in_control');
@@ -940,7 +914,7 @@ function makeFakeSocket(): FakeSocket {
 
 describe('browser_state channel', () => {
   it('subscription is passive: hydrates the empty state without creating a browser session', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     const channel = new BrowserStateChannel(h.service);
     const socket = makeFakeSocket();
 
@@ -954,15 +928,15 @@ describe('browser_state channel', () => {
     assert.strictEqual(hydration.eventType, 'browser_state');
     assert.strictEqual(hydration.sessionId, 'sess-1');
     assert.strictEqual(hydration.data.state, 'none');
-    // Passive: no Steel process was spawned and the registry stays empty
+    // Passive: no view was created and the registry stays empty
     // (the channel structurally cannot create runtimes — it only reads
     // browser-service's registry).
     assert.strictEqual(h.service.listSessions().length, 0);
-    assert.strictEqual(h.handles.length, 0);
+    assert.strictEqual(viewCount(h), 0);
   });
 
   it('hydrates the current state and forwards every state-machine migration', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     const channel = new BrowserStateChannel(h.service);
     const socket = makeFakeSocket();
 
@@ -973,13 +947,13 @@ describe('browser_state channel', () => {
     assert.strictEqual(typeof hydration.data.port, 'number');
 
     h.service.setControlState('sess-1', 'user_in_control', 'user_takeover');
-    h.handles[0].crash();
+    crashView(h);
     const forwarded = socket.sent.slice(1).map((msg) => (msg as { data: { state: string } }).data.state);
     assert.deepStrictEqual(forwarded, ['user_in_control', 'session_lost']);
   });
 
   it('forwards browser_unavailable and browser_closed on the same channel', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     const channel = new BrowserStateChannel(h.service);
     const socket = makeFakeSocket();
 
@@ -991,7 +965,7 @@ describe('browser_state channel', () => {
   });
 
   it('unsubscribe and disconnect cleanup stop the event flow', async () => {
-    const h = track(makeHarness());
+    const h = track(await makeHarness());
     const channel = new BrowserStateChannel(h.service);
     const socketA = makeFakeSocket();
     const socketB = makeFakeSocket();

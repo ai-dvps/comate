@@ -11,10 +11,9 @@ import {
 
 /**
  * browser-cdp — minimal Chrome DevTools Protocol client over a WebSocket
- * (KTD-3). Talks to the per-session Steel process's root WS endpoint, which
- * proxies Chromium's browser-level CDP socket (vendored Steel:
- * build/plugins/browser-socket/browser-socket.js falls through unmatched
- * upgrade URLs to cdpService.proxyWebSocket).
+ * (KTD-3). Talks to a debug-port Chromium's browser-level CDP socket: the
+ * in-shell Electron browser views (KTD-6) or an operator-supplied external
+ * endpoint (COMATE_BROWSER_CDP_TARGET, the R8/AE2 fallback).
  *
  * Why raw CDP over puppeteer-core: the distiller's hard parts (readability
  * extraction, ref minting, TOCTOU form reads) are custom in-page scripts
@@ -51,11 +50,11 @@ const LOAD_EVENT_TIMEOUT_MS = 10_000;
 export interface CdpConnectionOptions {
   commandTimeoutMs?: number;
   /**
-   * Total budget (ms) to keep retrying the CDP connect+attach across the Steel
-   * cold-start window. Steel reports /v1/health=200 before Chrome's CDP
-   * endpoint accepts WebSocket upgrades (~1–2s gap on a cold start), so the
-   * first connect after a fresh spawn races Chrome readiness and fails with
-   * "socket hang up". Default 10s — well beyond the observed cold-start.
+   * Total budget (ms) to keep retrying the CDP connect+attach across the
+   * cold-start window: a freshly created view/target races Chromium's CDP
+   * readiness (~1–2s gap on a cold start), so the first connect can fail
+   * transiently with "socket hang up". Default 10s — well beyond the
+   * observed cold-start.
    */
   connectReadyTimeoutMs?: number;
   /** Delay between cold-start connect retries. Default 300ms. */
@@ -238,7 +237,7 @@ export class CdpConnection {
  * Target session so commands address one page; the ref/TOCTOU machinery
  * only needs evaluate + AX tree + navigate + screenshot + backend-node click.
  */
-export interface SteelCdpSession {
+export interface BrowserCdpSession {
   readonly closed: boolean;
   evaluate<T>(expression: string): Promise<T>;
   navigate(url: string): Promise<void>;
@@ -257,8 +256,8 @@ export interface SteelCdpSession {
   /**
    * Register a script to run before page scripts on every new document
    * (Page.addScriptToEvaluateOnNewDocument) — remembered-site web-storage
-   * injection (U8). Tighter than Steel's own framenavigated race: the script
-   * lands before any page JavaScript can read localStorage.
+   * injection (U8). The script lands before any page JavaScript can read
+   * localStorage (no framenavigated race).
    */
   evaluateOnNewDocument(expression: string): Promise<void>;
   /** Optional so existing page fakes need not emulate raw CDP network traffic. */
@@ -290,32 +289,32 @@ const CLICK_FN = `function () {
   return true;
 }`;
 
-class SteelCdpSessionImpl implements SteelCdpSession {
+class BrowserCdpSessionImpl implements BrowserCdpSession {
   private constructor(
     private readonly connection: CdpConnection,
     private readonly sessionId: string,
   ) {}
 
-  static async attach(connection: CdpConnection): Promise<SteelCdpSessionImpl> {
+  static async attach(connection: CdpConnection): Promise<BrowserCdpSessionImpl> {
     const { targetInfos } = await connection.send<{ targetInfos: TargetInfo[] }>('Target.getTargets');
     const page = targetInfos.find((target) => target.type === 'page');
     if (!page) {
-      throw new CdpError('No page target available in Steel browser', 'Target.getTargets');
+      throw new CdpError('No page target available on the CDP endpoint', 'Target.getTargets');
     }
-    return SteelCdpSessionImpl.attachTo(connection, page.targetId);
+    return BrowserCdpSessionImpl.attachTo(connection, page.targetId);
   }
 
   /**
    * Attach to a specific target (flattened). The shell path (KTD-6) selects
    * the per-session browser view's page target from the debug port's target
-   * list instead of Steel's single page.
+   * list.
    */
-  static async attachTo(connection: CdpConnection, targetId: string): Promise<SteelCdpSessionImpl> {
+  static async attachTo(connection: CdpConnection, targetId: string): Promise<BrowserCdpSessionImpl> {
     const { sessionId } = await connection.send<{ sessionId: string }>('Target.attachToTarget', {
       targetId,
       flatten: true,
     });
-    const session = new SteelCdpSessionImpl(connection, sessionId);
+    const session = new BrowserCdpSessionImpl(connection, sessionId);
     // Events are best-effort: navigation wait uses loadEventFired, but ref
     // invalidation never relies on events (docId/epoch polling covers it).
     await connection.send('Page.enable', {}, sessionId).catch(() => undefined);
@@ -459,8 +458,9 @@ class SteelCdpSessionImpl implements SteelCdpSession {
 
   /**
    * KTD-12 fingerprint application (native path): UA override + init script,
-   * target-scoped — both survive later CDP re-attaches (verified on CfT 151),
-   * and the init script's per-document guard makes re-application a no-op.
+   * target-scoped — both survive later CDP re-attaches (verified on Chromium
+   * 151), and the init script's per-document guard makes re-application a
+   * no-op.
    */
   async applyFingerprint(fingerprint: DesktopFingerprint): Promise<void> {
     await this.connection.send(
@@ -486,7 +486,7 @@ const NETWORK_ENABLE_OPTIONS = {
   maxPostDataSize: 64 * 1024,
 };
 
-// Steel 0.3.5 freezes dedicated workers when Network.enable is sent to their
+// Chromium freezes dedicated workers when Network.enable is sent to their
 // flattened child session. Keep the page usable and retain worker target
 // lifecycle events; worker-originated HTTP remains an explicit v1 limitation.
 const NETWORK_TARGET_TYPES = new Set(['iframe']);
@@ -617,16 +617,13 @@ export interface RetryDuringColdStartOptions {
 }
 
 /**
- * Retry a CDP connect+attach across the Steel cold-start window. Steel's
- * /v1/health returns 200 (cdpService.isRunning() is true) before Chrome's CDP
- * endpoint accepts WebSocket upgrades — measured at ~1–2s after health on a
- * cold start — so the first connectSteelPage after a fresh spawn races Chrome
- * readiness and fails with "CDP websocket connect failed: socket hang up".
- * Without this, browser-mcp's first navigate fails and the pane stays on
- * about:blank. Bounded retry lets the first tool call wait for Chrome instead.
- *
- * `attempt` is the full connect+attach (both can fail transiently while Chrome
- * boots: the WS handshake hangs up, and Target.getTargets finds no page yet).
+ * Retry a CDP connect+attach across the cold-start window: a freshly spawned
+ * view/target races Chromium's CDP readiness (the WS handshake hangs up, and
+ * Target.getTargets finds no page yet — measured at ~1–2s on a cold start),
+ * so the first connectSinglePage after a fresh spawn can fail transiently
+ * with "CDP websocket connect failed: socket hang up". Without this,
+ * browser-mcp's first navigate fails and the pane stays on about:blank.
+ * Bounded retry lets the first tool call wait for Chromium instead.
  */
 export async function retryDuringColdStart<T>(
   attempt: () => Promise<T>,
@@ -648,14 +645,14 @@ export async function retryDuringColdStart<T>(
 }
 
 /**
- * Connect to a Steel process's CDP endpoint and attach to its page. Steel
- * exposes the browser-level CDP socket at the root WS path (self-hosted
- * single-session mode — one Steel process per chat session, KTD-1).
+ * Connect to a CDP endpoint that hosts exactly one page and attach to it
+ * (the root WS path of the baseUrl). Fallback for baseUrls that do not carry
+ * the __comate-cdp__ target convention.
  */
-export async function connectSteelPage(
+export async function connectSinglePage(
   baseUrl: string,
   options: CdpConnectionOptions = {},
-): Promise<SteelCdpSession> {
+): Promise<BrowserCdpSession> {
   const wsUrl = `${baseUrl.replace(/^http/i, 'ws')}/`;
   const budgetMs = options.connectReadyTimeoutMs ?? DEFAULT_CONNECT_READY_TIMEOUT_MS;
   const intervalMs = options.connectRetryIntervalMs ?? DEFAULT_CONNECT_RETRY_INTERVAL_MS;
@@ -663,7 +660,7 @@ export async function connectSteelPage(
     async () => {
       const connection = await CdpConnection.connect(wsUrl, options);
       try {
-        return await SteelCdpSessionImpl.attach(connection);
+        return await BrowserCdpSessionImpl.attach(connection);
       } catch (err) {
         connection.close();
         throw err;
@@ -678,7 +675,7 @@ export async function connectSteelPage(
 // debug-port Chromium (the in-shell Electron views, or an external fallback
 // endpoint per R8/AE2). The shell binds the port to 127.0.0.1 and never sets
 // --remote-allow-origins; this client works because the `ws` transport sends
-// no Origin header (verified against CfT 151).
+// no Origin header (verified against Chromium 151).
 // ---------------------------------------------------------------------------
 
 /**
@@ -705,7 +702,7 @@ export function buildCdpPageBaseUrl(address: CdpPageBaseAddress): string {
   return `http://${address.host}:${address.port}${CDP_PAGE_BASE_PATH}/${selector}`;
 }
 
-/** Parse the __comate-cdp__ baseUrl convention; null for anything else (Steel). */
+/** Parse the __comate-cdp__ baseUrl convention; null for anything else. */
 export function parseCdpPageBaseUrl(baseUrl: string): CdpPageBaseAddress | null {
   let url: URL;
   try {
@@ -772,8 +769,8 @@ export async function listCdpTargets(
 /**
  * Resolve the targetId of the page target whose URL carries the marker (the
  * shell loads a fresh view with `about:blank#<marker>`; verified to survive
- * in /json/list on CfT 151 and Electron 43). Used once per view, right after
- * control-channel creation — afterwards the registry pins the targetId
+ * in /json/list on Chromium 151 and Electron 43). Used once per view, right
+ * after control-channel creation — afterwards the registry pins the targetId
  * (the marker URL is replaced by the first real navigation).
  */
 export async function findCdpTargetIdByMarker(
@@ -797,7 +794,7 @@ export interface ShellPageConnectOptions extends CdpConnectionOptions {
   urlMarker?: string;
   /**
    * Apply the KTD-12 desktop-Chrome fingerprint (UA override + init script).
-   * Default true — Steel's default behavior, kept in the native stack.
+   * Default true — every session page presents as a synthetic desktop Chrome.
    */
   fingerprint?: boolean;
   /** Host OS/arch for the fingerprint; default process.platform/arch. */
@@ -809,13 +806,13 @@ export interface ShellPageConnectOptions extends CdpConnectionOptions {
 /**
  * Connect to a debug-port Chromium and attach (flatten) to one session's
  * page target, then apply the desktop-Chrome fingerprint (KTD-12). The whole
- * connect+attach retries across the cold-start window (same 10s/300ms budget
- * as the Steel path — the shell's view may still be loading its marker page
- * when the sidecar first dials).
+ * connect+attach retries across the cold-start window (10s/300ms budget —
+ * the shell's view may still be loading its marker page when the sidecar
+ * first dials).
  */
 export async function connectShellPage(
   options: ShellPageConnectOptions,
-): Promise<SteelCdpSession> {
+): Promise<BrowserCdpSession> {
   const budgetMs = options.connectReadyTimeoutMs ?? DEFAULT_CONNECT_READY_TIMEOUT_MS;
   const intervalMs = options.connectRetryIntervalMs ?? DEFAULT_CONNECT_RETRY_INTERVAL_MS;
   return retryDuringColdStart(
@@ -824,7 +821,7 @@ export async function connectShellPage(
       const connection = await CdpConnection.connect(browserWsUrl, options);
       try {
         const targetId = await resolveShellTargetId(connection, options);
-        const session = await SteelCdpSessionImpl.attachTo(connection, targetId);
+        const session = await BrowserCdpSessionImpl.attachTo(connection, targetId);
         if (options.fingerprint !== false) {
           await applyShellFingerprint(connection, session, options);
         }
@@ -872,7 +869,7 @@ async function resolveShellTargetId(
 
 async function applyShellFingerprint(
   connection: CdpConnection,
-  session: SteelCdpSessionImpl,
+  session: BrowserCdpSessionImpl,
   options: ShellPageConnectOptions,
 ): Promise<void> {
   // Engine version from the browser itself so UA / UA-CH / engine never
@@ -955,17 +952,18 @@ export async function closeShellTarget(
 
 /**
  * Unified page connector (U7): routes the __comate-cdp__ baseUrl convention
- * to the native path and everything else to Steel. This is the default
- * `connectPage` for the tool layer and the service's internal CDP reads, so
- * switching a session's CDP target never requires a tool-layer change (AE2).
+ * to the native path and everything else to the single-page fallback. This
+ * is the default `connectPage` for the tool layer and the service's internal
+ * CDP reads, so switching a session's CDP target never requires a tool-layer
+ * change (AE2).
  */
 export async function connectBrowserPage(
   baseUrl: string,
   options: CdpConnectionOptions = {},
-): Promise<SteelCdpSession> {
+): Promise<BrowserCdpSession> {
   const address = parseCdpPageBaseUrl(baseUrl);
   if (!address) {
-    return connectSteelPage(baseUrl, options);
+    return connectSinglePage(baseUrl, options);
   }
   return connectShellPage({
     ...options,
@@ -977,10 +975,9 @@ export async function connectBrowserPage(
 }
 
 /**
- * Native-path session-context export (remember-site / authenticated-request,
- * AE3): cookies via Network.getCookies for the open page's URLs + web storage
- * dumped in-page, keyed by page hostname — the vendored Steel export's shape
- * (its IndexedDB branch is stubbed upstream, so parity = cookies + storage).
+ * Session-context export (remember-site / authenticated-request, AE3):
+ * cookies via Network.getCookies for the open page's URLs + web storage
+ * dumped in-page, keyed by page hostname. IndexedDB is out of scope (R15).
  * Read-only; safe during user_in_control.
  */
 export async function exportCdpSessionContext(baseUrl: string): Promise<unknown> {

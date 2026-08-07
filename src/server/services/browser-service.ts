@@ -1,10 +1,7 @@
-import path from 'path';
 import { randomBytes } from 'crypto';
-import { rm } from 'fs/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import { getStorageDir } from '../storage/data-dir.js';
-import { resolveChromium } from '../utils/resolve-chromium.js';
 import { store as defaultStore, type SqliteStore } from '../storage/sqlite-store.js';
 import type { BrowserSessionContext, BrowserSiteAuthEntry } from '../models/workspace.js';
 import {
@@ -14,7 +11,6 @@ import {
   exportCdpSessionContext,
   fetchCdpBrowserInfo,
   findCdpTargetIdByMarker,
-  parseCdpPageBaseUrl,
   retryDuringColdStart,
 } from './browser-cdp.js';
 import { resolveBrowserCdpTarget, type BrowserCdpTarget } from './browser-target.js';
@@ -34,17 +30,6 @@ import {
 } from './browser-site-auth.js';
 import { browserAuditService, type BrowserAuditService } from './browser-audit.js';
 import {
-  allocateLoopbackPort,
-  cleanupStaleSteelProcesses,
-  reapStaleProfileLock,
-  SteelProcess,
-  type SteelExitInfo,
-  type SteelProcessHandle,
-  type SteelProcessOptions,
-  type StaleCleanupReport,
-} from './browser-steel-process.js';
-import { getBrowserAllowInsecureCerts } from './browser-app-settings.js';
-import {
   BrowserAuthBindingError,
   BrowserAuthBindingVault,
   type CapturedAuthMaterial,
@@ -52,12 +37,21 @@ import {
 } from './browser-auth-binding.js';
 
 /**
- * browser-service — Steel process orchestration and session lifecycle (KTD-1,
- * KTD-5). One vendored-Steel child process per active chat session, keyed by
- * chat sessionId — deliberately NOT attached to a runtime or SDK MCP server
- * instance: runtime rebuilds (provider switch, bot policy change, idle close)
- * rebind to the existing browser by sessionId (KTD-5). `forkSession` mints a
- * new sessionId, so a forked chat cold-starts its own browser (KTD-1).
+ * browser-service — native browser session lifecycle (KTD-1, KTD-5). One
+ * shell-hosted browser view per active chat session, keyed by chat sessionId —
+ * deliberately NOT attached to a runtime or SDK MCP server instance: runtime
+ * rebuilds (provider switch, bot policy change, idle close) rebind to the
+ * existing browser by sessionId (KTD-5). `forkSession` mints a new sessionId,
+ * so a forked chat cold-starts its own browser (KTD-1).
+ *
+ * The browser itself lives in the Electron shell (per-session partition view
+ * created over the KTD-11 control channel) or in an operator-supplied external
+ * debug-port Chromium (COMATE_BROWSER_CDP_TARGET — the R8/AE2 fallback, U9
+ * decision: no client re-release needed, aimed at support/enterprise-ops
+ * scenarios). U9 removed the bundled child-process stack end to end; there is
+ * no Chromium resolution, no profile dirs, and no pidfiles on this path —
+ * session/workspace deletion wipes the shell partition (KTD-11), and orphan
+ * partitions are reconciled against the session registry at startup.
  *
  * Control state machine lives here (KTD-5): agent_in_control |
  * user_in_control | handoff_pending (+ session_lost transient). U5 owns the
@@ -71,8 +65,6 @@ import {
  *  - session delete              -> teardownSession(sessionId)
  *  - workspace delete cascade    -> teardownWorkspace(workspaceId)
  *  - sidecar shutdown (2s budget)-> shutdown()
- * A sidecar force-kill is covered by pidfiles: the next boot's
- * cleanupStaleSteelProcesses reaps orphans (initialize(), lazy on first use).
  */
 
 export type BrowserControlState =
@@ -83,7 +75,6 @@ export type BrowserControlState =
 
 export type BrowserUnavailableCode =
   | 'browser_limit_reached'
-  | 'browser_chromium_missing'
   | 'browser_start_failed';
 
 export class BrowserUnavailableError extends Error {
@@ -213,26 +204,25 @@ interface RegistryEntry {
   sessionId: string;
   workspaceId: string;
   state: BrowserControlState;
-  handle: SteelProcessHandle | ShellViewHandle | null;
+  handle: ShellViewHandle | null;
   starting: Promise<BrowserSessionInfo> | null;
-  /** External-CDP targetDestroyed watcher teardown (native fallback path). */
+  /** External-CDP targetDestroyed watcher teardown (R8 fallback path). */
   closeWatcher?: (() => void) | undefined;
   /** Set when teardown is in flight so an exit is not treated as a crash. */
   expectingExit: boolean;
   startedAt: number;
   /**
-   * Per-session viewer credential (KTD-7), minted once per registry entry and
-   * handed to Steel as a DOMAIN path prefix at spawn — the pinned viewer HTML
-   * then bakes its cast WebSocket URL under `…/s/<token>/`, so the viewer
-   * proxy (U7) can authenticate HTTP and WS with the same path-carried token.
-   * Survives crash rebuilds (the entry persists across session_lost); dies
-   * with the entry on teardown.
+   * Per-session CSPRNG token, minted once per registry entry and used as the
+   * view's CDP marker (`about:blank#comate-view-<token>` — how the sidecar
+   * finds the fresh view's target on the debug port). Survives crash rebuilds
+   * (the entry persists across session_lost); dies with the entry on
+   * teardown.
    */
   viewerToken: string;
   /**
    * One-shot remembered-site injection eligibility (U8): set on every
    * successful (re)spawn, consumed by the first open() — injection happens
-   * exactly once per Steel process, before the first navigation.
+   * exactly once per view, before the first navigation.
    */
   siteAuthEligible: boolean;
   /** Idle-reclaim (U3): timestamp of the last browser activity (agent tool call or human ping). */
@@ -264,23 +254,10 @@ interface RegistryEntry {
 }
 
 export interface BrowserServiceDeps {
-  /** App data dir root; profiles and pidfiles live under `<dir>/browser`. */
+  /** App data dir root (reserved for future on-disk state; native sessions keep none). */
   storageDir: string;
   maxSessions: number;
-  allocatePort: () => Promise<number>;
-  /** Lazy Chromium resolution (allowDownload: true — first use may download). */
-  resolveChromiumPath: () => Promise<string | undefined>;
-  createProcess: (options: SteelProcessOptions) => SteelProcessHandle;
-  cleanupStale: (runDir: string) => Promise<StaleCleanupReport>;
   now: () => number;
-  /**
-   * U7 viewer proxy wiring: maps a session's viewer token to the DOMAIN value
-   * baked into its Steel child env (`127.0.0.1:<proxyPort>/s/<token>`). Steel
-   * builds the viewer's absolute cast wsUrl from DOMAIN, so the viewer only
-   * ever talks to the proxy, with the token carried in the path. Unset in
-   * tests without a proxy — Steel then points the viewer at its own port.
-   */
-  viewerDomain?: (token: string) => string | undefined;
   /**
    * Workspace store for the remembered-site read/write paths (U8). Defaults
    * to the process singleton; tests inject an isolated store.
@@ -292,11 +269,9 @@ export interface BrowserServiceDeps {
    */
   currentPageUrl?: (baseUrl: string) => Promise<string | null>;
   /**
-   * Dumps the browser's session context (remember-site flow) — the vendored
-   * Steel `GET /v1/sessions/:id/context` contract: cookies are browser-wide,
-   * storage covers the currently-open http(s) pages only (U8 entry
-   * criterion: LevelDB disk extraction is stubbed in the vendored build).
-   * Injectable for tests.
+   * Dumps the browser's session context (remember-site flow): cookies for the
+   * open page's URLs (CDP Network.getCookies) plus in-page web storage,
+   * covering the currently-open http(s) pages only. Injectable for tests.
    */
   exportContext?: (baseUrl: string) => Promise<unknown>;
   /**
@@ -310,12 +285,6 @@ export interface BrowserServiceDeps {
   idlePromptMs?: number;
   /** Server-fixed grace after the prompt before auto-close (U3). */
   idleCloseMs?: number;
-  /**
-   * Resolves the app-global "allow insecure certificates" value applied to
-   * every spawned Chrome (passed as --ignore-certificate-errors). Defaults to
-   * reading browser-app-settings (default ON); tests inject a stub.
-   */
-  resolveIgnoreCertErrors?: () => Promise<boolean>;
   /** Per-task opaque credential handles. Injectable for deterministic tests. */
   authBindings?: BrowserAuthBindingVault;
   /**
@@ -347,7 +316,6 @@ type ResolvedBrowserServiceDeps = Omit<
   | 'timer'
   | 'idlePromptMs'
   | 'idleCloseMs'
-  | 'resolveIgnoreCertErrors'
   | 'authBindings'
   | 'resolveTarget'
   | 'createControlClient'
@@ -363,7 +331,6 @@ type ResolvedBrowserServiceDeps = Omit<
       | 'timer'
       | 'idlePromptMs'
       | 'idleCloseMs'
-      | 'resolveIgnoreCertErrors'
       | 'authBindings'
       | 'resolveTarget'
       | 'createControlClient'
@@ -377,7 +344,7 @@ export function sanitizeSessionId(sessionId: string): string {
   return sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
-/** 192 bits of CSPRNG entropy, base64url — unguessable per-session viewer credential. */
+/** 192 bits of CSPRNG entropy, base64url — unguessable per-session view marker token. */
 export function mintViewerToken(): string {
   return randomBytes(24).toString('base64url');
 }
@@ -398,46 +365,18 @@ async function readPrimaryPageUrl(baseUrl: string): Promise<string | null> {
 }
 
 /**
- * Default exportContext: the vendored Steel `GET /v1/sessions/:id/context`
- * (pinned SHA d6b15d5). U8 entry criterion, verified against the vendored
- * build: cookies are complete (CDP Network.getAllCookies); localStorage /
- * sessionStorage / IndexedDB cover only the currently-open http(s) pages —
- * the LevelDB disk extraction silently degrades to empty because U2 stubs
- * classic-level (the reader throws on construction and the failure is
- * swallowed to `{}`). The sessionId path segment is ignored by the vendored
- * handler; "current" is a documentation placeholder.
- */
-async function exportSteelContext(baseUrl: string): Promise<unknown> {
-  const res = await fetch(`${baseUrl}/v1/sessions/current/context`, {
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!res.ok) {
-    throw new Error(`Steel context export failed with status ${res.status}`);
-  }
-  return res.json();
-}
-
-/**
- * Default exportContext dispatcher (U7): the __comate-cdp__ baseUrl convention
- * exports via CDP (Network.getCookies + in-page storage dump, same shape);
- * anything else keeps the vendored Steel HTTP export.
+ * Default exportContext (U7): cookies via CDP Network.getCookies for the open
+ * page's URLs + in-page web-storage dump (KTD-12/AE3 shape).
  */
 async function exportBrowserContext(baseUrl: string): Promise<unknown> {
-  if (parseCdpPageBaseUrl(baseUrl)) {
-    return exportCdpSessionContext(baseUrl);
-  }
-  return exportSteelContext(baseUrl);
+  return exportCdpSessionContext(baseUrl);
 }
 
 export class BrowserService {
   private readonly deps: ResolvedBrowserServiceDeps;
   private readonly registry = new Map<string, RegistryEntry>();
-  /** token → sessionId for O(1) proxy lookups (kept in step with registry). */
-  private readonly tokenIndex = new Map<string, string>();
   private readonly listeners = new Set<BrowserEventListener>();
   private readonly releasers = new Set<PendingCardReleaser>();
-  /** Ports reserved by live, starting, or not-yet-reaped processes. */
-  private readonly portsInUse = new Set<number>();
   /** Kept across browser close so rebound handles can locate remembered state. */
   private readonly authWorkspaceByTask = new Map<string, string>();
   /** Last binding the broker actually used; explicit Remember may persist it. */
@@ -454,12 +393,6 @@ export class BrowserService {
     this.deps = {
       storageDir: deps?.storageDir ?? getStorageDir(),
       maxSessions: deps?.maxSessions ?? DEFAULT_MAX_BROWSER_SESSIONS,
-      allocatePort: deps?.allocatePort ?? allocateLoopbackPort,
-      resolveChromiumPath:
-        deps?.resolveChromiumPath ??
-        (async () => (await resolveChromium({ allowDownload: true }))?.executablePath),
-      createProcess: deps?.createProcess ?? ((options) => new SteelProcess(options)),
-      cleanupStale: deps?.cleanupStale ?? cleanupStaleSteelProcesses,
       now: deps?.now ?? (() => Date.now()),
       store: deps?.store ?? defaultStore,
       currentPageUrl: deps?.currentPageUrl ?? readPrimaryPageUrl,
@@ -471,7 +404,6 @@ export class BrowserService {
       },
       idlePromptMs: deps?.idlePromptMs ?? DEFAULT_IDLE_PROMPT_MS,
       idleCloseMs: deps?.idleCloseMs ?? DEFAULT_IDLE_CLOSE_MS,
-      resolveIgnoreCertErrors: deps?.resolveIgnoreCertErrors ?? (() => getBrowserAllowInsecureCerts()),
       resolveTarget: deps?.resolveTarget ?? (() => resolveBrowserCdpTarget(process.env)),
       createControlClient:
         deps?.createControlClient ??
@@ -496,26 +428,16 @@ export class BrowserService {
   }
 
   /**
-   * One-shot startup cleanup of orphaned Steel processes from a previous
-   * sidecar run (pidfile/port probe, KTD-1). Idempotent; also chained lazily
-   * into the first ensureSession so callers cannot forget it.
+   * One-shot startup reconciliation (KTD-11): the shell deletes orphan
+   * persist:comate-browser-* partition dirs whose session is unknown to the
+   * sidecar. Idempotent; also chained lazily into the first ensureSession so
+   * callers cannot forget it.
    */
   initialize(): Promise<void> {
     if (!this.initPromise) {
-      this.initPromise = this.deps
-        .cleanupStale(this.runDir())
-        .then((report) => {
-          if (report.scanned > 0) {
-            diagLog(
-              `[browser] startup residue cleanup: scanned=${report.scanned} ` +
-                `killed=${report.killed} removed=${report.removed} skipped=${report.skipped}`,
-            );
-          }
-        })
-        .then(() => this.reconcileShellPartitions())
-        .catch((err) => {
-          diagWarn('[browser] startup residue cleanup failed:', err);
-        });
+      this.initPromise = this.reconcileShellPartitions().catch((err) => {
+        diagWarn('[browser] orphan partition reconcile failed:', err);
+      });
     }
     return this.initPromise;
   }
@@ -523,8 +445,8 @@ export class BrowserService {
   /**
    * U8 (KTD-11): orphan-partition reconciliation — the shell deletes every
    * persist:comate-browser-* partition dir whose session is unknown to the
-   * sidecar (persisted session registry + live in-memory entries). Mirrors
-   * the pidfile/SingletonLock cleanup above; shell target only, best-effort.
+   * sidecar (persisted session registry + live in-memory entries). Shell
+   * target only, best-effort.
    */
   private async reconcileShellPartitions(): Promise<void> {
     const target = this.deps.resolveTarget();
@@ -557,11 +479,12 @@ export class BrowserService {
   }
 
   /**
-   * Registry-level pending-card release hook (KTD-5 crash path): when a Steel
-   * process dies, every registered releaser is invoked with the sessionId so
-   * hanging browser approval cards can be dismissed. Tolerates the runtime
-   * already being gone — releasers must not throw (errors are logged and
-   * swallowed). The approval-system wiring lands with U5.
+   * Registry-level pending-card release hook (KTD-5 crash path): when a
+   * browser view crashes or detaches, every registered releaser is invoked
+   * with the sessionId so hanging browser approval cards can be dismissed.
+   * Tolerates the runtime already being gone — releasers must not throw
+   * (errors are logged and swallowed). The approval-system wiring lands
+   * with U5.
    */
   onPendingCardRelease(releaser: PendingCardReleaser): () => void {
     this.releasers.add(releaser);
@@ -576,35 +499,6 @@ export class BrowserService {
     return this.toInfo(entry);
   }
 
-  /** The session's viewer credential (KTD-7); undefined when the session is unknown. */
-  getViewerToken(sessionId: string): string | undefined {
-    return this.registry.get(sessionId)?.viewerToken;
-  }
-
-  /**
-   * Reverse lookup for the viewer proxy: resolves a token to its session.
-   * `info` is undefined when the token is valid but the Steel process is not
-   * live (starting, session_lost) — the proxy answers an explicit 503 there,
-   * vs a generic 403 for unknown tokens.
-   */
-  findSessionByViewerToken(
-    token: string,
-  ): { sessionId: string; info: BrowserSessionInfo | undefined } | undefined {
-    const sessionId = this.tokenIndex.get(token);
-    if (!sessionId) return undefined;
-    const entry = this.registry.get(sessionId);
-    if (!entry || entry.viewerToken !== token) return undefined;
-    return { sessionId, info: entry.handle ? this.toInfo(entry) : undefined };
-  }
-
-  /**
-   * Post-construction wiring for the U7 viewer proxy (the proxy's port only
-   * exists once it starts, which happens after this service is constructed).
-   */
-  setViewerDomainProvider(provider: ((token: string) => string | undefined) | undefined): void {
-    this.deps.viewerDomain = provider;
-  }
-
   getControlState(sessionId: string): BrowserControlState | undefined {
     return this.registry.get(sessionId)?.state;
   }
@@ -612,7 +506,7 @@ export class BrowserService {
   /**
    * U7 health surface: the last native-path failure with its failure class
    * (control channel / view creation / debug port — the health-browser
-   * classification, replacing Steel-centric messaging for shell sessions).
+   * classification).
    */
   getLastShellError():
     | { kind: 'control_channel' | 'view_creation' | 'debug_port'; message: string; at: number }
@@ -644,10 +538,9 @@ export class BrowserService {
   }
 
   /**
-   * Navigate a registered session's page via CDP `Page.navigate` (KTD1/U3).
-   * Steel only registers/tracks pages reached through Page.navigate (a JS
-   * `location.href` assignment is NOT tracked), and the viewer-proxy warm-up
-   * requires a tracked page — so the capture flow must navigate this way.
+   * Navigate a registered session's page via CDP `Page.navigate` (KTD1/U3) —
+   * the capture flow must navigate this way so the tool layer's tracked page
+   * and the session's lastUrl stay accurate.
    */
   async navigateInSession(sessionId: string, url: string): Promise<void> {
     const entry = this.registry.get(sessionId);
@@ -728,8 +621,8 @@ export class BrowserService {
   }
 
   /**
-   * Spawn (or rebind to) the Steel child for a chat session. Rebinding: an
-   * entry with a live process is returned as-is regardless of runtime
+   * Spawn (or rebind to) the browser view for a chat session. Rebinding: an
+   * entry with a live view is returned as-is regardless of runtime
    * identity (KTD-5). A session_lost entry is respawned — the next tool call
    * after a crash transparently rebuilds the browser (KTD-1).
    */
@@ -754,9 +647,9 @@ export class BrowserService {
       // session_lost — fall through to a respawn.
     }
 
-    // Mint (or reuse, on crash rebuild) the per-session viewer token (KTD-7).
+    // Mint (or reuse, on crash rebuild) the per-session view marker token.
     const viewerToken = existing?.viewerToken ?? mintViewerToken();
-    const starting = this.spawnForSession(sessionId, workspaceId, existing, viewerToken);
+    const starting = this.spawnForSession(sessionId, workspaceId, viewerToken);
     const entry: RegistryEntry = existing ?? {
       sessionId,
       workspaceId,
@@ -778,7 +671,6 @@ export class BrowserService {
     entry.starting = starting;
     if (!existing) {
       this.registry.set(sessionId, entry);
-      this.tokenIndex.set(viewerToken, sessionId);
     }
     try {
       return await starting;
@@ -787,7 +679,6 @@ export class BrowserService {
       // pre-existing entry in session_lost so the next call can retry.
       if (!existing && this.registry.get(sessionId)?.starting === starting) {
         this.registry.delete(sessionId);
-        this.tokenIndex.delete(viewerToken);
       }
       throw err;
     } finally {
@@ -806,7 +697,6 @@ export class BrowserService {
     const entry = this.registry.get(sessionId);
     if (!entry) return;
     this.registry.delete(sessionId);
-    this.tokenIndex.delete(entry.viewerToken);
     // The canUseTool-layer gate state (submit-semantics refs + navigation
     // ledger) is session-scoped — it must die with the session.
     clearBrowserGateSession(sessionId);
@@ -1003,16 +893,15 @@ export class BrowserService {
   /**
    * "记住此站点" export (checkbox → handback verb, BrowserStateBar). Reads
    * the primary page's URL, derives the PSL site key, dumps the browser
-   * context from Steel, filters it to the key's scope (the vendored export
-   * returns cookies browser-wide — storing it unfiltered would replay OTHER
-   * sites' cookies on injection), and persists it under the workspace's
-   * browserSiteAuth. The value then exists ONLY server-side (GET responses
-   * strip it — see workspaces routes).
+   * context over CDP, filters it to the key's scope (storing an unfiltered
+   * dump would replay OTHER sites' cookies on injection), and persists it
+   * under the workspace's browserSiteAuth. The value then exists ONLY
+   * server-side (GET responses strip it — see workspaces routes).
    *
    * R15 final scope: cookie-primary auth plus web storage for the open page
-   * (see exportSteelContext's entry-criterion note). Sites whose SSO lives
-   * exclusively in IndexedDB or in a closed tab's storage are NOT replayable
-   * — documented limitation, not a silent promise.
+   * (the export covers currently-open http(s) pages only). Sites whose SSO
+   * lives exclusively in IndexedDB or in a closed tab's storage are NOT
+   * replayable — documented limitation, not a silent promise.
    */
   async rememberCurrentSite(sessionId: string, bindingId?: string): Promise<RememberSiteResult> {
     const entry = this.registry.get(sessionId);
@@ -1336,13 +1225,12 @@ export class BrowserService {
     return { key: keyResult.key, context: siteAuthEntry.sessionContext };
   }
 
-  /** Sidecar shutdown: SIGKILL every Steel tree within the 2s budget (KTD-1). */
+  /** Sidecar shutdown: destroy every live view within the 2s budget (KTD-1). */
   async shutdown(): Promise<void> {
     this.shellEventUnsubscribe?.();
     this.shellEventUnsubscribe = null;
     const entries = [...this.registry.values()];
     this.registry.clear();
-    this.tokenIndex.clear();
     for (const entry of entries) {
       entry.expectingExit = true;
       this.clearIdleTimers(entry);
@@ -1351,8 +1239,8 @@ export class BrowserService {
     }
     await Promise.all(
       entries.map((entry) =>
-        // Profiles survive app restarts — only session/workspace deletion wipes
-        // on-disk login state.
+        // Partitions survive app restarts — only session/workspace deletion
+        // wipes on-disk login state.
         this.stopEntry(entry, { wipeProfile: false }).catch((err) => {
           diagWarn(`[browser] failed to stop session ${entry.sessionId} during shutdown:`, err);
         }),
@@ -1363,120 +1251,24 @@ export class BrowserService {
   private async spawnForSession(
     sessionId: string,
     workspaceId: string,
-    entry: RegistryEntry | undefined,
     viewerToken: string,
   ): Promise<BrowserSessionInfo> {
     const target = this.deps.resolveTarget();
     if (target.kind === 'misconfigured') {
       throw this.unavailable(sessionId, workspaceId, 'browser_start_failed', target.reason);
     }
-    if (target.kind === 'steel') {
-      return this.spawnSteelForSession(sessionId, workspaceId, entry, viewerToken);
-    }
     return this.spawnNativeForSession(sessionId, workspaceId, viewerToken, target);
   }
 
-  private async spawnSteelForSession(
-    sessionId: string,
-    workspaceId: string,
-    entry: RegistryEntry | undefined,
-    viewerToken: string,
-  ): Promise<BrowserSessionInfo> {
-    // Chromium resolution may download (~100MB) and must not serialize other
-    // spawns; the port allocation + spawn critical section below is the only
-    // part that needs the mutex.
-    let chromiumPath: string | undefined;
-    try {
-      chromiumPath = await this.deps.resolveChromiumPath();
-    } catch (err) {
-      throw this.unavailable(
-        sessionId,
-        workspaceId,
-        'browser_chromium_missing',
-        `Chromium resolution failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-    if (!chromiumPath) {
-      throw this.unavailable(
-        sessionId,
-        workspaceId,
-        'browser_chromium_missing',
-        'No Chromium executable available. The embedded browser uses a bundled, ' +
-          'isolated Chrome for Testing by default; if it is missing, reinstall ' +
-          'the app, set COMATE_CHROMIUM_PATH, or set COMATE_USE_SYSTEM_CHROME=1 ' +
-          'to drive your installed Chrome.',
-      );
-    }
-
-    // Critical section: cap re-check + port reservation + child creation. The
-    // reserved port stays in portsInUse until the process stops, so concurrent
-    // spawns can never double-allocate (KTD-1 dynamic ports).
-    const handle = await this.enqueueSpawn(sessionId, workspaceId, chromiumPath, viewerToken);
-
-    // A previous Steel process for this session may have been torn down
-    // without reaping its Chrome child, leaving an orphan Chrome holding the
-    // deterministic profile dir's SingletonLock. Chrome then refuses to relaunch
-    // into the same dir ("Failed to create SingletonLock: File exists"),
-    // live-details returns 500, and the viewer pane stays black. Clear the lock
-    // (and any verified orphan) before the new Steel launches Chrome into it.
-    try {
-      const reaped = await reapStaleProfileLock(handle.userDataDir);
-      if (reaped.cleared) {
-        diagLog(
-          `[browser] cleared stale profile lock for session ${sessionId} ` +
-            `(${reaped.reason}, holderPid=${reaped.holderPid ?? 'n/a'})`,
-        );
-      }
-    } catch (err) {
-      diagWarn(
-        `[browser] stale profile lock reap failed for session ${sessionId}: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-
-    try {
-      await handle.start();
-      diagLog(
-        `[browser] steel started for session ${sessionId} on port ${handle.port} ` +
-          `(pid=${handle.pid ?? 'unknown'})`,
-      );
-    } catch (err) {
-      this.portsInUse.delete(handle.port);
-      if (!entry) {
-        // Fresh session that never came up: drop the half-created profile so
-        // failed first spawns leave no disk residue. Rebuilds keep the
-        // profile (login state survives a crash).
-        await rm(this.profileDirFor(sessionId), { recursive: true, force: true }).catch(
-          () => undefined,
-        );
-      }
-      const reason = err instanceof Error ? err.message : String(err);
-      diagWarn(`[browser] steel start failed for session ${sessionId}:`, reason);
-      throw this.unavailable(sessionId, workspaceId, 'browser_start_failed', reason);
-    }
-
-    const current = this.registry.get(sessionId);
-    if (!current || current.expectingExit) {
-      // Teardown raced the spawn — kill the fresh child instead of registering.
-      await handle.stop();
-      this.portsInUse.delete(handle.port);
-      throw new BrowserUnavailableError(
-        'browser_start_failed',
-        `Browser session ${sessionId} was torn down while starting.`,
-      );
-    }
-    return this.adoptHandle(sessionId, workspaceId, handle);
-  }
-
   /**
-   * Shared registration tail for steel + native spawns (U7): adopt the live
-   * handle into the registry entry, arm idle-reclaim, wire the exit listener
-   * (Steel process death / shell view-crashed both land in handleProcessExit).
+   * Registration tail: adopt the live handle into the registry entry, arm
+   * idle-reclaim, wire the exit listener (view-crashed / view-destroyed /
+   * targetDestroyed all land in handleProcessExit).
    */
   private adoptHandle(
     sessionId: string,
     workspaceId: string,
-    handle: SteelProcessHandle | ShellViewHandle,
+    handle: ShellViewHandle,
   ): BrowserSessionInfo {
     const current = this.registry.get(sessionId);
     if (!current) {
@@ -1488,13 +1280,13 @@ export class BrowserService {
     current.handle = handle;
     current.state = 'agent_in_control';
     current.startedAt = this.deps.now();
-    // Fresh process — the first open() may inject a remembered site (U8).
+    // Fresh view — the first open() may inject a remembered site (U8).
     current.siteAuthEligible = true;
     // Arm the idle-reclaim prompt timer (U3): the clock starts now.
     current.lastActivityAt = this.deps.now();
     this.armIdlePrompt(sessionId);
-    handle.onExit((info) => this.handleProcessExit(sessionId, handle, info));
-    // A process that died between start() and here has already transitioned
+    handle.onExit(() => this.handleProcessExit(sessionId, handle));
+    // A view that died between creation and here has already transitioned
     // the entry to session_lost via handleProcessExit — skip the ready event.
     if (current.handle === handle && current.state === 'agent_in_control') {
       this.emit({
@@ -1509,10 +1301,11 @@ export class BrowserService {
   }
 
   // -------------------------------------------------------------------------
-  // Native spawn path (U7, KTD-6/KTD-10/KTD-11): the browser lives in the
-  // shell (per-session partition view created over the control channel) or in
-  // an operator-supplied external Chromium (R8/AE2, per-session throwaway
-  // browser context). No Chromium resolution, no profile dirs, no pidfiles.
+  // Spawn path (U7, KTD-6/KTD-10/KTD-11): the browser lives in the shell
+  // (per-session partition view created over the control channel) or in an
+  // operator-supplied external Chromium (COMATE_BROWSER_CDP_TARGET — the
+  // R8/AE2 fallback, per-session throwaway browser context). No Chromium
+  // resolution, no profile dirs, no pidfiles.
   // -------------------------------------------------------------------------
 
   private spawnNativeForSession(
@@ -1522,8 +1315,7 @@ export class BrowserService {
     target: BrowserCdpTarget & { kind: 'shell' | 'external' },
   ): Promise<BrowserSessionInfo> {
     const task = this.spawnQueue.then(async (): Promise<ShellViewHandle> => {
-      // Same cap rule as the steel path (count OTHER live/starting sessions
-      // inside the spawn mutex).
+      // Cap rule: count OTHER live/starting sessions inside the spawn mutex.
       const othersActive = [...this.registry.values()].filter(
         (e) => e.sessionId !== sessionId && (e.handle || e.starting),
       ).length;
@@ -1544,7 +1336,7 @@ export class BrowserService {
     });
     const handleTask = task.then(async (handle) => {
       // Teardown raced the spawn — destroy the fresh view/target instead of
-      // registering it (mirrors the steel path's race branch).
+      // registering it.
       const current = this.registry.get(sessionId);
       if (!current || current.expectingExit) {
         await handle.stop();
@@ -1718,69 +1510,9 @@ export class BrowserService {
     });
   }
 
-  private enqueueSpawn(
-    sessionId: string,
-    workspaceId: string,
-    chromiumPath: string,
-    viewerToken: string,
-  ): Promise<SteelProcessHandle> {
-    const task = this.spawnQueue.then(async () => {
-      // Count OTHER sessions holding or building a process; this session's own
-      // `starting` marker must not count against it (a session_lost rebuild is
-      // still one browser). Two ensures racing past the outer check re-check
-      // here, inside the mutex.
-      const othersActive = [...this.registry.values()].filter(
-        (e) => e.sessionId !== sessionId && (e.handle || e.starting),
-      ).length;
-      if (othersActive >= this.deps.maxSessions) {
-        throw this.unavailable(
-          sessionId,
-          workspaceId,
-          'browser_limit_reached',
-          `Embedded browser limit reached (${this.deps.maxSessions} concurrent sessions). ` +
-            'Close a browser session and try again.',
-        );
-      }
-
-      const port = await this.allocateFreePort();
-      this.portsInUse.add(port);
-      const safeId = sanitizeSessionId(sessionId);
-      // U7: point Steel's absolute viewer URLs (cast wsUrl) at the viewer
-      // proxy with the session token as path prefix (KTD-7).
-      const viewerDomain = this.deps.viewerDomain?.(viewerToken);
-      const ignoreCertErrors = await this.deps.resolveIgnoreCertErrors();
-      return this.deps.createProcess({
-        sessionId,
-        port,
-        userDataDir: path.join(this.profilesDir(), safeId),
-        chromiumPath,
-        pidfilePath: path.join(this.runDir(), `${safeId}.json`),
-        env: viewerDomain ? { DOMAIN: viewerDomain } : undefined,
-        ignoreCertErrors,
-      });
-    });
-    // Keep the queue alive across failures.
-    this.spawnQueue = task.then(
-      () => undefined,
-      () => undefined,
-    );
-    return task;
-  }
-
-  private async allocateFreePort(): Promise<number> {
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      const port = await this.deps.allocatePort();
-      if (!this.portsInUse.has(port)) {
-        return port;
-      }
-    }
-    throw new Error('Failed to allocate a free loopback port for Steel');
-  }
-
   private handleProcessExit(
     sessionId: string,
-    handle: SteelProcessHandle | ShellViewHandle,
-    info: SteelExitInfo,
+    handle: ShellViewHandle,
   ): void {
     const entry = this.registry.get(sessionId);
     if (!entry || entry.handle !== handle || entry.expectingExit) {
@@ -1792,11 +1524,7 @@ export class BrowserService {
     entry.closeWatcher = undefined;
     this.deps.authBindings.browserClosed(sessionId);
     this.clearIdleTimers(entry);
-    this.portsInUse.delete(handle.port);
-    const reason =
-      handle instanceof ShellViewHandle
-        ? 'Browser view crashed or was destroyed (shell control channel event)'
-        : `Steel process exited unexpectedly (code=${info.code}, signal=${info.signal})`;
+    const reason = 'Browser view crashed or was destroyed (render-process-gone / detach)';
     diagWarn(`[browser] session ${sessionId} lost: ${reason}`);
 
     // Registry-level pending-card release (U5 wires the approval system in).
@@ -1832,20 +1560,13 @@ export class BrowserService {
     entry.handle = null;
     if (handle) {
       await handle.stop();
-      this.portsInUse.delete(handle.port);
     }
-    if (options.wipeProfile) {
-      if (handle instanceof ShellViewHandle) {
-        // Native sessions: the wipeProfile semantic is the partition wipe over
-        // the control channel (KTD-11); no profile dir exists.
-        await handle.wipe();
-      } else {
-        // Per-session Chrome profile: session/workspace deletion wipes it (login
-        // state on disk must not outlive the session; KTD-8 cascades land in U8).
-        await rm(this.profileDirFor(entry.sessionId), { recursive: true, force: true }).catch(
-          () => undefined,
-        );
-      }
+    if (options.wipeProfile && handle) {
+      // The wipeProfile semantic is the partition wipe over the control
+      // channel (KTD-11): session/workspace deletion must not leave on-disk
+      // login state behind. External targets persist nothing (the throwaway
+      // browser context is disposed on stop).
+      await handle.wipe();
     }
   }
 
@@ -1882,21 +1603,9 @@ export class BrowserService {
       port: handle?.port ?? 0,
       pid: handle?.pid,
       baseUrl: handle?.baseUrl ?? '',
-      userDataDir: handle?.userDataDir ?? this.profileDirFor(entry.sessionId),
+      userDataDir: handle?.userDataDir ?? '',
       startedAt: entry.startedAt,
     };
-  }
-
-  private profilesDir(): string {
-    return path.join(this.deps.storageDir, 'browser', 'profiles');
-  }
-
-  private profileDirFor(sessionId: string): string {
-    return path.join(this.profilesDir(), sanitizeSessionId(sessionId));
-  }
-
-  private runDir(): string {
-    return path.join(this.deps.storageDir, 'browser', 'run');
   }
 }
 

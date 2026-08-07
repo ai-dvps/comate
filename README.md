@@ -70,7 +70,7 @@ Comate is a desktop AI workspace that brings Claude Code into a polished, native
 - Live task status as the model works through multi-step requests
 
 **Desktop Experience**
-- Native macOS and Windows app built with Tauri v2
+- Native macOS, Windows, and Linux app built with Electron
 - macOS title-bar overlay with draggable regions
 - System tray / background mode — close to tray, keep sessions alive
 - Auto-updater checks GitHub Releases and installs in the background
@@ -89,7 +89,8 @@ Comate is a desktop AI workspace that brings Claude Code into a polished, native
 Download the latest release for your platform:
 
 - **macOS** — `.dmg` installer
-- **Windows** — `.msi` installer
+- **Windows** — `.exe` installer (NSIS)
+- **Linux** — `.AppImage` (`.deb` also available)
 
 > **Note:** Prebuilt releases will be available once the repository is set up for distribution. For now, build from source (see [development.md](development.md)).
 
@@ -104,6 +105,7 @@ Download the latest release for your platform:
 
 - **macOS** 13.0 or later (Ventura+)
 - **Windows** 10 or later
+- **Linux** — a recent distribution with glibc (AppImage)
 
 ## Contributing
 

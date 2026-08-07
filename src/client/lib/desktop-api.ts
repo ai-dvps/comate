@@ -88,6 +88,12 @@ export interface ComateBridge {
     setInputMode?: (sessionId: string, mode: BrowserViewInputMode) => Promise<void>;
     /** Global modal-occlusion flag: shell hides every browser view while set. */
     setOccluded?: (occluded: boolean) => Promise<void>;
+    /**
+     * U9: per-session exemption from modal occlusion — the usage-login modal
+     * hosts its capture session's view INSIDE the modal, so that view must
+     * stay visible while every other view hides. Null clears the exemption.
+     */
+    setOcclusionExemption?: (sessionId: string | null) => Promise<void>;
     /** Esc intercepted on a user-driven view; returns an unsubscribe. */
     onEscape?: (handler: (sessionId: string) => void) => () => void;
   };

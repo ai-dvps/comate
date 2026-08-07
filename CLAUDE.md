@@ -1,6 +1,6 @@
 # Comate — Claude Code Project Guide
 
-Comate is a desktop AI workspace that wraps Claude Code in a native Tauri app. It uses a hybrid architecture: a **React 18 + Vite** frontend, an **Express.js** sidecar server, and a **Tauri v2** Rust desktop shell.
+Comate is a desktop AI workspace that wraps Claude Code in a native Electron app. It uses a hybrid architecture: a **React 18 + Vite** frontend, an **Express.js** sidecar server, and an **Electron** desktop shell.
 
 ## Quick Commands
 
@@ -21,8 +21,8 @@ Comate is a desktop AI workspace that wraps Claude Code in a native Tauri app. I
 
 ```
 ┌─────────────────┐     WebSocket / HTTP      ┌──────────────────┐
-│  Tauri shell    │  ←──────────────────────→  │  Express server  │
-│  (src-tauri/)   │                           │  (src/server/)   │
+│  Electron shell │  ←──────────────────────→  │  Express server  │
+│  (electron/)    │                           │  (src/server/)   │
 └────────┬────────┘                           └────────┬─────────┘
          │                                             │
          │  Vite dev client / bundled UI               │  sidecar Node process
@@ -35,7 +35,7 @@ Comate is a desktop AI workspace that wraps Claude Code in a native Tauri app. I
 
 - **Frontend** (`src/client/`): React 18, Zustand stores, Tailwind CSS, Radix primitives, `lucide-react` icons.
 - **Backend** (`src/server/`): Express API routes, service layer, SQLite storage via `better-sqlite3`.
-- **Desktop shell** (`src-tauri/`): Rust Tauri v2 app, sidecar Node binary, native resources (ripgrep, Claude binary).
+- **Desktop shell** (`electron/`): Electron main process + preload, sidecar Node binary lifecycle, native browser views (WebContentsView), tray, updater.
 - **Plugins** (`claude-code-plugin/`): Built-in local plugin marketplace shipped with the app bundle.
 - **WeCom CLI** (`packages/wecom-cli/`): Workspace-packaged oclif-style CLI for WeChat Work integration.
 
@@ -113,7 +113,7 @@ Comate is a desktop AI workspace that wraps Claude Code in a native Tauri app. I
 
 - Use `diagLog()` from `src/server/utils/diag-logger.ts` for server-side diagnostic logs.
 - Client logs can be posted to `POST /api/log`.
-- The Tauri/Rust shell writes a `main.log` to the app-data `logs/` folder (same folder as the Node logs) in both debug and release builds via `tauri-plugin-log`; use `log::` macros in `src-tauri/src/`.
+- The Electron shell writes a `main.log` to the app-data `logs/` folder (same folder as the Node logs) in both debug and release builds (see `electron/logger.ts`).
 
 ## Testing
 
@@ -123,12 +123,12 @@ Comate is a desktop AI workspace that wraps Claude Code in a native Tauri app. I
 - **Server SQLite isolation (mandatory)**: Every server test must import `test-utils/test-env` as its **first** statement — it redirects SQLite away from the production `data.db` (via `COMATE_DATA_DIR`) and is enforced by a lint rule plus a runtime guard. Never construct `SqliteStore()` against the default path in a test; use `createIsolatedStore()` or `new SqliteStore(':memory:')`, and reset with `store.resetData()` rather than reaching into the private `db`. See `docs/solutions/conventions/use-isolated-test-database-for-comate.md`.
 - Mock globals in `vitest.setup.ts`: `ResizeObserver`, `matchMedia`, `scrollIntoView`.
 
-## Desktop / Tauri Notes
+## Desktop / Electron Notes
 
-- Tauri config is in `src-tauri/tauri.conf.json` (plus macOS/Windows overrides).
-- Native resources are bundled under `src-tauri/resources/` and binaries under `src-tauri/binaries/`.
+- Electron packaging config is `electron-builder.config.ts` (always pass `--config`; it is not auto-discovered).
+- Native resources are staged under `resources/` and sidecar binaries under `build/sidecar/` (both build output of `scripts/build-sidecar.ts`, gitignored).
 - The Express server is packaged as a sidecar Node process; `scripts/build-sidecar.ts` handles this.
-- Tauri capabilities are declared in `src-tauri/capabilities/default.json`.
+- Renderer access to shell capabilities goes through the single `window.comate` contextBridge surface (`src/client/lib/desktop-api.ts`); the shell side lives in `electron/preload.ts`.
 
 ## WeCom Integration
 
@@ -153,7 +153,7 @@ Comate is a desktop AI workspace that wraps Claude Code in a native Tauri app. I
 
 ## Dependency Notes
 
-- `better-sqlite3` requires native bindings; Tauri bundles the prebuilt `.node` resource.
+- `better-sqlite3` requires native bindings; the prebuilt `.node` resource ships in the app resources and must match the sidecar's Node ABI.
 - `@vscode/ripgrep` powers the fast file picker.
 - `shiki` is used for syntax highlighting.
 - `streamdown` renders streaming markdown.
@@ -171,6 +171,6 @@ Comate is a desktop AI workspace that wraps Claude Code in a native Tauri app. I
 
 - **Port conflicts**: `npm run dev` and `npm run dev:electron` both want Vite's port. Use only one.
 - **Server `.js` imports**: TypeScript source files import each other with `.js` extensions so compiled ESM works.
-- **Tauri resource paths**: Resources move in production; use Tauri APIs or `src/server/utils/path-config.ts` rather than hardcoding paths.
+- **Resource paths**: Resources move in production; resolve them via `TAURI_RESOURCE_DIR` consumers or `src/server/utils/path-config.ts` rather than hardcoding paths.
 - **Zustand subscriptions**: Selecting whole stores causes re-renders; select only needed fields.
 - **i18n**: Add keys to both `en` and `zh-CN` namespaces; use `i18next.t('namespace:key', 'Fallback')`.

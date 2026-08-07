@@ -98,14 +98,14 @@ describe('sidecar binary / resource path resolution', () => {
     assert.throws(() => resolveSidecarTriple('freebsd', 'x64'), /Unsupported/);
   });
 
-  it('resolves the dev binary from src-tauri/binaries (externalBin layout)', () => {
+  it('resolves the dev binary from build/sidecar (build-sidecar staging layout)', () => {
     assert.strictEqual(
       resolveSidecarBinaryPath({ ...base, isPackaged: false, platform: 'darwin', arch: 'arm64' }),
-      join('/repo', 'src-tauri', 'binaries', 'sidecar-node-aarch64-apple-darwin'),
+      join('/repo', 'build', 'sidecar', 'sidecar-node-aarch64-apple-darwin'),
     );
     assert.strictEqual(
       resolveSidecarBinaryPath({ ...base, isPackaged: false, platform: 'win32', arch: 'x64' }),
-      join('/repo', 'src-tauri', 'binaries', 'sidecar-node-x86_64-pc-windows-msvc.exe'),
+      join('/repo', 'build', 'sidecar', 'sidecar-node-x86_64-pc-windows-msvc.exe'),
     );
   });
 
@@ -124,7 +124,7 @@ describe('sidecar binary / resource path resolution', () => {
     // Dev: the repo resources folder is consumed directly by server resolvers.
     assert.strictEqual(
       resolveResourceDir({ ...base, isPackaged: false }),
-      join('/repo', 'src-tauri', 'resources'),
+      join('/repo', 'resources'),
     );
     // Packaged: U3 stages the same tree under <resourcesPath>/resources.
     assert.strictEqual(

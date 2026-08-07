@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
-import { Globe, XCircle } from 'lucide-react'
-import BrowserViewer, { NativeBrowserView } from './BrowserViewer'
+import { Globe, MonitorOff, XCircle } from 'lucide-react'
+import { NativeBrowserView } from './BrowserViewer'
 import {
   BROWSER_START_PHASE_PERCENT,
   EMPTY_SESSION_BROWSER_STATE,
@@ -18,12 +18,16 @@ import { FOCUS_CLASSES } from './focus-classes'
  * BrowserBody — the pane/popout body derivation shared by both surfaces:
  *
  *   session_lost           → crash copy (manual retry lives in the state bar)
- *   live + native + here   → the native view host (React renders only the
+ *   live + here            → the native view host (React renders only the
  *                            backdrop; the shell's WebContentsView paints on top)
- *   viewerUrl + viewerHere → the keep-alive viewer iframe (dev-web fallback)
- *   viewerUrl + !viewerHere→ placeholder (the view lives in the other surface)
+ *   live + !here           → placeholder (the view lives in the other surface)
  *   startPhase             → F5 determinate progress (percent + cancel)
  *   otherwise              → the pure explanatory empty state (no primary CTA)
+ *
+ * U9 (KTD-15 degradation): outside the Electron shell there is no viewer
+ * backend at all (the iframe viewer left with the legacy browser stack), so
+ * every body state collapses to the 'needs desktop' state — disabled plus
+ * reason, matching the capability-degradation pattern.
  */
 
 export interface BrowserBodyProps {
@@ -46,6 +50,21 @@ export default function BrowserBody({ workspaceId, sessionId, viewerHere, surfac
   const interruptSession = useChatStore((s) => s.interruptSession)
   const native = isNativeBrowserView()
 
+  // KTD-15 degraded state: no shell, no viewer — the browser tools themselves
+  // may still run against an external CDP endpoint, but nothing can be shown.
+  if (!native) {
+    return (
+      <div
+        data-testid="browser-needs-desktop"
+        className="flex flex-col items-center justify-center h-full gap-3 px-6 text-center"
+      >
+        <MonitorOff className="w-8 h-8 text-text-tertiary" aria-hidden="true" />
+        <p className="text-sm font-medium text-text-primary">{t('pane.needsDesktopTitle')}</p>
+        <p className="text-xs text-text-secondary">{t('pane.needsDesktopDetail')}</p>
+      </div>
+    )
+  }
+
   if (session.controlState === 'session_lost') {
     return (
       <div
@@ -59,10 +78,8 @@ export default function BrowserBody({ workspaceId, sessionId, viewerHere, surfac
     )
   }
 
-  // Native stack: a live control state means the shell holds the view; the
-  // iframe stack keys off the server-constructed viewer URL instead.
-  const hasView = native ? isLiveControlState(session.controlState) : session.viewerUrl !== null
-  if (hasView) {
+  // A live control state means the shell holds the view.
+  if (isLiveControlState(session.controlState)) {
     if (!viewerHere) {
       return (
         <div
@@ -74,21 +91,11 @@ export default function BrowserBody({ workspaceId, sessionId, viewerHere, surfac
         </div>
       )
     }
-    if (native) {
-      return (
-        <NativeBrowserView
-          sessionId={sessionId}
-          controlState={session.controlState}
-          surfaceVisible={surfaceVisible}
-        />
-      )
-    }
     return (
-      <BrowserViewer
+      <NativeBrowserView
         sessionId={sessionId}
-        viewerUrl={session.viewerUrl!}
-        viewerNonce={session.viewerNonce}
         controlState={session.controlState}
+        surfaceVisible={surfaceVisible}
       />
     )
   }

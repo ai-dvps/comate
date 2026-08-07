@@ -1,5 +1,6 @@
 /**
- * U1: Electron main process — the shell-skeleton port of `src-tauri/src/lib.rs`.
+ * U1: Electron main process — the shell-skeleton port of the legacy Tauri
+ * shell (`lib.rs`, retired in U9).
  *
  * Mirrors the Tauri shell's role end to end:
  *  - data-dir pinning to the legacy Tauri paths + `userData` under the same
@@ -45,6 +46,7 @@ import {
   type SidecarHandle,
 } from './sidecar';
 import { createTray, runTrayStatusPoller, type TrayHandle, type TrayStatusPoller } from './tray';
+import { runFirstRunCleanup } from './first-run-cleanup';
 import { installAppMenu } from './menu';
 import { autoUpdater } from 'electron-updater';
 import {
@@ -99,9 +101,11 @@ protocol.registerSchemesAsPrivileged([
 //    to a guessable port. An env override exists as a test/dev hook;
 //  - loopback only (`--remote-debugging-address=127.0.0.1`);
 //  - NEVER `--remote-allow-origins` (the sidecar's `ws` client sends no Origin
-//    header, verified against CfT 151 — no origin wildcard is needed);
+//    header, verified against Chromium 151 — no origin wildcard is needed);
 //  - dev-web mode has no shell process at all, so no debug port exists there
-//    (the sidecar then serves the browser stack from its legacy fallback).
+//    (the browser stack then reports target_misconfigured until the operator
+//    points COMATE_BROWSER_CDP_TARGET at an external Chromium — the R8/AE2
+//    fallback, U9 decision).
 // ---------------------------------------------------------------------------
 const shellDebugPortOverride = process.env['COMATE_SHELL_DEBUG_PORT'];
 /** The concrete port Chromium was told to bind; null = debug port disabled. */
@@ -166,8 +170,10 @@ let isUpdating = false;
 let pendingQuitReason: ShutdownReason = 'exit-requested';
 let updaterController: UpdaterController | null = null;
 // U7: control channel (KTD-11) + debug port (KTD-6) coordinates handed to the
-// sidecar via spawn env. Null when the channel failed to start — the sidecar
-// then serves the browser stack from its legacy fallback (KTD-15 degradation).
+// sidecar via spawn env. Null when the channel failed to start — the browser
+// stack then reports its failure class via /api/health/browser (KTD-15
+// degradation); the R8 fallback is COMATE_BROWSER_CDP_TARGET pointing at an
+// operator-supplied external Chromium (U9 decision).
 let controlServer: ControlServerHandle | null = null;
 let viewManager: BrowserViewManager | null = null;
 let shellDebugPort: number | null = null;
@@ -304,7 +310,7 @@ function loadUi(win: BrowserWindow): void {
 function createMainWindow(): BrowserWindow {
   const iconPath = app.isPackaged
     ? join(process.resourcesPath, 'icon.png')
-    : join(app.getAppPath(), 'src-tauri', 'icons', '32x32.png');
+    : join(app.getAppPath(), 'build', 'icon.png');
 
   const win = new BrowserWindow({
     title: 'Comate',
@@ -477,6 +483,13 @@ function registerIpcHandlers(): void {
   ipcMain.handle('comate:browser-view-occluded', (_event, occluded: unknown) => {
     viewManager?.setOccluded(occluded === true);
   });
+  // U9: the usage-login modal hosts its capture session's view inside the
+  // modal — that one view is exempt from modal occlusion (every other view
+  // still hides behind the overlay).
+  ipcMain.handle('comate:browser-view-occlusion-exemption', (_event, sessionId: unknown) => {
+    if (sessionId !== null && (typeof sessionId !== 'string' || !SESSION_ID_PATTERN.test(sessionId))) return;
+    viewManager?.setOcclusionExemption(sessionId);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -510,7 +523,7 @@ function registerUiProtocol(): void {
 function setupTray(): void {
   const iconPath = app.isPackaged
     ? join(process.resourcesPath, 'icon.png')
-    : join(app.getAppPath(), 'src-tauri', 'icons', '32x32.png');
+    : join(app.getAppPath(), 'build', 'icon.png');
 
   try {
     trayHandle = createTray({
@@ -543,8 +556,8 @@ function setupTray(): void {
 /**
  * Verify the pre-allocated debug port actually came up (post-ready probe of
  * /json/version). Returns null when the devtools server lost the bind race or
- * never started — the sidecar then degrades to its fallback stack and
- * /api/health/browser reports debug_port_unreachable.
+ * never started — the browser stack then reports debug_port_unreachable via
+ * /api/health/browser (no silent fallback).
  */
 async function readShellDebugPort(): Promise<number | null> {
   if (shellDebugPortSetting === null) return null;
@@ -742,6 +755,12 @@ void debugPortConfigured.then(() => {
 
   void app.whenReady().then(async () => {
     logger.info(`Comate shell starting (data dir: ${legacyDataDir})`);
+    // U9: sweep legacy browser-stack residue (profiles / pidfiles / Chromium
+    // extraction caches) — idempotent, best-effort, never blocks startup;
+    // the site-auth store (data.db) is preserved by construction.
+    void runFirstRunCleanup(legacyDataDir, { logger }).catch((err: unknown) => {
+      logger.warn(`[first-run-cleanup] sweep failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
     installAppMenu();
     registerUiProtocol();
     setupUpdater();
@@ -751,8 +770,8 @@ void debugPortConfigured.then(() => {
     try {
       await setupControlChannel();
     } catch (err) {
-      // Non-fatal: the app runs without the native browser stack; the sidecar
-      // degrades to its fallback and /api/health/browser reports the class.
+      // Non-fatal: the app runs without the native browser stack;
+      // /api/health/browser reports the failure class (KTD-15 degradation).
       logger.error(`Control channel failed to start: ${err instanceof Error ? err.message : String(err)}`);
       controlServer = null;
       viewManager = null;

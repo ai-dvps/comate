@@ -30,7 +30,7 @@ import { browserAuditService, type BrowserAuditService } from './browser-audit.j
  *  - Timeout semantics reuse the runtime's timeoutDeny (approval_timeout +
  *    recoverable deny) via an injected narrow channel — the panel's
  *    no-content activity pings reset the timer (keystrokes never travel).
- *  - Crash/runtime-close cleanup: Steel crashes arrive through
+ *  - Crash/runtime-close cleanup: view crashes/detaches arrive through
  *    browser-service's onPendingCardRelease (U1 hook, tolerates a dead
  *    runtime); runtime rebuilds arrive through chat-service's chained
  *    pre-close listener (the single-slot onRuntimeClose stays with the WS
@@ -238,9 +238,9 @@ export class BrowserControlService {
       timer: deps.timer ?? defaultTimer,
       audit: deps.audit ?? browserAuditService,
     };
-    // Crash path (KTD-5): a dying Steel process releases this session's
-    // pending browser card through the U1 registry hook. Tolerates the
-    // runtime already being gone — the resolver injection no-ops then.
+    // Crash path (KTD-5): a crashed/destroyed browser view releases this
+    // session's pending browser card through the U1 registry hook. Tolerates
+    // the runtime already being gone — the resolver injection no-ops then.
     this.deps.browserService.onPendingCardRelease((sessionId) => {
       this.handleCrashRelease(sessionId);
     });

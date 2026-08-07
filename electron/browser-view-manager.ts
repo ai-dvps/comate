@@ -36,7 +36,7 @@
 
 import { join } from 'node:path';
 import { readdir, rm } from 'node:fs/promises';
-import type { ControlEvent, ControlViewManager, ViewRect } from './control-server';
+import type { ControlEvent, ControlViewManager, ControlViewState, ViewRect } from './control-server';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -45,16 +45,7 @@ import type { ControlEvent, ControlViewManager, ViewRect } from './control-serve
 export type BrowserViewInputMode = 'user' | 'agent';
 
 /** E2E/attestation surface (GET /views/:id/state on the control channel). */
-export interface BrowserViewState {
-  attached: boolean;
-  visible: boolean;
-  bounds: ViewRect | null;
-  inputMode: BrowserViewInputMode;
-  /** True while the transparent shield swallows pointer input (agent mode). */
-  pointerGated: boolean;
-  popupCount: number;
-  lastUrl: string | null;
-}
+export type BrowserViewState = ControlViewState;
 
 interface ElectronSessionLike {
   setPermissionRequestHandler(
@@ -126,6 +117,11 @@ export type BrowserViewManager = ControlViewManager & {
   setInputMode(sessionId: string, mode: BrowserViewInputMode): void;
   /** Global modal-occlusion flag: hides every browser view while set. */
   setOccluded(occluded: boolean): void;
+  /**
+   * U9: one session exempt from modal occlusion — the usage-login modal hosts
+   * its capture session's view INSIDE the modal. Null clears the exemption.
+   */
+  setOcclusionExemption(sessionId: string | null): void;
   /** Attestation snapshot; null when the session has no live view. */
   getViewState(sessionId: string): BrowserViewState | null;
   /** KTD-11 reconciliation: delete partition dirs absent from `keep`. */
@@ -182,6 +178,8 @@ export function createBrowserViewManager(deps: BrowserViewManagerDeps): BrowserV
   const desiredRects = new Map<string, ViewRect | null>();
   const partitions = new Map<string, ElectronSessionLike>();
   let occluded = false;
+  /** U9: session exempt from modal occlusion (modal-hosted capture view). */
+  let occlusionExemptSessionId: string | null = null;
   const activityThrottleMs = deps.activityThrottleMs ?? DEFAULT_ACTIVITY_THROTTLE_MS;
   const listDir = deps.listDir ?? ((dir: string) => readdir(dir));
   const removeDir = deps.removeDir ?? ((dir: string) => rm(dir, { recursive: true, force: true }).then(() => undefined));
@@ -300,7 +298,11 @@ export function createBrowserViewManager(deps: BrowserViewManagerDeps): BrowserV
     const rect = desiredRects.get(sessionId) ?? null;
     const host = liveHost();
     const shouldShow =
-      !occluded && rect !== null && rect.width > 0 && rect.height > 0 && host !== null;
+      (!occluded || sessionId === occlusionExemptSessionId) &&
+      rect !== null &&
+      rect.width > 0 &&
+      rect.height > 0 &&
+      host !== null;
     if (shouldShow && rect && host) {
       if (!record.attachedHost) {
         host.contentView.addChildView(record.view);
@@ -496,6 +498,12 @@ export function createBrowserViewManager(deps: BrowserViewManagerDeps): BrowserV
     setOccluded(next) {
       if (occluded === next) return;
       occluded = next;
+      applyLayoutAll();
+    },
+
+    setOcclusionExemption(sessionId) {
+      if (occlusionExemptSessionId === sessionId) return;
+      occlusionExemptSessionId = sessionId;
       applyLayoutAll();
     },
 

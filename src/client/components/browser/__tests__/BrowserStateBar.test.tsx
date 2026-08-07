@@ -10,9 +10,20 @@ const wsClientMock = vi.hoisted(() => ({
   onDisconnect: vi.fn(() => () => {}),
 }))
 
+const bridgeMock = vi.hoisted(() => ({
+  isNativeBrowserView: vi.fn(() => true),
+}))
+
 vi.mock('../../../lib/websocket-client.js', () => ({
   wsClient: wsClientMock,
   DEFAULT_TIMEOUT: 30000,
+}))
+
+vi.mock('../../../lib/browser-view-bridge', () => ({
+  isNativeBrowserView: bridgeMock.isNativeBrowserView,
+  // The pane store subscribes at module scope; the occlusion watcher is not
+  // under test here.
+  onBrowserViewOcclusionChange: vi.fn(() => () => {}),
 }))
 
 import BrowserStateBar from '../BrowserStateBar'
@@ -39,13 +50,11 @@ function setSession(patch: Partial<SessionBrowserState>) {
   }))
 }
 
-const VIEWER_URL =
-  'http://127.0.0.1:43210/s/abcdefghijklmnopqrstuvwxyzabcdef/v1/sessions/debug?interactive=true&theme=dark&showControls=true'
-
 describe('BrowserStateBar', () => {
   beforeEach(() => {
     cleanup()
     vi.clearAllMocks()
+    bridgeMock.isNativeBrowserView.mockReturnValue(true)
     useBrowserPaneStore.setState({
       openBySession: { 'sess-1': true },
       width: 480,
@@ -60,7 +69,7 @@ describe('BrowserStateBar', () => {
   // Five-state rendering, one assertion bundle each (plan test scenario).
 
   it('agent_in_control: shows "Claude is driving" with an enabled Take over button', () => {
-    setSession({ controlState: 'agent_in_control', port: 4001, viewerUrl: VIEWER_URL })
+    setSession({ controlState: 'agent_in_control', port: 4001 })
     renderBar()
 
     expect(screen.getByTestId('browser-state-label')).toHaveTextContent('Claude is driving')
@@ -71,7 +80,7 @@ describe('BrowserStateBar', () => {
   })
 
   it('handoff_pending: shows the waiting state with both Take over and Continue', () => {
-    setSession({ controlState: 'handoff_pending', port: 4001, viewerUrl: VIEWER_URL })
+    setSession({ controlState: 'handoff_pending', port: 4001 })
     renderBar()
 
     expect(screen.getByTestId('browser-state-label')).toHaveTextContent(
@@ -82,7 +91,7 @@ describe('BrowserStateBar', () => {
   })
 
   it('user_in_control: shows "You are driving" with Continue', () => {
-    setSession({ controlState: 'user_in_control', port: 4001, viewerUrl: VIEWER_URL })
+    setSession({ controlState: 'user_in_control', port: 4001 })
     renderBar()
 
     expect(screen.getByTestId('browser-state-label')).toHaveTextContent('You are driving')
@@ -128,14 +137,14 @@ describe('BrowserStateBar', () => {
     expect(wsClientMock.request).toHaveBeenCalledWith('browserHandback', { sessionId: 'sess-1' })
   })
 
-  it('session_lost Retry refetches the viewer URL', () => {
+  it('session_lost Retry POSTs the native rebuild route', () => {
     global.fetch = vi.fn(() =>
-      Promise.resolve({ ok: true, json: () => Promise.resolve({ url: null }) } as unknown as Response),
+      Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) } as unknown as Response),
     )
     setSession({ controlState: 'session_lost' })
     renderBar()
     fireEvent.click(screen.getByTestId('browser-retry-button'))
-    expect(global.fetch).toHaveBeenCalledWith('/api/browser/sess-1/viewer-url')
+    expect(global.fetch).toHaveBeenCalledWith('/api/browser/sess-1/retry', { method: 'POST' })
   })
 
   // Degraded state.
@@ -174,18 +183,25 @@ describe('BrowserStateBar', () => {
     expect(screen.getByTestId('browser-state-live')).toHaveTextContent('You are driving')
   })
 
-  // Popout entry.
+  // Popout entry (U8/U9: native shell + live control state only).
 
-  it('shows the popout button only with a live viewer URL', () => {
-    setSession({ controlState: 'agent_in_control', port: 4001, viewerUrl: VIEWER_URL })
+  it('shows the popout button for a live control state in the native shell', () => {
+    setSession({ controlState: 'agent_in_control', port: 4001 })
     const onPopout = vi.fn()
     renderBar(onPopout)
     fireEvent.click(screen.getByTestId('browser-popout-button'))
     expect(onPopout).toHaveBeenCalledTimes(1)
   })
 
-  it('hides the popout button when there is no viewer URL', () => {
+  it('hides the popout button when the control state is not live', () => {
     setSession({ controlState: 'none' })
+    renderBar(vi.fn())
+    expect(screen.queryByTestId('browser-popout-button')).not.toBeInTheDocument()
+  })
+
+  it('hides the popout button outside the Electron shell even when live', () => {
+    bridgeMock.isNativeBrowserView.mockReturnValue(false)
+    setSession({ controlState: 'agent_in_control', port: 4001 })
     renderBar(vi.fn())
     expect(screen.queryByTestId('browser-popout-button')).not.toBeInTheDocument()
   })
@@ -205,7 +221,7 @@ describe('BrowserStateBar', () => {
   // "记住此站点" checkbox (U8).
 
   it('user_in_control: renders the remember-site checkbox next to Continue (F3-friendly)', () => {
-    setSession({ controlState: 'user_in_control', port: 4001, viewerUrl: VIEWER_URL })
+    setSession({ controlState: 'user_in_control', port: 4001 })
     renderBar()
 
     const checkbox = screen.getByTestId('browser-remember-site-checkbox')
@@ -228,7 +244,7 @@ describe('BrowserStateBar', () => {
   })
 
   it('toggling the checkbox updates the store; handback carries rememberSite in the verb payload', async () => {
-    setSession({ controlState: 'user_in_control', port: 4001, viewerUrl: VIEWER_URL })
+    setSession({ controlState: 'user_in_control', port: 4001 })
     renderBar()
 
     fireEvent.click(screen.getByTestId('browser-remember-site-checkbox'))
@@ -244,7 +260,7 @@ describe('BrowserStateBar', () => {
   })
 
   it('handback without the checkbox sends no rememberSite flag', async () => {
-    setSession({ controlState: 'user_in_control', port: 4001, viewerUrl: VIEWER_URL })
+    setSession({ controlState: 'user_in_control', port: 4001 })
     renderBar()
 
     fireEvent.click(screen.getByTestId('browser-handback-button'))

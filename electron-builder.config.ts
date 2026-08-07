@@ -24,7 +24,8 @@
  * Resource layout (consumed by electron/sidecar.ts):
  *  - build/sidecar/sidecar-node-<arch>[.exe] (staged by build-sidecar.ts)
  *    → <resourcesPath>/sidecar-node[.exe]        (never inside the asar)
- *  - src-tauri/resources/ → <resourcesPath>/resources/  (TAURI_RESOURCE_DIR)
+ *  - resources/ → <resourcesPath>/resources/  (TAURI_RESOURCE_DIR keeps its
+ *    name — the server-side resolvers consume it, KTD-13)
  *  - build/icon.png → <resourcesPath>/icon.png (window/tray icon, electron/main.ts)
  *
  * The updater endpoint (provider github / owner ai-dvps / repo comate) is
@@ -152,7 +153,7 @@ const config: Configuration = {
       ? { from: 'build/sidecar/sidecar-node-x64.exe', to: 'sidecar-node.exe' }
       : { from: 'build/sidecar/sidecar-node-${arch}', to: 'sidecar-node' },
     {
-      from: 'src-tauri/resources',
+      from: 'resources',
       to: 'resources',
       // Belt-and-suspenders on top of the build-sidecar assertion gate: the
       // enterprise flavor must not ship a claude binary even if a stale one

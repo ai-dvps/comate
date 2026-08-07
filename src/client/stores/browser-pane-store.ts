@@ -1,20 +1,19 @@
 import { create } from 'zustand'
 import type { WsEventMessage } from '@server/websocket/types'
-import { VIEWER_TOKEN_PATTERN } from '@server/services/browser-viewer-token'
 import { wsClient } from '../lib/websocket-client.js'
-import { isNativeBrowserView, onBrowserViewOcclusionChange } from '../lib/browser-view-bridge'
+import { onBrowserViewOcclusionChange } from '../lib/browser-view-bridge'
 import type { ChatState } from './chat-store'
 
 /**
- * browser-pane-store — client half of the U6 chat-side browser panel:
- * pane visibility/width persistence, the per-session control-state mirror of
- * the U5 browser_state channel, the handoff badge + auto-expand, the
- * takeover/handback verbs with their busy window, and the viewer-URL fetch.
+ * browser-pane-store — client half of the chat-side browser panel: pane
+ * visibility/width persistence, the per-session control-state mirror of the
+ * browser_state channel, the handoff badge + auto-expand, and the
+ * takeover/handback verbs with their busy window.
  *
- * Security discipline (KTD-7): the iframe src is ONLY ever the string the
- * server constructed — `sanitizeViewerUrl` rejects anything that does not
- * match the exact viewer-proxy shape, so a forged REST/WS payload (the test
- * injection fixture) can never steer the iframe at an attacker URL.
+ * The panel is backed by the shell's native WebContentsView (U8); U9 removed
+ * the iframe viewer with the legacy browser stack, so outside the Electron
+ * shell the panel renders its degraded "needs the desktop app" state
+ * (KTD-15) — no viewer URL is ever fetched or constructed client-side.
  *
  * Subscription discipline (KTD-9): one passive subscription follows the
  * ACTIVE chat session — subscribing never creates a browser. Hydration lands
@@ -40,15 +39,11 @@ export interface SessionBrowserState {
   /** True once the channel's hydration (or any live event) has landed. */
   hydrated: boolean
   port: number | null
-  /** Server-constructed, shape-validated viewer URL; null when not live. */
-  viewerUrl: string | null
   unavailable: BrowserUnavailableInfo | null
   /** Busy window after a verb click until the state flip arrives. */
   pendingVerb: BrowserPendingVerb | null
   /** Last verb failure, shown in the state bar; cleared on the next event. */
   verbError: string | null
-  /** Bump to force the iframe to reload (manual retry). */
-  viewerNonce: number
   /**
    * "记住此站点" checkbox (U8): rides along with the next handback — the
    * server then exports the current site's login state into the workspace's
@@ -95,8 +90,11 @@ export interface BrowserPaneState {
   /** Toggle the "记住此站点" checkbox (user_in_control only). */
   setRememberSite: (sessionId: string, remember: boolean) => void
   recordActivity: (sessionId: string) => void
-  /** session_lost manual retry: refetch the URL and reload when live again. */
-  retryViewer: (sessionId: string) => Promise<void>
+  /**
+   * session_lost manual retry (U8): the server rebuilds the view over the
+   * control channel and navigates back to the session's last URL.
+   */
+  retrySession: (sessionId: string) => Promise<void>
   /** browser_unavailable retry: re-probe health; clear the banner when well. */
   retryUnavailable: (sessionId: string) => Promise<void>
   /** Explicit close (U1/U4): the state bar's "close browser" button. */
@@ -181,21 +179,6 @@ function writePersistedWidth(width: number): void {
 }
 
 /**
- * The exact shape browserViewerProxy.getViewerUrl constructs (U7): loopback
- * http, path token (shape pinned by browser-viewer-token on both sides), the
- * pinned debug view. Anything else — including agent/user-supplied input — is
- * rejected (returns null).
- */
-const VIEWER_URL_PATTERN = new RegExp(
-  `^http://127\\.0\\.0\\.1:\\d{1,5}/s/${VIEWER_TOKEN_PATTERN}/v1/sessions/debug\\?`,
-)
-
-export function sanitizeViewerUrl(url: unknown): string | null {
-  if (typeof url !== 'string' || !VIEWER_URL_PATTERN.test(url)) return null
-  return url
-}
-
-/**
  * The single empty-session object (F11b): selectors and components share ONE
  * reference for unknown sessions, so `useBrowserPaneStore((s) => …?? EMPTY)`
  * keeps selector identity stable across unrelated store updates. Never
@@ -205,11 +188,9 @@ export const EMPTY_SESSION_BROWSER_STATE: SessionBrowserState = {
   controlState: 'none',
   hydrated: false,
   port: null,
-  viewerUrl: null,
   unavailable: null,
   pendingVerb: null,
   verbError: null,
-  viewerNonce: 0,
   rememberSite: false,
   idlePrompt: false,
 }
@@ -262,27 +243,6 @@ function unsubscribeCurrent(): void {
   }
 }
 
-async function refreshViewerUrl(sessionId: string): Promise<void> {
-  let url: string | null = null
-  try {
-    const res = await fetch(`/api/browser/${encodeURIComponent(sessionId)}/viewer-url`)
-    if (res.ok) {
-      const data = (await res.json()) as { url?: unknown }
-      // The ONLY place an iframe src enters the system — shape-validated.
-      url = sanitizeViewerUrl(data.url)
-    }
-  } catch {
-    // Viewer URL unavailable; the pane keeps rendering its non-iframe states.
-  }
-  useBrowserPaneStore.setState((state) => {
-    const current = getSessionState(state, sessionId)
-    if (current.viewerUrl === url) return state
-    return {
-      sessions: { ...state.sessions, [sessionId]: { ...current, viewerUrl: url } },
-    }
-  })
-}
-
 const ACTIVITY_PING_INTERVAL_MS = 15_000
 const lastActivityPingAt = new Map<string, number>()
 
@@ -293,8 +253,8 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
     set((state) => {
       const current = getSessionState(state, sessionId)
       const merged = { ...current, ...patch }
-      // No-op guard (mirrors refreshViewerUrl): duplicate events — e.g. WS
-      // reconnect hydration replays — must not rebuild the session object.
+      // No-op guard: duplicate events — e.g. WS reconnect hydration replays —
+      // must not rebuild the session object.
       let changed = false
       for (const key of Object.keys(merged) as Array<keyof SessionBrowserState>) {
         if (merged[key] !== current[key]) {
@@ -443,24 +403,16 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
       wsClient.request('browserActivityPing', { sessionId }).catch(() => {})
     },
 
-    retryViewer: async (sessionId: string) => {
-      if (isNativeBrowserView()) {
-        // Native stack (U8): the server rebuilds the view over the control
-        // channel and navigates back to the session's last URL (the
-        // partition survives, so login state is kept). The browser_state
-        // event flips the panel out of session_lost.
-        try {
-          await fetch(`/api/browser/${encodeURIComponent(sessionId)}/retry`, { method: 'POST' })
-        } catch {
-          // A failed retry leaves the session_lost copy up; the state bar
-          // copy already sets expectations ("next tool call also rebuilds").
-        }
-        return
-      }
-      await refreshViewerUrl(sessionId)
-      const session = getSessionState(get(), sessionId)
-      if (session.viewerUrl) {
-        patchSession(sessionId, { viewerNonce: session.viewerNonce + 1 })
+    retrySession: async (sessionId: string) => {
+      // Native stack (U8): the server rebuilds the view over the control
+      // channel and navigates back to the session's last URL (the
+      // partition survives, so login state is kept). The browser_state
+      // event flips the panel out of session_lost.
+      try {
+        await fetch(`/api/browser/${encodeURIComponent(sessionId)}/retry`, { method: 'POST' })
+      } catch {
+        // A failed retry leaves the session_lost copy up; the state bar
+        // copy already sets expectations ("next tool call also rebuilds").
       }
     },
 
@@ -480,10 +432,6 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
       const current = getSessionState(get(), sessionId)
       if (healthy) {
         patchSession(sessionId, { unavailable: null })
-        // Native stack renders no iframe — there is no viewer URL to refetch.
-        if (!isNativeBrowserView()) {
-          await refreshViewerUrl(sessionId)
-        }
       } else {
         patchSession(sessionId, {
           unavailable: {
@@ -496,7 +444,6 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
 
     _applyBrowserState: (sessionId, data) => {
       const next = data.state
-      const current = getSessionState(get(), sessionId)
       patchSession(sessionId, {
         controlState: next,
         hydrated: true,
@@ -512,21 +459,10 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
         rememberSite: false,
         // A moving state machine supersedes a stale idle prompt.
         idlePrompt: false,
-        ...(isLiveControlState(next) ? {} : { viewerUrl: null }),
       })
       // handoff → header badge + auto-expand (R1/R5).
       if (next === 'handoff_pending' && sessionId === get().activeSessionId) {
         get().setPaneOpen(sessionId, true)
-      }
-      // Fetch the server-constructed viewer URL once the browser is (or may
-      // be) live; the REST route answers null while it is still starting.
-      // The native stack (U8) renders no iframe, so it never fetches one.
-      if (
-        !isNativeBrowserView() &&
-        isLiveControlState(next) &&
-        (current.viewerUrl === null || data.port !== current.port)
-      ) {
-        void refreshViewerUrl(sessionId)
       }
     },
 
@@ -535,7 +471,6 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
         hydrated: true,
         unavailable: info,
         pendingVerb: null,
-        viewerUrl: null,
       })
     },
 
@@ -664,14 +599,13 @@ export type BrowserStartPhase = 'preparing' | 'starting' | null
 
 /**
  * Determinate first-use progress phase (F5): two observable milestones —
- * the tool call has been issued (runtime resolution / possible download) and
- * the browser session exists but is not live yet (Steel spawning).
+ * the tool call has been issued (runtime resolution) and the browser session
+ * exists but its view is not live yet (shell view creation).
  */
 export function selectBrowserStartPhase(
   session: SessionBrowserState,
   hasInFlightBrowserTool: boolean,
 ): BrowserStartPhase {
-  if (session.viewerUrl) return null
   if (session.controlState === 'session_lost') return null
   if (isLiveControlState(session.controlState)) return 'starting'
   if (session.controlState === 'none' && hasInFlightBrowserTool) return 'preparing'

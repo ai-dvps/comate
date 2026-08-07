@@ -24,6 +24,8 @@ interface FakeWebContents extends Record<string, unknown> {
   loadedUrls: string[];
   destroyed: boolean;
   focusCount: number;
+  destroy(): void;
+  isDestroyed(): boolean;
 }
 
 function emit(wc: FakeWebContents, event: string, ...args: unknown[]): void {

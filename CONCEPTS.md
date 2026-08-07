@@ -4,6 +4,14 @@
 
 ## Steel vendoring
 
+> **Historical (retired in U9, Tauri→Electron migration):** the vendored Steel
+> bundle, the Chrome for Testing payload, and the whole child-process browser
+> stack were deleted. The embedded browser now runs as native WebContentsViews
+> in the Electron shell (per-session partitions over the KTD-11 control
+> channel); the R8 fallback is `COMATE_BROWSER_CDP_TARGET` pointing at an
+> operator-supplied external Chromium. These entries remain as vocabulary for
+> pre-migration documents.
+
 ### Vendored Steel
 The third-party Steel browser engine, repackaged as a pure-JS, dependency-pruned bundle that ships inside the desktop app's resources; the embedded controlled browser runs it locally instead of requiring Docker.
 

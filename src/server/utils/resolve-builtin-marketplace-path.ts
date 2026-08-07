@@ -25,7 +25,8 @@ export function resolveBuiltInMarketplacePath(): string | undefined {
   }
 
   // pkg-bundled sidecar fallback: resolve from the executable directory.
-  // In `tauri dev` the sidecar lives in src-tauri/binaries, two levels above the repo root.
+  // In Electron dev the sidecar lives in build/sidecar, two levels below the
+  // repo root.
   const execDir = path.dirname(process.execPath);
   candidates.push(
     path.join(execDir, '..', '..', 'claude-code-plugin'),

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import type { WsEventMessage } from '@server/websocket/types'
@@ -23,9 +23,25 @@ const wsClientMock = vi.hoisted(() => {
   }
 })
 
+const bridgeMock = vi.hoisted(() => ({
+  isNativeBrowserView: vi.fn(() => true),
+  reportBrowserViewRect: vi.fn(),
+  setBrowserViewInputMode: vi.fn(),
+}))
+
 vi.mock('../../../lib/websocket-client.js', () => ({
   wsClient: wsClientMock,
   DEFAULT_TIMEOUT: 30000,
+}))
+
+vi.mock('../../../lib/browser-view-bridge', () => ({
+  isNativeBrowserView: bridgeMock.isNativeBrowserView,
+  reportBrowserViewRect: bridgeMock.reportBrowserViewRect,
+  setBrowserViewInputMode: bridgeMock.setBrowserViewInputMode,
+  onBrowserViewEscape: vi.fn(() => () => {}),
+  // The pane store subscribes at module scope; the occlusion watcher is not
+  // under test here.
+  onBrowserViewOcclusionChange: vi.fn(() => () => {}),
 }))
 
 import BrowserPane from '../BrowserPane'
@@ -36,8 +52,13 @@ import {
 } from '../../../stores/browser-pane-store'
 import { useChatStore } from '../../../stores/chat-store'
 
-const VIEWER_URL =
-  'http://127.0.0.1:43210/s/abcdefghijklmnopqrstuvwxyzabcdef/v1/sessions/debug?interactive=true&theme=dark&showControls=true'
+beforeAll(() => {
+  globalThis.ResizeObserver = class ResizeObserverMock {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver
+})
 
 function renderPane() {
   return render(
@@ -77,6 +98,7 @@ describe('BrowserPane', () => {
     cleanup()
     localStorage.clear()
     vi.clearAllMocks()
+    bridgeMock.isNativeBrowserView.mockReturnValue(true)
     useBrowserPaneStore.setState({
       openBySession: {},
       width: 480,
@@ -88,7 +110,7 @@ describe('BrowserPane', () => {
     })
     setChatState()
     global.fetch = vi.fn(() =>
-      Promise.resolve({ ok: true, json: () => Promise.resolve({ url: null }) } as unknown as Response),
+      Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) } as unknown as Response),
     )
   })
 
@@ -96,17 +118,32 @@ describe('BrowserPane', () => {
     renderPane()
     expect(screen.getByTestId('browser-state-bar')).toBeInTheDocument()
     expect(screen.getByTestId('browser-pane-dormant')).toBeInTheDocument()
-    expect(document.querySelector('iframe')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('browser-viewer-native')).not.toBeInTheDocument()
   })
 
-  it('mounts the iframe once hasOpened becomes true', () => {
+  it('mounts the native view host once the pane has opened and the control state is live', () => {
     setPane({ hasOpened: true })
-    setSession({ controlState: 'agent_in_control', port: 4001, viewerUrl: VIEWER_URL })
-    const { container } = renderPane()
+    setSession({ controlState: 'agent_in_control', port: 4001 })
+    renderPane()
 
-    const iframe = container.querySelector('iframe')
-    expect(iframe).toBeInTheDocument()
-    expect(iframe?.getAttribute('src')).toBe(VIEWER_URL)
+    expect(screen.getByTestId('browser-viewer-native')).toBeInTheDocument()
+    // jsdom rects are zero-area → the shell is told to hide the view; the
+    // input gate still follows the control state.
+    expect(bridgeMock.reportBrowserViewRect).toHaveBeenCalledWith('sess-1', null)
+    expect(bridgeMock.setBrowserViewInputMode).toHaveBeenCalledWith('sess-1', 'agent')
+  })
+
+  it('collapses every body state to the needs-desktop degradation outside the Electron shell (KTD-15)', () => {
+    bridgeMock.isNativeBrowserView.mockReturnValue(false)
+    setPane({ hasOpened: true })
+    setSession({ controlState: 'agent_in_control', port: 4001 })
+    renderPane()
+
+    const degraded = screen.getByTestId('browser-needs-desktop')
+    expect(degraded).toHaveTextContent('The browser view needs the desktop app')
+    expect(screen.queryByTestId('browser-viewer-native')).not.toBeInTheDocument()
+    // No shell → no popout entry either.
+    expect(screen.queryByTestId('browser-popout-button')).not.toBeInTheDocument()
   })
 
   it('does not render anything when the workspace has no active session', () => {
@@ -117,14 +154,14 @@ describe('BrowserPane', () => {
 
   it('switches the view when the active chat session changes', () => {
     setPane({ hasOpened: true })
-    const otherUrl = VIEWER_URL.replace('43210', '54321')
-    setSession({ controlState: 'agent_in_control', port: 4001, viewerUrl: VIEWER_URL })
-    setSession({ controlState: 'user_in_control', port: 4002, viewerUrl: otherUrl }, 'sess-2')
-    const { container } = renderPane()
-    expect(container.querySelector('iframe')?.getAttribute('src')).toBe(VIEWER_URL)
+    setSession({ controlState: 'agent_in_control', port: 4001 })
+    setSession({ controlState: 'user_in_control', port: 4002 }, 'sess-2')
+    renderPane()
+    expect(bridgeMock.setBrowserViewInputMode).toHaveBeenLastCalledWith('sess-1', 'agent')
 
     setChatState('sess-2')
-    expect(container.querySelector('iframe')?.getAttribute('src')).toBe(otherUrl)
+    expect(screen.getByTestId('browser-viewer-native')).toBeInTheDocument()
+    expect(bridgeMock.setBrowserViewInputMode).toHaveBeenLastCalledWith('sess-2', 'user')
     expect(screen.getByTestId('browser-state-label')).toHaveTextContent('You are driving')
   })
 
@@ -147,7 +184,7 @@ describe('BrowserPane', () => {
     renderPane()
 
     expect(screen.getByTestId('browser-start-progress')).toBeInTheDocument()
-    expect(screen.getByTestId('browser-start-phase')).toHaveTextContent('Preparing the browser runtime')
+    expect(screen.getByTestId('browser-start-phase')).toHaveTextContent('Preparing the browser')
     expect(screen.getByTestId('browser-start-percent')).toHaveTextContent('30%')
 
     const interruptSession = vi.fn(() => Promise.resolve())
@@ -167,29 +204,21 @@ describe('BrowserPane', () => {
     expect(lost).toHaveTextContent('rebuilds it automatically')
   })
 
-  it('agent driving: a read-only shield blocks the viewer', () => {
-    setPane({ hasOpened: true })
-    setSession({ controlState: 'agent_in_control', port: 4001, viewerUrl: VIEWER_URL })
-    renderPane()
-    expect(screen.getByTestId('browser-readonly-shield')).toBeInTheDocument()
-    expect(screen.queryByTestId('browser-capture-shield')).not.toBeInTheDocument()
-  })
-
   it('opens the popout from the state bar and swaps the pane body for a placeholder', () => {
     setPane({ hasOpened: true })
-    setSession({ controlState: 'agent_in_control', port: 4001, viewerUrl: VIEWER_URL })
-    const { container } = renderPane()
-    expect(container.querySelector('iframe')).toBeInTheDocument()
+    setSession({ controlState: 'agent_in_control', port: 4001 })
+    renderPane()
+    expect(screen.getByTestId('browser-viewer-native')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('browser-popout-button'))
     expect(useBrowserPaneStore.getState().popoutOpen).toBe(true)
     expect(screen.getByTestId('browser-popout-placeholder')).toBeInTheDocument()
-    expect(container.querySelector('iframe')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('browser-viewer-native')).not.toBeInTheDocument()
   })
 
   it('sends content-free activity pings on pane interaction while the user drives', () => {
     setPane({ hasOpened: true })
-    setSession({ controlState: 'user_in_control', port: 4001, viewerUrl: VIEWER_URL })
+    setSession({ controlState: 'user_in_control', port: 4001 })
     renderPane()
     fireEvent.pointerDown(screen.getByTestId('browser-pane'))
     expect(wsClientMock.request).toHaveBeenCalledWith('browserActivityPing', { sessionId: 'sess-1' })
