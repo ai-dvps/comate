@@ -7,7 +7,23 @@ import { getStorageDir } from '../storage/data-dir.js';
 import { resolveChromium } from '../utils/resolve-chromium.js';
 import { store as defaultStore, type SqliteStore } from '../storage/sqlite-store.js';
 import type { BrowserSessionContext, BrowserSiteAuthEntry } from '../models/workspace.js';
-import { connectSteelPage } from './browser-cdp.js';
+import {
+  CdpConnection,
+  connectBrowserPage,
+  createShellTarget,
+  exportCdpSessionContext,
+  fetchCdpBrowserInfo,
+  findCdpTargetIdByMarker,
+  parseCdpPageBaseUrl,
+  retryDuringColdStart,
+} from './browser-cdp.js';
+import { resolveBrowserCdpTarget, type BrowserCdpTarget } from './browser-target.js';
+import {
+  ControlChannelError,
+  ShellControlClient,
+  ShellViewHandle,
+  type ShellViewEvent,
+} from './browser-shell-client.js';
 import { siteKeyForUrl } from './browser-site-key.js';
 import { clearBrowserGateSession } from './browser-gate-state.js';
 import {
@@ -197,8 +213,10 @@ interface RegistryEntry {
   sessionId: string;
   workspaceId: string;
   state: BrowserControlState;
-  handle: SteelProcessHandle | null;
+  handle: SteelProcessHandle | ShellViewHandle | null;
   starting: Promise<BrowserSessionInfo> | null;
+  /** External-CDP targetDestroyed watcher teardown (native fallback path). */
+  closeWatcher?: (() => void) | undefined;
   /** Set when teardown is in flight so an exit is not treated as a crash. */
   expectingExit: boolean;
   startedAt: number;
@@ -294,6 +312,16 @@ export interface BrowserServiceDeps {
   resolveIgnoreCertErrors?: () => Promise<boolean>;
   /** Per-task opaque credential handles. Injectable for deterministic tests. */
   authBindings?: BrowserAuthBindingVault;
+  /**
+   * U7 (R8): which CDP target serves browser sessions. Defaults to resolving
+   * COMATE_BROWSER_CDP_TARGET + the shell env at spawn time; tests inject a
+   * fixed target.
+   */
+  resolveTarget?: () => BrowserCdpTarget;
+  /** U7: control-channel client factory (KTD-11); tests inject a fake. */
+  createControlClient?: (endpoint: { controlPort: number; controlToken: string }) => ShellControlClient;
+  /** U7: cold-start retry budget for native target discovery; tests shrink it. */
+  cdpRetry?: { budgetMs: number; intervalMs: number };
 }
 
 /** Constructor-resolved deps: the U8 + U3 additions have defaults, so internally
@@ -309,6 +337,8 @@ type ResolvedBrowserServiceDeps = Omit<
   | 'idleCloseMs'
   | 'resolveIgnoreCertErrors'
   | 'authBindings'
+  | 'resolveTarget'
+  | 'createControlClient'
 > &
   Required<
     Pick<
@@ -322,6 +352,9 @@ type ResolvedBrowserServiceDeps = Omit<
       | 'idleCloseMs'
       | 'resolveIgnoreCertErrors'
       | 'authBindings'
+      | 'resolveTarget'
+      | 'createControlClient'
+      | 'cdpRetry'
     >
   >;
 
@@ -341,7 +374,7 @@ export function mintViewerToken(): string {
  * user — safe during user_in_control.
  */
 async function readPrimaryPageUrl(baseUrl: string): Promise<string | null> {
-  const page = await connectSteelPage(baseUrl, { commandTimeoutMs: 5_000 });
+  const page = await connectBrowserPage(baseUrl, { commandTimeoutMs: 5_000 });
   try {
     const href = await page.evaluate<string>('(() => window.location.href)()');
     return typeof href === 'string' && /^https?:\/\//.test(href) ? href : null;
@@ -370,6 +403,18 @@ async function exportSteelContext(baseUrl: string): Promise<unknown> {
   return res.json();
 }
 
+/**
+ * Default exportContext dispatcher (U7): the __comate-cdp__ baseUrl convention
+ * exports via CDP (Network.getCookies + in-page storage dump, same shape);
+ * anything else keeps the vendored Steel HTTP export.
+ */
+async function exportBrowserContext(baseUrl: string): Promise<unknown> {
+  if (parseCdpPageBaseUrl(baseUrl)) {
+    return exportCdpSessionContext(baseUrl);
+  }
+  return exportSteelContext(baseUrl);
+}
+
 export class BrowserService {
   private readonly deps: ResolvedBrowserServiceDeps;
   private readonly registry = new Map<string, RegistryEntry>();
@@ -385,6 +430,11 @@ export class BrowserService {
   private readonly preferredAuthBindingByTask = new Map<string, string>();
   private initPromise: Promise<void> | null = null;
   private spawnQueue: Promise<void> = Promise.resolve();
+  /** U7: last native-path failure, surfaced by /api/health/browser. */
+  private lastShellError:
+    | { kind: 'control_channel' | 'view_creation' | 'debug_port'; message: string; at: number }
+    | undefined;
+  private shellEventUnsubscribe: (() => void) | null = null;
 
   constructor(deps?: Partial<BrowserServiceDeps>) {
     this.deps = {
@@ -399,7 +449,7 @@ export class BrowserService {
       now: deps?.now ?? (() => Date.now()),
       store: deps?.store ?? defaultStore,
       currentPageUrl: deps?.currentPageUrl ?? readPrimaryPageUrl,
-      exportContext: deps?.exportContext ?? exportSteelContext,
+      exportContext: deps?.exportContext ?? exportBrowserContext,
       audit: deps?.audit ?? browserAuditService,
       timer: deps?.timer ?? {
         set: (fn, ms) => setTimeout(fn, ms),
@@ -408,6 +458,11 @@ export class BrowserService {
       idlePromptMs: deps?.idlePromptMs ?? DEFAULT_IDLE_PROMPT_MS,
       idleCloseMs: deps?.idleCloseMs ?? DEFAULT_IDLE_CLOSE_MS,
       resolveIgnoreCertErrors: deps?.resolveIgnoreCertErrors ?? (() => getBrowserAllowInsecureCerts()),
+      resolveTarget: deps?.resolveTarget ?? (() => resolveBrowserCdpTarget(process.env)),
+      createControlClient:
+        deps?.createControlClient ??
+        ((endpoint) => new ShellControlClient({ port: endpoint.controlPort, token: endpoint.controlToken })),
+      cdpRetry: deps?.cdpRetry ?? { budgetMs: 10_000, intervalMs: 300 },
       authBindings: deps?.authBindings ?? new BrowserAuthBindingVault({
         readRemembered: (taskId, siteKey) => {
           const workspaceId = this.authWorkspaceByTask.get(taskId);
@@ -509,6 +564,17 @@ export class BrowserService {
   }
 
   /**
+   * U7 health surface: the last native-path failure with its failure class
+   * (control channel / view creation / debug port — the health-browser
+   * classification, replacing Steel-centric messaging for shell sessions).
+   */
+  getLastShellError():
+    | { kind: 'control_channel' | 'view_creation' | 'debug_port'; message: string; at: number }
+    | undefined {
+    return this.lastShellError;
+  }
+
+  /**
    * The workspace a browser session belongs to, even when the process is
    * starting/lost (audit paths must keep working through crashes — U8).
    */
@@ -527,7 +593,7 @@ export class BrowserService {
     if (!entry?.handle) {
       throw new Error(`No live browser session for ${sessionId}`);
     }
-    const page = await connectSteelPage(entry.handle.baseUrl, { commandTimeoutMs: 5_000 });
+    const page = await connectBrowserPage(entry.handle.baseUrl, { commandTimeoutMs: 5_000 });
     return page.evaluate(expression);
   }
 
@@ -542,7 +608,7 @@ export class BrowserService {
     if (!entry?.handle) {
       throw new Error(`No live browser session for ${sessionId}`);
     }
-    const page = await connectSteelPage(entry.handle.baseUrl, { commandTimeoutMs: 5_000 });
+    const page = await connectBrowserPage(entry.handle.baseUrl, { commandTimeoutMs: 5_000 });
     await page.navigate(url);
   }
 
@@ -1201,12 +1267,16 @@ export class BrowserService {
 
   /** Sidecar shutdown: SIGKILL every Steel tree within the 2s budget (KTD-1). */
   async shutdown(): Promise<void> {
+    this.shellEventUnsubscribe?.();
+    this.shellEventUnsubscribe = null;
     const entries = [...this.registry.values()];
     this.registry.clear();
     this.tokenIndex.clear();
     for (const entry of entries) {
       entry.expectingExit = true;
       this.clearIdleTimers(entry);
+      entry.closeWatcher?.();
+      entry.closeWatcher = undefined;
     }
     await Promise.all(
       entries.map((entry) =>
@@ -1220,6 +1290,22 @@ export class BrowserService {
   }
 
   private async spawnForSession(
+    sessionId: string,
+    workspaceId: string,
+    entry: RegistryEntry | undefined,
+    viewerToken: string,
+  ): Promise<BrowserSessionInfo> {
+    const target = this.deps.resolveTarget();
+    if (target.kind === 'misconfigured') {
+      throw this.unavailable(sessionId, workspaceId, 'browser_start_failed', target.reason);
+    }
+    if (target.kind === 'steel') {
+      return this.spawnSteelForSession(sessionId, workspaceId, entry, viewerToken);
+    }
+    return this.spawnNativeForSession(sessionId, workspaceId, viewerToken, target);
+  }
+
+  private async spawnSteelForSession(
     sessionId: string,
     workspaceId: string,
     entry: RegistryEntry | undefined,
@@ -1308,7 +1394,26 @@ export class BrowserService {
         `Browser session ${sessionId} was torn down while starting.`,
       );
     }
+    return this.adoptHandle(sessionId, workspaceId, handle);
+  }
 
+  /**
+   * Shared registration tail for steel + native spawns (U7): adopt the live
+   * handle into the registry entry, arm idle-reclaim, wire the exit listener
+   * (Steel process death / shell view-crashed both land in handleProcessExit).
+   */
+  private adoptHandle(
+    sessionId: string,
+    workspaceId: string,
+    handle: SteelProcessHandle | ShellViewHandle,
+  ): BrowserSessionInfo {
+    const current = this.registry.get(sessionId);
+    if (!current) {
+      throw new BrowserUnavailableError(
+        'browser_start_failed',
+        `Browser session ${sessionId} was torn down while starting.`,
+      );
+    }
     current.handle = handle;
     current.state = 'agent_in_control';
     current.startedAt = this.deps.now();
@@ -1330,6 +1435,207 @@ export class BrowserService {
       });
     }
     return this.toInfo(current);
+  }
+
+  // -------------------------------------------------------------------------
+  // Native spawn path (U7, KTD-6/KTD-10/KTD-11): the browser lives in the
+  // shell (per-session partition view created over the control channel) or in
+  // an operator-supplied external Chromium (R8/AE2, per-session throwaway
+  // browser context). No Chromium resolution, no profile dirs, no pidfiles.
+  // -------------------------------------------------------------------------
+
+  private spawnNativeForSession(
+    sessionId: string,
+    workspaceId: string,
+    viewerToken: string,
+    target: BrowserCdpTarget & { kind: 'shell' | 'external' },
+  ): Promise<BrowserSessionInfo> {
+    const task = this.spawnQueue.then(async (): Promise<ShellViewHandle> => {
+      // Same cap rule as the steel path (count OTHER live/starting sessions
+      // inside the spawn mutex).
+      const othersActive = [...this.registry.values()].filter(
+        (e) => e.sessionId !== sessionId && (e.handle || e.starting),
+      ).length;
+      if (othersActive >= this.deps.maxSessions) {
+        throw this.unavailable(
+          sessionId,
+          workspaceId,
+          'browser_limit_reached',
+          `Embedded browser limit reached (${this.deps.maxSessions} concurrent sessions). ` +
+            'Close a browser session and try again.',
+        );
+      }
+      const marker = `comate-view-${viewerToken}`;
+      if (target.kind === 'shell') {
+        return this.spawnShellView(sessionId, workspaceId, marker, target);
+      }
+      return this.spawnExternalTarget(sessionId, workspaceId, marker, target);
+    });
+    const handleTask = task.then(async (handle) => {
+      // Teardown raced the spawn — destroy the fresh view/target instead of
+      // registering it (mirrors the steel path's race branch).
+      const current = this.registry.get(sessionId);
+      if (!current || current.expectingExit) {
+        await handle.stop();
+        throw new BrowserUnavailableError(
+          'browser_start_failed',
+          `Browser session ${sessionId} was torn down while starting.`,
+        );
+      }
+      return this.adoptHandle(sessionId, workspaceId, handle);
+    });
+    this.spawnQueue = handleTask.then(
+      () => undefined,
+      () => undefined,
+    );
+    return handleTask;
+  }
+
+  private async spawnShellView(
+    sessionId: string,
+    workspaceId: string,
+    marker: string,
+    target: BrowserCdpTarget & { kind: 'shell' },
+  ): Promise<ShellViewHandle> {
+    const client = this.deps.createControlClient({
+      controlPort: target.controlPort,
+      controlToken: target.controlToken,
+    });
+    this.ensureShellEventStream(client);
+    try {
+      await client.createView({ sessionId, marker });
+      this.lastShellError = undefined;
+    } catch (err) {
+      const kind = err instanceof ControlChannelError && err.kind === 'unreachable'
+        ? 'control_channel'
+        : 'view_creation';
+      const message = err instanceof Error ? err.message : String(err);
+      this.lastShellError = { kind, message, at: this.deps.now() };
+      throw this.unavailable(
+        sessionId,
+        workspaceId,
+        'browser_start_failed',
+        kind === 'control_channel'
+          ? `The desktop shell's browser control channel is unreachable: ${message}`
+          : `The desktop shell could not create the browser view: ${message}`,
+      );
+    }
+    let targetId: string;
+    try {
+      targetId = await retryDuringColdStart(
+        async () => {
+          const found = await findCdpTargetIdByMarker({ port: target.debugPort }, marker);
+          if (!found) throw new Error('view target not yet visible on the debug port');
+          return found;
+        },
+        { budgetMs: this.deps.cdpRetry.budgetMs, intervalMs: this.deps.cdpRetry.intervalMs },
+      );
+      this.lastShellError = undefined;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.lastShellError = { kind: 'debug_port', message, at: this.deps.now() };
+      await client.destroyView(sessionId).catch(() => undefined);
+      throw this.unavailable(
+        sessionId,
+        workspaceId,
+        'browser_start_failed',
+        `The shell's Chromium debug port did not expose the new view: ${message}`,
+      );
+    }
+    return new ShellViewHandle({
+      sessionId,
+      debugPort: target.debugPort,
+      targetId,
+      partition: `persist:comate-browser-${sanitizeSessionId(sessionId)}`,
+      client,
+    });
+  }
+
+  private async spawnExternalTarget(
+    sessionId: string,
+    workspaceId: string,
+    marker: string,
+    target: BrowserCdpTarget & { kind: 'external' },
+  ): Promise<ShellViewHandle> {
+    let created: { targetId: string; browserContextId?: string };
+    try {
+      created = await createShellTarget({
+        host: target.host,
+        port: target.port,
+        url: `about:blank#${marker}`,
+        isolate: true,
+      });
+    } catch (err) {
+      throw this.unavailable(
+        sessionId,
+        workspaceId,
+        'browser_start_failed',
+        `The external CDP endpoint at ${target.host}:${target.port} could not create a target: ` +
+          (err instanceof Error ? err.message : String(err)),
+      );
+    }
+    const handle = new ShellViewHandle({
+      sessionId,
+      host: target.host,
+      debugPort: target.port,
+      targetId: created.targetId,
+      ...(created.browserContextId ? { browserContextId: created.browserContextId } : {}),
+    });
+    // Crash/lost signal for the external path: a persistent browser-level
+    // connection watches for our target's destruction; the socket dying means
+    // the whole endpoint went away. Both land in handleProcessExit via
+    // notifyExit (KTD-14 session_lost semantics).
+    void (async () => {
+      let intentionalClose = false;
+      try {
+        const info = await fetchCdpBrowserInfo({ host: target.host, port: target.port });
+        const watcher = await CdpConnection.connect(info.browserWsUrl, {});
+        await watcher.send('Target.setDiscoverTargets', { discover: true });
+        const off = watcher.onEvent((event) => {
+          if (event.method !== 'Target.targetDestroyed') return;
+          if ((event.params as { targetId?: string }).targetId === created.targetId) {
+            handle.notifyExit({ code: null, signal: null });
+          }
+        });
+        watcher.onClose(() => {
+          if (!intentionalClose) handle.notifyExit({ code: null, signal: null });
+        });
+        const entry = this.registry.get(sessionId);
+        if (entry) {
+          entry.closeWatcher = () => {
+            intentionalClose = true;
+            off();
+            watcher.close();
+          };
+        } else {
+          intentionalClose = true;
+          watcher.close();
+        }
+      } catch (err) {
+        diagWarn(`[browser] external target watcher failed for ${sessionId}:`, err);
+      }
+    })();
+    return handle;
+  }
+
+  /** One SSE subscription per service instance, lazily opened on first shell spawn. */
+  private ensureShellEventStream(client: ShellControlClient): void {
+    if (this.shellEventUnsubscribe) return;
+    this.shellEventUnsubscribe = client.subscribeEvents((event: ShellViewEvent) => {
+      if (event.type === 'view-activity') {
+        this.resetIdle(event.sessionId);
+        return;
+      }
+      const entry = this.registry.get(event.sessionId);
+      if (!entry || entry.expectingExit) return;
+      if (entry.handle instanceof ShellViewHandle) {
+        diagWarn(
+          `[browser] shell reported ${event.type} for session ${event.sessionId}` +
+            (event.type === 'view-crashed' ? ` (reason=${event.reason ?? 'unknown'})` : ''),
+        );
+        entry.handle.notifyExit({ code: null, signal: null });
+      }
+    });
   }
 
   private enqueueSpawn(
@@ -1393,7 +1699,7 @@ export class BrowserService {
 
   private handleProcessExit(
     sessionId: string,
-    handle: SteelProcessHandle,
+    handle: SteelProcessHandle | ShellViewHandle,
     info: SteelExitInfo,
   ): void {
     const entry = this.registry.get(sessionId);
@@ -1402,10 +1708,15 @@ export class BrowserService {
     }
     entry.handle = null;
     entry.state = 'session_lost';
+    entry.closeWatcher?.();
+    entry.closeWatcher = undefined;
     this.deps.authBindings.browserClosed(sessionId);
     this.clearIdleTimers(entry);
     this.portsInUse.delete(handle.port);
-    const reason = `Steel process exited unexpectedly (code=${info.code}, signal=${info.signal})`;
+    const reason =
+      handle instanceof ShellViewHandle
+        ? 'Browser view crashed or was destroyed (shell control channel event)'
+        : `Steel process exited unexpectedly (code=${info.code}, signal=${info.signal})`;
     diagWarn(`[browser] session ${sessionId} lost: ${reason}`);
 
     // Registry-level pending-card release (U5 wires the approval system in).
@@ -1435,6 +1746,8 @@ export class BrowserService {
       // itself when it sees expectingExit.
       await entry.starting.catch(() => undefined);
     }
+    entry.closeWatcher?.();
+    entry.closeWatcher = undefined;
     const handle = entry.handle;
     entry.handle = null;
     if (handle) {
@@ -1442,11 +1755,17 @@ export class BrowserService {
       this.portsInUse.delete(handle.port);
     }
     if (options.wipeProfile) {
-      // Per-session Chrome profile: session/workspace deletion wipes it (login
-      // state on disk must not outlive the session; KTD-8 cascades land in U8).
-      await rm(this.profileDirFor(entry.sessionId), { recursive: true, force: true }).catch(
-        () => undefined,
-      );
+      if (handle instanceof ShellViewHandle) {
+        // Native sessions: the wipeProfile semantic is the partition wipe over
+        // the control channel (KTD-11); no profile dir exists.
+        await handle.wipe();
+      } else {
+        // Per-session Chrome profile: session/workspace deletion wipes it (login
+        // state on disk must not outlive the session; KTD-8 cascades land in U8).
+        await rm(this.profileDirFor(entry.sessionId), { recursive: true, force: true }).catch(
+          () => undefined,
+        );
+      }
     }
   }
 

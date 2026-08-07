@@ -1,6 +1,13 @@
 import WebSocket from 'ws';
 import type { InspectedElement, RawAxNode } from './browser-page-model.js';
 import type { BrowserNetworkCaptureTransport, CdpEventEnvelope } from './browser-network-capture.js';
+import {
+  buildDesktopFingerprint,
+  buildFingerprintInitScript,
+  parseChromeVersion,
+  userAgentOverrideParams,
+  type DesktopFingerprint,
+} from './browser-fingerprint.js';
 
 /**
  * browser-cdp — minimal Chrome DevTools Protocol client over a WebSocket
@@ -256,6 +263,12 @@ export interface SteelCdpSession {
   evaluateOnNewDocument(expression: string): Promise<void>;
   /** Optional so existing page fakes need not emulate raw CDP network traffic. */
   createNetworkCaptureTransport?(): BrowserNetworkCaptureTransport;
+  /**
+   * Page-scoped cookie read (Network.getCookies for the given URLs) — the
+   * native-path session-context export (KTD-12). Optional so existing page
+   * fakes need not emulate the Network domain.
+   */
+  getCookiesForUrls?(urls: string[]): Promise<Array<Record<string, unknown>>>;
   onClose(listener: () => void): void;
   close(): void;
 }
@@ -263,6 +276,7 @@ export interface SteelCdpSession {
 interface TargetInfo {
   targetId: string;
   type: string;
+  url?: string;
 }
 
 interface EvaluateResult {
@@ -288,8 +302,17 @@ class SteelCdpSessionImpl implements SteelCdpSession {
     if (!page) {
       throw new CdpError('No page target available in Steel browser', 'Target.getTargets');
     }
+    return SteelCdpSessionImpl.attachTo(connection, page.targetId);
+  }
+
+  /**
+   * Attach to a specific target (flattened). The shell path (KTD-6) selects
+   * the per-session browser view's page target from the debug port's target
+   * list instead of Steel's single page.
+   */
+  static async attachTo(connection: CdpConnection, targetId: string): Promise<SteelCdpSessionImpl> {
     const { sessionId } = await connection.send<{ sessionId: string }>('Target.attachToTarget', {
-      targetId: page.targetId,
+      targetId,
       flatten: true,
     });
     const session = new SteelCdpSessionImpl(connection, sessionId);
@@ -416,10 +439,38 @@ class SteelCdpSessionImpl implements SteelCdpSession {
     await this.connection.send('Network.setCookies', { cookies }, this.sessionId);
   }
 
+  async getCookiesForUrls(urls: string[]): Promise<Array<Record<string, unknown>>> {
+    await this.connection.send('Network.enable', {}, this.sessionId).catch(() => undefined);
+    const result = await this.connection.send<{ cookies?: Array<Record<string, unknown>> }>(
+      'Network.getCookies',
+      { urls },
+      this.sessionId,
+    );
+    return result.cookies ?? [];
+  }
+
   async evaluateOnNewDocument(expression: string): Promise<void> {
     await this.connection.send(
       'Page.addScriptToEvaluateOnNewDocument',
       { source: expression },
+      this.sessionId,
+    );
+  }
+
+  /**
+   * KTD-12 fingerprint application (native path): UA override + init script,
+   * target-scoped — both survive later CDP re-attaches (verified on CfT 151),
+   * and the init script's per-document guard makes re-application a no-op.
+   */
+  async applyFingerprint(fingerprint: DesktopFingerprint): Promise<void> {
+    await this.connection.send(
+      'Emulation.setUserAgentOverride',
+      userAgentOverrideParams(fingerprint),
+      this.sessionId,
+    );
+    await this.connection.send(
+      'Page.addScriptToEvaluateOnNewDocument',
+      { source: buildFingerprintInitScript(fingerprint) },
       this.sessionId,
     );
   }
@@ -620,4 +671,350 @@ export async function connectSteelPage(
     },
     { budgetMs, intervalMs },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Native shell path (U7, KTD-6/KTD-12): attach to one page target of a
+// debug-port Chromium (the in-shell Electron views, or an external fallback
+// endpoint per R8/AE2). The shell binds the port to 127.0.0.1 and never sets
+// --remote-allow-origins; this client works because the `ws` transport sends
+// no Origin header (verified against CfT 151).
+// ---------------------------------------------------------------------------
+
+/**
+ * baseUrl convention carrying a native-target address through the existing
+ * `connectPage(baseUrl)` tool-layer contract:
+ *   http://<host>:<port>/__comate-cdp__/t/<targetId>   — attach by exact target
+ *   http://<host>:<port>/__comate-cdp__/m/<marker>     — pick the page target
+ *     whose URL contains <marker> (the pre-navigation about:blank#… marker the
+ *     shell loads a fresh view with; only valid until the first navigation)
+ */
+export const CDP_PAGE_BASE_PATH = '/__comate-cdp__';
+
+export interface CdpPageBaseAddress {
+  host: string;
+  port: number;
+  targetId?: string;
+  urlMarker?: string;
+}
+
+export function buildCdpPageBaseUrl(address: CdpPageBaseAddress): string {
+  const selector = address.targetId
+    ? `t/${encodeURIComponent(address.targetId)}`
+    : `m/${encodeURIComponent(address.urlMarker ?? '')}`;
+  return `http://${address.host}:${address.port}${CDP_PAGE_BASE_PATH}/${selector}`;
+}
+
+/** Parse the __comate-cdp__ baseUrl convention; null for anything else (Steel). */
+export function parseCdpPageBaseUrl(baseUrl: string): CdpPageBaseAddress | null {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    return null;
+  }
+  if (!url.pathname.startsWith(`${CDP_PAGE_BASE_PATH}/`)) return null;
+  const rest = url.pathname.slice(CDP_PAGE_BASE_PATH.length + 1);
+  const [mode, ...tail] = rest.split('/');
+  const value = decodeURIComponent(tail.join('/'));
+  const port = Number(url.port);
+  if (!Number.isInteger(port) || port <= 0 || !value) return null;
+  if (mode === 't') return { host: url.hostname, port, targetId: value };
+  if (mode === 'm') return { host: url.hostname, port, urlMarker: value };
+  return null;
+}
+
+interface JsonVersionInfo {
+  webSocketDebuggerUrl?: string;
+  Browser?: string;
+  'User-Agent'?: string;
+}
+
+interface JsonTargetInfo {
+  id: string;
+  type: string;
+  url: string;
+}
+
+async function fetchJson<T>(url: string, fetchImpl: typeof fetch): Promise<T> {
+  const res = await fetchImpl(url, { signal: AbortSignal.timeout(5_000) });
+  if (!res.ok) {
+    throw new CdpError(`CDP HTTP probe failed: ${res.status} for ${url}`);
+  }
+  return (await res.json()) as T;
+}
+
+/** GET /json/version → browser-level WS URL (and product string). */
+export async function fetchCdpBrowserInfo(
+  address: { host?: string; port: number },
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ browserWsUrl: string; product?: string }> {
+  const host = address.host ?? '127.0.0.1';
+  const info = await fetchJson<JsonVersionInfo>(
+    `http://${host}:${address.port}/json/version`,
+    fetchImpl,
+  );
+  if (!info.webSocketDebuggerUrl) {
+    throw new CdpError('CDP /json/version did not report a browser websocket URL');
+  }
+  return { browserWsUrl: info.webSocketDebuggerUrl, product: info.Browser };
+}
+
+/** GET /json/list — the debug port's target table. */
+export async function listCdpTargets(
+  address: { host?: string; port: number },
+  fetchImpl: typeof fetch = fetch,
+): Promise<JsonTargetInfo[]> {
+  const host = address.host ?? '127.0.0.1';
+  return fetchJson<JsonTargetInfo[]>(`http://${host}:${address.port}/json/list`, fetchImpl);
+}
+
+/**
+ * Resolve the targetId of the page target whose URL carries the marker (the
+ * shell loads a fresh view with `about:blank#<marker>`; verified to survive
+ * in /json/list on CfT 151 and Electron 43). Used once per view, right after
+ * control-channel creation — afterwards the registry pins the targetId
+ * (the marker URL is replaced by the first real navigation).
+ */
+export async function findCdpTargetIdByMarker(
+  address: { host?: string; port: number },
+  urlMarker: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string | undefined> {
+  const targets = await listCdpTargets(address, fetchImpl);
+  return targets.find((target) => target.type === 'page' && target.url.includes(urlMarker))?.id;
+}
+
+export interface ShellPageConnectOptions extends CdpConnectionOptions {
+  /** Debug port (loopback). */
+  port: number;
+  host?: string;
+  /** Injectable browser-level WS URL (tests point at a fake). */
+  browserWsUrl?: string;
+  /** Exact target (post-spawn reconnects, external fallback). */
+  targetId?: string;
+  /** Marker lookup (only before the first navigation). */
+  urlMarker?: string;
+  /**
+   * Apply the KTD-12 desktop-Chrome fingerprint (UA override + init script).
+   * Default true — Steel's default behavior, kept in the native stack.
+   */
+  fingerprint?: boolean;
+  /** Host OS/arch for the fingerprint; default process.platform/arch. */
+  platform?: string;
+  arch?: string;
+  fetchImpl?: typeof fetch;
+}
+
+/**
+ * Connect to a debug-port Chromium and attach (flatten) to one session's
+ * page target, then apply the desktop-Chrome fingerprint (KTD-12). The whole
+ * connect+attach retries across the cold-start window (same 10s/300ms budget
+ * as the Steel path — the shell's view may still be loading its marker page
+ * when the sidecar first dials).
+ */
+export async function connectShellPage(
+  options: ShellPageConnectOptions,
+): Promise<SteelCdpSession> {
+  const budgetMs = options.connectReadyTimeoutMs ?? DEFAULT_CONNECT_READY_TIMEOUT_MS;
+  const intervalMs = options.connectRetryIntervalMs ?? DEFAULT_CONNECT_RETRY_INTERVAL_MS;
+  return retryDuringColdStart(
+    async () => {
+      const browserWsUrl = await resolveBrowserWsUrl(options);
+      const connection = await CdpConnection.connect(browserWsUrl, options);
+      try {
+        const targetId = await resolveShellTargetId(connection, options);
+        const session = await SteelCdpSessionImpl.attachTo(connection, targetId);
+        if (options.fingerprint !== false) {
+          await applyShellFingerprint(connection, session, options);
+        }
+        return session;
+      } catch (err) {
+        connection.close();
+        throw err;
+      }
+    },
+    { budgetMs, intervalMs },
+  );
+}
+
+async function resolveBrowserWsUrl(options: ShellPageConnectOptions): Promise<string> {
+  if (options.browserWsUrl) return options.browserWsUrl;
+  const info = await fetchCdpBrowserInfo(
+    { host: options.host, port: options.port },
+    options.fetchImpl,
+  );
+  return info.browserWsUrl;
+}
+
+async function resolveShellTargetId(
+  connection: CdpConnection,
+  options: ShellPageConnectOptions,
+): Promise<string> {
+  if (options.targetId) return options.targetId;
+  if (options.urlMarker) {
+    const { targetInfos } = await connection.send<{ targetInfos: TargetInfo[] }>(
+      'Target.getTargets',
+    );
+    const page = targetInfos.find(
+      (target) => target.type === 'page' && target.url?.includes(options.urlMarker ?? ''),
+    );
+    if (!page) {
+      throw new CdpError(
+        `No page target carrying the session view marker on debug port ${options.port}`,
+        'Target.getTargets',
+      );
+    }
+    return page.targetId;
+  }
+  throw new CdpError('connectShellPage requires targetId or urlMarker', 'Target.getTargets');
+}
+
+async function applyShellFingerprint(
+  connection: CdpConnection,
+  session: SteelCdpSessionImpl,
+  options: ShellPageConnectOptions,
+): Promise<void> {
+  // Engine version from the browser itself so UA / UA-CH / engine never
+  // disagree (KTD-12). Falls back to the UA when product parsing fails.
+  let chromeVersion: string | undefined;
+  try {
+    const version = await connection.send<{ product?: string; userAgent?: string }>(
+      'Browser.getVersion',
+    );
+    chromeVersion =
+      (version.product ? parseChromeVersion(version.product) : undefined) ??
+      (version.userAgent ? parseChromeVersion(version.userAgent) : undefined);
+  } catch {
+    chromeVersion = undefined;
+  }
+  if (!chromeVersion) {
+    throw new CdpError('Could not determine the attached Chromium version for fingerprinting');
+  }
+  const fingerprint: DesktopFingerprint = buildDesktopFingerprint({
+    platform: options.platform ?? process.platform,
+    arch: options.arch ?? process.arch,
+    chromeVersion,
+  });
+  await session.applyFingerprint(fingerprint);
+}
+
+/** Create a fresh page target on any debug-port Chromium (R8 external fallback). */
+export async function createShellTarget(
+  options: { port: number; host?: string; url?: string; isolate?: boolean; fetchImpl?: typeof fetch },
+): Promise<{ targetId: string; browserContextId?: string }> {
+  const browserWsUrl = await resolveBrowserWsUrl({ port: options.port, host: options.host, fetchImpl: options.fetchImpl });
+  const connection = await CdpConnection.connect(browserWsUrl, {});
+  try {
+    let browserContextId: string | undefined;
+    if (options.isolate) {
+      // A throwaway per-session browser context gives the external fallback
+      // the same cookie/storage isolation the shell's partitions do (KTD-10
+      // semantics, CDP mechanics).
+      const context = await connection.send<{ browserContextId: string }>('Target.createBrowserContext', {
+        disposeOnDetach: false,
+      });
+      browserContextId = context.browserContextId;
+    }
+    try {
+      const { targetId } = await connection.send<{ targetId: string }>('Target.createTarget', {
+        url: options.url ?? 'about:blank',
+        ...(browserContextId ? { browserContextId } : {}),
+      });
+      return browserContextId ? { targetId, browserContextId } : { targetId };
+    } catch (err) {
+      if (browserContextId) {
+        await connection
+          .send('Target.disposeBrowserContext', { browserContextId })
+          .catch(() => undefined);
+      }
+      throw err;
+    }
+  } finally {
+    connection.close();
+  }
+}
+
+/** Close a page target (external-fallback teardown); disposes its isolated context when present. */
+export async function closeShellTarget(
+  options: { port: number; host?: string; targetId: string; browserContextId?: string; fetchImpl?: typeof fetch },
+): Promise<void> {
+  const browserWsUrl = await resolveBrowserWsUrl(options);
+  const connection = await CdpConnection.connect(browserWsUrl, {});
+  try {
+    await connection.send('Target.closeTarget', { targetId: options.targetId });
+    if (options.browserContextId) {
+      await connection
+        .send('Target.disposeBrowserContext', { browserContextId: options.browserContextId })
+        .catch(() => undefined);
+    }
+  } finally {
+    connection.close();
+  }
+}
+
+/**
+ * Unified page connector (U7): routes the __comate-cdp__ baseUrl convention
+ * to the native path and everything else to Steel. This is the default
+ * `connectPage` for the tool layer and the service's internal CDP reads, so
+ * switching a session's CDP target never requires a tool-layer change (AE2).
+ */
+export async function connectBrowserPage(
+  baseUrl: string,
+  options: CdpConnectionOptions = {},
+): Promise<SteelCdpSession> {
+  const address = parseCdpPageBaseUrl(baseUrl);
+  if (!address) {
+    return connectSteelPage(baseUrl, options);
+  }
+  return connectShellPage({
+    ...options,
+    port: address.port,
+    host: address.host,
+    ...(address.targetId ? { targetId: address.targetId } : {}),
+    ...(address.urlMarker ? { urlMarker: address.urlMarker } : {}),
+  });
+}
+
+/**
+ * Native-path session-context export (remember-site / authenticated-request,
+ * AE3): cookies via Network.getCookies for the open page's URLs + web storage
+ * dumped in-page, keyed by page hostname — the vendored Steel export's shape
+ * (its IndexedDB branch is stubbed upstream, so parity = cookies + storage).
+ * Read-only; safe during user_in_control.
+ */
+export async function exportCdpSessionContext(baseUrl: string): Promise<unknown> {
+  const page = await connectBrowserPage(baseUrl, { commandTimeoutMs: 10_000 });
+  try {
+    const href = await page.evaluate<string>('(() => window.location.href)()');
+    if (typeof href !== 'string' || !/^https?:\/\//.test(href)) {
+      return { cookies: [], localStorage: {}, sessionStorage: {} };
+    }
+    const hostname = new URL(href).hostname;
+    const origin = new URL(href).origin;
+    const storage = await page.evaluate<{
+      local: Record<string, string>;
+      session: Record<string, string>;
+    }>(`(() => {
+      var dump = function (store) {
+        var out = {};
+        try {
+          for (var i = 0; i < store.length; i++) {
+            var k = store.key(i);
+            out[k] = store.getItem(k);
+          }
+        } catch (e) {}
+        return out;
+      };
+      return { local: dump(window.localStorage), session: dump(window.sessionStorage) };
+    })()`);
+    const cookies = page.getCookiesForUrls ? await page.getCookiesForUrls([href, origin]) : [];
+    return {
+      cookies,
+      localStorage: { [hostname]: storage.local },
+      sessionStorage: { [hostname]: storage.session },
+    };
+  } finally {
+    page.close();
+  }
 }

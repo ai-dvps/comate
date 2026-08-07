@@ -26,13 +26,17 @@
     "test:browser": "vitest run --project browser",
     "test:browser-cdp": "tsx scripts/test-browser-cdp.ts",
     "test:browser-cdp:required": "tsx scripts/test-browser-cdp.ts --required",
+    "test:shell-cdp": "tsx scripts/test-shell-cdp.ts",
+    "test:shell-cdp:required": "tsx scripts/test-shell-cdp.ts --required",
+    "test:electron-cdp": "tsx scripts/test-electron-cdp.ts",
+    "test:electron-cdp:required": "tsx scripts/test-electron-cdp.ts --required",
     "test:server": "npm run build:contracts && tsx --test-isolation=process --test-concurrency=1 -r ./src/server/test-utils/test-env.ts --test --test-force-exit $(find src/server -name '*.test.ts' -not -path '*/vendor/*')",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "dev:electron": "concurrently \"npm run dev:client\" \"electron-vite dev\"",
     "build:electron": "electron-vite build",
     "dist:electron": "npm run build:electron && electron-builder --config electron-builder.config.ts",
     "test:electron": "tsx --test electron/*.test.ts",
-    "release": "npm run build:sidecar && npm run test:browser-cdp:required && npm run dist:electron"
+    "release": "npm run build:sidecar && npm run test:shell-cdp:required && npm run test:electron-cdp:required && npm run dist:electron"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.220",

@@ -77,12 +77,22 @@ export function selectShutdownGraceMs(reason: ShutdownReason, isUpdating: boolea
  * wires a Windows Job Object with KILL_ON_JOB_CLOSE), add the env here —
  * without it a Windows shutdown/logout can orphan the sidecar.
  */
-export function buildSidecarEnv(opts: { dataDir: string; resourceDir: string }): Record<string, string> {
+export function buildSidecarEnv(opts: {
+  dataDir: string;
+  resourceDir: string;
+  /** U7 (KTD-6/KTD-11): in-shell Chromium CDP + control channel coordinates. */
+  shellDebugPort?: number | undefined;
+  shellControlPort?: number | undefined;
+  shellControlToken?: string | undefined;
+}): Record<string, string> {
   return {
     COMATE_DATA_DIR: opts.dataDir,
     TAURI_RESOURCE_DIR: opts.resourceDir,
     PORT: '0',
     COMATE_SIDECAR: '1',
+    ...(opts.shellDebugPort ? { COMATE_SHELL_DEBUG_PORT: String(opts.shellDebugPort) } : {}),
+    ...(opts.shellControlPort ? { COMATE_SHELL_CONTROL_PORT: String(opts.shellControlPort) } : {}),
+    ...(opts.shellControlToken ? { COMATE_SHELL_CONTROL_TOKEN: opts.shellControlToken } : {}),
   };
 }
 
