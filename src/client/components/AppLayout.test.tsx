@@ -5,14 +5,9 @@ import App from '../App'
 import i18n from '../i18n'
 
 // Keep the test focused on the outer layout shell by stubbing child components.
-vi.mock('@tauri-apps/api/window', () => ({
-  getCurrentWindow: () => ({
-    show: vi.fn(),
-    unminimize: vi.fn(),
-    setFocus: vi.fn(),
-    startDragging: vi.fn(),
-  }),
-}))
+// The desktop bridge is the single boundary for shell capabilities (U2);
+// mock it instead of the old per-package `@tauri-apps/*` modules.
+vi.mock('../lib/desktop-api')
 
 vi.mock('../components/Sidebar', () => ({ default: () => <div data-testid="sidebar" /> }))
 vi.mock('../components/WorkspaceTabs', () => ({ default: () => <div data-testid="workspace-tabs" /> }))

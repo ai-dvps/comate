@@ -2,16 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { openUrlInBrowser, splitTextByUrls } from './open-url'
 
-const invokeMock = vi.fn()
+const openExternalMock = vi.fn()
 const windowOpenMock = vi.fn()
-let tauriInternals: unknown = undefined
+let desktopBridgePresent = false
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: unknown[]) => invokeMock(...args),
-}))
-
-vi.mock('./tauri-api', () => ({
-  isTauri: () => Boolean(tauriInternals),
+vi.mock('./desktop-api', () => ({
+  isDesktop: () => desktopBridgePresent,
+  openExternal: (...args: unknown[]) => openExternalMock(...args),
 }))
 
 describe('splitTextByUrls', () => {
@@ -58,37 +55,38 @@ describe('splitTextByUrls', () => {
 
 describe('openUrlInBrowser', () => {
   beforeEach(() => {
-    invokeMock.mockClear()
+    openExternalMock.mockClear()
     windowOpenMock.mockClear()
-    tauriInternals = undefined
+    desktopBridgePresent = false
     vi.stubGlobal('open', windowOpenMock)
   })
 
-  it('invokes the Tauri open_url command when running in Tauri', async () => {
-    tauriInternals = {}
+  it('delegates to the desktop bridge when running in the Electron shell', async () => {
+    desktopBridgePresent = true
     await openUrlInBrowser('https://example.com')
-    expect(invokeMock).toHaveBeenCalledWith('open_url', { url: 'https://example.com' })
+    expect(openExternalMock).toHaveBeenCalledWith('https://example.com')
     expect(windowOpenMock).not.toHaveBeenCalled()
   })
 
-  it('falls back to window.open when not running in Tauri', async () => {
+  it('falls back to window.open when the bridge is absent (plain browser)', async () => {
     await openUrlInBrowser('https://example.com')
     expect(windowOpenMock).toHaveBeenCalledWith('https://example.com', '_blank', 'noopener')
-    expect(invokeMock).not.toHaveBeenCalled()
+    expect(openExternalMock).not.toHaveBeenCalled()
   })
 
-  it('rejects unsupported schemes without calling invoke or window.open', async () => {
+  it('rejects unsupported schemes without calling the bridge or window.open', async () => {
+    desktopBridgePresent = true
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     await openUrlInBrowser('ftp://example.com')
-    expect(invokeMock).not.toHaveBeenCalled()
+    expect(openExternalMock).not.toHaveBeenCalled()
     expect(windowOpenMock).not.toHaveBeenCalled()
     expect(warnSpy).toHaveBeenCalled()
     warnSpy.mockRestore()
   })
 
-  it('catches invoke failures and logs a warning', async () => {
-    tauriInternals = {}
-    invokeMock.mockRejectedValueOnce(new Error('backend error'))
+  it('catches bridge failures and logs a warning', async () => {
+    desktopBridgePresent = true
+    openExternalMock.mockRejectedValueOnce(new Error('shell error'))
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     await expect(openUrlInBrowser('https://example.com')).resolves.toBeUndefined()
     expect(warnSpy).toHaveBeenCalled()

@@ -33,6 +33,7 @@ export default defineProject({
       'src/client/lib/workflow-utils.test.ts',
       'src/client/lib/structured-report.test.ts',
       'src/client/lib/open-url.test.ts',
+      'src/client/lib/desktop-api.test.ts',
       'src/client/lib/result-focus-view.test.ts',
       'src/client/lib/conversation-view.test.ts',
     ],

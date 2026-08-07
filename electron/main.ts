@@ -15,7 +15,7 @@
  *    the Vite dev server), macOS Edit menu for Cmd+C/V, main.log file logging.
  */
 
-import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, net, protocol, shell } from 'electron';
+import { app, BrowserWindow, Menu, Notification, Tray, dialog, ipcMain, nativeImage, net, protocol, shell } from 'electron';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
@@ -235,6 +235,58 @@ function registerIpcHandlers(): void {
   // electron-updater install path onto this flag).
   ipcMain.handle('comate:prepare-updater-relaunch', () => {
     isUpdating = true;
+  });
+
+  // Shell version (SettingsPanel "Check for updates" footer), previously
+  // @tauri-apps/api/app getVersion().
+  ipcMain.handle('comate:get-app-version', () => app.getVersion());
+
+  // Native folder picker (CreateWorkspaceModal). Resolves null on cancel.
+  ipcMain.handle('comate:open-directory-dialog', async () => {
+    const options: Electron.OpenDialogOptions = {
+      properties: ['openDirectory', 'createDirectory'],
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+
+  // Desktop notifications (scheduler run events, R15/KTD-4). Electron has no
+  // runtime permission API on macOS/Windows — support is the grant signal;
+  // the OS may still prompt/deny at its own level, and the client degrades
+  // to the in-app badge in that case (first-class degraded path).
+  ipcMain.handle('comate:notification-is-permission-granted', () =>
+    Notification.isSupported(),
+  );
+  ipcMain.handle('comate:notification-request-permission', () =>
+    Notification.isSupported(),
+  );
+  ipcMain.handle('comate:notification-send', (_event, options: unknown) => {
+    const { title, body } = (options ?? {}) as { title?: unknown; body?: unknown };
+    if (typeof title !== 'string' || title.length === 0) {
+      throw new Error('notification-send: title is required');
+    }
+    if (!Notification.isSupported()) return;
+    const notification = new Notification({
+      title,
+      body: typeof body === 'string' ? body : undefined,
+    });
+    // Click focuses the window and relays to the renderer, which performs the
+    // session jump (KTD-4) via its onNotificationAction handler.
+    notification.on('click', () => {
+      showMainWindow();
+      mainWindow?.webContents.send('comate:notification-action');
+    });
+    notification.show();
+  });
+
+  // TODO(U5): electron-updater. Until it is wired, check is a benign
+  // "no update available" so the client's periodic checks stay quiet, and
+  // relaunch fails loudly (it is unreachable while check returns null).
+  ipcMain.handle('comate:updater-check', () => null);
+  ipcMain.handle('comate:updater-relaunch', () => {
+    throw new Error('Updater not available yet (U5: electron-updater not wired)');
   });
 }
 

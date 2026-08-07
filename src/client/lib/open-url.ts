@@ -1,5 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
-import { isTauri } from './tauri-api'
+import { isDesktop, openExternal } from './desktop-api'
 
 const URL_REGEX = /https?:\/\/[^\s<>"')\]]+/g
 const TRAILING_PUNCTUATION = /[.,;:!?)\]}>"']+$/
@@ -46,10 +45,10 @@ export function splitTextByUrls(text: string): TextSegment[] {
 /**
  * Open an http/https URL in the system default browser.
  *
- * In the Tauri shell this delegates to the Rust `open_url` command; in a plain
- * browser (dev:client, Playwright tests) it falls back to `window.open`.
- * Failures are caught and logged so a click never produces an unhandled
- * promise rejection.
+ * In the Electron shell this delegates to the desktop bridge (`openExternal`);
+ * in a plain browser (dev:client, Playwright tests) it falls back to
+ * `window.open`. Failures are caught and logged so a click never produces an
+ * unhandled promise rejection.
  */
 export async function openUrlInBrowser(url: string): Promise<void> {
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
@@ -58,8 +57,8 @@ export async function openUrlInBrowser(url: string): Promise<void> {
   }
 
   try {
-    if (isTauri()) {
-      await invoke('open_url', { url })
+    if (isDesktop()) {
+      await openExternal(url)
     } else {
       window.open(url, '_blank', 'noopener')
     }

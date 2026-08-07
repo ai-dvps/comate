@@ -1,15 +1,9 @@
-interface TauriWindow extends Window {
-  __TAURI_INTERNALS__?: unknown;
-}
-
-function isTauri(): boolean {
-  return typeof window !== 'undefined' && !!(window as TauriWindow).__TAURI_INTERNALS__;
-}
+import { isDesktop } from './desktop-api'
 
 let macOSPromise: Promise<boolean> | null = null
 
 async function detectMacOS(): Promise<boolean> {
-  if (!isTauri()) return false
+  if (!isDesktop()) return false
   return typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform)
 }
 

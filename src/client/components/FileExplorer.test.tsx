@@ -5,10 +5,9 @@ import i18n from '../i18n'
 import FileExplorer from './FileExplorer'
 import type { UseFilesResult } from '../stores/files-store'
 
-const mockInvoke = vi.fn()
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: unknown[]) => mockInvoke(...args),
-}))
+import { revealInFileManager } from '../lib/desktop-api'
+
+vi.mock('../lib/desktop-api')
 
 const mockWorkspaceStore = {
   activeWorkspaceId: 'ws-1' as string | null,
@@ -168,6 +167,28 @@ describe('FileExplorer', () => {
 
     expect(screen.getByText('Reveal in Finder')).toBeInTheDocument()
     expect(screen.getByText('Copy full path')).toBeInTheDocument()
+  })
+
+  it('reveals a file via the desktop bridge from the context menu', async () => {
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ nodes: [{ name: 'README.md', type: 'file' }] }),
+      }),
+    ) as unknown as typeof global.fetch
+
+    renderWithI18n(<FileExplorer onFileClick={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('README.md')).toBeInTheDocument()
+    })
+
+    fireEvent.contextMenu(screen.getByText('README.md'))
+    fireEvent.click(screen.getByText('Reveal in Finder'))
+
+    await waitFor(() => {
+      expect(revealInFileManager).toHaveBeenCalledWith('/project/README.md', 'file')
+    })
   })
 
   it('supports single-click select and double-click open for search results', async () => {

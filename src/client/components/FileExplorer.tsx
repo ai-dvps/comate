@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useFiles } from '../stores/files-store'
-import { invoke } from '@tauri-apps/api/core'
+import { revealInFileManager } from '../lib/desktop-api'
 import { ChevronRight, Folder, Loader2, X } from 'lucide-react'
 import { cn } from './ui/utils'
 import { getFileIcon } from '../lib/file-helpers'
@@ -241,7 +241,7 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFileClick }
     const absolutePath = resolveAbsolutePath(contextMenu.itemPath)
     setContextMenu(null)
     try {
-      await invoke('reveal_in_file_manager', { path: absolutePath, itemType: contextMenu.itemType })
+      await revealInFileManager(absolutePath, contextMenu.itemType)
     } catch (err) {
       console.error('Failed to reveal file:', err)
     }

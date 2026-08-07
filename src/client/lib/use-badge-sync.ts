@@ -1,7 +1,6 @@
 import { useEffect } from 'react'
-import { invoke } from '@tauri-apps/api/core'
+import { isDesktop, updateBadgeState } from './desktop-api'
 import { useChatStore } from '../stores/chat-store'
-import { isTauri } from './tauri-api'
 
 export function computeTotalPendingCount(
   sessionStatus: Record<string, { pendingCount: number } | undefined>,
@@ -23,9 +22,9 @@ export function useBadgeSync(): void {
   })
 
   useEffect(() => {
-    if (!isTauri()) return
+    if (!isDesktop()) return
 
-    invoke('update_badge_state', { count: totalPendingCount }).catch((err) => {
+    updateBadgeState(totalPendingCount).catch((err) => {
       console.error('Failed to update badge state:', err)
     })
   }, [totalPendingCount])

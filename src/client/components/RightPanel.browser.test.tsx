@@ -11,9 +11,7 @@ function renderWithI18n(ui: React.ReactElement) {
   return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>)
 }
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(),
-}))
+vi.mock('../lib/desktop-api')
 
 vi.mock('../stores/workspace-store', () => ({
   useWorkspaceStore: (selector?: (s: { activeWorkspaceId: string | null; workspaces: unknown[]; openWorkspaceIds: string[] }) => unknown) =>
