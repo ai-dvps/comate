@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- V8 requires JIT; hardened runtime forbids it unless opted in. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<!-- V8/Chromium also allocate unsigned executable memory. -->
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+	<!-- The app loads frameworks/helpers not signed with the same Team ID
+	     (Electron framework, spawned sidecar toolchain). -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>

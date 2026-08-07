@@ -14,9 +14,7 @@ import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
-  assertNoDanglingSymlinks,
   assertNoNativeArtifacts,
-  assertNoNonAsciiPaths,
   assertSizeBudget,
   walkFiles,
 } from '../src/server/utils/native-artifact-audit.js';
@@ -675,13 +673,10 @@ async function build(): Promise<void> {
         `(budget ${(STEEL_SIZE_BUDGET_BYTES / (1024 * 1024)).toFixed(0)} MiB)`,
     );
 
-    console.log('\n--- Symlink audit ---');
-    assertNoDanglingSymlinks(staging);
-    console.log('clean (no dangling symlinks)');
-
-    console.log('\n--- Non-ASCII path audit ---');
-    assertNoNonAsciiPaths(staging);
-    console.log('clean (no non-ASCII paths)');
+    // The dangling-symlink and non-ASCII-path audits were re-homed (U3,
+    // KTD-13) to scripts/build-sidecar.ts, which runs them over the entire
+    // staged src-tauri/resources tree (of which this Steel tree is a subtree)
+    // at the end of resource staging.
 
     writeManifest(staging, bytes);
 
