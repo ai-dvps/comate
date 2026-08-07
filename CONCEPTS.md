@@ -68,3 +68,8 @@ SkillHub 中以企业为发现入口的标准 Skill 目录。用户先浏览企�
 
 ### 专家包 (Expert Package)
 由一个专家包专用编排项和多个标准子 Skills 组成的完整工作流能力。编排项不是业界标准 Skill，但会以运行时可加载的 `SKILL.md` 写入共享作用域，并通过 `skillhub-package:` 来源识别为 `expert-package-orchestrator`，在 Installed 中专门标记。安装专家包会在同一作用域安装编排项与全部子 Skills；从包内 Skill 详情安装时只安装当前 Skill。
+
+## Desktop shell
+
+### 桥接版本 (bridge release)
+Tauri→Electron 壳迁移中，最后一个 Tauri 版本承担的特殊角色：其自动更新通道指向首个 Electron 安装包，把存量用户平滑带到 Electron 线；更新失败时用户可回滚到该版本安装包。Linux 无桥接版本——首个 Linux 版本即 Electron 版本。
