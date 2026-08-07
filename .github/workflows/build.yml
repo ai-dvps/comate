@@ -1,86 +1,246 @@
 name: Build
 
+# U4 (R3 CI, KTD-3, KTD-9): electron-builder release pipeline.
+#
+# Flow per platform: sidecar → shell-path CDP gate → shell bundle →
+# electron-builder package → signature verification → update-manifest guard →
+# draft-release endpoint test. Guards ported from the tauri-era pipeline
+# (docs/solutions/workflow-issues/tauri-v2-signed-auto-updater-ci-release.md):
+# conditional signing config, draft-first-then-test-endpoints, and
+# missing-manifest = build failure.
+#
+# Signing readiness contract (mirrors electron-builder.config.ts):
+#  - Credentials present → signed/notarized build, update manifests
+#    (latest.yml / latest-mac.yml + blockmaps) emitted, draft release published.
+#  - Credentials absent → UNSIGNED smoke build with publish: null (no
+#    manifests, nothing uploaded); the signature/manifest/endpoint guards key
+#    off the same variables and skip in lockstep, so an unsigned run can never
+#    half-publish.
+#
+# FOOTGUN (KTD-1): electron-builder does NOT auto-discover
+# electron-builder.config.ts — the --config flag below is load-bearing. A bare
+# run silently builds with defaults and attempts an Electron-ABI rebuild of
+# better-sqlite3, corrupting the sidecar resource. The effective-config guard
+# step fails the build if our config was not loaded.
+
 on:
   push:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build:
-    permissions:
-      contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Single macOS arm64 runner produces BOTH architectures in one
+          # electron-builder invocation (U3: the shell has no native modules,
+          # so no universal build is needed).
           - platform: macos-latest
-            args: '--target aarch64-apple-darwin'
-          - platform: macos-latest
-            args: '--target x86_64-apple-darwin'
+            builder-args: '--mac --x64 --arm64'
           - platform: windows-2022
-            args: ''
+            builder-args: '--win'
+          # TODO(U10): Linux targets (AppImage + deb) are configured in
+          # electron-builder.config.ts but join the matrix only in U10:
+          # - platform: ubuntu-22.04
+          #   builder-args: '--linux'
 
     runs-on: ${{ matrix.platform }}
     env:
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      # Signing credentials injected from GitHub secrets (KTD-9). Absent
+      # secrets evaluate to empty strings; electron-builder.config.ts then
+      # skips signing AND suppresses update manifests, and the guard steps
+      # below skip too.
+      # macOS: base64 .p12 (CSC_LINK; CSC_NAME keychain identity is the local
+      # alternative, not used in CI) + App Store Connect API key for
+      # notarization (APPLE_API_KEY holds the .p8 CONTENTS; a step below
+      # materializes it to a file because notarytool needs a key path).
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      # Windows: Azure Trusted Signing (cloud Authenticode). The first three
+      # are the standard Microsoft Entra auth vars; the last four describe the
+      # signing account/profile consumed by electron-builder azureSignOptions.
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TRUSTED_SIGNING_PUBLISHER: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER }}
+      AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+      AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
+      AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # >= 22.12 for CI robustness. electron-builder stays pinned at
+          # 26.12.1 regardless (26.14+ hard-crashes on Node 20.11 via the
+          # noble/hashes ESM require).
+          node-version: 22
           cache: npm
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Install npm dependencies
         run: npm ci
 
-      - name: Build Tauri app
-        id: build_tauri
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Comate ${{ github.ref_name }}'
-          releaseBody: 'See the assets to download and install this version.'
-          releaseDraft: true
-          prerelease: false
-          args: ${{ matrix.args }} ${{ env.TAURI_SIGNING_PRIVATE_KEY != '' && '--config src-tauri/updater-ci.json' || '' }}
+      - name: Materialize App Store Connect API key (macOS)
+        if: runner.os == 'macOS' && env.APPLE_API_KEY != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$APPLE_API_KEY" > "$RUNNER_TEMP/AuthKey.p8"
+          # Re-export as the key-file PATH notarytool expects; subsequent
+          # steps (incl. packaging) see the path, not the .p8 contents.
+          echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
 
-      - name: Verify updater artifacts
-        if: env.TAURI_SIGNING_PRIVATE_KEY != ''
+      # Mirrors the `release` npm script (build:sidecar + CDP gate +
+      # electron-builder), split into steps so CI can add publish flags and
+      # per-guard conditions.
+      - name: Build sidecar
+        run: npm run build:sidecar
+
+      # TODO(U7): 壳径 CDP 门禁占位 — U7 delivers the shell-path (in-app
+      # Chromium) CDP e2e gate and wires it into the `release` script; until
+      # then the existing Steel-path required gate stands in.
+      - name: Shell-path CDP gate (U7 placeholder)
+        run: npm run test:browser-cdp:required
+
+      - name: Build shell bundle
+        run: npm run build:electron
+
+      - name: Determine signing readiness
+        id: signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Must match the releaseReady logic in electron-builder.config.ts:
+          # macOS requires signature AND notarization, Windows requires the
+          # Azure Trusted Signing profile.
+          ready=false
+          if [ "${{ runner.os }}" = 'macOS' ] && [ -n "$CSC_LINK" ] \
+             && [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_KEY_ID" ] && [ -n "$APPLE_API_ISSUER" ]; then
+            ready=true
+          elif [ "${{ runner.os }}" = 'Windows' ] && [ -n "$AZURE_TRUSTED_SIGNING_ACCOUNT" ]; then
+            ready=true
+          fi
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
+
+      - name: Package (publish draft release when signed)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Signed → --publish onTagOrDraft uploads artifacts + update manifests
+        # to the tag's DRAFT release. Unsigned → --publish never: a smoke
+        # build that cannot half-publish (config publish is already null).
+        # --config is load-bearing: see the FOOTGUN note at the top.
+        run: npx electron-builder --config electron-builder.config.ts ${{ matrix.builder-args }} ${{ steps.signing.outputs.ready == 'true' && '--publish onTagOrDraft' || '--publish never' }}
+
+      - name: Guard electron-builder config discovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Proves --config electron-builder.config.ts was honored (a default
+          # run would produce the wrong layout and an ABI-broken sidecar).
+          eff=release/builder-effective-config.yaml
+          [ -f "$eff" ] || { echo "::error::$eff missing — electron-builder.config.ts was not loaded"; exit 1; }
+          grep -q 'com.comate.app' "$eff" || { echo "::error::effective config lacks appId com.comate.app"; exit 1; }
+          echo "electron-builder.config.ts loaded (appId com.comate.app)"
+
+      - name: Unsigned smoke build notice
+        if: steps.signing.outputs.ready != 'true'
+        shell: bash
+        run: |
+          echo "::warning::Signing credentials absent — artifacts are UNSIGNED, no update manifests emitted, nothing published. This is a smoke build, not a release."
+
+      - name: Verify macOS signature and notarization
+        if: runner.os == 'macOS' && steps.signing.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apps=(release/mac*/Comate.app)
+          [ "${#apps[@]}" -ge 2 ] || { echo "::error::expected x64 + arm64 unpacked apps under release/, found ${#apps[@]}"; exit 1; }
+          for app in "${apps[@]}"; do
+            echo "== $app =="
+            codesign --verify --deep --strict --verbose=2 "$app"
+            spctl --assess --type execute -vv "$app"
+            xcrun stapler validate "$app"
+          done
+          for dmg in release/*.dmg; do
+            xcrun stapler validate "$dmg"
+          done
+          echo "macOS signatures + notarization staples verified"
+
+      - name: Verify Windows Authenticode signatures
+        if: runner.os == 'Windows' && steps.signing.outputs.ready == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Cover app exe, NSIS installer, and uninstaller.
+          $targets = @()
+          $targets += Get-ChildItem 'release/win-unpacked/Comate.exe' -ErrorAction Stop
+          $targets += Get-ChildItem 'release/win-unpacked/Uninstall*.exe' -ErrorAction Stop
+          $targets += Get-ChildItem 'release/Comate-*-win-*.exe' -ErrorAction Stop
+          foreach ($t in $targets) {
+            $sig = Get-AuthenticodeSignature $t.FullName
+            Write-Host "$($t.Name): $($sig.Status)"
+            if ($sig.Status -ne 'Valid') {
+              throw "Authenticode verification failed for $($t.FullName): $($sig.Status)"
+            }
+          }
+
+      - name: Guard update manifests (signed builds)
+        if: steps.signing.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Ported from the tauri-era structural guard: a signed build with no
+          # update manifest is a broken release → CI red. Blockmaps are the
+          # differential-download companions and must ship alongside.
+          compgen -G 'release/*.blockmap' > /dev/null || { echo "::error::no .blockmap files under release/"; exit 1; }
+          if [ "${{ runner.os }}" = 'macOS' ]; then
+            [ -s release/latest-mac.yml ] || { echo "::error::missing release/latest-mac.yml"; exit 1; }
+            # Dual-arch integration guard: latest-mac.yml must list BOTH the
+            # x64 and the arm64 assets from the single-runner dual-arch build.
+            grep -q 'arm64' release/latest-mac.yml || { echo "::error::latest-mac.yml missing arm64 asset"; exit 1; }
+            grep -q 'x64' release/latest-mac.yml || { echo "::error::latest-mac.yml missing x64 asset"; exit 1; }
+          elif [ "${{ runner.os }}" = 'Windows' ]; then
+            [ -s release/latest.yml ] || { echo "::error::missing release/latest.yml"; exit 1; }
+          fi
+          # TODO(U10): linux job → guard release/latest-linux.yml here.
+          echo "Update manifests + blockmaps present"
+
+      # Draft-first-then-test-endpoints (ported from the tauri-era guard):
+      # GitHub's /releases/latest/download/* convenience endpoint only
+      # resolves for PUBLISHED releases, so the draft's asset list is tested
+      # via the API instead. The release is published manually after all
+      # matrix legs are green.
+      - name: Test draft release endpoints
+        if: steps.signing.outputs.ready == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_ID: ${{ steps.build_tauri.outputs.releaseId }}
         run: |
           set -euo pipefail
-
-          if ! find src-tauri/target -name '*.sig' -print -quit | grep -q .; then
-            echo "Missing updater signatures"
-            exit 1
+          assets="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" --jq '.assets[].name')"
+          echo "$assets"
+          if [ "${{ runner.os }}" = 'macOS' ]; then
+            manifest=latest-mac.yml
+          elif [ "${{ runner.os }}" = 'Windows' ]; then
+            manifest=latest.yml
           fi
+          echo "$assets" | grep -Fxq "$manifest" || { echo "::error::draft release missing $manifest asset"; exit 1; }
+          echo "Draft release carries $manifest"
 
-          if [ ! -s latest.json ]; then
-            echo "Missing local latest.json updater manifest"
-            exit 1
-          fi
-
-          if [ -z "${RELEASE_ID}" ]; then
-            echo "Missing release id from tauri-action"
-            exit 1
-          fi
-
-          if ! gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" --jq '.[].name' | grep -Fxq latest.json; then
-            echo "Missing latest.json updater manifest release asset"
-            exit 1
-          fi
-
-          echo "Updater artifacts present"
+      # TODO(U6): tauri-format latest.json bridge manifest (KTD-3 dual
+      # manifest families). U6's generator produces latest.json pointing at
+      # the Electron installers and uploads it to this same draft release;
+      # extend the endpoint test above to fail when latest.json is absent
+      # (KTD-3: from the bridge release onward, missing latest.json = build
+      # failure). Until U6 lands, latest.json is intentionally unchecked.
