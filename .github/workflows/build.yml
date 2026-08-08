@@ -389,27 +389,49 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
+      # The bridge needs the FINAL signed mac+win artifacts, so its sentinel
+      # is the full signing chain — not the tauri key alone: without mac
+      # (CSC + notarize) and Windows (Azure) credentials the matrix legs run
+      # unsigned and publish nothing, and this job must skip in lockstep
+      # rather than fail on missing draft assets.
+      - name: Determine bridge readiness
+        id: gating
+        shell: bash
+        run: |
+          set -euo pipefail
+          ready=false
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && [ -n "$CSC_LINK" ] \
+             && [ -n "$APPLE_API_KEY" ] && [ -n "$AZURE_TRUSTED_SIGNING_ACCOUNT" ]; then
+            ready=true
+          fi
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
+
       - name: Setup Node.js
+        if: steps.gating.outputs.ready == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
       - name: Install npm dependencies
+        if: steps.gating.outputs.ready == 'true'
         run: npm ci
 
       - name: Unsigned run notice
-        if: env.TAURI_SIGNING_PRIVATE_KEY == ''
+        if: steps.gating.outputs.ready != 'true'
         shell: bash
         run: |
-          echo "::notice::TAURI_SIGNING_PRIVATE_KEY absent — unsigned smoke run; skipping bridge manifest (lockstep with the unsigned matrix legs)."
+          echo "::notice::signing chain incomplete (tauri key / mac CSC+notarize / Windows Azure) — unsigned smoke run; skipping bridge manifest (lockstep with the unsigned matrix legs)."
 
       - name: Download bridge signatures
-        if: env.TAURI_SIGNING_PRIVATE_KEY != ''
+        if: steps.gating.outputs.ready == 'true'
         uses: actions/download-artifact@v4
         with:
           pattern: bridge-signatures-*
@@ -419,7 +441,7 @@ jobs:
       # Download the FINAL bridge assets from the draft release itself, so the
       # signature check below verifies exactly the bytes users will get.
       - name: Download bridge assets from the draft release
-        if: env.TAURI_SIGNING_PRIVATE_KEY != ''
+        if: steps.gating.outputs.ready == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -434,7 +456,7 @@ jobs:
           ls -la bridge-assets bridge-sigs bridge-yml
 
       - name: Generate + verify + upload latest.json
-        if: env.TAURI_SIGNING_PRIVATE_KEY != ''
+        if: steps.gating.outputs.ready == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -465,11 +487,13 @@ jobs:
       # latest.json (old line) and latest*.yml (new line). Missing
       # latest.json = build failure, from the bridge release onward.
       - name: Guard dual manifest families on the draft release
-        if: env.TAURI_SIGNING_PRIVATE_KEY != ''
+        if: steps.gating.outputs.ready == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          assets="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" --jq '.assets[].name')"
+          # gh release view, not the REST tags endpoint — the latter 404s on
+          # drafts whose tag was deleted/re-created (see the per-leg step).
+          assets="$(gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name')"
           echo "$assets"
           echo "$assets" | grep -Fxq 'latest.json' || { echo "::error::draft release missing latest.json (tauri bridge manifest)"; exit 1; }
           echo "$assets" | grep -Eq '^latest(-mac|-linux)?\.yml$' || { echo "::error::draft release missing latest*.yml (electron-updater manifests)"; exit 1; }
