@@ -190,12 +190,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Proves --config electron-builder.config.ts was honored (a default
-          # run would produce the wrong layout and an ABI-broken sidecar).
-          eff=release/builder-effective-config.yaml
-          [ -f "$eff" ] || { echo "::error::$eff missing — electron-builder.config.ts was not loaded"; exit 1; }
-          grep -q 'com.comate.app' "$eff" || { echo "::error::effective config lacks appId com.comate.app"; exit 1; }
-          echo "electron-builder.config.ts loaded (appId com.comate.app)"
+          # Proves electron-builder.config.ts loads and carries our appId —
+          # a default discovery run would silently use package.json defaults
+          # (wrong layout, ABI-broken sidecar). electron-builder 26 does NOT
+          # write builder-effective-config.yaml, so check the config directly
+          # with the same TS loader the repo uses everywhere (tsx is a devDep).
+          npx tsx -e "void (async () => { const {default: c} = await import('./electron-builder.config.ts'); if (c?.appId !== 'com.comate.app') { console.error('appId mismatch:', c?.appId); process.exit(1); } console.log('electron-builder config OK: appId', c.appId); })()"
 
       - name: Unsigned smoke build notice
         if: steps.signing.outputs.ready != 'true'
