@@ -35,6 +35,12 @@ This architecture lets us ship a self-contained desktop app while keeping the UI
    ```
    This starts the Vite dev client and the Electron shell together.
 
+   On macOS the dev shell's menu bar / dock show "Comate" (not "Electron") via
+   `scripts/patch-electron-dev-name.mjs`, which patches the installed Electron
+   bundle's `Info.plist` — it runs on `postinstall`, so re-run `npm install`
+   (or the script directly) after any Electron upgrade. The patch lives in
+   `node_modules` and never affects packaged builds.
+
 > **Note:** Do not run `npm run dev` (which starts both server and client via `concurrently`) alongside `npm run dev:electron`, as both would try to start the Vite client and cause a port conflict.
 
 ## Key Directories
