@@ -307,6 +307,23 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # Installers as CI artifacts on every leg: unsigned smoke builds never
+      # reach the draft release (--publish never), and even signed runs benefit
+      # from a direct download that doesn't touch the release. Unsigned builds
+      # are suffixed -unsigned-smoke so nobody ships them by mistake.
+      - name: Upload installers (workflow artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ runner.os }}${{ steps.signing.outputs.ready != 'true' && '-unsigned-smoke' || '' }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+            release/*.AppImage
+            release/*.deb
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Guard update manifests (signed builds)
         if: steps.signing.outputs.ready == 'true'
         shell: bash
