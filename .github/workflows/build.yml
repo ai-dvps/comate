@@ -314,8 +314,13 @@ jobs:
           set -euo pipefail
           # Ported from the tauri-era structural guard: a signed build with no
           # update manifest is a broken release → CI red. Blockmaps are the
-          # differential-download companions and must ship alongside.
-          compgen -G 'release/*.blockmap' > /dev/null || { echo "::error::no .blockmap files under release/"; exit 1; }
+          # differential-download companions and must ship alongside — but on
+          # Linux electron-builder embeds the AppImage blockmap INSIDE the
+          # .AppImage (no separate file, deb never has one), so the blockmap
+          # file check only applies to macOS/Windows.
+          if [ "${{ runner.os }}" != 'Linux' ]; then
+            compgen -G 'release/*.blockmap' > /dev/null || { echo "::error::no .blockmap files under release/"; exit 1; }
+          fi
           if [ "${{ runner.os }}" = 'macOS' ]; then
             [ -s release/latest-mac.yml ] || { echo "::error::missing release/latest-mac.yml"; exit 1; }
             # Dual-arch integration guard: latest-mac.yml must list BOTH the

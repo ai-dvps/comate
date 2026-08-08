@@ -29,6 +29,13 @@
 !ifndef COMATE_LEGACY_CLEANUP_NSH
 !define COMATE_LEGACY_CLEANUP_NSH
 
+; Install-time only: electron-builder runs makensis twice (installer +
+; BUILD_UNINSTALLER) over the same include. In the uninstaller context
+; customInstall is never inserted, so unguarded install functions trip
+; warning 6010 ("function not referenced"), which makensis treats as an
+; error in the electron-builder pipeline.
+!ifndef BUILD_UNINSTALLER
+
 !include LogicLib.nsh
 
 Var /GLOBAL LegacyMsiProductCode
@@ -137,5 +144,7 @@ FunctionEnd
     ${EndIf}
   ${EndIf}
 !macroend
+
+!endif ; BUILD_UNINSTALLER
 
 !endif ; COMATE_LEGACY_CLEANUP_NSH
