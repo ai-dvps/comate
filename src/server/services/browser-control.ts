@@ -34,7 +34,10 @@ import { browserAuditService, type BrowserAuditService } from './browser-audit.j
  *    browser-service's onPendingCardRelease (U1 hook, tolerates a dead
  *    runtime); runtime rebuilds arrive through chat-service's chained
  *    pre-close listener (the single-slot onRuntimeClose stays with the WS
- *    server — this service never overwrites it, KTD-5).
+ *    server — this service never overwrites it, KTD-5). Explicit closes
+ *    (human/agent/idle — the U1 close sink) arrive through the browser_closed
+ *    event, because the close path sets expectingExit and the crash releasers
+ *    never run; the pending card is released with a browser_closed ending.
  */
 
 /** Server-fixed handoff timeout (KTD-6): 10 minutes, never agent-influenced. */
@@ -135,7 +138,8 @@ export type HandoffEndReason =
   | 'declined'
   | 'timeout'
   | 'crash'
-  | 'runtime_closed';
+  | 'runtime_closed'
+  | 'browser_closed';
 
 export interface BrowserHandoffCompletion {
   reason: HandoffEndReason;
@@ -243,6 +247,15 @@ export class BrowserControlService {
     // the runtime already being gone — the resolver injection no-ops then.
     this.deps.browserService.onPendingCardRelease((sessionId) => {
       this.handleCrashRelease(sessionId);
+    });
+    // Explicit-close path (U1 close sink): teardownSession sets expectingExit
+    // and deletes the registry entry, so handleProcessExit — and with it the
+    // crash releasers — never runs. Without this subscription a pending
+    // handoff card would hang until the 10-minute timeout after a human/idle
+    // close. browser_closed fires on every close path (human, agent, idle,
+    // session/workspace teardown).
+    this.deps.browserService.onEvent((event) => {
+      if (event.type === 'browser_closed') this.handleBrowserClosed(event.sessionId);
     });
   }
 
@@ -561,6 +574,34 @@ export class BrowserControlService {
     }
   }
 
+  /**
+   * Explicit-close release (U1 close sink → browser_closed): mirrors the
+   * crash release, but the ending is a deliberate close, not a session loss —
+   * the deny continuation classifies it browser_closed (recoverable) and
+   * completeHandoff's state flip no-ops because the registry entry is already
+   * gone. An already-recorded ending wins (a session delete fires the
+   * runtime-close hook before the browser teardown emits browser_closed).
+   */
+  private handleBrowserClosed(sessionId: string): void {
+    const record = this.records.get(sessionId);
+    if (!record) return;
+    if (record.endedBy) return;
+    record.endedBy = 'browser_closed';
+    this.clearTimer(record);
+    if (record.cardRequestId) {
+      // Tolerates a dead runtime — the same resolver contract the crash
+      // release relies on.
+      this.deps.resolveApprovalCard?.(
+        sessionId,
+        record.cardRequestId,
+        'deny',
+        'The browser was closed during the handoff.',
+      );
+    } else {
+      this.completeHandoff(sessionId, 'browser_closed');
+    }
+  }
+
   private armTimer(record: HandoffRecord): void {
     record.timerHandle = this.deps.timer.set(() => {
       this.handleTimeout(record.sessionId);
@@ -611,6 +652,8 @@ export class BrowserControlService {
         return 'handoff_timeout';
       case 'runtime_closed':
         return 'runtime_closed';
+      case 'browser_closed':
+        return 'browser_closed';
       case 'crash':
         return 'crash';
     }

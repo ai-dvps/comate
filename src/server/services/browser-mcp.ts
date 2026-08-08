@@ -395,6 +395,8 @@ const HANDOFF_END_DETAILS: Partial<Record<HandoffEndReason, string>> = {
     'The handoff timed out after 10 minutes without a response. Explain in the chat that the task is paused and can resume whenever the user is ready — they can take over from the browser panel or you can request a new handoff.',
   runtime_closed:
     'The chat session was rebuilt while the handoff was pending. The browser session is unaffected; re-request the handoff if it is still needed.',
+  browser_closed:
+    'The browser was closed while the handoff was pending, so the takeover ended without a handback. Reopen the browser and re-request the handoff if it is still needed.',
 };
 
 const INSPECT_ATTRIBUTE_ALLOWLIST = new Set([
@@ -1661,7 +1663,11 @@ export class BrowserToolContext {
       );
     }
 
-    const includeDiff = completion.reason === 'handed_back' || completion.phase === 'in_takeover';
+    // A closed browser is never re-distilled: ensurePage would transparently
+    // respawn the session the human just closed.
+    const includeDiff =
+      completion.reason !== 'browser_closed' &&
+      (completion.reason === 'handed_back' || completion.phase === 'in_takeover');
     let delta: ReturnType<typeof diffPageModels> | undefined;
     let model: PageModel | undefined;
     if (includeDiff) {
