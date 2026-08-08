@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - UI preferences kept in webview storage (panel open/closed, pane widths) reset once on first launch of the Electron build.
   - Site logins in the embedded browser do not carry over from the old browser runtime; sites saved via "Remember this site" sign back in automatically on first use, other sites need one fresh login.
   - On first launch the app deletes the legacy browser residue (old profiles, pidfiles, and the downloaded browser cache); remembered-site login data is preserved.
-  - On Windows, the old Tauri installation is cleaned up automatically by the bridge installer (由桥接安装包承担).
+  - On Windows, the old Tauri installation is detected and removed by the new installer automatically (one UAC prompt; if declined, the old entry points are neutralized instead).
   - For support and enterprise-ops scenarios, the browser tools can be pointed at an operator-supplied Chromium without a client release via `COMATE_BROWSER_CDP_TARGET` (see development.md).
 
 ### Added
@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Handoff approval card no longer hangs when the browser closes** — Closing the embedded browser (or an idle auto-close) while a takeover/handback approval card is pending now resolves the card immediately with a "browser was closed" result instead of leaving the agent's tool call hanging until the 10-minute timeout.
 - **Compacting conversation progress bar width** — The "Compacting conversation…" progress bar no longer stretches to the full conversation width; it now matches the centered message column (`max-w-3xl`) like the rest of the messages.
 - **Todo "Start session" now loads the new session** — Starting a session from a todo's detail pane no longer left the workspace's session list stale. The run is created server-side, so the workspace's session list is now reloaded and the freshly started session is opened (and begins streaming) immediately after the run kicks off.
 
