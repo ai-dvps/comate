@@ -30,6 +30,7 @@
     "test:server": "npm run build:contracts && tsx --test-isolation=process --test-concurrency=1 -r ./src/server/test-utils/test-env.ts --test --test-force-exit $(find src/server -name '*.test.ts' -not -path '*/vendor/*')",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "dev:electron": "concurrently \"npm run dev:client\" \"electron-vite dev\"",
+    "postinstall": "node scripts/patch-electron-dev-name.mjs",
     "build:electron": "electron-vite build",
     "dist:electron": "npm run build:electron && electron-builder --config electron-builder.config.ts",
     "test:electron": "tsx --test electron/*.test.ts",
