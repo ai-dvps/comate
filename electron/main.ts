@@ -574,10 +574,16 @@ function registerUiProtocol(): void {
 
 function setupTray(): void {
   try {
+    // Menu-bar icons render at ~18pt; feeding the 512px app icon directly
+    // produces an oversized tray glyph.
+    let trayIcon = nativeImage.createFromPath(shellIconPath());
+    if (process.platform === 'darwin') {
+      trayIcon = trayIcon.resize({ width: 18 });
+    }
     trayHandle = createTray({
       TrayClass: Tray,
       MenuClass: Menu,
-      icon: nativeImage.createFromPath(shellIconPath()),
+      icon: trayIcon,
       onOpen: showMainWindow,
       onQuit: () => initiateQuit('tray-quit'),
       logger,
@@ -803,6 +809,12 @@ void debugPortConfigured.then(() => {
 
   void app.whenReady().then(async () => {
     logger.info(`Comate shell starting (data dir: ${legacyDataDir})`);
+    // macOS dock icon: BrowserWindow's `icon` option is ignored on darwin, so
+    // dev mode would otherwise show Electron's default icon; packaged builds
+    // already get the dock icon from the bundled icns (same artwork).
+    if (process.platform === 'darwin') {
+      app.dock?.setIcon(nativeImage.createFromPath(shellIconPath()));
+    }
     // U9: sweep legacy browser-stack residue (profiles / pidfiles / Chromium
     // extraction caches) — idempotent, best-effort, never blocks startup;
     // the site-auth store (data.db) is preserved by construction.
