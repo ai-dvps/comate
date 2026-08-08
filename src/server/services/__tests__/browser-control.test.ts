@@ -872,6 +872,67 @@ describe('browser-control crash and runtime close', () => {
     assert.strictEqual(h.service.getSession('sess-1') !== undefined, true);
   });
 
+  it('explicit close while the takeover card is pending releases the card (closed reason, no hang)', async () => {
+    const h = track(await makeHarness());
+    await h.call('open', { url: 'https://shop.example/checkout' });
+
+    const pending = h.call('requestHandoff', { reason: 'Log in' });
+    await flush();
+    // The human closes the browser while card #1 is pending: expectingExit
+    // short-circuits handleProcessExit, so the crash releasers never run —
+    // the close path itself must release the card.
+    await h.service.closeSession('sess-1', 'human');
+
+    // Race against a short deadline: pre-fix the tool-call promise hangs past
+    // the 10-minute handoff timer instead of settling.
+    const result = await Promise.race([
+      pending,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 500)),
+    ]);
+    assert.ok(result, 'the handoff tool call must settle when the browser is closed');
+    assert.strictEqual(result.isError, undefined);
+    const payload = resultPayload(result);
+    assert.strictEqual(payload.handoffCompleted, false);
+    assert.strictEqual(payload.reason, 'browser_closed');
+    assert.deepStrictEqual(h.channel.resolutions.map((r) => [r.requestId, r.result]), [
+      ['browser-handoff-sess-1-1', 'deny'],
+    ]);
+    assert.ok(h.channel.resolutions[0].message?.includes('closed'));
+    assert.strictEqual(h.control.getHandoff('sess-1'), undefined);
+    // The close must not be undone by a diff-driven respawn.
+    assert.strictEqual(viewCount(h), 1);
+  });
+
+  it('explicit close mid-takeover releases the handback card without respawning the browser', async () => {
+    const h = track(await makeHarness());
+    await h.call('open', { url: 'https://shop.example/checkout' });
+
+    const pending = h.call('requestHandoff', { reason: 'Log in' });
+    await flush();
+    h.control.takeover('sess-1');
+    await flush();
+    assert.strictEqual(h.channel.cards.length, 2);
+
+    await h.service.closeSession('sess-1', 'idle');
+
+    const result = await Promise.race([
+      pending,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 500)),
+    ]);
+    assert.ok(result, 'the handoff tool call must settle when the browser is closed mid-takeover');
+    assert.strictEqual(result.isError, undefined);
+    const payload = resultPayload(result);
+    assert.strictEqual(payload.handoffCompleted, false);
+    assert.strictEqual(payload.reason, 'browser_closed');
+    assert.deepStrictEqual(h.channel.resolutions.map((r) => [r.requestId, r.result]), [
+      ['browser-handoff-sess-1-1', 'allow'], // the takeover grant
+      ['browser-handoff-sess-1-2', 'deny'], // the close release
+    ]);
+    assert.strictEqual(h.control.getHandoff('sess-1'), undefined);
+    // No state diff against a closed browser — ensurePage must not respawn it.
+    assert.strictEqual(viewCount(h), 1);
+  });
+
   it('session switching keeps the server-side control state (capture release is client-side)', async () => {
     const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
