@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-08
+
 ### Changed
 
 - **Desktop shell migrated from Tauri to Electron** — The app now ships on an Electron shell (same React UI, same Express sidecar, same data directory). The embedded browser no longer downloads or bundles its own Chrome for Testing runtime; browser sessions run as native, per-session isolated views inside the shell itself, which makes the app roughly 267 MB lighter. Linux (AppImage, plus deb) joins macOS and Windows as a supported desktop target. Behavior notes for existing installs:
