@@ -331,8 +331,10 @@ function createMainWindow(): BrowserWindow {
     icon: nativeImage.createFromPath(shellIconPath()),
     // macOS parity with the Tauri shell (Overlay + hiddenTitle): the client
     // reserves pl-20 for the traffic lights and drags via -webkit-app-region.
+    // Tauri's trafficLightPosition y is center-based (22 = half of the h-11
+    // header); Electron's is the button's top edge, so 22 - 6 (12px button).
     ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 14, y: 22 } }
+      ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 14, y: 16 } }
       : {}),
     webPreferences: {
       preload: join(__dirname, '..', 'preload', 'preload.cjs'),
