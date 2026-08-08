@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { syncTitleBarOverlay } from '../lib/desktop-api'
 
 type Theme = 'dark' | 'light'
 
@@ -34,6 +35,8 @@ export function useTheme() {
     } else {
       root.classList.remove('dark')
     }
+    // Keep the Windows title-bar caption buttons in sync with the app theme.
+    syncTitleBarOverlay(newTheme)
   }, [])
 
   const setTheme = useCallback(
@@ -61,6 +64,16 @@ export function useTheme() {
     }
     applyTheme(getSystemTheme(), true)
   }, [applyTheme])
+
+  // Initial sync: the FOUC script in index.html sets the dark class before
+  // React mounts, but applyTheme above doesn't run for the initial theme, so
+  // the Windows overlay would otherwise stay on the system theme until the
+  // first manual toggle. Read from the DOM (the authoritative source here).
+  useEffect(() => {
+    syncTitleBarOverlay(
+      document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+    )
+  }, [])
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')

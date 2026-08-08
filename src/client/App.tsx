@@ -30,7 +30,7 @@ import { useRightPanelStore } from './stores/right-panel-store'
 import { useBrowserPaneStore } from './stores/browser-pane-store'
 import { useTheme } from './hooks/use-theme'
 import { useAppSettings } from './hooks/use-app-settings'
-import { isMacOS } from './lib/platform'
+import { isMacOS, isWindows } from './lib/platform'
 import { useBadgeSync } from './lib/use-badge-sync'
 import { useNotificationSounds } from './lib/use-notification-sounds'
 import { cn } from './components/ui/utils'
@@ -66,6 +66,7 @@ function App() {
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [isWorkspaceSwitcherOpen, setIsWorkspaceSwitcherOpen] = useState(false)
   const [isMac, setIsMac] = useState(false)
+  const [isWin, setIsWin] = useState(false)
   const [claudeCheck, setClaudeCheck] = useState<{ ok: boolean; checking: boolean; error?: string }>({
     ok: true,
     checking: true,
@@ -122,6 +123,7 @@ function App() {
     checkClaudeCli()
     initProviders()
     isMacOS().then(setIsMac)
+    isWindows().then(setIsWin)
 
     startPeriodicUpdateChecks(
       () => ({ autoCheckUpdates }),
@@ -251,7 +253,7 @@ function App() {
           </div>
         </div>
         <div data-tauri-drag-region className="flex-1 self-stretch select-none" />
-        <div className="flex items-center flex-shrink-0 pl-4 pr-4">
+        <div className={`flex items-center flex-shrink-0 pl-4 ${isWin ? 'pr-[138px]' : 'pr-4'}`}>
           <HeaderToolbar
             popupOpen={activePanel !== null || showCreateModal}
             onCreateWorkspace={() => setShowCreateModal(true)}
