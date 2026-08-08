@@ -50,6 +50,14 @@ const api = {
   /** App.tsx parity: show + unminimize + focus the main window. */
   showWindow: (): Promise<void> => ipcRenderer.invoke('comate:show-window'),
 
+  /**
+   * Windows: recolor the native min/max/close caption buttons to match the
+   * app theme. No-op off Windows (overlay only exists with titleBarStyle:
+   * 'hidden', which is Win32-only here).
+   */
+  setTitleBarOverlay: (theme: 'dark' | 'light'): Promise<void> =>
+    ipcRenderer.invoke('comate:set-titlebar-overlay', theme),
+
   // Custom titlebar dragging has no IPC equivalent: Electron drags via CSS
   // `-webkit-app-region: drag` on the data-tauri-drag-region elements (see
   // src/client/index.css), so `startDragging` is intentionally not exposed.

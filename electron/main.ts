@@ -16,7 +16,7 @@
  *    the Vite dev server), macOS Edit menu for Cmd+C/V, main.log file logging.
  */
 
-import { app, BrowserWindow, Menu, Notification, Tray, WebContentsView, dialog, ipcMain, nativeImage, net, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, Menu, Notification, Tray, WebContentsView, dialog, ipcMain, nativeImage, nativeTheme, net, protocol, session, shell } from 'electron';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { createServer as createNetServer } from 'node:net';
@@ -320,6 +320,25 @@ function shellIconPath(): string {
     : join(app.getAppPath(), 'build', 'icon.png');
 }
 
+// Windows titleBarOverlay colors mirror the app's --color-chrome (header bg)
+// and --color-text-secondary (caption symbols) so the native min/max/close
+// buttons blend into the custom header. Values track src/client/index.css —
+// if those CSS variables change, update these to match.
+const TITLEBAR_CHROME_LIGHT = '#f5f5f5'; // hsl(0 0% 96%)
+const TITLEBAR_CHROME_DARK = '#212121';  // hsl(0 0% 13%)
+const TITLEBAR_SYMBOL_LIGHT = '#6b6b6b'; // hsl(0 0% 42%)
+const TITLEBAR_SYMBOL_DARK = '#9e9e9e';  // hsl(0 0% 62%)
+const TITLEBAR_HEIGHT = 44;              // matches the h-11 header (11 × 4px)
+
+/** Windows only: native caption-button overlay styled to match the app theme. */
+function titlebarOverlayOpts(dark = nativeTheme.shouldUseDarkColors) {
+  return {
+    color: dark ? TITLEBAR_CHROME_DARK : TITLEBAR_CHROME_LIGHT,
+    symbolColor: dark ? TITLEBAR_SYMBOL_DARK : TITLEBAR_SYMBOL_LIGHT,
+    height: TITLEBAR_HEIGHT,
+  };
+}
+
 function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
     title: 'Comate',
@@ -335,7 +354,9 @@ function createMainWindow(): BrowserWindow {
     // header); Electron's is the button's top edge, so 22 - 6 (12px button).
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 14, y: 16 } }
-      : {}),
+      : process.platform === 'win32'
+        ? { titleBarStyle: 'hidden' as const, titleBarOverlay: titlebarOverlayOpts() }
+        : {}),
     webPreferences: {
       preload: join(__dirname, '..', 'preload', 'preload.cjs'),
       contextIsolation: true,
@@ -411,6 +432,14 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('comate:show-window', () => {
     showMainWindow();
+  });
+
+  // Windows: recolor the native min/max/close caption buttons to match the
+  // app theme. The renderer calls this on every theme change; no-op off Win32
+  // (the overlay only exists with titleBarStyle: 'hidden').
+  ipcMain.handle('comate:set-titlebar-overlay', (_event, theme: unknown) => {
+    if (process.platform !== 'win32' || !mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.setTitleBarOverlay(titlebarOverlayOpts(theme === 'dark'));
   });
 
   // lib.rs update_badge_state: badge + macOS accessory-policy toggle when the

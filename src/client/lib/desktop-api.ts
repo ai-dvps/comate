@@ -59,6 +59,8 @@ export type BrowserViewInputMode = 'user' | 'agent';
 export interface ComateBridge {
   getApiInfo: () => Promise<ComateApiInfo>;
   showWindow?: () => Promise<void>;
+  /** Windows: recolor the native caption buttons to match the app theme. */
+  setTitleBarOverlay?: (theme: 'dark' | 'light') => Promise<void>;
   updateBadgeState?: (count: number) => Promise<void>;
   revealInFileManager?: (path: string) => Promise<void>;
   openUrl?: (url: string) => Promise<void>;
@@ -206,6 +208,15 @@ export function initDesktopApi(): void {
 /** App.tsx parity: show + unminimize + focus the main window. */
 export async function showWindow(): Promise<void> {
   await getBridge()?.showWindow?.();
+}
+
+/**
+ * Windows: recolor the native title-bar caption buttons (min/max/close) to
+ * match the current app theme so they blend into the header. No-op off
+ * Windows and in a plain browser (optional bridge method).
+ */
+export function syncTitleBarOverlay(theme: 'dark' | 'light'): void {
+  void getBridge()?.setTitleBarOverlay?.(theme);
 }
 
 // ---------------------------------------------------------------------------

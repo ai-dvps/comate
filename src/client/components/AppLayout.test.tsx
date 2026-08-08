@@ -103,7 +103,10 @@ vi.mock('../stores/chat-store', () => ({
     selector ? selector(mockChatStore) : mockChatStore,
 }))
 
-vi.mock('../lib/platform', () => ({ isMacOS: () => Promise.resolve(false) }))
+vi.mock('../lib/platform', () => ({
+  isMacOS: () => Promise.resolve(false),
+  isWindows: () => Promise.resolve(false),
+}))
 vi.mock('../lib/updater-api', () => ({
   startPeriodicUpdateChecks: () => {},
   stopPeriodicUpdateChecks: () => {},
