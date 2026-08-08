@@ -5,7 +5,7 @@
  * Tauri window (which showed none on Windows/Linux).
  */
 
-import { app, Menu, type MenuItemConstructorOptions } from 'electron';
+import { Menu, type MenuItemConstructorOptions } from 'electron';
 
 export function installAppMenu(): void {
   if (process.platform !== 'darwin') {
@@ -15,7 +15,11 @@ export function installAppMenu(): void {
 
   const template: MenuItemConstructorOptions[] = [
     {
-      label: app.name,
+      // Hardcoded: in dev the bundle is Electron.app, and macOS renders the
+      // bold app-menu title from the bundle/process name — app.name may still
+      // be 'Electron' there even with app.setName. Packaged builds get
+      // productName ('Comate') from the bundle either way.
+      label: 'Comate',
       submenu: [
         { role: 'about' },
         { type: 'separator' },
