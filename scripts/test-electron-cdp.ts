@@ -48,8 +48,13 @@ const execFileAsync = promisify(execFile);
 
 // Fresh build of the main/preload bundles so the gate always tests the
 // current source (cheap: electron-vite main+preload only, no renderer).
+// Windows: `npm` is npm.cmd — execFile needs shell:true to resolve it.
+const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 try {
-  await execFileAsync('npm', ['run', 'build:electron', '--silent'], { timeout: 180_000 });
+  await execFileAsync(npmCmd, ['run', 'build:electron', '--silent'], {
+    timeout: 180_000,
+    shell: process.platform === 'win32',
+  });
 } catch (err) {
   unavailable(`electron-vite build failed: ${err instanceof Error ? err.message : String(err)}`);
 }
