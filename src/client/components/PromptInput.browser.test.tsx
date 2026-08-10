@@ -327,6 +327,42 @@ describe('PromptInput browser', () => {
     await waitFor(() => expect(DEFAULT_PROPS.onSend).toHaveBeenCalledWith('send me'))
   })
 
+  it('sends repeatedly with Cmd+Enter when macOS omits the Enter keyup event', async () => {
+    appSettingsMock.useModifierToSubmit = true
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const input = editableLocator()
+    const el = editableElement()
+
+    await input.fill('first message')
+    act(() => {
+      el.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter',
+        code: 'Enter',
+        metaKey: true,
+        bubbles: true,
+      }))
+      el.dispatchEvent(new KeyboardEvent('keyup', {
+        key: 'Meta',
+        code: 'MetaLeft',
+        bubbles: true,
+      }))
+    })
+
+    await waitFor(() => expect(DEFAULT_PROPS.onSend).toHaveBeenCalledWith('first message'))
+
+    await input.fill('second message')
+    act(() => {
+      el.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter',
+        code: 'Enter',
+        metaKey: true,
+        bubbles: true,
+      }))
+    })
+
+    await waitFor(() => expect(DEFAULT_PROPS.onSend).toHaveBeenCalledWith('second message'))
+  })
+
   it('inserts a newline with Shift+Enter', async () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
     const input = editableLocator()

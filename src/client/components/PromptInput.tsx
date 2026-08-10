@@ -710,7 +710,9 @@ export default function PromptInput({
   }
 
   const handleKeyUp = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.key === 'Enter') {
+    // macOS does not dispatch an Enter keyup for Cmd+Enter, so release the
+    // submit lock when either half of the shortcut is released.
+    if (e.key === 'Enter' || e.key === 'Meta' || e.key === 'Control') {
       submitLockRef.current = false
     }
   }
