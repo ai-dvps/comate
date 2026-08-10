@@ -149,6 +149,7 @@ export class SessionRuntime {
   private currentMessageStartId?: string;
   private foregroundMessageUuid?: string;
   private backgroundTasks = new Map<string, SessionBackgroundTask>();
+  private backgroundTaskToolUseIds = new Map<string, string>();
   private stopping = false;
   private stopFenceActive = false;
   private stopOperation?: Promise<void>;
@@ -318,6 +319,7 @@ export class SessionRuntime {
       ...(Object.keys(hooks).length > 0 ? { hooks } : {}),
     };
     this.backgroundTasks.clear();
+    this.backgroundTaskToolUseIds.clear();
     this.evaluateActivity();
     const { query, messages } = this.driver.createStreamingQuery(
       this.input,
@@ -398,6 +400,7 @@ export class SessionRuntime {
           !this.deliberateShutdown && (unfinishedForeground || unfinishedTasks.length > 0);
         this.foregroundMessageUuid = undefined;
         this.backgroundTasks.clear();
+        this.backgroundTaskToolUseIds.clear();
         this.activityInterruption = unexpectedlyInterrupted
           ? {
               reason: 'runtime_failure',
@@ -412,7 +415,29 @@ export class SessionRuntime {
   }
 
   private handleActivityMessage(message: SDKMessage): void {
-    if (message.type !== 'system' || message.subtype !== 'background_tasks_changed') return;
+    if (message.type !== 'system') return;
+
+    if (message.subtype === 'task_started') {
+      if (message.tool_use_id) {
+        this.backgroundTaskToolUseIds.set(message.task_id, message.tool_use_id);
+      }
+      return;
+    }
+
+    if (message.subtype === 'task_notification') {
+      this.backgroundTaskToolUseIds.delete(message.task_id);
+      return;
+    }
+
+    if (message.subtype === 'task_updated') {
+      const status = message.patch.status;
+      if (status && ['completed', 'failed', 'killed'].includes(status)) {
+        this.backgroundTaskToolUseIds.delete(message.task_id);
+      }
+      return;
+    }
+
+    if (message.subtype !== 'background_tasks_changed') return;
 
     this.backgroundTasks = new Map(
       message.tasks.map((task) => [
@@ -420,6 +445,11 @@ export class SessionRuntime {
         { id: task.task_id, type: task.task_type, description: task.description },
       ]),
     );
+    for (const taskId of this.backgroundTaskToolUseIds.keys()) {
+      if (!this.backgroundTasks.has(taskId)) {
+        this.backgroundTaskToolUseIds.delete(taskId);
+      }
+    }
     for (const taskId of this.individuallyStoppedTaskIds) {
       if (!this.backgroundTasks.has(taskId)) {
         this.individuallyStoppedTaskIds.delete(taskId);
@@ -955,6 +985,16 @@ export class SessionRuntime {
     };
   }
 
+  isSubagentRunning(parentToolUseId: string): boolean {
+    // task_id and Agent tool_use id are separate SDK identities. Preserve the
+    // task_started correlation instead of assuming an agent transcript id is
+    // also the live background task id.
+    for (const taskId of this.backgroundTasks.keys()) {
+      if (this.backgroundTaskToolUseIds.get(taskId) === parentToolUseId) return true;
+    }
+    return false;
+  }
+
   private evaluateActivity(): void {
     const next = this.getActivitySnapshot();
     if (activitySnapshotsEqual(next, this.lastEmittedActivity)) return;
@@ -1332,6 +1372,7 @@ export class SessionRuntime {
     this.cancelPendingApprovals('Session stopped by user.');
     this.foregroundMessageUuid = undefined;
     this.backgroundTasks.clear();
+    this.backgroundTaskToolUseIds.clear();
     this.stopping = false;
     this.activityInterruption = {
       reason: 'user_stop',
@@ -1444,6 +1485,7 @@ export class SessionRuntime {
     // structural guard suppresses a duplicate loop-death emission.
     this.foregroundMessageUuid = undefined;
     this.backgroundTasks.clear();
+    this.backgroundTaskToolUseIds.clear();
     this.stopping = false;
     this.activityInterruption = undefined;
     this.evaluateActivity();
