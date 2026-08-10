@@ -31,9 +31,13 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "dev:electron": "concurrently \"npm run dev:client\" \"electron-vite dev\"",
     "postinstall": "node scripts/patch-electron-dev-name.mjs",
-    "build:electron": "electron-vite build",
+    "build:client": "vite build",
+    "build:electron:shell": "electron-vite build",
+    "build:electron": "npm run build:client && npm run build:electron:shell",
     "dist:electron": "npm run build:electron && electron-builder --config electron-builder.config.ts",
     "test:electron": "tsx --test electron/*.test.ts",
+    "test:electron-build": "tsx --test scripts/electron-build-contract.test.ts scripts/verify-packaged-renderer.test.ts",
+    "verify:electron-package": "tsx scripts/verify-packaged-renderer.ts",
     "test:bridge-manifest": "tsx --test scripts/build-bridge-manifest.test.ts",
     "release": "npm run build:sidecar && npm run test:shell-cdp:required && npm run test:electron-cdp:required && npm run dist:electron"
   },
@@ -108,6 +112,7 @@
     "zustand": "^4.5.2"
   },
   "devDependencies": {
+    "@electron/asar": "^3.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",

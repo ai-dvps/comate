@@ -133,8 +133,8 @@ jobs:
         if: runner.os == 'Linux'
         run: xvfb-run -a npm run test:electron-cdp:required
 
-      - name: Build shell bundle
-        run: npm run build:electron
+      - name: Build renderer bundle
+        run: npm run build:client
 
       # Version-consistency guard: electron-builder derives the app version,
       # artifact names and latest*.yml from package.json, while the bridge
@@ -185,6 +185,9 @@ jobs:
         # build that cannot half-publish (config publish is already null).
         # --config is load-bearing: see the FOOTGUN note at the top.
         run: npx electron-builder --config electron-builder.config.ts ${{ matrix.builder-args }} ${{ steps.signing.outputs.ready == 'true' && '--publish onTagOrDraft' || '--publish never' }}
+
+      - name: Guard packaged renderer contents
+        run: npm run verify:electron-package
 
       - name: Guard electron-builder config discovery
         shell: bash
