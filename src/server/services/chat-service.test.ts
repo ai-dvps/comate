@@ -1893,6 +1893,132 @@ describe('chat-service loadMessages subagents', { concurrency: false }, () => {
     assert.strictEqual(result.subagents[0].toolCount, 0);
   });
 
+  it('terminalizes an incomplete subagent transcript when the session runtime is inactive', async () => {
+    const mainMessages: SessionMessage[] = [
+      {
+        type: 'assistant',
+        uuid: 'm1',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'tool-interrupted',
+              name: 'Agent',
+              input: { description: 'Interrupted agent' },
+            },
+          ],
+        },
+      } as unknown as SessionMessage,
+      {
+        type: 'user',
+        uuid: 'm2',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tool-interrupted',
+              content: 'Async agent launched. agentId: agent-interrupted (internal ID)',
+              is_error: false,
+            },
+          ],
+        },
+      } as unknown as SessionMessage,
+    ];
+    const subagentMessages: SessionMessage[] = [
+      {
+        type: 'assistant',
+        uuid: 'a1',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 'read-1', name: 'Read', input: { file_path: 'x' } }],
+        },
+        timestamp: '2026-06-19T10:00:00.000Z',
+      } as unknown as SessionMessage,
+      {
+        type: 'user',
+        uuid: 'u1',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'read-1',
+              content: 'partial output before interruption',
+              is_error: false,
+            },
+          ],
+        },
+        timestamp: '2026-06-19T10:00:01.000Z',
+      } as unknown as SessionMessage,
+    ];
+
+    class InterruptedSubagentSdkClient extends SdkClient {
+      override async getSessionMessages(): Promise<SessionMessage[]> {
+        return mainMessages;
+      }
+      override async listSubagents(): Promise<string[]> {
+        return ['agent-interrupted'];
+      }
+      override async getSubagentMessages(): Promise<SessionMessage[]> {
+        return subagentMessages;
+      }
+    }
+
+    service = new TestChatService(new InterruptedSubagentSdkClient());
+    const result = await service.loadMessages('s1', 'ws-1');
+
+    assert.strictEqual(result.subagents.length, 1);
+    assert.strictEqual(result.subagents[0].state, 'error');
+    assert.strictEqual(
+      result.subagents[0].endTime,
+      Date.parse('2026-06-19T10:00:01.000Z'),
+    );
+
+    const runtimes = (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes;
+    runtimes.set('s1', {
+      isClosed: () => false,
+      isSubagentRunning: (parentToolUseId: string) => parentToolUseId === 'tool-interrupted',
+      getActivitySnapshot: () => ({
+        phase: 'background',
+        active: true,
+        backgroundTasks: [{ id: 'agent-live', type: 'agent', description: 'Live agent' }],
+      }),
+      close: () => Promise.resolve(),
+    } as unknown as SessionRuntime);
+
+    const activeResult = await service.loadMessages('s1', 'ws-1');
+    assert.strictEqual(activeResult.subagents[0].state, 'running');
+    assert.strictEqual(activeResult.subagents[0].endTime, undefined);
+
+    runtimes.set('s1', {
+      isClosed: () => false,
+      isSubagentRunning: () => false,
+      getActivitySnapshot: () => ({
+        phase: 'foreground',
+        active: true,
+        backgroundTasks: [],
+      }),
+      close: () => Promise.resolve(),
+    } as unknown as SessionRuntime);
+
+    const unrelatedActiveResult = await service.loadMessages('s1', 'ws-1');
+    assert.strictEqual(unrelatedActiveResult.subagents[0].state, 'error');
+    assert.strictEqual(
+      unrelatedActiveResult.subagents[0].endTime,
+      Date.parse('2026-06-19T10:00:01.000Z'),
+    );
+  });
+
   it('survives listSubagents failures and returns empty subagents', async () => {
     class FailingListSdkClient extends SdkClient {
       override async getSessionMessages(): Promise<SessionMessage[]> {

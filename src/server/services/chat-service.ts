@@ -1011,6 +1011,7 @@ export class ChatService {
     comateSessionId: string,
     backendSessionId: string,
     workspace: Workspace,
+    incompleteState: 'running' | 'error',
   ): Promise<SubagentState[]> {
     const instance = await this.ensureOpencodeServe(comateSessionId, workspace);
     if (!instance) return [];
@@ -1039,7 +1040,7 @@ export class ChatService {
             pairing?.parentToolUseId ?? child.id,
             subMessages,
             pairing?.description ?? child.title ?? `Agent ${child.id.slice(-6)}`,
-            {},
+            { incompleteState },
           );
           if (reconstructed) {
             subagents.push(reconstructed);
@@ -1085,12 +1086,20 @@ export class ChatService {
     }
 
     const dir = normalizeWindowsPath(workspace.folderPath);
+    const runtime = this.getRuntimeIfExists(sessionId);
+    const opencodeIncompleteState =
+      runtime && this.runtimeActivity(runtime).active ? 'running' : 'error';
 
     // Backend-aware loading (U7): opencode subagents are child sessions on
     // the session's serve, translated into the same SubagentState shape.
     const localSession = workspaceStore.getLocalSession(sessionId);
     if (localSession?.backend === 'opencode' && localSession.backendSessionId) {
-      return this.loadOpencodeSubagents(sessionId, localSession.backendSessionId, workspace);
+      return this.loadOpencodeSubagents(
+        sessionId,
+        localSession.backendSessionId,
+        workspace,
+        opencodeIncompleteState,
+      );
     }
 
     let agentIds: string[] = [];
@@ -1235,6 +1244,7 @@ export class ChatService {
         const reconstructed = reconstructSubagentState(parentToolUseId, subMessages, description, {
           fallbackStartTime,
           fallbackEndTime,
+          incompleteState: runtime?.isSubagentRunning(parentToolUseId) ? 'running' : 'error',
         });
         if (reconstructed) {
           subagents.push(reconstructed);

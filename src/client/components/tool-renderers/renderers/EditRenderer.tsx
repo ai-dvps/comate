@@ -1,9 +1,43 @@
-import { FileCode, Pencil } from 'lucide-react'
-import type { ReactNode } from 'react'
-import { CodeBlockContent } from '../../ai-elements/code-block'
-import { getLanguageFromFilename } from '@/lib/language'
+import { unifiedMergeView } from '@codemirror/merge'
+import { FileCode } from 'lucide-react'
+import { useMemo, type ReactNode } from 'react'
+import CodeMirrorEditor from '../../CodeMirrorEditor'
+import { getCodeMirrorLanguage } from '@/lib/codemirror-language'
 import { registerToolRenderer } from '../registry'
 import FilePath from '../FilePath'
+
+interface EditDiffProps {
+  filePath: string
+  oldString: string
+  newString: string
+}
+
+function EditDiff({ filePath, oldString, newString }: EditDiffProps) {
+  const language = useMemo(() => getCodeMirrorLanguage(filePath), [filePath])
+  const extensions = useMemo(
+    () => [
+      unifiedMergeView({
+        original: oldString,
+        highlightChanges: true,
+        gutter: true,
+        syntaxHighlightDeletions: true,
+        mergeControls: false,
+      }),
+    ],
+    [oldString],
+  )
+
+  return (
+    <div className="rounded-md border border-border/50 overflow-hidden">
+      <CodeMirrorEditor
+        value={newString}
+        language={language}
+        readOnly={true}
+        extensions={extensions}
+      />
+    </div>
+  )
+}
 
 export default function EditRenderer(input: unknown): ReactNode | null {
   if (typeof input !== 'object' || input === null) {
@@ -26,7 +60,6 @@ export default function EditRenderer(input: unknown): ReactNode | null {
     new_string: string
   }
 
-  const language = getLanguageFromFilename(file_path)
   const replaceAll = obj.replace_all === true
 
   return (
@@ -44,33 +77,13 @@ export default function EditRenderer(input: unknown): ReactNode | null {
         )}
       </div>
 
-      {old_string.length > 0 && (
-        <div className="space-y-1">
-          <div className="flex items-center gap-1.5">
-            <Pencil className="size-3 text-destructive" />
-            <span className="text-[11px] font-medium text-destructive uppercase tracking-wide">
-              Before
-            </span>
-          </div>
-          <div className="rounded-md bg-destructive/10 overflow-hidden">
-            <CodeBlockContent code={old_string} language={language} />
-          </div>
-        </div>
-      )}
-
-      {new_string.length > 0 && (
-        <div className="space-y-1">
-          <div className="flex items-center gap-1.5">
-            <Pencil className="size-3 text-success" />
-            <span className="text-[11px] font-medium text-success uppercase tracking-wide">
-              After
-            </span>
-          </div>
-          <div className="rounded-md bg-success/10 overflow-hidden">
-            <CodeBlockContent code={new_string} language={language} />
-          </div>
-        </div>
-      )}
+      {old_string.length > 0 || new_string.length > 0 ? (
+        <EditDiff
+          filePath={file_path}
+          oldString={old_string}
+          newString={new_string}
+        />
+      ) : null}
     </div>
   )
 }

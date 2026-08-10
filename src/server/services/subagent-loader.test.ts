@@ -106,6 +106,55 @@ describe('reconstructSubagentState', () => {
     assert.strictEqual(state!.state, 'error');
   });
 
+  it('terminalizes an incomplete transcript when the owning session is inactive', () => {
+    const messages: SessionMessage[] = [
+      {
+        type: 'assistant',
+        uuid: 'a1',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 'tool-1', name: 'Read', input: { file_path: 'x' } }],
+        },
+        timestamp: '2026-06-19T10:00:00.000Z',
+      } as unknown as SessionMessage,
+      {
+        type: 'user',
+        uuid: 'u1',
+        session_id: 's1',
+        parent_tool_use_id: null,
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tool-1',
+              content: 'partial output before interruption',
+              is_error: false,
+            },
+          ],
+        },
+        timestamp: '2026-06-19T10:00:01.000Z',
+      } as unknown as SessionMessage,
+    ];
+
+    const activeState = reconstructSubagentState('tool-123', messages, 'Active agent', {
+      incompleteState: 'running',
+    });
+    assert.ok(activeState);
+    assert.strictEqual(activeState!.state, 'running');
+    assert.strictEqual(activeState!.endTime, undefined);
+
+    const state = reconstructSubagentState('tool-123', messages, 'Interrupted agent', {
+      incompleteState: 'error',
+    });
+
+    assert.ok(state);
+    assert.strictEqual(state!.state, 'error');
+    assert.strictEqual(state!.endTime, Date.parse('2026-06-19T10:00:01.000Z'));
+  });
+
   it('returns null when no displayable messages remain', () => {
     const state = reconstructSubagentState('tool-123', []);
     assert.strictEqual(state, null);
