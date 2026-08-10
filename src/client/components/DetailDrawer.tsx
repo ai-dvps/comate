@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bot, ChevronLeft, Layers, Workflow as WorkflowIcon, X } from 'lucide-react'
 
@@ -19,7 +19,8 @@ import type { ChatMessage } from '../types/message'
 /* ------------------------------------------------------------------ */
 
 const MIN_WIDTH = 300
-const MAX_WIDTH = 600
+const MAX_WIDTH = 800
+const DRAWER_ANIMATION_DURATION_MS = 200
 const FOCUSABLE_SELECTOR =
   'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
 
@@ -45,6 +46,8 @@ export default function DetailDrawer({
   const { t } = useTranslation('chat')
   const asideRef = useRef<HTMLElement>(null)
   const previouslyFocused = useRef<HTMLElement | null>(null)
+  const closeTimerRef = useRef<number | null>(null)
+  const [isClosing, setIsClosing] = useState(false)
   const view = topView(stack)
   const showBack = canGoBack(stack)
   const drillSubagent = useCallback(
@@ -52,9 +55,27 @@ export default function DetailDrawer({
     [onPush],
   )
 
+  const handleClose = useCallback(() => {
+    if (isClosing) return
+    const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    if (prefersReducedMotion) {
+      onClose()
+      return
+    }
+
+    setIsClosing(true)
+    closeTimerRef.current = window.setTimeout(onClose, DRAWER_ANIMATION_DURATION_MS)
+  }, [isClosing, onClose])
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current)
+    }
+  }, [])
+
   // Focus + Escape + Tab trap. Re-focuses on view swap (push/pop) per R9.
   useEffect(() => {
-    if (!view) return
+    if (!view || isClosing) return
     previouslyFocused.current = (document.activeElement as HTMLElement) ?? null
     const aside = asideRef.current
     aside?.focus()
@@ -62,7 +83,7 @@ export default function DetailDrawer({
       if (e.key === 'Escape') {
         e.preventDefault()
         e.stopPropagation()
-        onClose()
+        handleClose()
         return
       }
       if (e.key !== 'Tab' || !aside) return
@@ -83,7 +104,7 @@ export default function DetailDrawer({
       window.removeEventListener('keydown', onKey)
       previouslyFocused.current?.focus?.()
     }
-  }, [view, onClose])
+  }, [view, isClosing, handleClose])
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -111,6 +132,10 @@ export default function DetailDrawer({
   if (!view) return null
 
   const title = viewTitle(view, t)
+  const drawerStyle = {
+    width,
+    '--detail-drawer-width': `${width}px`,
+  } as CSSProperties
 
   return (
     <aside
@@ -118,8 +143,15 @@ export default function DetailDrawer({
       tabIndex={-1}
       role="dialog"
       aria-label={title}
-      className="relative flex h-full flex-shrink-0 flex-col border-l border-border bg-surface outline-none"
-      style={{ width }}
+      aria-hidden={isClosing || undefined}
+      data-state={isClosing ? 'closing' : 'open'}
+      className={cn(
+        'relative flex h-full flex-shrink-0 flex-col overflow-hidden border-l border-border bg-surface outline-none',
+        isClosing ? 'animate-detail-drawer-exit' : 'animate-detail-drawer-enter',
+        'motion-reduce:animate-none',
+      )}
+      style={drawerStyle}
+      {...(isClosing ? { inert: 'true' } : {})}
     >
       <div
         className="absolute bottom-0 left-0 top-0 z-10 w-1 cursor-col-resize transition-colors hover:bg-accent/50"
@@ -147,7 +179,7 @@ export default function DetailDrawer({
         </span>
         <button
           type="button"
-          onClick={onClose}
+          onClick={handleClose}
           aria-label={t('close')}
           className="rounded-md p-1.5 text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-secondary"
         >
@@ -204,6 +236,25 @@ function ViewIcon({ view }: { view: DrawerView }) {
 /*  Process body                                                       */
 /* ------------------------------------------------------------------ */
 
+function collectAssistantTurn(messages: ChatMessage[], messageId: string): ChatMessage[] {
+  const anchorId = messageId.split('|')[0]
+  const anchorIndex = messages.findIndex((message) => message.id === anchorId)
+  if (anchorIndex < 0) return []
+
+  const turnMessages: ChatMessage[] = []
+  for (let index = anchorIndex; index < messages.length; index += 1) {
+    const message = messages[index]
+    if (message.role === 'assistant') {
+      turnMessages.push(message)
+      continue
+    }
+    const isToolResultOnly = message.role === 'user' && message.parts.length > 0 &&
+      message.parts.every((part) => part.type === 'tool_result')
+    if (!isToolResultOnly) break
+  }
+  return turnMessages
+}
+
 function ProcessBody({
   messageId,
   regionIndex,
@@ -219,10 +270,7 @@ function ProcessBody({
   const resultMap = useMemo(() => buildResultMap(messages), [messages])
 
   const region = useMemo(() => {
-    const ids = messageId.split('|')
-    const turnMessages = ids
-      .map((id) => messages.find((m) => m.id === id))
-      .filter((m): m is ChatMessage => Boolean(m))
+    const turnMessages = collectAssistantTurn(messages, messageId)
     if (turnMessages.length === 0) return null
     const parts: RenderablePart[] = []
     for (const m of turnMessages) parts.push(...adaptChatMessage(m).parts)

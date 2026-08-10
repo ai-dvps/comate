@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import React from 'react'
-import { render, screen, fireEvent, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { I18nextProvider } from 'react-i18next'
 
@@ -115,6 +115,8 @@ describe('DetailDrawer', () => {
 
   afterEach(() => {
     cleanup()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
     if (originalScrollHeight) {
       Object.defineProperty(Element.prototype, 'scrollHeight', originalScrollHeight)
     } else {
@@ -142,22 +144,95 @@ describe('DetailDrawer', () => {
     expect(onPop).toHaveBeenCalledTimes(1)
   })
 
-  it('X button calls onClose (R4, AE4)', () => {
+  it('animates in when opened', () => {
+    renderWithI18n(<DetailDrawer stack={[sub('a1')]} {...defaultProps} />)
+
+    expect(screen.getByRole('dialog')).toHaveAttribute('data-state', 'open')
+    expect(screen.getByRole('dialog')).toHaveClass('animate-detail-drawer-enter')
+  })
+
+  it('animates out before the X button calls onClose (R4, AE4)', () => {
+    vi.useFakeTimers()
     const onClose = vi.fn()
     renderWithI18n(
       <DetailDrawer stack={[sub('a1')]} {...defaultProps} onClose={onClose} />,
     )
     fireEvent.click(screen.getByRole('button', { name: /close/i }))
+
+    expect(screen.getByRole('dialog', { hidden: true })).toHaveAttribute('data-state', 'closing')
+    expect(screen.getByRole('dialog', { hidden: true })).toHaveClass('animate-detail-drawer-exit')
+    expect(onClose).not.toHaveBeenCalled()
+
+    act(() => vi.advanceTimersByTime(200))
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('Escape calls onClose (R9, AE4)', () => {
+  it('Escape animates out before calling onClose (R9, AE4)', () => {
+    vi.useFakeTimers()
     const onClose = vi.fn()
     renderWithI18n(
       <DetailDrawer stack={[sub('a1')]} {...defaultProps} onClose={onClose} />,
     )
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
+    expect(onClose).not.toHaveBeenCalled()
+    act(() => vi.advanceTimersByTime(200))
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes immediately when reduced motion is preferred', () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }))
+    const onClose = vi.fn()
+    renderWithI18n(
+      <DetailDrawer stack={[sub('a1')]} {...defaultProps} onClose={onClose} />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /close/i }))
+
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('dialog')).toHaveAttribute('data-state', 'open')
+  })
+
+  it('restores focus and removes keyboard handling while closing', () => {
+    vi.useFakeTimers()
+    const opener = document.createElement('button')
+    document.body.appendChild(opener)
+    opener.focus()
+    const onClose = vi.fn()
+    renderWithI18n(
+      <DetailDrawer stack={[sub('a1')]} {...defaultProps} onClose={onClose} />,
+    )
+    expect(screen.getByRole('dialog')).toHaveFocus()
+
+    fireEvent.click(screen.getByRole('button', { name: /close/i }))
+    expect(opener).toHaveFocus()
+
+    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
+    act(() => vi.advanceTimersByTime(200))
+    expect(onClose).toHaveBeenCalledTimes(1)
+    opener.remove()
+  })
+
+  it('keeps resize behavior while the animated drawer is open', () => {
+    const onWidthChange = vi.fn()
+    renderWithI18n(
+      <DetailDrawer
+        stack={[sub('a1')]}
+        {...defaultProps}
+        onWidthChange={onWidthChange}
+      />,
+    )
+    const dialog = screen.getByRole('dialog')
+    const resizeHandle = dialog.querySelector<HTMLElement>('.cursor-col-resize')
+    expect(resizeHandle).not.toBeNull()
+    expect(dialog.style.getPropertyValue('--detail-drawer-width')).toBe('400px')
+
+    fireEvent.mouseDown(resizeHandle!, { clientX: 400 })
+    fireEvent.mouseMove(document, { clientX: 250 })
+    fireEvent.mouseMove(document, { clientX: -600 })
+    fireEvent.mouseUp(document)
+
+    expect(onWidthChange).toHaveBeenNthCalledWith(1, 550)
+    expect(onWidthChange).toHaveBeenLastCalledWith(800)
   })
 
   it('renders a dialog with an accessible label', () => {
@@ -219,6 +294,52 @@ describe('DetailDrawer process region real-time updates', () => {
     ]
     chatStoreMock.setMessages(sessionId, updated)
     await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(screen.getByText('Edit')).toBeInTheDocument()
+  })
+
+  it('renders a new tool card when the active turn gains another assistant message', async () => {
+    const sessionId = 's1'
+    const firstMessageId = 'm1'
+    const firstToolUseId = 'tu-1'
+    const initial: ChatMessage[] = [
+      {
+        id: firstMessageId,
+        role: 'assistant',
+        timestamp: 1,
+        parts: [toolUsePart('Bash', firstToolUseId, { command: 'npm test' })],
+      },
+    ]
+    chatStoreMock.setMessages(sessionId, initial)
+
+    renderWithI18n(
+      <DetailDrawer
+        stack={[processView(firstMessageId)]}
+        {...defaultProps}
+        sessionId={sessionId}
+      />,
+    )
+
+    expect(screen.getByText('Bash')).toBeInTheDocument()
+    expect(screen.queryByText('Edit')).not.toBeInTheDocument()
+
+    await act(async () => {
+      chatStoreMock.setMessages(sessionId, [
+        ...initial,
+        {
+          id: 'result-1',
+          role: 'user',
+          timestamp: 2,
+          parts: [toolResultPart(firstToolUseId, 'ok')],
+        },
+        {
+          id: 'm2',
+          role: 'assistant',
+          timestamp: 3,
+          parts: [toolUsePart('Edit', 'tu-2', { file_path: 'src/App.tsx' })],
+        },
+      ])
+    })
 
     expect(screen.getByText('Edit')).toBeInTheDocument()
   })

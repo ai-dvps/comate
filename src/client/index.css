@@ -256,6 +256,26 @@
     from { opacity: 0; transform: translateX(-0.25rem); }
     to { opacity: 1; transform: translateX(0); }
   }
+
+  /* Detail drawer presence: grow the chat-side column while the pane slides in,
+     then keep it mounted long enough to reverse the motion on close. */
+  .animate-detail-drawer-enter {
+    animation: detail-drawer-enter 200ms ease-out both;
+  }
+
+  .animate-detail-drawer-exit {
+    animation: detail-drawer-exit 200ms ease-in both;
+  }
+
+  @keyframes detail-drawer-enter {
+    from { width: 0; opacity: 0; transform: translateX(1rem); }
+    to { width: var(--detail-drawer-width); opacity: 1; transform: translateX(0); }
+  }
+
+  @keyframes detail-drawer-exit {
+    from { width: var(--detail-drawer-width); opacity: 1; transform: translateX(0); }
+    to { width: 0; opacity: 0; transform: translateX(1rem); }
+  }
 }
 
 /* Electron custom titlebar dragging (U2): the preload exposes no startDragging
