@@ -124,9 +124,9 @@ function unsupported(capability: string): Error {
 }
 
 // ---------------------------------------------------------------------------
-// Sidecar API coordinates (port + desktop token), 50×200ms retry semantics
-// carried over from tauri-api.ts: the shell rejects getApiInfo until the
-// sidecar ready handshake lands.
+// Sidecar API coordinates (port + desktop token). Electron waits for its
+// sidecar ready handshake; retries preserve compatibility with desktop
+// bridges that reject while starting.
 // ---------------------------------------------------------------------------
 
 const RETRY_COUNT = 50;

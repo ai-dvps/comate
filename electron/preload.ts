@@ -42,8 +42,8 @@ function onNotificationAction(handler: () => void): Promise<void> {
 const api = {
   /**
    * Port + per-boot desktop credential of the sidecar, captured from the
-   * ready handshake. Rejects until the sidecar is up — the client bridge
-   * keeps the 50×200ms retry semantics from tauri-api.ts.
+   * ready handshake. Waits while the sidecar starts and rejects only when
+   * startup fails.
    */
   getApiInfo: (): Promise<ComateApiInfo> => ipcRenderer.invoke('comate:get-api-info'),
 

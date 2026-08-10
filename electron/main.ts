@@ -25,6 +25,7 @@ import { join, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { APP_ID, resolveLegacyDataDir } from './paths';
 import { createNoopShellLogger, createShellLogger, type ShellLogger } from './logger';
+import { createApiInfoLatch } from './api-info';
 import {
   createControlServer,
   SESSION_ID_PATTERN,
@@ -171,6 +172,7 @@ let trayHandle: TrayHandle | null = null;
 let trayPoller: TrayStatusPoller | null = null;
 let apiPort: number | null = null;
 let apiToken: string | null = null;
+const apiInfoLatch = createApiInfoLatch();
 let badgeCount = 0;
 let isQuitting = false;
 let isShuttingDown = false;
@@ -431,12 +433,7 @@ function createMainWindow(): BrowserWindow {
 // ---------------------------------------------------------------------------
 
 function registerIpcHandlers(): void {
-  ipcMain.handle('comate:get-api-info', () => {
-    if (apiPort == null) {
-      throw new Error('API port not yet discovered');
-    }
-    return { port: apiPort, token: apiToken ?? '' };
-  });
+  ipcMain.handle('comate:get-api-info', () => apiInfoLatch.wait());
 
   ipcMain.handle('comate:show-window', () => {
     showMainWindow();
@@ -727,8 +724,10 @@ function startSidecar(): void {
   try {
     mkdirSync(legacyDataDir, { recursive: true });
   } catch (err) {
+    const startupError = err instanceof Error ? err : new Error(String(err));
+    apiInfoLatch.fail(startupError);
     showFatalError(
-      `Cannot create data directory ${legacyDataDir}: ${err instanceof Error ? err.message : String(err)}`,
+      `Cannot create data directory ${legacyDataDir}: ${startupError.message}`,
     );
     return;
   }
@@ -760,11 +759,14 @@ function startSidecar(): void {
     .then(({ port, desktopToken }) => {
       apiPort = port;
       apiToken = desktopToken ?? null;
+      apiInfoLatch.succeed({ port, token: desktopToken ?? '' });
       logger.info(`Sidecar ready on port ${port}`);
     })
     .catch((err: unknown) => {
+      const startupError = err instanceof Error ? err : new Error(String(err));
+      apiInfoLatch.fail(startupError);
       showFatalError(
-        `The Comate backend failed to start: ${err instanceof Error ? err.message : String(err)}`,
+        `The Comate backend failed to start: ${startupError.message}`,
       );
     });
 }
