@@ -260,6 +260,28 @@ describe('DetailDrawer process region real-time updates', () => {
     }
   })
 
+  it('lets process-region messages fill the drawer body width', () => {
+    const sessionId = 's1'
+    const messageId = 'm1'
+    chatStoreMock.setMessages(sessionId, [
+      {
+        id: messageId,
+        role: 'assistant',
+        timestamp: 1,
+        parts: [toolUsePart('Bash', 'tu-1', { command: 'npm test' })],
+      },
+    ])
+
+    renderWithI18n(
+      <DetailDrawer stack={[processView(messageId)]} {...defaultProps} sessionId={sessionId} />,
+    )
+
+    const drawerBody = screen.getByRole('dialog').querySelector('.overflow-y-auto.p-3')
+    const message = drawerBody?.firstElementChild
+    expect(message).toHaveClass('w-full', 'max-w-none')
+    expect(message).not.toHaveClass('max-w-[95%]')
+  })
+
   it('renders a new tool card when a tool_use part is appended while the drawer is open', async () => {
     const sessionId = 's1'
     const messageId = 'm1'

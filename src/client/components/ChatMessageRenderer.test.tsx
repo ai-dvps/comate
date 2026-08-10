@@ -65,6 +65,17 @@ const baseProps = {
   sessionId: 'session-1',
 }
 
+describe('ChatMessageRenderer width', () => {
+  it('keeps the standard chat width constraint by default', () => {
+    const { container } = render(
+      <ChatMessageRenderer {...baseProps} message={makeTextMessage('hello')} />,
+    )
+
+    expect(container.firstElementChild).toHaveClass('w-full', 'max-w-[95%]')
+    expect(container.firstElementChild).not.toHaveClass('max-w-none')
+  })
+})
+
 describe('ChatMessageRenderer search highlights', () => {
   beforeEach(() => {
     mockStoreState = { workflows: {}, subagents: {} }
