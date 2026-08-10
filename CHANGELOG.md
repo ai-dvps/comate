@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Edit tool changes now appear as one unified diff** — Replacements, additions, and deletions are shown in a single read-only diff instead of separate Before and After blocks, while file metadata and Replace all status remain visible.
 - **Process Region detail drawer now opens and closes smoothly** — The side pane expands from the right when opened, supports resizing up to 800px, and finishes its exit motion before it is removed while respecting reduced-motion preferences.
+- **Process Region items now expand and collapse smoothly** — Tool details and thinking blocks animate to their measured content height inside the side drawer while respecting reduced-motion preferences.
+- **Process Region content now follows the chat font-size setting** — Tool and thinking details in the side drawer use the same configured size as the main conversation.
+- **Process Region tool headers now match reasoning rows** — Tool controls in the side drawer use the same lightweight, transparent presentation instead of a separate card background.
+- **Subagent message lists now match Process Region presentation** — Their content follows the chat font-size setting, uses lightweight tool headers, and animates tool and reasoning expansion and collapse.
 
 ### Fixed
 
