@@ -329,9 +329,10 @@ function ChatMessageRenderer({
         message.role === 'user' ? 'ml-auto items-end' : 'items-start',
       )}
     >
-      <Message from={message.role}>
+      <Message from={message.role} className={fullWidth ? 'max-w-none' : undefined}>
         <MessageContent
           className={cn(
+            fullWidth && 'w-full',
             hasAnyMatch && message.role === 'assistant' &&
               'ring-1 ring-accent/30 rounded-lg',
           )}
