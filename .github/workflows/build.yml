@@ -20,11 +20,12 @@ name: Build
 #  - Credentials present → signed/notarized build, update manifests
 #    (latest.yml / latest-mac.yml / latest-linux.yml + blockmaps) emitted,
 #    draft release published.
-#  - Credentials absent → UNSIGNED smoke build with publish: null (no
-#    manifests, nothing uploaded); the signature/manifest/endpoint guards key
-#    off the same variables and skip in lockstep, so an unsigned run can never
-#    half-publish. Linux has no signing credentials of its own (KTD-9) — its
-#    readiness keys off the tauri bridge key as the release-run sentinel.
+#  - Credentials absent → UNSIGNED build with electron-builder publish: null
+#    and no update manifests. macOS/Windows installers are uploaded explicitly
+#    as individual release assets (and clearly identified as unsigned in the
+#    release notes); signature/manifest guards still skip in lockstep. Linux
+#    has no signing credentials of its own (KTD-9) — its readiness keys off the
+#    tauri bridge key as the release-run sentinel.
 #
 # FOOTGUN (KTD-1): electron-builder does NOT auto-discover
 # electron-builder.config.ts — the --config flag below is load-bearing. A bare
@@ -216,7 +217,33 @@ jobs:
         if: steps.signing.outputs.ready != 'true'
         shell: bash
         run: |
-          echo "::warning::Signing credentials absent — artifacts are UNSIGNED, no update manifests emitted, nothing published. This is a smoke build, not a release."
+          echo "::warning::Signing credentials absent — artifacts are UNSIGNED and no update manifests are emitted. macOS/Windows installers will be uploaded as individual release assets."
+
+      # actions/upload-artifact always wraps downloads in an outer ZIP. Upload
+      # unsigned desktop installers from the runner as well so the release
+      # exposes each DMG, macOS updater ZIP, and Windows EXE directly.
+      - name: Upload unsigned macOS/Windows installers to release
+        if: runner.os != 'Linux' && steps.signing.outputs.ready != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(release/*.dmg release/*.zip release/*.exe)
+          [ "${#assets[@]}" -gt 0 ] || { echo "::error::no macOS/Windows installers found under release/"; exit 1; }
+
+          tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.sha')"
+          [ "$tag_sha" = "$GITHUB_SHA" ] || {
+            echo "::error::tag $GITHUB_REF_NAME moved to $tag_sha; refusing to upload assets from stale commit $GITHUB_SHA"
+            exit 1
+          }
+
+          if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Comate ${GITHUB_REF_NAME#v}" || \
+              gh release view "$GITHUB_REF_NAME" > /dev/null
+          fi
+          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
 
       - name: Verify macOS signature and notarization
         if: runner.os == 'macOS' && steps.signing.outputs.ready == 'true'
@@ -322,10 +349,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # Installers as CI artifacts on every leg: unsigned smoke builds never
-      # reach the draft release (--publish never), and even signed runs benefit
-      # from a direct download that doesn't touch the release. Unsigned builds
-      # are suffixed -unsigned-smoke so nobody ships them by mistake.
+      # Installers as CI artifacts on every leg remain a short-lived backup.
+      # GitHub wraps these files in an outer ZIP; release consumers should use
+      # the individual assets uploaded above or by electron-builder. Unsigned
+      # backups are suffixed -unsigned-smoke to preserve their provenance.
       - name: Upload installers (workflow artifact)
         uses: actions/upload-artifact@v4
         with:
