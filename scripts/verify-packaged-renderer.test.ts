@@ -6,6 +6,7 @@ import { finished } from 'node:stream/promises';
 import { afterEach, test } from 'node:test';
 import { createPackageWithOptions } from '@electron/asar';
 import {
+  archiveEntryPathForPlatform,
   normalizeArchiveEntryPath,
   verifyPackagedRenderers,
 } from './verify-packaged-renderer.ts';
@@ -65,6 +66,13 @@ test('normalizes Windows ASAR entry separators before membership checks', () => 
   assert.equal(
     normalizeArchiveEntryPath('\\dist\\client\\index.html'),
     '/dist/client/index.html',
+  );
+});
+
+test('uses Windows separators when extracting an ASAR entry', () => {
+  assert.equal(
+    archiveEntryPathForPlatform('/dist/client/index.html', '\\'),
+    'dist\\client\\index.html',
   );
 });
 
