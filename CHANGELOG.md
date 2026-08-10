@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Process Region detail drawer now opens and closes smoothly** — The side pane expands from the right when opened, supports resizing up to 800px, and finishes its exit motion before it is removed while respecting reduced-motion preferences.
+
 ### Fixed
 
 - **Windows custom title bar now has a visible top frame when restored** — The subtle top edge follows the app theme and disappears while the window is maximized or fullscreen.
