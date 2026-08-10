@@ -276,6 +276,41 @@
     from { width: var(--detail-drawer-width); opacity: 1; transform: translateX(0); }
     to { width: 0; opacity: 0; transform: translateX(1rem); }
   }
+
+  /* Process-region item details: Radix exposes the measured content height,
+     allowing both expansion and collapse to animate without a fixed height. */
+  .animate-process-item[data-state='open'] {
+    animation: process-item-expand 180ms ease-out;
+  }
+
+  .animate-process-item[data-state='closed'] {
+    animation: process-item-collapse 150ms ease-in;
+  }
+
+  @keyframes process-item-expand {
+    from { height: 0; opacity: 0; transform: translateY(-0.25rem); }
+    to {
+      height: min(var(--radix-collapsible-content-height), 40vh);
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes process-item-collapse {
+    from {
+      height: min(var(--radix-collapsible-content-height), 40vh);
+      opacity: 1;
+      transform: translateY(0);
+    }
+    to { height: 0; opacity: 0; transform: translateY(-0.25rem); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-process-item[data-state] {
+      animation: none;
+    }
+  }
+
 }
 
 /* Electron custom titlebar dragging (U2): the preload exposes no startDragging

@@ -62,6 +62,10 @@ export interface ChatMessageRendererProps {
   resultRegions?: ResultFocusRegion[]
   /** Allow embedded renderers, such as the detail drawer, to use all available width. */
   fullWidth?: boolean
+  /** Animate collapsible thinking and tool details in embedded process-region views. */
+  animateCollapsibleItems?: boolean
+  /** Render tool rows without the card-like background used in the main conversation. */
+  lightweightToolHeaders?: boolean
 }
 
 interface ResultProcessRegionProps {
@@ -210,6 +214,8 @@ function ChatMessageRenderer({
   onOpenProcessRegion,
   resultRegions,
   fullWidth = false,
+  animateCollapsibleItems = false,
+  lightweightToolHeaders = false,
 }: ChatMessageRendererProps) {
   const messageIdRef = useRef(message.id)
   messageIdRef.current = message.id
@@ -385,7 +391,13 @@ function ChatMessageRenderer({
                   isCurrentSearchMatch={isCurrentInPart}
                 >
                   <ReasoningTrigger />
-                  <ReasoningContent>{part.text}</ReasoningContent>
+                  <ReasoningContent
+                    className={animateCollapsibleItems
+                      ? 'animate-process-item'
+                      : undefined}
+                  >
+                    {part.text}
+                  </ReasoningContent>
                 </Reasoning>
               )
             }
@@ -443,6 +455,9 @@ function ChatMessageRenderer({
                   key={partKey}
                   hasSearchMatch={hasMatchInPart}
                   isCurrentSearchMatch={isCurrentInPart}
+                  className={lightweightToolHeaders
+                    ? 'rounded-lg border-0 bg-transparent shadow-none'
+                    : undefined}
                 >
                   <ToolHeader
                     state={state}
@@ -450,8 +465,16 @@ function ChatMessageRenderer({
                     type={`tool-${part.toolName}`}
                     autoApproved={autoApproved}
                     meta={part.meta}
+                    className={lightweightToolHeaders
+                      ? 'gap-2 p-0 text-text-tertiary transition-colors'
+                      : undefined}
                   />
-                  <ToolContent forceExpanded={isCurrentInPart}>
+                  <ToolContent
+                    forceExpanded={isCurrentInPart}
+                    className={animateCollapsibleItems
+                      ? 'animate-process-item'
+                      : undefined}
+                  >
                     {isStreaming && streamingJson.length > 0 ? (
                       <StreamingToolInputPreview partialJson={streamingJson} />
                     ) : (
@@ -538,6 +561,8 @@ function areEqual(
   if (prevProps.autoApprovedTools !== nextProps.autoApprovedTools) return false
   if (prevProps.resultRegions !== nextProps.resultRegions) return false
   if (prevProps.fullWidth !== nextProps.fullWidth) return false
+  if (prevProps.animateCollapsibleItems !== nextProps.animateCollapsibleItems) return false
+  if (prevProps.lightweightToolHeaders !== nextProps.lightweightToolHeaders) return false
 
   if (
     searchPropsAffectMessage(

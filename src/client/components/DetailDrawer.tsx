@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { useTranslation } from 'react-i18next'
 import { Bot, ChevronLeft, Layers, Workflow as WorkflowIcon, X } from 'lucide-react'
 
+import { useAppSettings } from '../hooks/use-app-settings'
 import { useChatStore } from '../stores/chat-store'
 import { formatDuration } from '../lib/time'
 import { getWorkflowPhaseIndex, getCurrentPhaseTitle } from '../lib/workflow-utils'
@@ -44,6 +45,7 @@ export default function DetailDrawer({
   onPush,
 }: DetailDrawerProps) {
   const { t } = useTranslation('chat')
+  const { chatFontSize } = useAppSettings()
   const asideRef = useRef<HTMLElement>(null)
   const previouslyFocused = useRef<HTMLElement | null>(null)
   const closeTimerRef = useRef<number | null>(null)
@@ -188,7 +190,11 @@ export default function DetailDrawer({
       </div>
 
       {/* Body */}
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+      <div
+        className="min-h-0 flex-1 overflow-y-auto p-3"
+        data-testid={view.kind === 'process' ? 'process-region-content' : undefined}
+        style={view.kind === 'process' ? { fontSize: chatFontSize } : undefined}
+      >
         {view.kind === 'process' && (
           <ProcessBody
             messageId={view.messageId}
@@ -296,6 +302,8 @@ function ProcessBody({
       sessionId={sessionId}
       displayMode="linear"
       fullWidth
+      animateCollapsibleItems
+      lightweightToolHeaders
     />
   )
 }

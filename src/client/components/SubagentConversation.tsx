@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 
+import { useAppSettings } from '../hooks/use-app-settings'
 import type { SubagentMessage } from '../stores/chat-store'
 import ChatMessageRenderer from './ChatMessageRenderer'
 import { adaptSubagentMessage, buildResultMap } from './chat-message-adapter'
@@ -25,6 +26,7 @@ export default function SubagentConversation({
   sessionId,
   onOpenDrawer,
 }: SubagentConversationProps) {
+  const { chatFontSize } = useAppSettings()
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -47,7 +49,12 @@ export default function SubagentConversation({
   const visibleMessages = messages.filter((m) => !isToolResultOnly(m))
 
   return (
-    <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-3 p-4">
+    <div
+      ref={scrollRef}
+      className="flex-1 overflow-y-auto space-y-3 p-4"
+      data-testid="subagent-message-list"
+      style={{ fontSize: chatFontSize }}
+    >
       {visibleMessages.map((msg) => {
         const adapted = adaptSubagentMessage(msg, isRunning)
         return (
@@ -57,6 +64,8 @@ export default function SubagentConversation({
             resultMap={resultMap}
             onOpenDrawer={onOpenDrawer ?? (() => {})}
             sessionId={sessionId}
+            animateCollapsibleItems
+            lightweightToolHeaders
           />
         )
       })}

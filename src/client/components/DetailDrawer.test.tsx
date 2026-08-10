@@ -12,6 +12,12 @@ import type { ChatMessage } from '../types/message'
 const renderWithI18n = (ui: React.ReactElement) =>
   render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>)
 
+const appSettingsMock = vi.hoisted(() => ({ chatFontSize: 12 }))
+
+vi.mock('../hooks/use-app-settings', () => ({
+  useAppSettings: () => ({ chatFontSize: appSettingsMock.chatFontSize }),
+}))
+
 const chatStoreMock = vi.hoisted(() => {
   type Listener = () => void
   const listeners = new Set<Listener>()
@@ -108,6 +114,7 @@ describe('DetailDrawer', () => {
 
   beforeEach(() => {
     originalScrollHeight = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight')
+    appSettingsMock.chatFontSize = 12
     chatStoreMock.getState().messages = {}
     chatStoreMock.getState().subagents = {}
     chatStoreMock.getState().workflows = {}
@@ -127,6 +134,60 @@ describe('DetailDrawer', () => {
   it('renders nothing when the stack is empty', () => {
     const { container } = renderWithI18n(<DetailDrawer stack={[]} {...defaultProps} />)
     expect(container.firstChild).toBeNull()
+  })
+
+  it('keeps non-process drawer content on the UI font size', () => {
+    appSettingsMock.chatFontSize = 18
+
+    renderWithI18n(<DetailDrawer stack={[sub('missing')]} {...defaultProps} />)
+
+    const drawerBody = screen.getByRole('dialog').querySelector('.overflow-y-auto.p-3')
+    expect(drawerBody).not.toHaveAttribute('style')
+    expect(drawerBody).not.toHaveAttribute('data-testid')
+  })
+
+  it('applies process-region presentation to the subagent message list', () => {
+    const sessionId = 's1'
+    const parentToolUseId = 'agent-1'
+    appSettingsMock.chatFontSize = 18
+    chatStoreMock.getState().subagents[sessionId] = [
+      {
+        parentToolUseId,
+        description: 'Inspect implementation',
+        state: 'completed',
+        startTime: 1,
+        endTime: 2,
+        toolCount: 1,
+        progressHint: '',
+        messages: [
+          {
+            id: 'sub-message-1',
+            role: 'assistant',
+            parts: [
+              { type: 'thinking', text: 'Reviewing the code' },
+              { type: 'tool_use', toolUseId: 'sub-tool-1', toolName: 'Bash', input: { command: 'npm test' } },
+            ],
+          },
+        ],
+      },
+    ]
+
+    renderWithI18n(
+      <DetailDrawer stack={[sub(parentToolUseId)]} {...defaultProps} sessionId={sessionId} />,
+    )
+
+    expect(screen.getByTestId('subagent-message-list')).toHaveStyle({ fontSize: '18px' })
+
+    const toolToggle = screen.getByRole('button', { name: /Expand tool details/i })
+    const toolHeader = toolToggle.parentElement
+    expect(toolHeader?.parentElement).toHaveClass('bg-transparent', 'border-0', 'shadow-none')
+    expect(toolHeader).toHaveClass('p-0', 'text-text-tertiary')
+    fireEvent.click(toolToggle)
+    expect(document.querySelector('[data-tool-content]')).toHaveClass('animate-process-item')
+
+    const reasoningToggle = screen.getByRole('button', { name: /Expand thoughts/i })
+    fireEvent.click(reasoningToggle)
+    expect(document.querySelector('[data-reasoning-content]')).toHaveClass('animate-process-item')
   })
 
   it('shows no back button at depth 1 (R3)', () => {
@@ -246,6 +307,7 @@ describe('DetailDrawer process region real-time updates', () => {
 
   beforeEach(() => {
     originalScrollHeight = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight')
+    appSettingsMock.chatFontSize = 12
     chatStoreMock.getState().messages = {}
     chatStoreMock.getState().subagents = {}
     chatStoreMock.getState().workflows = {}
@@ -280,6 +342,71 @@ describe('DetailDrawer process region real-time updates', () => {
     const message = drawerBody?.firstElementChild
     expect(message).toHaveClass('w-full', 'max-w-none')
     expect(message).not.toHaveClass('max-w-[95%]')
+  })
+
+  it('uses the configured chat font size for process-region content', () => {
+    const sessionId = 's1'
+    const messageId = 'm1'
+    appSettingsMock.chatFontSize = 18
+    chatStoreMock.setMessages(sessionId, [
+      {
+        id: messageId,
+        role: 'assistant',
+        timestamp: 1,
+        parts: [toolUsePart('Bash', 'tu-1', { command: 'npm test' })],
+      },
+    ])
+
+    renderWithI18n(
+      <DetailDrawer stack={[processView(messageId)]} {...defaultProps} sessionId={sessionId} />,
+    )
+
+    expect(screen.getByTestId('process-region-content')).toHaveStyle({ fontSize: '18px' })
+  })
+
+  it('renders process-region tool headers with the same lightweight style as reasoning', () => {
+    const sessionId = 's1'
+    const messageId = 'm1'
+    chatStoreMock.setMessages(sessionId, [
+      {
+        id: messageId,
+        role: 'assistant',
+        timestamp: 1,
+        parts: [toolUsePart('Bash', 'tu-1', { command: 'npm test' })],
+      },
+    ])
+
+    renderWithI18n(
+      <DetailDrawer stack={[processView(messageId)]} {...defaultProps} sessionId={sessionId} />,
+    )
+
+    const toggle = screen.getByRole('button', { name: /Expand tool details/i })
+    const header = toggle.parentElement
+    const tool = header?.parentElement
+    expect(tool).toHaveClass('border-0', 'bg-transparent', 'shadow-none')
+    expect(tool).not.toHaveClass('bg-surface-hover/30')
+    expect(header).toHaveClass('gap-2', 'p-0', 'text-text-tertiary')
+    expect(header).not.toHaveClass('p-2')
+  })
+
+  it('enables expand and collapse animations for process-region tool cards', async () => {
+    const sessionId = 's1'
+    const messageId = 'm1'
+    chatStoreMock.setMessages(sessionId, [
+      {
+        id: messageId,
+        role: 'assistant',
+        timestamp: 1,
+        parts: [toolUsePart('Bash', 'tu-1', { command: 'npm test' })],
+      },
+    ])
+
+    renderWithI18n(
+      <DetailDrawer stack={[processView(messageId)]} {...defaultProps} sessionId={sessionId} />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /Expand tool details/i }))
+    expect(document.querySelector('[data-tool-content]')).toHaveClass('animate-process-item')
   })
 
   it('renders a new tool card when a tool_use part is appended while the drawer is open', async () => {
