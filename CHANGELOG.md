@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Electron release no longer opens to a blank window** — Clean CI builds now compile and package the Vite renderer alongside the Electron shell, and the release workflow rejects any app archive whose renderer entry files are missing.
+
 ## [0.1.0] - 2026-08-08
 
 ### Changed

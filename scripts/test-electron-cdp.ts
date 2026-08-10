@@ -51,7 +51,7 @@ const execFileAsync = promisify(execFile);
 // Windows: `npm` is npm.cmd — execFile needs shell:true to resolve it.
 const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 try {
-  await execFileAsync(npmCmd, ['run', 'build:electron', '--silent'], {
+  await execFileAsync(npmCmd, ['run', 'build:electron:shell', '--silent'], {
     timeout: 180_000,
     shell: process.platform === 'win32',
   });
