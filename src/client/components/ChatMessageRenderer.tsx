@@ -60,6 +60,8 @@ export interface ChatMessageRendererProps {
   /** Open the per-region drawer (U4). Keyed by message id + region index. */
   onOpenProcessRegion?: (messageId: string, regionIndex: number) => void
   resultRegions?: ResultFocusRegion[]
+  /** Allow embedded renderers, such as the detail drawer, to use all available width. */
+  fullWidth?: boolean
 }
 
 interface ResultProcessRegionProps {
@@ -207,6 +209,7 @@ function ChatMessageRenderer({
   displayMode = 'linear',
   onOpenProcessRegion,
   resultRegions,
+  fullWidth = false,
 }: ChatMessageRendererProps) {
   const messageIdRef = useRef(message.id)
   messageIdRef.current = message.id
@@ -321,7 +324,8 @@ function ChatMessageRenderer({
   return (
     <div
       className={cn(
-        'group flex w-full max-w-[95%] flex-col',
+        'group flex w-full flex-col',
+        fullWidth ? 'max-w-none' : 'max-w-[95%]',
         message.role === 'user' ? 'ml-auto items-end' : 'items-start',
       )}
     >
@@ -532,6 +536,7 @@ function areEqual(
   if (prevProps.onOpenProcessRegion !== nextProps.onOpenProcessRegion) return false
   if (prevProps.autoApprovedTools !== nextProps.autoApprovedTools) return false
   if (prevProps.resultRegions !== nextProps.resultRegions) return false
+  if (prevProps.fullWidth !== nextProps.fullWidth) return false
 
   if (
     searchPropsAffectMessage(

@@ -295,6 +295,7 @@ function ProcessBody({
       onOpenDrawer={onOpenDrawer}
       sessionId={sessionId}
       displayMode="linear"
+      fullWidth
     />
   )
 }
