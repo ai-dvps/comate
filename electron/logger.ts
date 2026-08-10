@@ -46,6 +46,18 @@ export interface ShellLoggerOptions {
 const DEFAULT_MAX_SIZE_BYTES = 100 * 1024 * 1024;
 const DEFAULT_KEEP_DAYS = 7;
 const ARCHIVE_PATTERN = /^main\..+\.log$/;
+const NOOP_SHELL_LOGGER: ShellLogger = Object.freeze({
+  filePath: null,
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+});
+
+/** Logger used by a duplicate process while Electron completes its exit. */
+export function createNoopShellLogger(): ShellLogger {
+  return NOOP_SHELL_LOGGER;
+}
 
 function formatTimestamp(now: Date): string {
   const pad = (n: number): string => String(n).padStart(2, '0');

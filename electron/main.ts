@@ -24,7 +24,7 @@ import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { APP_ID, resolveLegacyDataDir } from './paths';
-import { createShellLogger, type ShellLogger } from './logger';
+import { createNoopShellLogger, createShellLogger, type ShellLogger } from './logger';
 import {
   createControlServer,
   SESSION_ID_PATTERN,
@@ -48,6 +48,7 @@ import {
 import { createTray, resolveWindowCloseAction, runTrayStatusPoller, type TrayHandle, type TrayStatusPoller } from './tray';
 import { runFirstRunCleanup } from './first-run-cleanup';
 import { installAppMenu } from './menu';
+import { enforceSingleInstance } from './single-instance';
 import { autoUpdater } from 'electron-updater';
 import {
   createUpdaterController,
@@ -78,6 +79,11 @@ const legacyDataDir =
     xdgDataHome: process.env['XDG_DATA_HOME'],
   });
 app.setPath('userData', join(legacyDataDir, 'shell'));
+
+// Acquire the process lock before allocating the debug port, creating logs,
+// or starting any shell services. A losing launch exits immediately, while
+// Electron signals the primary process to restore its existing window.
+const isPrimaryInstance = enforceSingleInstance(app, showMainWindow);
 
 // Privileged UI scheme (production). Registered pre-ready; handled post-ready.
 const UI_SCHEME = 'app.comate';
@@ -132,7 +138,7 @@ function allocateLoopbackPort(): Promise<number> {
  * order matters more than the ~1ms allocation latency (ready physically
  * cannot fire before the first macrotask turn completes).
  */
-const debugPortConfigured: Promise<void> = (async () => {
+const debugPortConfigured: Promise<void> = isPrimaryInstance ? (async () => {
   try {
     shellDebugPortSetting = shellDebugPortOverride
       ? Number(shellDebugPortOverride)
@@ -147,11 +153,13 @@ const debugPortConfigured: Promise<void> = (async () => {
     app.commandLine.appendSwitch('remote-debugging-port', String(shellDebugPortSetting));
     app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
   }
-})();
+})() : Promise.resolve();
 
-const logger: ShellLogger = createShellLogger(join(legacyDataDir, 'logs'), {
-  mirrorToConsole: !app.isPackaged,
-});
+const logger: ShellLogger = isPrimaryInstance
+  ? createShellLogger(join(legacyDataDir, 'logs'), {
+      mirrorToConsole: !app.isPackaged,
+    })
+  : createNoopShellLogger();
 
 // ---------------------------------------------------------------------------
 // Shell state (lib.rs AppState)
@@ -806,16 +814,7 @@ function initiateQuit(reason: ShutdownReason): void {
 // The debug-port switch must land before Chromium init, so every app handler
 // registration waits out the (sub-millisecond) port allocation (KTD-6).
 void debugPortConfigured.then(() => {
-  const gotSingleInstanceLock = app.requestSingleInstanceLock();
-  if (!gotSingleInstanceLock) {
-    // A second launch focuses the existing window and exits (lib.rs
-    // tauri_plugin_single_instance).
-    app.quit();
-    return;
-  }
-  app.on('second-instance', () => {
-    showMainWindow();
-  });
+  if (!isPrimaryInstance) return;
 
   app.on('before-quit', (event) => {
     if (isShuttingDown) return; // cleanup already ran; let the quit proceed

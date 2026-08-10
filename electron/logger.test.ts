@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createShellLogger } from './logger';
+import { createNoopShellLogger, createShellLogger } from './logger';
 
 function withTempDir(fn: (dir: string) => void): void {
   const dir = mkdtempSync(join(tmpdir(), 'comate-electron-logger-'));
@@ -51,5 +51,18 @@ describe('createShellLogger', () => {
       assert.ok(!files.includes('main.20000101-000000.log'), 'stale archive should be pruned');
       assert.ok(files.includes('main.20990101-000000.log'), 'recent archive should be kept');
     });
+  });
+});
+
+describe('createNoopShellLogger', () => {
+  it('accepts log calls without creating a file sink', () => {
+    const logger = createNoopShellLogger();
+
+    logger.debug('ignored');
+    logger.info('ignored');
+    logger.warn('ignored');
+    logger.error('ignored');
+
+    assert.strictEqual(logger.filePath, null);
   });
 });
