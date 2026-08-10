@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Windows custom title bar now has a visible top frame when restored** — The subtle top edge follows the app theme and disappears while the window is maximized or fullscreen.
 - **Comate now exits duplicate desktop launches immediately** — The Electron single-instance lock is acquired before debug-port allocation or shell service startup, and launching Comate again restores the existing window instead of starting another app instance.
 - **Electron release no longer opens to a blank window** — Clean CI builds now compile and package the Vite renderer alongside the Electron shell, and the release workflow rejects any app archive whose renderer entry files are missing.
 

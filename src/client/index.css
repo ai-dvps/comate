@@ -264,3 +264,19 @@
 [data-tauri-drag-region] {
   -webkit-app-region: drag;
 }
+
+/* Windows drops the native top edge for a hidden title bar. Restore that
+   subtle frame while the window is restored, without shifting header layout. */
+[data-windows-restored-frame] {
+  position: relative;
+}
+
+[data-windows-restored-frame]::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 40;
+  height: 1px;
+  background: hsl(var(--color-border));
+  pointer-events: none;
+}

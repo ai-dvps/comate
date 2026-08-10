@@ -164,6 +164,34 @@ describe('shell capabilities through the bridge', () => {
     await expect(api.showWindow()).resolves.toBeUndefined()
   })
 
+  it('reports and subscribes to the main window maximized state', async () => {
+    const isWindowMaximized = vi.fn(() => Promise.resolve(true))
+    const unsubscribe = vi.fn()
+    let maximizedHandler: ((maximized: boolean) => void) | undefined
+    installBridge({
+      getApiInfo: vi.fn(),
+      isWindowMaximized,
+      onWindowMaximizedChange: (handler) => {
+        maximizedHandler = handler
+        return unsubscribe
+      },
+    })
+    const api = await importBridge()
+    const handler = vi.fn()
+
+    await expect(api.isWindowMaximized()).resolves.toBe(true)
+    const stopListening = api.onWindowMaximizedChange(handler)
+    maximizedHandler?.(false)
+
+    expect(handler).toHaveBeenCalledWith(false)
+    stopListening()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+
+    removeBridge()
+    await expect(api.isWindowMaximized()).resolves.toBe(false)
+    expect(() => api.onWindowMaximizedChange(handler)()).not.toThrow()
+  })
+
   it('updateBadgeState forwards the count and is a no-op without the bridge', async () => {
     const updateBadgeState = vi.fn(() => Promise.resolve())
     installBridge({ getApiInfo: vi.fn(), updateBadgeState })

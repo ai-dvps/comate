@@ -39,6 +39,14 @@ function onNotificationAction(handler: () => void): Promise<void> {
   return Promise.resolve();
 }
 
+function onWindowMaximizedChange(handler: (maximized: boolean) => void): () => void {
+  const listener = (_event: Electron.IpcRendererEvent, maximized: unknown): void => {
+    if (typeof maximized === 'boolean') handler(maximized);
+  };
+  ipcRenderer.on('comate:window-maximized-changed', listener);
+  return () => ipcRenderer.removeListener('comate:window-maximized-changed', listener);
+}
+
 const api = {
   /**
    * Port + per-boot desktop credential of the sidecar, captured from the
@@ -49,6 +57,12 @@ const api = {
 
   /** App.tsx parity: show + unminimize + focus the main window. */
   showWindow: (): Promise<void> => ipcRenderer.invoke('comate:show-window'),
+
+  /** Whether the main window currently fills the screen (maximized/fullscreen). */
+  isWindowMaximized: (): Promise<boolean> => ipcRenderer.invoke('comate:is-window-maximized'),
+
+  /** Subscribe to maximize/restore changes so the renderer can style its frame. */
+  onWindowMaximizedChange,
 
   /**
    * Windows: recolor the native min/max/close caption buttons to match the
