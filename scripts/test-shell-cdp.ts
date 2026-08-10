@@ -33,6 +33,7 @@ import path from 'node:path';
 import { chromium as playwrightChromium } from 'playwright';
 
 import { createGateHarness } from './lib/gate-harness.js';
+import { waitForChildProcessClose } from './lib/process-cleanup.js';
 
 const { unavailable, check, assert, results } = createGateHarness({
   gateName: 'shell CDP contract suite',
@@ -197,6 +198,7 @@ const chrome: ChildProcess = spawn(
   ],
   { stdio: ['ignore', 'ignore', 'pipe'] },
 );
+const chromeClosed = waitForChildProcessClose(chrome);
 let chromeStderr = '';
 chrome.stderr?.on('data', (chunk) => {
   chromeStderr += String(chunk);
@@ -704,12 +706,13 @@ try {
   defaultStore?.close();
   await closeShellTarget({ port: debugPort, targetId: targetA.targetId }).catch(() => undefined);
   chrome.kill('SIGKILL');
+  await chromeClosed;
   await new Promise<void>((resolve) => {
     fixture.closeAllConnections?.();
     fixture.close(() => resolve());
   });
-  rmSync(tempDir, { recursive: true, force: true });
-  rmSync(chromeUserData, { recursive: true, force: true });
+  rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  rmSync(chromeUserData, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 
 const failed = results.filter((r) => !r.ok);

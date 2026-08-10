@@ -30,7 +30,7 @@
     "test:electron-cdp": "tsx scripts/test-electron-cdp.ts",
     "test:electron-cdp:required": "tsx scripts/test-electron-cdp.ts --required",
     "test:server": "npm run build:contracts && tsx scripts/test-server.ts",
-    "test:scripts": "tsx --test scripts/electron-build-contract.test.ts scripts/verify-packaged-renderer.test.ts scripts/build-bridge-manifest.test.ts scripts/test-server.test.ts",
+    "test:scripts": "tsx --test scripts/electron-build-contract.test.ts scripts/verify-packaged-renderer.test.ts scripts/build-bridge-manifest.test.ts scripts/test-server.test.ts scripts/lib/process-cleanup.test.ts",
     "test:packages": "npm run build:cli && npm test -w packages/comate-api-contracts -w packages/comate-cli -w packages/wecom-cli",
     "typecheck": "npm run build:contracts && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "check": "npm run lint && npm run typecheck && npm test",
