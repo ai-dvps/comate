@@ -2,7 +2,8 @@ name: Build
 
 # U4 (R3 CI, KTD-3, KTD-9): electron-builder release pipeline.
 #
-# Flow per platform: sidecar → shell-path CDP gate → shell bundle →
+# Flow per platform: sidecar → native CDP contract gate → Electron shell-path
+# CDP gate → renderer bundle →
 # electron-builder package → signature verification → update-manifest guard →
 # bridge artifact repack + tauri-signer sign (U6) → draft-release endpoint
 # test. A final bridge-manifest job (U6, KTD-3) then generates the tauri-format
@@ -114,11 +115,22 @@ jobs:
           # steps (incl. packaging) see the path, not the .p8 contents.
           echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
 
-      # Mirrors the `release` npm script (build:sidecar + CDP gate +
+      # Mirrors the `release` npm script (build:sidecar + CDP gates +
       # electron-builder), split into steps so CI can add publish flags and
       # per-guard conditions.
       - name: Build sidecar
         run: npm run build:sidecar
+
+      - name: Install Playwright Chromium (macOS/Windows)
+        if: runner.os != 'Linux'
+        run: npx playwright install chromium
+
+      - name: Install Playwright Chromium and system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: npx playwright install --with-deps chromium
+
+      - name: Native shell CDP contract gate
+        run: npm run test:shell-cdp:required
 
       # Shell-path (in-app Chromium) CDP e2e gate — drives a real Electron
       # shell via Playwright, creates a view over the control channel, and
@@ -187,7 +199,7 @@ jobs:
         run: npx electron-builder --config electron-builder.config.ts ${{ matrix.builder-args }} ${{ steps.signing.outputs.ready == 'true' && '--publish onTagOrDraft' || '--publish never' }}
 
       - name: Guard packaged renderer contents
-        run: npm run verify:electron-package
+        run: npm run verify:electron:package
 
       - name: Guard electron-builder config discovery
         shell: bash

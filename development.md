@@ -70,6 +70,8 @@ npm run release
 
 This bundles the sidecar server, runs the CDP gates (the native shell-CDP parity suite `test:shell-cdp:required` and the real-Electron shell-path gate `test:electron-cdp:required`), and packages the app with electron-builder. Output artifacts land in `release/`.
 
+Before opening a pull request, run `npm run check` for the complete lint, type-check, and unit-test suite. Use the individual `test:*` commands while iterating on a focused area.
+
 ### Linux artifacts (AppImage primary, deb secondary)
 
 Linux targets build only on a Linux host (electron-builder cannot cross-build them from macOS without Docker) — in practice the `ubuntu-22.04` CI leg produces them. Two artifacts ship per release:
