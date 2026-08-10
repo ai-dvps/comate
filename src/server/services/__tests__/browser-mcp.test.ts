@@ -27,6 +27,7 @@ import {
   type BrowserToolDefinition,
 } from '../browser-mcp.js';
 import type { RawAxNode, RawPageExtraction, SubmitSnapshot } from '../browser-page-model.js';
+import { CdpError } from '../browser-cdp.js';
 import { ChatService } from '../chat-service.js';
 import { SessionRuntime } from '../session-runtime.js';
 import { SdkClient } from '../sdk-client.js';
@@ -45,9 +46,11 @@ import { SESSION_TOKEN_ENV } from '../session-capability-service.js';
 
 interface FakePageOptions {
   extraction: RawPageExtraction;
+  postSubmitExtraction?: RawPageExtraction;
   axNodes?: RawAxNode[];
   probe?: { docId: string; domEpoch: number };
   submitSnapshots?: Array<SubmitSnapshot | null>;
+  submitDispatchError?: Error;
   extractResults?: Record<string, unknown>;
   inspectResult?: Record<string, unknown>;
   networkTransport?: BrowserNetworkCaptureTransport;
@@ -91,6 +94,7 @@ class FakePage implements BrowserCdpSession {
   dispatchScripts: string[] = [];
   private readonly options: FakePageOptions;
   private submitSnapshots: Array<SubmitSnapshot | null>;
+  private submitDispatched = false;
   private closeListeners = new Set<() => void>();
 
   constructor(options: FakePageOptions) {
@@ -106,7 +110,11 @@ class FakePage implements BrowserCdpSession {
 
   async evaluate<T>(expression: string): Promise<T> {
     if (expression.includes('new MutationObserver')) {
-      return this.options.extraction as T; // distiller extractor
+      return (
+        this.submitDispatched && this.options.postSubmitExtraction
+          ? this.options.postSubmitExtraction
+          : this.options.extraction
+      ) as T; // distiller extractor
     }
     if (expression.includes('window.__comateProbe')) {
       return this.probe as T; // READ_PROBE_SCRIPT
@@ -121,10 +129,14 @@ class FakePage implements BrowserCdpSession {
     }
     if (expression.includes('requestSubmit')) {
       this.dispatchScripts.push(expression);
+      this.submitDispatched = true;
+      if (this.options.submitDispatchError) throw this.options.submitDispatchError;
       return { ok: true } as T;
     }
     if (expression.includes('XPathResult')) {
       this.actScripts.push(expression);
+      this.submitDispatched = true;
+      if (this.options.submitDispatchError) throw this.options.submitDispatchError;
       return { ok: true } as T;
     }
     if (expression.includes('var specs = ')) {
@@ -623,6 +635,89 @@ describe('browser-mcp submit handler-level gate', () => {
     assert.ok(!JSON.stringify(cardPayload).includes('4111'));
     assert.ok(!JSON.stringify(cardPayload).includes('deadbeef'));
   });
+
+  for (const testCase of [
+    {
+      name: 'target navigation during requestSubmit',
+      message: 'Inspected target navigated or closed',
+      refKind: 'form',
+    },
+    {
+      name: 'execution-context destruction during requestSubmit',
+      message: 'Execution context was destroyed',
+      refKind: 'form',
+    },
+    {
+      name: 'missing execution context during submit-control click',
+      message: 'Cannot find context with specified id',
+      refKind: 'control',
+    },
+  ] as const) {
+    it(`treats ${testCase.name} as successful navigation`, async () => {
+      const page = new FakePage({
+        extraction: makeExtraction(),
+        postSubmitExtraction: makeExtraction({
+          url: 'https://shop.example/submitted',
+          title: 'Submitted',
+          forms: [],
+        }),
+        submitSnapshots: [makeSubmitSnapshot()],
+        submitDispatchError: new CdpError(
+          `CDP Runtime.evaluate failed: ${testCase.message}`,
+          'Runtime.evaluate',
+        ),
+      });
+      harness = await makeHarness({ page });
+      const { formRef, payRef } = await openAndGetFormRef(harness);
+      const ref = testCase.refKind === 'control' ? payRef : formRef;
+
+      const result = await harness.call('submit', { ref });
+
+      assert.strictEqual(result.isError, undefined);
+      const payload = resultPayload(result);
+      assert.strictEqual(payload.submitted, true);
+      assert.strictEqual((payload.model as { title: string }).title, 'Submitted');
+      if (testCase.refKind === 'control') {
+        assert.strictEqual(page.dispatchScripts.length, 0);
+        assert.ok(page.actScripts.some((script) => script.includes('"click"')));
+      }
+    });
+  }
+
+  for (const testCase of [
+    {
+      name: 'a navigation-shaped CdpError from another method',
+      error: new CdpError(
+        'CDP Page.navigate failed: Inspected target navigated or closed',
+        'Page.navigate',
+      ),
+    },
+    {
+      name: 'a plain Error with a navigation-race message',
+      error: new Error('Inspected target navigated or closed'),
+    },
+    {
+      name: 'an unrelated Runtime.evaluate CdpError',
+      error: new CdpError('CDP Runtime.evaluate failed: JavaScript exception', 'Runtime.evaluate'),
+    },
+  ]) {
+    it(`propagates ${testCase.name}`, async () => {
+      const page = new FakePage({
+        extraction: makeExtraction(),
+        submitSnapshots: [makeSubmitSnapshot()],
+        submitDispatchError: testCase.error,
+      });
+      harness = await makeHarness({ page });
+      const { formRef } = await openAndGetFormRef(harness);
+
+      const result = await harness.call('submit', { ref: formRef });
+
+      assert.strictEqual(result.isError, true);
+      const error = resultPayload(result).error as { code: string; message: string };
+      assert.strictEqual(error.code, 'browser_cdp_error');
+      assert.ok(error.message.includes(testCase.error.message));
+    });
+  }
 
   it('returns a non-error deny result and never dispatches', async () => {
     const page = new FakePage({

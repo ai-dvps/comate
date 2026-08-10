@@ -1,7 +1,7 @@
 import '../test-utils/test-env.js';
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
-import { mkdtempSync } from 'fs';
+import { existsSync, mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { SqliteStore } from './sqlite-store.js';
@@ -418,6 +418,26 @@ describe('SqliteStore in-memory + resetData', { concurrency: false }, () => {
 
   it('resetData on a freshly constructed (empty) store completes without error', () => {
     assert.doesNotThrow(() => store.resetData());
+  });
+
+  it('close releases the database connection and is idempotent', async () => {
+    store.close();
+    assert.doesNotThrow(() => store.close());
+    await assert.rejects(store.list(), /database connection is not open/i);
+  });
+
+  it('close releases a file-backed database so its directory can be deleted', () => {
+    const storageDir = mkdtempSync(join(tmpdir(), 'sqlite-store-close-'));
+    const fileStore = new SqliteStore(join(storageDir, 'data.db'));
+
+    try {
+      fileStore.close();
+      rmSync(storageDir, { recursive: true });
+      assert.strictEqual(existsSync(storageDir), false);
+    } finally {
+      fileStore.close();
+      rmSync(storageDir, { recursive: true, force: true });
+    }
   });
 
   it('separate in-memory stores are isolated from each other', async () => {

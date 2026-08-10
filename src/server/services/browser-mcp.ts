@@ -48,7 +48,7 @@ import {
   type HandoffEndReason,
   type HandoffPhase,
 } from './browser-control.js';
-import { connectBrowserPage, type BrowserCdpSession } from './browser-cdp.js';
+import { CdpError, connectBrowserPage, type BrowserCdpSession } from './browser-cdp.js';
 import {
   READ_PROBE_SCRIPT,
   RefTable,
@@ -264,6 +264,16 @@ function buildRequestSubmitScript(formIndex: number): string {
     return { ok: false, reason: 'dispatch_failed: ' + (e && e.message ? e.message : String(e)) };
   }
 })()`;
+}
+
+function isSubmitNavigationRace(error: unknown): boolean {
+  return (
+    error instanceof CdpError &&
+    error.method === 'Runtime.evaluate' &&
+    /(?:Inspected target navigated or closed|Execution context was destroyed|Cannot find context with specified id)/i.test(
+      error.message,
+    )
+  );
 }
 
 export interface ExtractFieldSpec {
@@ -1307,30 +1317,24 @@ export class BrowserToolContext {
 
       // Dispatch: click the approved submit control when given, else
       // requestSubmit() so validation + submit events fire.
-      if (controlEntry?.xpath) {
-        const clickResult = await page.evaluate<{ ok: boolean; reason?: string }>(
-          buildActScript(controlEntry.xpath, 'click', undefined),
-        );
-        if (!clickResult.ok) {
-          return toolError(
-            'browser_action_failed',
-            'dispatch',
-            `Failed to activate the submit control: ${clickResult.reason ?? 'unknown'}`,
-            'Call snapshot to re-read the page and retry.',
-          );
-        }
-      } else {
-        const dispatchResult = await page.evaluate<{ ok: boolean; reason?: string }>(
-          buildRequestSubmitScript(formIndex),
-        );
+      const dispatchScript = controlEntry?.xpath
+        ? buildActScript(controlEntry.xpath, 'click', undefined)
+        : buildRequestSubmitScript(formIndex);
+      const dispatchFailure = controlEntry?.xpath
+        ? 'Failed to activate the submit control'
+        : 'Form dispatch failed';
+      try {
+        const dispatchResult = await page.evaluate<{ ok: boolean; reason?: string }>(dispatchScript);
         if (!dispatchResult.ok) {
           return toolError(
             'browser_action_failed',
             'dispatch',
-            `Form dispatch failed: ${dispatchResult.reason ?? 'unknown'}`,
+            `${dispatchFailure}: ${dispatchResult.reason ?? 'unknown'}`,
             'Call snapshot to re-read the page and retry.',
           );
         }
+      } catch (error) {
+        if (!isSubmitNavigationRace(error)) throw error;
       }
 
       await this.settle();
