@@ -10,6 +10,9 @@ Comate is a desktop AI workspace that wraps Claude Code in a native Electron app
 | `npm run dev:client` | Start the Vite dev server (port 5173) |
 | `npm run dev:electron` | Start the Electron desktop app (Vite dev client + shell) |
 | `npm run lint` | Run ESLint on `.ts`/`.tsx` |
+| `npm run typecheck` | Type-check client, server, and Electron sources |
+| `npm test` | Run server, client, Electron, and build-script unit tests |
+| `npm run check` | Run the complete lint, type-check, and unit-test suite |
 | `npm run test:client` | Run jsdom-based component/hook tests |
 | `npm run test:server` | Run `node:test` server tests (excludes `src/server/vendor/`) |
 | `npm run test:browser` | Run Playwright browser tests |
