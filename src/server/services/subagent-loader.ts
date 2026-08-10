@@ -114,6 +114,7 @@ function isResultMessage(msg: SessionMessage): boolean {
 function deriveState(
   sdkMessages: SessionMessage[],
   messages: SubagentMessage[],
+  incompleteState: 'running' | 'error',
 ): SubagentState['state'] {
   // A dedicated result entry is the canonical completion marker.
   for (let i = sdkMessages.length - 1; i >= 0; i--) {
@@ -139,7 +140,7 @@ function deriveState(
     return 'error';
   }
 
-  return 'running';
+  return incompleteState;
 }
 
 function deriveProgressHint(
@@ -169,6 +170,7 @@ function deriveProgressHint(
 interface ReconstructOptions {
   fallbackStartTime?: number;
   fallbackEndTime?: number;
+  incompleteState?: 'running' | 'error';
 }
 
 /**
@@ -212,7 +214,7 @@ export function reconstructSubagentState(
   const firstTs = parseTimestamp(sdkMessages[0]);
   const lastTs = parseTimestamp(sdkMessages[sdkMessages.length - 1]);
   const startTime = firstTs ?? options.fallbackStartTime ?? Date.now();
-  const state = deriveState(sdkMessages, messages);
+  const state = deriveState(sdkMessages, messages, options.incompleteState ?? 'running');
   const endTime =
     state !== 'running'
       ? (lastTs ?? options.fallbackEndTime ?? Date.now())

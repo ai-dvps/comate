@@ -1741,6 +1741,50 @@ describe('session-runtime authoritative activity', { concurrency: false }, () =>
     );
   });
 
+  it('correlates a live background subagent with its parent tool use', async () => {
+    const sdk = createActivitySdkClient();
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      sdk.client,
+      () => {},
+    );
+
+    sdk.pushMessage({
+      type: 'system',
+      subtype: 'background_tasks_changed',
+      tasks: [{ task_id: 'agent-1', task_type: 'agent', description: 'Research' }],
+      uuid: 'snapshot-1',
+      session_id: 's1',
+    } as SDKMessage);
+    sdk.pushMessage({
+      type: 'system',
+      subtype: 'task_started',
+      task_id: 'agent-1',
+      tool_use_id: 'tool-agent-1',
+      description: 'Research',
+      uuid: 'started-1',
+      session_id: 's1',
+    } as SDKMessage);
+    await tick();
+
+    assert.strictEqual(runtime.isSubagentRunning('tool-agent-1'), true);
+    assert.strictEqual(runtime.isSubagentRunning('tool-unrelated'), false);
+
+    sdk.pushMessage({
+      type: 'system',
+      subtype: 'background_tasks_changed',
+      tasks: [],
+      uuid: 'snapshot-2',
+      session_id: 's1',
+    } as SDKMessage);
+    await tick();
+
+    assert.strictEqual(runtime.isSubagentRunning('tool-agent-1'), false);
+  });
+
   it('restores foreground activity when the main agent resumes after background work', async () => {
     const events: SseEvent[] = [];
     const sdk = createActivitySdkClient();
