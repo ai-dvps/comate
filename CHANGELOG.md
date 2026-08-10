@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Edit tool changes now appear as one unified diff** — Replacements, additions, and deletions are shown in a single read-only diff instead of separate Before and After blocks, while file metadata and Replace all status remain visible.
 - **Process Region detail drawer now opens and closes smoothly** — The side pane expands from the right when opened, supports resizing up to 800px, and finishes its exit motion before it is removed while respecting reduced-motion preferences.
 
 ### Fixed
