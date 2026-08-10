@@ -10,6 +10,13 @@ export function normalizeArchiveEntryPath(entryPath: string): string {
   return entryPath.replaceAll('\\', '/');
 }
 
+export function archiveEntryPathForPlatform(
+  entryPath: string,
+  separator = path.sep,
+): string {
+  return normalizeArchiveEntryPath(entryPath).replace(/^\/+/, '').split('/').join(separator);
+}
+
 function findAppArchives(root: string): string[] {
   const archives: string[] = [];
 
@@ -34,7 +41,7 @@ function verifyRendererArchive(archivePath: string): void {
   );
   assert.ok(entries.has(INDEX_PATH), `${archivePath} is missing ${INDEX_PATH}`);
 
-  const html = extractFile(archivePath, INDEX_PATH.slice(1)).toString('utf8');
+  const html = extractFile(archivePath, archiveEntryPathForPlatform(INDEX_PATH)).toString('utf8');
   const assetPaths = [...html.matchAll(/(?:src|href)=["'](\/assets\/[^"']+)["']/g)].map(
     ([, assetPath]) => `/dist/client${assetPath}`,
   );
