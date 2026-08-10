@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { showWindow } from './lib/desktop-api'
+import { isWindowMaximized, onWindowMaximizedChange, showWindow } from './lib/desktop-api'
 import { AlertCircle, X } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 import { useSidebarWidth } from './hooks/use-sidebar-width'
@@ -67,6 +67,7 @@ function App() {
   const [isWorkspaceSwitcherOpen, setIsWorkspaceSwitcherOpen] = useState(false)
   const [isMac, setIsMac] = useState(false)
   const [isWin, setIsWin] = useState(false)
+  const [windowMaximized, setWindowMaximized] = useState(false)
   const [claudeCheck, setClaudeCheck] = useState<{ ok: boolean; checking: boolean; error?: string }>({
     ok: true,
     checking: true,
@@ -131,6 +132,28 @@ function App() {
     )
     return () => stopPeriodicUpdateChecks()
   }, [fetchWorkspaces, autoCheckUpdates, setLastUpdateCheckAt, initProviders])
+
+  useEffect(() => {
+    if (!isWin) {
+      setWindowMaximized(false)
+      return
+    }
+
+    let active = true
+    let receivedWindowStateChange = false
+    const stopListening = onWindowMaximizedChange((maximized) => {
+      receivedWindowStateChange = true
+      if (active) setWindowMaximized(maximized)
+    })
+    void isWindowMaximized().then((maximized) => {
+      if (active && !receivedWindowStateChange) setWindowMaximized(maximized)
+    })
+
+    return () => {
+      active = false
+      stopListening()
+    }
+  }, [isWin])
 
   const handleForceShowWindow = useCallback(async () => {
     try {
@@ -237,6 +260,7 @@ function App() {
       <div
         className="h-screen flex flex-col bg-work text-text-primary overflow-hidden"
         style={{ fontSize: uiFontSize }}
+        {...(isWin && !windowMaximized ? { 'data-windows-restored-frame': '' } : {})}
       >
         {/* Top Bar */}
         <header className="flex items-center h-11 flex-shrink-0 relative z-30 bg-chrome shadow-[0_1px_2px_0_rgba(0,0,0,0.06)]">

@@ -59,6 +59,8 @@ export type BrowserViewInputMode = 'user' | 'agent';
 export interface ComateBridge {
   getApiInfo: () => Promise<ComateApiInfo>;
   showWindow?: () => Promise<void>;
+  isWindowMaximized?: () => Promise<boolean>;
+  onWindowMaximizedChange?: (handler: (maximized: boolean) => void) => () => void;
   /** Windows: recolor the native caption buttons to match the app theme. */
   setTitleBarOverlay?: (theme: 'dark' | 'light') => Promise<void>;
   updateBadgeState?: (count: number) => Promise<void>;
@@ -208,6 +210,16 @@ export function initDesktopApi(): void {
 /** App.tsx parity: show + unminimize + focus the main window. */
 export async function showWindow(): Promise<void> {
   await getBridge()?.showWindow?.();
+}
+
+/** False outside the desktop shell so browser development remains frameless. */
+export async function isWindowMaximized(): Promise<boolean> {
+  return (await getBridge()?.isWindowMaximized?.()) ?? false;
+}
+
+/** Subscribe to maximize/restore changes; returns a no-op cleanup in browsers. */
+export function onWindowMaximizedChange(handler: (maximized: boolean) => void): () => void {
+  return getBridge()?.onWindowMaximizedChange?.(handler) ?? (() => {});
 }
 
 /**

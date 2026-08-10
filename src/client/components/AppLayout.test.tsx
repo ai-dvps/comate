@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, cleanup } from '@testing-library/react'
+import { act, render, cleanup, waitFor } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import App from '../App'
 import i18n from '../i18n'
+import { isWindows } from '../lib/platform'
+import { isWindowMaximized, onWindowMaximizedChange } from '../lib/desktop-api'
 
 // Keep the test focused on the outer layout shell by stubbing child components.
 // The desktop bridge is the single boundary for shell capabilities (U2);
@@ -104,8 +106,8 @@ vi.mock('../stores/chat-store', () => ({
 }))
 
 vi.mock('../lib/platform', () => ({
-  isMacOS: () => Promise.resolve(false),
-  isWindows: () => Promise.resolve(false),
+  isMacOS: vi.fn(() => Promise.resolve(false)),
+  isWindows: vi.fn(() => Promise.resolve(false)),
 }))
 vi.mock('../lib/updater-api', () => ({
   startPeriodicUpdateChecks: () => {},
@@ -130,6 +132,9 @@ describe('App layout', () => {
     mockWorkspaceStore.activeWorkspaceId = null
     mockWorkspaceStore.openWorkspaceIds = []
     mockWorkspaceStore.workspaces = []
+    vi.mocked(isWindows).mockResolvedValue(false)
+    vi.mocked(isWindowMaximized).mockResolvedValue(false)
+    vi.mocked(onWindowMaximizedChange).mockReturnValue(() => {})
   })
 
   it('clips the root container vertically to prevent the whole page from scrolling', async () => {
@@ -138,6 +143,67 @@ describe('App layout', () => {
     const root = container.firstElementChild
     expect(root).toHaveClass('overflow-hidden')
     expect(root).not.toHaveClass('overflow-x-hidden')
+  })
+
+  it('shows the Windows top frame only while the window is restored', async () => {
+    vi.mocked(isWindows).mockResolvedValue(true)
+    let handleMaximizedChange: ((maximized: boolean) => void) | undefined
+    const stopListening = vi.fn()
+    vi.mocked(onWindowMaximizedChange).mockImplementation((handler) => {
+      handleMaximizedChange = handler
+      return stopListening
+    })
+
+    const { container, findByTestId, unmount } = renderWithI18n(<App />)
+    await findByTestId('workspace-empty-state')
+    const root = container.firstElementChild
+
+    await waitFor(() => expect(root).toHaveAttribute('data-windows-restored-frame'))
+
+    act(() => handleMaximizedChange?.(true))
+    expect(root).not.toHaveAttribute('data-windows-restored-frame')
+
+    act(() => handleMaximizedChange?.(false))
+    expect(root).toHaveAttribute('data-windows-restored-frame')
+
+    unmount()
+    expect(stopListening).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not show the Windows top frame when launched maximized', async () => {
+    vi.mocked(isWindows).mockResolvedValue(true)
+    vi.mocked(isWindowMaximized).mockResolvedValue(true)
+
+    const { container, findByTestId } = renderWithI18n(<App />)
+    await findByTestId('workspace-empty-state')
+    const root = container.firstElementChild
+
+    await waitFor(() => expect(isWindowMaximized).toHaveBeenCalledTimes(1))
+    expect(root).not.toHaveAttribute('data-windows-restored-frame')
+  })
+
+  it('does not let the initial query overwrite a newer maximize event', async () => {
+    vi.mocked(isWindows).mockResolvedValue(true)
+    let resolveInitialState: ((maximized: boolean) => void) | undefined
+    vi.mocked(isWindowMaximized).mockReturnValue(new Promise((resolve) => {
+      resolveInitialState = resolve
+    }))
+    let handleMaximizedChange: ((maximized: boolean) => void) | undefined
+    vi.mocked(onWindowMaximizedChange).mockImplementation((handler) => {
+      handleMaximizedChange = handler
+      return () => {}
+    })
+
+    const { container, findByTestId } = renderWithI18n(<App />)
+    await findByTestId('workspace-empty-state')
+    const root = container.firstElementChild
+    await waitFor(() => expect(handleMaximizedChange).toBeDefined())
+
+    act(() => handleMaximizedChange?.(true))
+    resolveInitialState?.(false)
+    await waitFor(() => expect(root).not.toHaveAttribute('data-windows-restored-frame'))
+
+    expect(root).not.toHaveAttribute('data-windows-restored-frame')
   })
 
   it('renders RightPanel and not legacy FilePanel/GitDiffPanel when a workspace is active', async () => {

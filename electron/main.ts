@@ -349,6 +349,14 @@ function titlebarOverlayOpts(dark = nativeTheme.shouldUseDarkColors) {
   };
 }
 
+function isMainWindowMaximized(): boolean {
+  return Boolean(
+    mainWindow &&
+    !mainWindow.isDestroyed() &&
+    (mainWindow.isMaximized() || mainWindow.isFullScreen()),
+  );
+}
+
 function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
     title: 'Comate',
@@ -374,6 +382,18 @@ function createMainWindow(): BrowserWindow {
       nodeIntegration: false,
     },
   });
+
+  if (process.platform === 'win32') {
+    const publishMaximizedState = (): void => {
+      if (!win.webContents.isDestroyed()) {
+        win.webContents.send('comate:window-maximized-changed', isMainWindowMaximized());
+      }
+    };
+    win.on('maximize', publishMaximizedState);
+    win.on('unmaximize', publishMaximizedState);
+    win.on('enter-full-screen', publishMaximizedState);
+    win.on('leave-full-screen', publishMaximizedState);
+  }
 
   // Trust boundary: this window's preload exposes the sidecar desktop token
   // (comate:get-api-info), so the main frame must never navigate away from
@@ -438,6 +458,8 @@ function registerIpcHandlers(): void {
   ipcMain.handle('comate:show-window', () => {
     showMainWindow();
   });
+
+  ipcMain.handle('comate:is-window-maximized', () => isMainWindowMaximized());
 
   // Windows: recolor the native min/max/close caption buttons to match the
   // app theme. The renderer calls this on every theme change; no-op off Win32
