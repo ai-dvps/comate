@@ -903,6 +903,10 @@ export class SqliteStore {
     wipe();
   }
 
+  close(): void {
+    this.db.close();
+  }
+
   runInTransaction<T>(fn: () => T): T {
     const run = this.db.transaction(fn);
     return run();

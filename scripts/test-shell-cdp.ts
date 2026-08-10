@@ -245,6 +245,7 @@ if (!chromeVersion) {
 
 const markerA = `comate-view-${Math.random().toString(36).slice(2)}`;
 const targetA = await createShellTarget({ port: debugPort, url: `about:blank#${markerA}` });
+let defaultStore: { close(): void } | undefined;
 
 try {
   console.log(`shell CDP contract suite: Chromium ${chromeVersion} on 127.0.0.1:${debugPort}`);
@@ -506,6 +507,7 @@ try {
 
   process.env.COMATE_BROWSER_CDP_TARGET = `http://127.0.0.1:${debugPort}`;
   const { BrowserService } = await import('../src/server/services/browser-service.js');
+  defaultStore = (await import('../src/server/storage/sqlite-store.js')).store;
   const { BrowserToolContext } = await import('../src/server/services/browser-mcp.js');
   const { BrowserControlService } = await import('../src/server/services/browser-control.js');
   const { siteKeyForUrl } = await import('../src/server/services/browser-site-key.js');
@@ -519,7 +521,6 @@ try {
       browserService: toolService,
       handoffControl: new BrowserControlService({ browserService: toolService }),
       approvalRequester: async () => ({ behavior: 'allow' }),
-      settleMs: 0,
     });
   interface ToolResult {
     isError?: boolean;
@@ -700,6 +701,7 @@ try {
 
   await toolService.shutdown().catch(() => undefined);
 } finally {
+  defaultStore?.close();
   await closeShellTarget({ port: debugPort, targetId: targetA.targetId }).catch(() => undefined);
   chrome.kill('SIGKILL');
   await new Promise<void>((resolve) => {
