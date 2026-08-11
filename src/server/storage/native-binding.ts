@@ -10,6 +10,10 @@ export function getNativeBindingPath(): string | undefined {
   const execDir = dirname(normalizeWindowsPath(process.execPath));
 
   const candidates = [
+    // Electron dev/packaged resource directory supplied by the shell.
+    ...(process.env.TAURI_RESOURCE_DIR
+      ? [join(process.env.TAURI_RESOURCE_DIR, 'better_sqlite3.node')]
+      : []),
     // macOS app bundle
     join(execDir, '..', 'Resources', 'resources', 'better_sqlite3.node'),
     join(execDir, 'resources', 'better_sqlite3.node'),

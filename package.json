@@ -35,7 +35,7 @@
     "typecheck": "npm run build:contracts && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "check": "npm run lint && npm run typecheck && npm test",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "dev:electron": "concurrently --kill-others --success first \"npm run dev:client\" \"electron-vite dev\"",
+    "dev:electron": "npm run build:sidecar && concurrently --kill-others --success first \"npm run dev:client\" \"electron-vite dev\"",
     "postinstall": "node scripts/patch-electron-dev-name.mjs",
     "build:client": "vite build",
     "build:electron:shell": "electron-vite build",

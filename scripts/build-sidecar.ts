@@ -270,15 +270,53 @@ async function build() {
     );
   }
 
-  // 6. Copy wecom CLI to resources/
-  console.log('\n--- Copying wecom CLI ---');
-  const wecomCliSource = join(rootDir, 'packages', 'wecom-cli', 'dist', 'index.js');
-  if (existsSync(wecomCliSource)) {
-    const wecomCliDest = join(resourcesDir, 'wecom-send.js');
-    copyFileSync(wecomCliSource, wecomCliDest);
-    console.log(`Copied to ${wecomCliDest}`);
-  } else {
-    console.warn(`Warning: WeCom CLI not found at ${wecomCliSource}`);
+  // 6. Bundle a self-contained WeCom CLI. Copying only dist/index.js leaves
+  // its command modules and package metadata behind, so the staged entrypoint
+  // cannot run outside the workspace.
+  console.log('\n--- Bundling self-contained WeCom CLI ---');
+  const wecomCliDir = join(resourcesDir, 'wecom-cli');
+  if (existsSync(wecomCliDir)) rmSync(wecomCliDir, { recursive: true, force: true });
+  mkdirSync(wecomCliDir, { recursive: true });
+  const wecomBundle = join(wecomCliDir, 'bundle.cjs');
+  run(
+    `npx esbuild ${join(rootDir, 'packages', 'wecom-cli', 'dist', 'index.js')} ` +
+      `--bundle --platform=node --target=node20 --format=cjs ` +
+      `--outfile=${wecomBundle} ` +
+      `--banner:js="const __wecomImportMetaUrl = require('node:url').pathToFileURL(__filename).href;"`,
+  );
+  const wecomPackage = JSON.parse(
+    readFileSync(join(rootDir, 'packages', 'wecom-cli', 'package.json'), 'utf8'),
+  ) as { name: string; version: string };
+  const fixedWecomBundle = readFileSync(wecomBundle, 'utf8')
+    .replace(
+      /var import_meta(\d*) = \{\};/g,
+      (_match, num) => `var import_meta${num} = { url: __wecomImportMetaUrl };`,
+    )
+    .replace(
+      /var packageJson = require\d*\("\.\.\/package\.json"\);/,
+      `var packageJson = ${JSON.stringify({ name: wecomPackage.name, version: wecomPackage.version })};`,
+    );
+  if (/require\d*\("\.\.\/package\.json"\)/.test(fixedWecomBundle)) {
+    throw new Error('self-contained WeCom CLI still contains a runtime package.json require');
+  }
+  writeFileSync(wecomBundle, fixedWecomBundle);
+  const wecomCliTriples = process.platform === 'darwin'
+    ? ['aarch64-apple-darwin', 'x86_64-apple-darwin']
+    : [hostTriple];
+  for (const triple of wecomCliTriples) {
+    const commandDir = join(wecomCliDir, triple);
+    mkdirSync(commandDir, { recursive: true });
+    const command = join(commandDir, triple.includes('windows') ? 'wecom.exe' : 'wecom');
+    run(`npx pkg ${wecomBundle} --targets ${getPkgTarget(triple)} --output ${command} --no-bytecode --public`);
+    if (!isFile(command)) throw new Error(`native WeCom CLI missing after pkg (${command})`);
+  }
+  const wecomCommand = join(wecomCliDir, hostTriple, platform === 'win32' ? 'wecom.exe' : 'wecom');
+  const wecomVersion = execFileSync(wecomCommand, ['--version'], {
+    env: { PATH: '' },
+    encoding: 'utf8',
+  }).trim();
+  if (!/^@webank\/wecom\/\d+\.\d+\.\d+/.test(wecomVersion)) {
+    throw new Error(`native WeCom CLI smoke check returned an unexpected version: ${wecomVersion}`);
   }
 
   // Copying only the entrypoint is insufficient because this CLI imports the

@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Browser element discovery is now explicit** — The embedded browser adds `findElements` for locating controls by text, regex, or accessibility role, and renames the old ref-only `inspectElement` operation to `getElementDetails`. Read-only details tolerate same-document changes only for stable backend-node refs, while actions and form refs keep strict stale-ref protection.
+- **Electron development now rebuilds every main runtime before launch** — `npm run dev:electron` refreshes the server, sidecar, client, and bundled CLIs before starting the development watchers, and the sidecar prefers that freshly staged WeCom CLI over an older global installation.
+- **Browser page understanding and element discovery are now explicit** — The embedded browser adds `getPageState`, a text-only, token-bounded semantic outline and element inventory for models without vision, plus `findElements` for locating controls by text, regex, or accessibility role. The old ref-only `inspectElement` operation is renamed to `getElementDetails`. Read-only details tolerate same-document changes only for stable backend-node refs, while actions and form refs keep strict stale-ref protection.
 - **Edit tool changes now appear as one unified diff** — Replacements, additions, and deletions are shown in a single read-only diff instead of separate Before and After blocks, while file metadata and Replace all status remain visible.
 - **Process Region detail drawer now opens and closes smoothly** — The side pane expands from the right when opened, supports resizing up to 800px, and finishes its exit motion before it is removed while respecting reduced-motion preferences.
 - **Process Region items now expand and collapse smoothly** — Tool details and thinking blocks animate to their measured content height inside the side drawer while respecting reduced-motion preferences.
@@ -19,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Electron development sidecar now loads its staged SQLite binding** — Development launches resolve `better_sqlite3.node` from the resource directory supplied by the Electron shell instead of looking for an unpackaged native module inside the sidecar snapshot.
 - **Interrupted turns no longer show internal EDE diagnostics** — Manually stopping a Claude turn now hides the SDK's internal `[ede_diagnostic]` marker from the message list while preserving genuine error messages.
 - **Interrupted sub-agent timers now stop in inactive sessions** — Reopening an inactive session no longer reconstructs interrupted Process Region agents as running; their terminal state and elapsed time remain fixed.
 - **Windows custom title bar now has a visible top frame when restored** — The subtle top edge follows the app theme and disappears while the window is maximized or fullscreen.
