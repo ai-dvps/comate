@@ -17,6 +17,7 @@ import {
   extractAlertsFromAxTree,
   isSensitiveField,
   sanitizeSubmitPayload,
+  sameElementFingerprint,
   type PageModel,
   type PageModelSource,
   type RawAxNode,
@@ -40,6 +41,7 @@ function makeExtraction(overrides: Partial<RawPageExtraction> = {}): RawPageExtr
     forms: [
       {
         formIndex: 0,
+        xpath: '/html[1]/body[1]/form[1]',
         name: 'payment',
         action: 'https://shop.example/pay',
         method: 'post',
@@ -140,17 +142,48 @@ function fakeSource(extraction: RawPageExtraction, axNodes: RawAxNode[]): PageMo
       return extraction as T;
     },
     getFullAXTree: async () => axNodes,
+    getDocumentIdentity: () => ({
+      targetId: 'target-1', sessionId: 'session-1', frameId: 'frame-1', loaderId: extraction.docId, generation: 0,
+    }),
+    extractPageModel: async () => ({
+      extraction,
+      backendNodeIds: [
+        ...extraction.forms.flatMap((form) => [form, ...form.fields]),
+        ...(extraction.standalone.length > 0 ? [{}] : []),
+        ...extraction.standalone,
+      ].map((_item, index) => 100 + index),
+    }),
+    callBackendNode: async <T>(backendNodeId: number): Promise<T | null> => {
+      const node = axNodes.find((candidate) => candidate.backendDOMNodeId === backendNodeId);
+      if (!node) return null;
+      const role = String(node.role?.value ?? '').toLowerCase();
+      const tag = role === 'link' ? 'a' : 'button';
+      return { tag, type: tag === 'button' ? 'submit' : tag, role, editable: false, fileInput: false } as T;
+    },
   };
 }
 
 describe('browser-page-model sensitivity ruleset (KTD-8)', () => {
+  it('fails a bounded semantic fingerprint closed on tag/type/role/editable/file drift', () => {
+    const expected = { tag: 'input', type: 'email', role: 'textbox', editable: true, fileInput: false };
+    assert.equal(sameElementFingerprint(expected, expected), true);
+    for (const changed of [
+      { ...expected, tag: 'textarea' },
+      { ...expected, type: 'file' },
+      { ...expected, role: 'button' },
+      { ...expected, editable: false },
+      { ...expected, fileInput: true },
+    ]) assert.equal(sameElementFingerprint(expected, changed), false);
+  });
   it('builds a bounded positive-shape inspector with no raw HTML/value escape hatch', () => {
     const script = buildInspectElementScript({
       ref: 'e1-aa',
       kind: 'field',
       role: 'textbox',
       name: 'Email',
-      batch: { docId: 'doc-1', domEpoch: 0 },
+      batch: { targetId: 'target-1', sessionId: 'session-1', frameId: 'frame-1', loaderId: 'loader-1', generation: 0 },
+      backendNodeId: 101,
+      fingerprint: { tag: 'input', type: 'email', role: 'textbox', editable: true, fileInput: false },
       xpath: '/html/body/input[1]',
     });
     assert.match(script, /__comateInspectElement/);
@@ -237,6 +270,29 @@ describe('browser-page-model accessibility tree processing', () => {
 });
 
 describe('browser-page-model distillation (KTD-3)', () => {
+  it('maps the exact extracted objects without an XPath identity re-query', async () => {
+    const extraction = makeExtraction();
+    const source = {
+      evaluate: async <T>(): Promise<T> => extraction as T,
+      getFullAXTree: async () => [],
+      getDocumentIdentity: () => ({
+        targetId: 'target-1', sessionId: 'session-1', frameId: 'frame-1', loaderId: 'doc-1', generation: 0,
+      }),
+      extractPageModel: async () => ({
+        extraction,
+        backendNodeIds: [100, 101, 102, 103, 104],
+      }),
+      resolveBackendNodeIds: async (): Promise<Array<number | null>> => {
+        throw new Error('XPath identity re-query must not run after extraction');
+      },
+    } as PageModelSource & {
+      extractPageModel: () => Promise<{ extraction: RawPageExtraction; backendNodeIds: number[] }>;
+    };
+
+    const model = await distillPageModel(source, new RefTable());
+    assert.equal(model.forms[0].fields[0].ref.startsWith('e'), true);
+  });
+
   it('builds a revisioned semantic outline and a bounded element inventory', async () => {
     const axNodes: RawAxNode[] = [
       { nodeId: 'root', role: { value: 'RootWebArea' }, name: { value: 'Checkout' }, childIds: ['main'] },
@@ -358,7 +414,7 @@ describe('browser-page-model distillation (KTD-3)', () => {
     assert.strictEqual(state.elements[0].name.length, 160);
   });
 
-  it('mints refs with form/field/action semantics and invalidates the batch on DOM change', async () => {
+  it('mints backend-node refs that survive unrelated same-document DOM churn', async () => {
     const refTable = new RefTable();
     const model = await distillPageModel(fakeSource(makeExtraction(), makeAxNodes()), refTable);
     const fieldRef = model.forms[0].fields[0].ref;
@@ -367,6 +423,9 @@ describe('browser-page-model distillation (KTD-3)', () => {
     assert.ok(fieldRef && formRef && actionRef);
     assert.strictEqual(refTable.get(fieldRef)?.kind, 'field');
     assert.strictEqual(refTable.get(formRef)?.kind, 'form');
+    assert.deepEqual(refTable.get(formRef)?.fingerprint, {
+      tag: 'form', type: 'form', role: 'form', editable: false, fileInput: false,
+    });
     assert.strictEqual(refTable.get(actionRef)?.kind, 'action');
     assert.strictEqual(refTable.get(actionRef)?.backendNodeId, 22);
     assert.strictEqual(refTable.get(fieldRef)?.submitSemantics, false);
@@ -382,11 +441,11 @@ describe('browser-page-model distillation (KTD-3)', () => {
     assert.strictEqual(refTable.get(fieldRef), undefined, 'the previous batch ref is removed');
 
     const currentFieldRef = nextModel.forms[0].fields[0].ref;
-    assert.strictEqual(refTable.isCurrent(currentFieldRef, { docId: 'doc-1', domEpoch: 0 }), true);
-    // DOM mutation bumps the epoch: the whole batch is dead.
-    assert.strictEqual(refTable.isCurrent(currentFieldRef, { docId: 'doc-1', domEpoch: 1 }), false);
-    // Navigation changes the document: the whole batch is dead.
-    assert.strictEqual(refTable.isCurrent(currentFieldRef, { docId: 'doc-2', domEpoch: 0 }), false);
+    const identity = { targetId: 'target-1', sessionId: 'session-1', frameId: 'frame-1', loaderId: 'doc-1', generation: 0 };
+    assert.strictEqual(refTable.isCurrent(currentFieldRef, identity), true);
+    assert.strictEqual(refTable.isCurrent(currentFieldRef, identity), true, 'unrelated DOM churn does not alter CDP document identity');
+    assert.strictEqual(refTable.isCurrent(currentFieldRef, { ...identity, loaderId: 'doc-2', generation: 1 }), false);
+    assert.equal(refTable.get(currentFieldRef)?.backendNodeId, 101);
   });
 
   it('normalizes common implicit and explicit field roles', async () => {

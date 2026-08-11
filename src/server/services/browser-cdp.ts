@@ -1,5 +1,11 @@
 import WebSocket from 'ws';
-import type { InspectedElement, RawAxNode } from './browser-page-model.js';
+import type {
+  BrowserDocumentIdentity,
+  InspectedElement,
+  PageExtractionBundle,
+  RawAxNode,
+  RawPageExtraction,
+} from './browser-page-model.js';
 import type { BrowserNetworkCaptureTransport, CdpEventEnvelope } from './browser-network-capture.js';
 import {
   buildDesktopFingerprint,
@@ -243,6 +249,9 @@ export interface BrowserCdpSession {
   navigate(url: string): Promise<void>;
   getFullAXTree(): Promise<RawAxNode[]>;
   clickBackendNode(backendNodeId: number): Promise<void>;
+  getDocumentIdentity?(): BrowserDocumentIdentity | null;
+  extractPageModel?(expression: string): Promise<PageExtractionBundle>;
+  callBackendNode?<T>(backendNodeId: number, functionDeclaration: string): Promise<T | null>;
   /** Resolve an AX-backed ref without accepting an arbitrary selector. */
   inspectBackendNode?(backendNodeId: number, functionDeclaration: string): Promise<InspectedElement | null>;
   /** JPEG base64 (bare, no data-URL prefix) for MCP image blocks. */
@@ -279,8 +288,23 @@ interface TargetInfo {
 }
 
 interface EvaluateResult {
-  result?: { type?: string; value?: unknown; description?: string };
+  result?: { type?: string; value?: unknown; description?: string; objectId?: string };
   exceptionDetails?: { text?: string; exception?: { description?: string } };
+}
+
+function isPositivePageExtraction(value: unknown): value is RawPageExtraction {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.url === 'string' &&
+    typeof candidate.title === 'string' &&
+    typeof candidate.docId === 'string' &&
+    typeof candidate.domEpoch === 'number' &&
+    Array.isArray(candidate.forms) &&
+    Array.isArray(candidate.standalone) &&
+    typeof candidate.contentText === 'string' &&
+    typeof candidate.contentTruncated === 'boolean' &&
+    Array.isArray(candidate.alerts) &&
+    !!candidate.stats && typeof candidate.stats === 'object' && !Array.isArray(candidate.stats);
 }
 
 const CLICK_FN = `function () {
@@ -294,16 +318,54 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
   private readonly closeListeners = new Set<() => void>();
   private offConnectionClose?: () => void;
   private offTargetDetached?: () => void;
+  private readonly lifecycleTeardowns: Array<() => void> = [];
+  private documentIdentity: BrowserDocumentIdentity | null = null;
+  private documentGeneration = 0;
+  private mainFrameId = '';
+  private loaderId = '';
+  private extractionSequence = 0;
 
   private constructor(
     private readonly connection: CdpConnection,
     private readonly sessionId: string,
+    private readonly targetId: string,
   ) {
     this.offConnectionClose = connection.onClose(() => this.markClosed());
     this.offTargetDetached = connection.on('Target.detachedFromTarget', (event) => {
       const detachedSessionId = (event.params as { sessionId?: string }).sessionId;
       if (detachedSessionId === this.sessionId) this.markClosed();
     });
+    this.lifecycleTeardowns.push(
+      connection.on('Page.frameNavigated', (event) => {
+        if (event.sessionId !== this.sessionId) return;
+        const frame = (event.params as { frame?: { id?: string; parentId?: string; loaderId?: string } }).frame;
+        if (!frame?.id || frame.parentId) return;
+        if (this.mainFrameId && (frame.id !== this.mainFrameId || (frame.loaderId && frame.loaderId !== this.loaderId))) {
+          this.documentGeneration += 1;
+        }
+        this.mainFrameId = frame.id;
+        if (frame.loaderId) this.loaderId = frame.loaderId;
+        this.refreshDocumentIdentity();
+      }),
+      connection.on('DOM.documentUpdated', (event) => {
+        if (event.sessionId !== this.sessionId) return;
+        this.documentGeneration += 1;
+        this.refreshDocumentIdentity();
+      }),
+      connection.on('Runtime.executionContextsCleared', (event) => {
+        if (event.sessionId !== this.sessionId) return;
+        this.documentGeneration += 1;
+        this.refreshDocumentIdentity();
+      }),
+      connection.on('Runtime.executionContextDestroyed', (event) => {
+        if (event.sessionId !== this.sessionId) return;
+        this.documentGeneration += 1;
+        this.refreshDocumentIdentity();
+      }),
+      connection.on('Inspector.detached', (event) => {
+        if (event.sessionId === this.sessionId) this.markClosed();
+      }),
+    );
   }
 
   static async attach(connection: CdpConnection): Promise<BrowserCdpSessionImpl> {
@@ -325,10 +387,16 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
       targetId,
       flatten: true,
     });
-    const session = new BrowserCdpSessionImpl(connection, sessionId);
-    // Events are best-effort: navigation wait uses loadEventFired, but ref
-    // invalidation never relies on events (docId/epoch polling covers it).
+    const session = new BrowserCdpSessionImpl(connection, sessionId, targetId);
     await connection.send('Page.enable', {}, sessionId).catch(() => undefined);
+    await connection.send('DOM.enable', {}, sessionId).catch(() => undefined);
+    await connection.send('Runtime.enable', {}, sessionId).catch(() => undefined);
+    const frameTree: { frameTree?: { frame?: { id?: string; loaderId?: string } } } = await connection.send<{ frameTree?: { frame?: { id?: string; loaderId?: string } } }>(
+      'Page.getFrameTree', {}, sessionId,
+    ).catch(() => ({} as { frameTree?: { frame?: { id?: string; loaderId?: string } } }));
+    session.mainFrameId = frameTree.frameTree?.frame?.id ?? '';
+    session.loaderId = frameTree.frameTree?.frame?.loaderId ?? '';
+    session.refreshDocumentIdentity();
     return session;
   }
 
@@ -356,6 +424,8 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
     this.offTargetDetached?.();
     this.offConnectionClose = undefined;
     this.offTargetDetached = undefined;
+    for (const off of this.lifecycleTeardowns.splice(0)) off();
+    this.documentIdentity = null;
     for (const listener of [...this.closeListeners]) {
       try {
         listener();
@@ -364,6 +434,80 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
       }
     }
     this.closeListeners.clear();
+  }
+
+  private refreshDocumentIdentity(): void {
+    this.documentIdentity = this.mainFrameId && this.loaderId
+      ? {
+          targetId: this.targetId,
+          sessionId: this.sessionId,
+          frameId: this.mainFrameId,
+          loaderId: this.loaderId,
+          generation: this.documentGeneration,
+        }
+      : null;
+  }
+
+  getDocumentIdentity(): BrowserDocumentIdentity | null {
+    return this.closed || !this.documentIdentity ? null : { ...this.documentIdentity };
+  }
+
+  async extractPageModel(expression: string): Promise<PageExtractionBundle> {
+    const objectGroup = `comate-page-extraction-${this.sessionId}-${++this.extractionSequence}`;
+    try {
+      const evaluated = await this.connection.send<EvaluateResult>(
+        'Runtime.evaluate',
+        { expression, returnByValue: false, awaitPromise: true, objectGroup },
+        this.sessionId,
+      );
+      if (evaluated.exceptionDetails) throw new CdpError('In-page extraction failed', 'Runtime.evaluate');
+      const rootObjectId = evaluated.result?.objectId;
+      if (!rootObjectId) throw new CdpError('Page extraction did not return an object handle', 'Runtime.evaluate');
+
+      const properties = await this.connection.send<{
+        result?: Array<{ name?: string; value?: { objectId?: string } }>;
+      }>('Runtime.getProperties', { objectId: rootObjectId, ownProperties: true }, this.sessionId);
+      const identityArrayId = properties.result?.find((property) => property.name === 'identityObjects')?.value?.objectId;
+      if (!identityArrayId) throw new CdpError('Page extraction omitted exact element handles', 'Runtime.getProperties');
+
+      const serialized = await this.connection.send<EvaluateResult>(
+        'Runtime.callFunctionOn',
+        {
+          objectId: rootObjectId,
+          functionDeclaration: `function () {
+            var out = {};
+            var keys = Object.keys(this);
+            for (var i = 0; i < keys.length; i++) {
+              if (keys[i] !== 'identityObjects') out[keys[i]] = this[keys[i]];
+            }
+            return out;
+          }`,
+          returnByValue: true,
+        },
+        this.sessionId,
+      );
+      const extraction = serialized.result?.value;
+      if (!isPositivePageExtraction(extraction)) {
+        throw new CdpError('Page extraction returned an invalid positive-shape payload', 'Runtime.callFunctionOn');
+      }
+
+      const identityProperties = await this.connection.send<{
+        result?: Array<{ name?: string; value?: { objectId?: string } }>;
+      }>('Runtime.getProperties', { objectId: identityArrayId, ownProperties: true }, this.sessionId);
+      const handles = (identityProperties.result ?? [])
+        .filter((property) => /^\d+$/.test(property.name ?? '') && property.value?.objectId)
+        .sort((a, b) => Number(a.name) - Number(b.name));
+      const backendNodeIds: Array<number | null> = [];
+      for (const handle of handles) {
+        const described = await this.connection.send<{ node?: { backendNodeId?: number } }>(
+          'DOM.describeNode', { objectId: handle.value!.objectId }, this.sessionId,
+        );
+        backendNodeIds.push(described.node?.backendNodeId ?? null);
+      }
+      return { extraction, backendNodeIds };
+    } finally {
+      await this.connection.send('Runtime.releaseObjectGroup', { objectGroup }, this.sessionId).catch(() => undefined);
+    }
   }
 
   async evaluate<T>(expression: string): Promise<T> {
@@ -438,6 +582,10 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
     backendNodeId: number,
     functionDeclaration: string,
   ): Promise<InspectedElement | null> {
+    return this.callBackendNode<InspectedElement>(backendNodeId, functionDeclaration);
+  }
+
+  async callBackendNode<T>(backendNodeId: number, functionDeclaration: string): Promise<T | null> {
     const { object } = await this.connection.send<{ object: { objectId?: string } }>(
       'DOM.resolveNode',
       { backendNodeId },
@@ -451,7 +599,7 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
         this.sessionId,
       );
       if (result.exceptionDetails) return null;
-      return (result.result?.value ?? null) as InspectedElement | null;
+      return (result.result?.value ?? null) as T | null;
     } finally {
       await this.connection.send('Runtime.releaseObject', { objectId: object.objectId }, this.sessionId).catch(() => undefined);
     }
