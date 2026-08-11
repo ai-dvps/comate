@@ -68,7 +68,7 @@ describe('BrowserMutationCoordinator', () => {
       privateParameters: { ref: 'e1', text: 'private article text' },
       dispatch: async () => {
         dispatches += 1;
-        assert.equal(store.getBrowserOperation('operation-1')?.state, 'dispatch_intent');
+        assert.equal(store.getBrowserOperation('principal-1', 'operation-1')?.state, 'dispatch_intent');
         return {
           outcome: 'dispatched_verified' as const,
           dispatchState: 'dispatched' as const,
@@ -85,7 +85,7 @@ describe('BrowserMutationCoordinator', () => {
     const replay = await run();
     assert.deepEqual(replay, first);
     assert.equal(dispatches, 1);
-    const row = store.getBrowserOperation('operation-1');
+    const row = store.getBrowserOperation('principal-1', 'operation-1');
     assert.equal(row?.state, 'terminal');
     assert.equal(JSON.stringify(row).includes('private article text'), false);
     const audit = store.listBrowserAudit('ws-1', { sessionId: 'session-1' });
@@ -94,7 +94,7 @@ describe('BrowserMutationCoordinator', () => {
     assert.equal(JSON.stringify(audit).includes('private article text'), false);
   });
 
-  it('coalesces concurrent same-id replay and hard-conflicts changed digest or principal', async () => {
+  it('coalesces same-principal replay while isolating operation IDs by principal', async () => {
     const { coordinator: mutations } = coordinator();
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => { release = resolve; });
@@ -117,10 +117,15 @@ describe('BrowserMutationCoordinator', () => {
       mutations.execute(scope(), { action: 'open', privateParameters: { url: 'https://example.test/changed' }, dispatch: async () => assert.fail('must not dispatch') }),
       BrowserMutationConflictError,
     );
-    await assert.rejects(
-      mutations.execute(scope({ principalId: 'principal-2' }), { action: 'open', privateParameters: { url: 'https://example.test/a?secret=1' }, dispatch: async () => assert.fail('must not dispatch') }),
-      BrowserMutationConflictError,
-    );
+    const otherPrincipal = await mutations.execute(scope({ principalId: 'principal-2' }), {
+      action: 'open',
+      privateParameters: { url: 'https://example.test/a?secret=1' },
+      dispatch: async () => ({
+        outcome: 'dispatched_verified', dispatchState: 'dispatched', verified: true,
+        retrySafe: false, delta: { kind: 'none', changed: true },
+      }),
+    });
+    assert.equal(otherPrincipal.outcome, 'dispatched_verified');
   });
 
   it('serializes mutations by session while observations remain unblocked', async () => {
@@ -190,11 +195,11 @@ describe('BrowserMutationCoordinator', () => {
     const store = new SqliteStore(':memory:');
     store.proposeBrowserOperation({ operationId: 'proposed', principalId: 'p', workspaceId: 'ws', sessionId: 's', runtimeGeneration: 'r', capabilityId: 'c', action: 'fill', parameterDigest: 'v1:digest-a' });
     store.proposeBrowserOperation({ operationId: 'intent', principalId: 'p', workspaceId: 'ws', sessionId: 's', runtimeGeneration: 'r', capabilityId: 'c', action: 'upload', parameterDigest: 'v1:digest-b' });
-    store.markBrowserOperationDispatchIntent('intent');
+    store.markBrowserOperationDispatchIntent('p', 'intent');
     new BrowserMutationCoordinator({ store });
-    assert.equal(store.getBrowserOperation('proposed')?.receipt?.outcome, 'not_dispatched');
-    assert.equal(store.getBrowserOperation('intent')?.receipt?.outcome, 'outcome_unknown');
-    assert.equal(store.getBrowserOperation('intent')?.receipt?.retrySafe, false);
+    assert.equal(store.getBrowserOperation('p', 'proposed')?.receipt?.outcome, 'not_dispatched');
+    assert.equal(store.getBrowserOperation('p', 'intent')?.receipt?.outcome, 'outcome_unknown');
+    assert.equal(store.getBrowserOperation('p', 'intent')?.receipt?.retrySafe, false);
 
     const columns = store.listBrowserOperationColumns();
     for (const forbidden of ['text', 'url', 'query', 'path', 'filename', 'params', 'exception']) {

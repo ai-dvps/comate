@@ -114,7 +114,8 @@ export class BrowserMutationCoordinator {
       return Promise.reject(new Error('operationId must be 1-128 bounded caller-stable characters'));
     }
     const digest = browserMutationParameterDigest(request.action, request.privateParameters);
-    const inflight = this.inflight.get(scope.operationId);
+    const operationKey = `${scope.principalId}\0${scope.operationId}`;
+    const inflight = this.inflight.get(operationKey);
     if (inflight) {
       if (inflight.principalId !== scope.principalId || inflight.digest !== digest) {
         return Promise.reject(new BrowserMutationConflictError());
@@ -138,9 +139,9 @@ export class BrowserMutationCoordinator {
       scope.signal.removeEventListener('abort', abortFromCaller);
       set.delete(controller);
       if (set.size === 0) this.cancellers.delete(scope.sessionId);
-      this.inflight.delete(scope.operationId);
+      this.inflight.delete(operationKey);
     });
-    this.inflight.set(scope.operationId, { principalId: scope.principalId, digest, promise });
+    this.inflight.set(operationKey, { principalId: scope.principalId, digest, promise });
     return promise;
   }
 
@@ -166,7 +167,7 @@ export class BrowserMutationCoordinator {
     digest: string,
     controller: AbortController,
   ): Promise<BrowserOperationReceipt> {
-    const existing = this.store.getBrowserOperation(scope.operationId);
+    const existing = this.store.getBrowserOperation(scope.principalId, scope.operationId);
     if (existing) return this.replay(existing, scope, request.action, digest);
 
     try {
@@ -181,7 +182,7 @@ export class BrowserMutationCoordinator {
         parameterDigest: digest,
       });
     } catch (error) {
-      const raced = this.store.getBrowserOperation(scope.operationId);
+      const raced = this.store.getBrowserOperation(scope.principalId, scope.operationId);
       if (raced) return this.replay(raced, scope, request.action, digest);
       throw error;
     }
@@ -195,7 +196,7 @@ export class BrowserMutationCoordinator {
       if (!approved || controller.signal.aborted) {
         return this.persistTerminal(scope, request.action, notDispatched(this.cancelReason(controller, 'user_denied')));
       }
-      if (!this.store.markBrowserOperationApproved(scope.operationId)) return unknown();
+      if (!this.store.markBrowserOperationApproved(scope.principalId, scope.operationId)) return unknown();
       approvalPersisted = true;
     }
 
@@ -208,7 +209,7 @@ export class BrowserMutationCoordinator {
         return false;
       }
       try {
-        approvalPersisted = this.store.markBrowserOperationApproved(scope.operationId);
+        approvalPersisted = this.store.markBrowserOperationApproved(scope.principalId, scope.operationId);
       } catch {
         authorizationFailure = notDispatched('dispatch_failed');
         return false;
@@ -235,7 +236,7 @@ export class BrowserMutationCoordinator {
         return false;
       }
       try {
-        intentPersisted = this.store.markBrowserOperationDispatchIntent(scope.operationId);
+        intentPersisted = this.store.markBrowserOperationDispatchIntent(scope.principalId, scope.operationId);
       } catch {
         authorizationFailure = notDispatched('dispatch_failed');
         return false;
@@ -257,7 +258,7 @@ export class BrowserMutationCoordinator {
       receipt = notDispatched('dispatch_failed');
     }
     try {
-      if (!this.store.completeBrowserOperation(scope.operationId, receipt)) return unknown();
+      if (!this.store.completeBrowserOperation(scope.principalId, scope.operationId, receipt)) return unknown();
       this.logReceipt(scope, request.action, receipt);
       return receipt;
     } catch {
@@ -287,7 +288,7 @@ export class BrowserMutationCoordinator {
     receipt: BrowserOperationReceipt,
   ): BrowserOperationReceipt {
     try {
-      if (!this.store.completeBrowserOperation(scope.operationId, receipt)) {
+      if (!this.store.completeBrowserOperation(scope.principalId, scope.operationId, receipt)) {
         const uncertain = unknown();
         this.logReceipt(scope, action, uncertain);
         return uncertain;

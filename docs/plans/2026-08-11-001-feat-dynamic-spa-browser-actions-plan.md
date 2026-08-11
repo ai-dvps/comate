@@ -369,7 +369,7 @@ flowchart LR
   - Reuse a long-lived `BrowserToolContext` across runtime generations and verify each mutation uses the current invocation scope, not constructor-cached authority.
   - Start an operation with an old task token, rebuild the runtime while approval waits, then allow; verify cancellation, mutex release, and zero dispatch.
   - Replay the same operation ID and digest before and after terminal and verify one logical operation and one persisted receipt.
-  - Reuse an operation ID with a different digest or principal and verify a hard conflict with no approval or dispatch.
+  - Reuse an operation ID with a different digest under the same principal and verify a hard conflict; verify another principal may use the same caller-stable ID independently.
   - Crash or restart after dispatch-intent but before terminal and verify recovery to stable unknown with retry prohibited.
   - Submit two stateless MCP mutations concurrently and verify deterministic serialization; observe the page concurrently and verify read-only access remains available.
   - Change control ownership while approval waits and verify immediate cancellation rather than queued execution after handback.

@@ -89,7 +89,16 @@ class FakePage implements BrowserCdpSession {
       ].map((_item, index) => 100 + index),
     };
   }
-  async clickBackendNode(): Promise<BrowserOperationReceipt> {
+  async clickBackendNode(
+    _backendNodeId: number,
+    beforeDispatch?: () => boolean | Promise<boolean>,
+  ): Promise<BrowserOperationReceipt> {
+    if (beforeDispatch && !await beforeDispatch()) {
+      return {
+        outcome: 'not_dispatched', dispatchState: 'not_dispatched', verified: false,
+        retrySafe: true, reason: 'cancelled', delta: { kind: 'none', changed: false },
+      };
+    }
     return {
       outcome: 'dispatched_verified', dispatchState: 'dispatched', verified: true,
       retrySafe: false, delta: { kind: 'activation', changed: false },

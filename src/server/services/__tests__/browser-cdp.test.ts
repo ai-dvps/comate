@@ -305,6 +305,35 @@ describe('BrowserCdpSession trusted interaction adapter', () => {
     }
   });
 
+  it('rechecks authority after hit-testing and immediately before mouse dispatch', async () => {
+    const peer = await withInteractionPeer((command) => {
+      if (command.method === 'DOM.resolveNode') return { object: { objectId: 'target-node' } };
+      if (command.method === 'Runtime.callFunctionOn') {
+        return { result: { value: { connected: true, enabled: true } } };
+      }
+      if (command.method === 'DOM.getBoxModel') {
+        return { model: { content: [10, 20, 110, 20, 110, 60, 10, 60] } };
+      }
+      if (command.method === 'DOM.getNodeForLocation') {
+        return { backendNodeId: 42, frameId: 'main-frame' };
+      }
+      return {};
+    });
+    try {
+      let commandsAtAuthorization = 0;
+      const receipt = await peer.page.clickBackendNode(42, () => {
+        commandsAtAuthorization = peer.commands.length;
+        return false;
+      });
+      assert.equal(receipt.outcome, 'not_dispatched');
+      assert.equal(receipt.reason, 'cancelled');
+      assert.ok(peer.commands.slice(0, commandsAtAuthorization).some((command) => command.method === 'DOM.getNodeForLocation'));
+      assert.equal(peer.commands.some((command) => command.method === 'Input.dispatchMouseEvent'), false);
+    } finally {
+      await peer.close();
+    }
+  });
+
   it('does not dispatch when the fresh hit test is occluded', async () => {
     const peer = await withInteractionPeer((command) => {
       if (command.method === 'DOM.getBoxModel') {

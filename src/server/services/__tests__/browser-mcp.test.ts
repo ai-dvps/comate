@@ -284,7 +284,16 @@ class FakePage implements BrowserCdpSession {
   async getFullAXTree(): Promise<RawAxNode[]> {
     return this.options.axNodes ?? [];
   }
-  async clickBackendNode(backendNodeId: number): Promise<import('../browser-cdp.js').BrowserOperationReceipt> {
+  async clickBackendNode(
+    backendNodeId: number,
+    beforeDispatch?: () => boolean | Promise<boolean>,
+  ): Promise<import('../browser-cdp.js').BrowserOperationReceipt> {
+    if (beforeDispatch && !await beforeDispatch()) {
+      return {
+        outcome: 'not_dispatched', dispatchState: 'not_dispatched', verified: false,
+        retrySafe: true, reason: 'cancelled', delta: { kind: 'none', changed: false },
+      };
+    }
     this.clickedBackendNodes.push(backendNodeId);
     if (this.options.submitDispatchError) {
       this.submitDispatched = true;
@@ -454,9 +463,15 @@ function recordingOperationStore(): { operationStore: SqliteStore; sequence: str
   const intent = operationStore.markBrowserOperationDispatchIntent.bind(operationStore);
   const terminal = operationStore.completeBrowserOperation.bind(operationStore);
   operationStore.proposeBrowserOperation = (input) => { sequence.push('proposed'); return proposed(input); };
-  operationStore.markBrowserOperationApproved = (operationId) => { sequence.push('approved'); return approved(operationId); };
-  operationStore.markBrowserOperationDispatchIntent = (operationId) => { sequence.push('dispatch_intent'); return intent(operationId); };
-  operationStore.completeBrowserOperation = (operationId, receipt) => { sequence.push('terminal'); return terminal(operationId, receipt); };
+  operationStore.markBrowserOperationApproved = (principalId, operationId) => {
+    sequence.push('approved'); return approved(principalId, operationId);
+  };
+  operationStore.markBrowserOperationDispatchIntent = (principalId, operationId) => {
+    sequence.push('dispatch_intent'); return intent(principalId, operationId);
+  };
+  operationStore.completeBrowserOperation = (principalId, operationId, receipt) => {
+    sequence.push('terminal'); return terminal(principalId, operationId, receipt);
+  };
   return { operationStore, sequence };
 }
 

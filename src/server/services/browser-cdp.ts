@@ -287,7 +287,10 @@ export interface BrowserCdpSession {
   evaluate<T>(expression: string): Promise<T>;
   navigate(url: string): Promise<void>;
   getFullAXTree(): Promise<RawAxNode[]>;
-  clickBackendNode(backendNodeId: number): Promise<BrowserOperationReceipt>;
+  clickBackendNode(
+    backendNodeId: number,
+    beforeDispatch?: () => boolean | Promise<boolean>,
+  ): Promise<BrowserOperationReceipt>;
   fillBackendNode?(backendNodeId: number, text: string): Promise<BrowserOperationReceipt>;
   setFileInputFiles?(backendNodeId: number, paths: string[]): Promise<BrowserOperationReceipt>;
   getDocumentIdentity?(): BrowserDocumentIdentity | null;
@@ -694,7 +697,10 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
     return result.nodes ?? [];
   }
 
-  async clickBackendNode(backendNodeId: number): Promise<BrowserOperationReceipt> {
+  async clickBackendNode(
+    backendNodeId: number,
+    beforeDispatch?: () => boolean | Promise<boolean>,
+  ): Promise<BrowserOperationReceipt> {
     let targetObjectId: string | undefined;
     try {
       const resolved = await this.connection.send<{ object?: { objectId?: string } }>(
@@ -758,6 +764,7 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
         }
       }
 
+      if (beforeDispatch && !await beforeDispatch()) return notDispatched('cancelled');
       try {
         await this.connection.send('Input.dispatchMouseEvent', {
           type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1,

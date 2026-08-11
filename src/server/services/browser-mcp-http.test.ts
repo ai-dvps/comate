@@ -124,7 +124,8 @@ describe('browser-mcp-http (U6)', { concurrency: false }, () => {
     assert.equal(res.status, 200);
     assert.equal(res.json.result.serverInfo.name, 'comate-browser');
     assert.equal(res.json.result.serverInfo.version, '0.3.0');
-    assert.match(res.json.result.instructions, /fresh page model already returned by open or act/i);
+    assert.match(res.json.result.instructions, /Mutation tools return only bounded receipts, never a page model/i);
+    assert.match(res.json.result.instructions, /After every mutation, call getPageState/i);
     assert.match(res.json.result.instructions, /getPageState[\s\S]*findElements[\s\S]*getElementDetails[\s\S]*act[\s\S]*upload[\s\S]*activate[\s\S]*takeScreenshot/);
     assert.match(res.json.result.instructions, /takeScreenshot.*only.*visual/i);
   });

@@ -1273,7 +1273,7 @@ describe('SqliteStore browser operation ledger positive-shape parsing', { concur
       .run('terminal', '{', 'bad-json');
 
     for (const operationId of ['bad-state', 'bad-receipt', 'bad-json']) {
-      const parsed = store.getBrowserOperation(operationId)!;
+      const parsed = store.getBrowserOperation('principal', operationId)!;
       assert.strictEqual(parsed.state, 'terminal');
       assert.strictEqual(parsed.receipt?.outcome, 'outcome_unknown');
       assert.strictEqual(parsed.receipt?.dispatchState, 'dispatched');
