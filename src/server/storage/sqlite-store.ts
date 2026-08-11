@@ -272,7 +272,7 @@ export class SqliteStore {
     // filename, or exception columns.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS browser_operation_ledger (
-        operation_id TEXT PRIMARY KEY,
+        operation_id TEXT NOT NULL,
         principal_id TEXT NOT NULL,
         workspace_id TEXT NOT NULL,
         session_id TEXT NOT NULL,
@@ -283,9 +283,11 @@ export class SqliteStore {
         state TEXT NOT NULL,
         receipt_json TEXT,
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (principal_id, operation_id)
       )
     `);
+    this.ensureBrowserOperationLedgerPrincipalScope();
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_browser_operation_session_state
         ON browser_operation_ledger (session_id, state, created_at)
@@ -3770,6 +3772,45 @@ export class SqliteStore {
   // browser_operation_ledger (U8/KTD6-KTD7)
   // -------------------------------------------------------------------------
 
+  private ensureBrowserOperationLedgerPrincipalScope(): void {
+    const columns = this.db.prepare('PRAGMA table_info(browser_operation_ledger)').all() as Array<{
+      name: string;
+      pk: number;
+    }>;
+    const principalPk = columns.find((column) => column.name === 'principal_id')?.pk;
+    const operationPk = columns.find((column) => column.name === 'operation_id')?.pk;
+    if (principalPk === 1 && operationPk === 2) return;
+    this.db.transaction(() => {
+      this.db.exec('ALTER TABLE browser_operation_ledger RENAME TO browser_operation_ledger_legacy');
+      this.db.exec(`
+        CREATE TABLE browser_operation_ledger (
+          operation_id TEXT NOT NULL,
+          principal_id TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          runtime_generation TEXT NOT NULL,
+          capability_id TEXT NOT NULL,
+          action TEXT NOT NULL,
+          parameter_digest TEXT NOT NULL,
+          state TEXT NOT NULL,
+          receipt_json TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (principal_id, operation_id)
+        )
+      `);
+      this.db.exec(`
+        INSERT INTO browser_operation_ledger
+          (operation_id, principal_id, workspace_id, session_id, runtime_generation,
+           capability_id, action, parameter_digest, state, receipt_json, created_at, updated_at)
+        SELECT operation_id, principal_id, workspace_id, session_id, runtime_generation,
+               capability_id, action, parameter_digest, state, receipt_json, created_at, updated_at
+        FROM browser_operation_ledger_legacy
+      `);
+      this.db.exec('DROP TABLE browser_operation_ledger_legacy');
+    })();
+  }
+
   deleteBrowserOperationsForWorkspace(workspaceId: string): number {
     return this.db.prepare('DELETE FROM browser_operation_ledger WHERE workspace_id = ?').run(workspaceId).changes;
   }
@@ -3786,30 +3827,30 @@ export class SqliteStore {
       input.runtimeGeneration, input.capabilityId, input.action,
       input.parameterDigest, now, now,
     );
-    return this.getBrowserOperation(input.operationId)!;
+    return this.getBrowserOperation(input.principalId, input.operationId)!;
   }
 
-  getBrowserOperation(operationId: string): BrowserOperationEntry | null {
+  getBrowserOperation(principalId: string, operationId: string): BrowserOperationEntry | null {
     const row = this.db.prepare(
-      'SELECT * FROM browser_operation_ledger WHERE operation_id = ?',
-    ).get(operationId) as RawBrowserOperationRow | undefined;
+      'SELECT * FROM browser_operation_ledger WHERE principal_id = ? AND operation_id = ?',
+    ).get(principalId, operationId) as RawBrowserOperationRow | undefined;
     return row ? parseBrowserOperationRow(row) : null;
   }
 
-  markBrowserOperationApproved(operationId: string): boolean {
-    return this.transitionBrowserOperation(operationId, ['proposed'], 'approved') > 0;
+  markBrowserOperationApproved(principalId: string, operationId: string): boolean {
+    return this.transitionBrowserOperation(principalId, operationId, ['proposed'], 'approved') > 0;
   }
 
-  markBrowserOperationDispatchIntent(operationId: string): boolean {
-    return this.transitionBrowserOperation(operationId, ['proposed', 'approved'], 'dispatch_intent') > 0;
+  markBrowserOperationDispatchIntent(principalId: string, operationId: string): boolean {
+    return this.transitionBrowserOperation(principalId, operationId, ['proposed', 'approved'], 'dispatch_intent') > 0;
   }
 
-  completeBrowserOperation(operationId: string, receipt: BrowserOperationStoredReceipt): boolean {
+  completeBrowserOperation(principalId: string, operationId: string, receipt: BrowserOperationStoredReceipt): boolean {
     const result = this.db.prepare(`
       UPDATE browser_operation_ledger
       SET state = 'terminal', receipt_json = ?, updated_at = ?
-      WHERE operation_id = ? AND state != 'terminal'
-    `).run(JSON.stringify(receipt), new Date().toISOString(), operationId);
+      WHERE principal_id = ? AND operation_id = ? AND state != 'terminal'
+    `).run(JSON.stringify(receipt), new Date().toISOString(), principalId, operationId);
     return result.changes > 0;
   }
 
@@ -3842,6 +3883,7 @@ export class SqliteStore {
   }
 
   private transitionBrowserOperation(
+    principalId: string,
     operationId: string,
     from: BrowserOperationState[],
     to: BrowserOperationState,
@@ -3849,8 +3891,8 @@ export class SqliteStore {
     const placeholders = from.map(() => '?').join(', ');
     return this.db.prepare(`
       UPDATE browser_operation_ledger SET state = ?, updated_at = ?
-      WHERE operation_id = ? AND state IN (${placeholders})
-    `).run(to, new Date().toISOString(), operationId, ...from).changes;
+      WHERE principal_id = ? AND operation_id = ? AND state IN (${placeholders})
+    `).run(to, new Date().toISOString(), principalId, operationId, ...from).changes;
   }
 
   // -------------------------------------------------------------------------

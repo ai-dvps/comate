@@ -48,7 +48,12 @@ import {
 } from '../../test-utils/fake-browser-shell.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { BrowserCdpSession } from '../browser-cdp.js';
-import type { RawAxNode, RawPageExtraction, SubmitSnapshot } from '../browser-page-model.js';
+import type {
+  ActivationTargetSnapshot,
+  RawAxNode,
+  RawPageExtraction,
+  SubmitSnapshot,
+} from '../browser-page-model.js';
 import workspacesRouter from '../../routes/workspaces.js';
 
 /**
@@ -351,6 +356,23 @@ class FakePage implements BrowserCdpSession {
     };
   }
   async callBackendNode<T>(backendNodeId: number, functionDeclaration: string): Promise<T | null> {
+    if (functionDeclaration.includes('__comateActivationSnapshot')) {
+      return {
+        connected: true,
+        enabled: true,
+        visible: true,
+        inViewport: true,
+        occluded: false,
+        origin: new URL(this.currentExtraction.url).origin,
+        geometry: { x: 10, y: 10, width: 100, height: 30 },
+        editorSummary: {
+          count: 0,
+          filledCount: 0,
+          totalLength: 0,
+          privateDigest: 'site-auth-test-editor',
+        },
+      } satisfies ActivationTargetSnapshot as T;
+    }
     if (functionDeclaration.includes('var form = this')) {
       this.dispatchCount += 1;
       return { ok: true } as T;
@@ -402,7 +424,16 @@ class FakePage implements BrowserCdpSession {
       delta: { kind: 'field', changed: true },
     };
   }
-  async clickBackendNode(backendNodeId: number): Promise<import('../browser-cdp.js').BrowserOperationReceipt> {
+  async clickBackendNode(
+    backendNodeId: number,
+    beforeDispatch?: () => boolean | Promise<boolean>,
+  ): Promise<import('../browser-cdp.js').BrowserOperationReceipt> {
+    if (beforeDispatch && !await beforeDispatch()) {
+      return {
+        outcome: 'not_dispatched', dispatchState: 'not_dispatched', verified: false,
+        retrySafe: true, reason: 'cancelled', delta: { kind: 'none', changed: false },
+      };
+    }
     this.clicks.push(backendNodeId);
     return {
       outcome: 'dispatched_verified', dispatchState: 'dispatched', verified: true,
@@ -901,7 +932,7 @@ describe('workspace delete cascade (KTD-8)', () => {
 describe('browser_audit table + service contract', () => {
   it('constructor migrates to the current schema version and resetData wipes the table', () => {
     const store = createIsolatedStore();
-    assert.strictEqual(store.getMigrationVersion(), 10);
+    assert.strictEqual(store.getMigrationVersion(), 11);
     const audit = new BrowserAuditService(store);
     audit.logControl({ workspaceId: 'ws', sessionId: 's', verb: 'takeover', outcome: 'ok' });
     assert.strictEqual(store.listBrowserAudit('ws').length, 1);
@@ -1008,7 +1039,7 @@ describe('browser_audit table + service contract', () => {
     }
   });
 
-  it('flags a click followed by navigation as a potential submit (RISK-1)', async () => {
+  it('audits an approved activation without claiming downstream business success', async () => {
     const harness = await makeChainHarness();
     const workspaceId = await createWorkspace(harness.store);
     try {
@@ -1038,21 +1069,23 @@ describe('browser_audit table + service contract', () => {
         pageRegistry: new Map(),
         settleMs: 0,
         audit: harness.audit,
+        approvalRequester: async () => ({ behavior: 'allow' }),
       } satisfies BrowserMcpDeps);
 
       const openResult = await ctx.handleOpen({ url: 'https://app.example.com/a' });
       const model = resultModel(openResult);
       const linkRef = model.model.actions[0].ref;
-      const actResult = await ctx.handleAct({ ref: linkRef, action: 'click' });
-      assert.strictEqual(actResult.isError, undefined);
+      const actResult = await ctx.handleActivate({ operationId: 'audit-activate', ref: linkRef });
+      assert.strictEqual(actResult.isError, undefined, JSON.stringify(actResult));
       assert.deepStrictEqual(page.clicks, [777]);
 
       const rows = harness.store.listBrowserAudit(workspaceId);
       const act = rows.find(
-        (row) => row.category === 'tool' && row.action === 'mcp__comate-browser__act',
+        (row) => row.category === 'tool' && row.action === 'mcp__comate-browser__activate',
       );
       assert.ok(act);
-      assert.strictEqual(act!.potentialSubmit, true, 'click followed by navigation is flagged');
+      assert.strictEqual(act!.potentialSubmit, false);
+      assert.match(act!.detail ?? '', /activation=dispatched_verified/);
       assert.strictEqual(act!.origin, 'https://app.example.com');
     } finally {
       await harness.browserService.shutdown().catch(() => undefined);

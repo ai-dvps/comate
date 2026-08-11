@@ -386,6 +386,15 @@ describe('browser-page-model distillation (KTD-3)', () => {
     assert.ok(extraction.domCandidates?.some((candidate) => candidate.name === 'Child action'));
   });
 
+  it('reserves the bounded scan for explicit controls after generic layout nodes', () => {
+    const layout = Array.from({ length: 2_100 }, (_, index) =>
+      `<div data-index="${index + 1}">Layout ${index}</div>`).join('');
+    const extraction = runExtractor(`<!doctype html><body>${layout}
+      <div onclick="void 0" data-index="2200">Late authoring action</div>
+    </body>`);
+    assert.ok(extraction.domCandidates?.some((candidate) => candidate.name === 'Late authoring action'));
+  });
+
   it('extracts only the outer editable root and associated non-directory file input', () => {
     const sentinel = 'PRIVATE_ARTICLE_SENTINEL_中文_🚀';
     const extraction = runExtractor(`<!doctype html><body>
@@ -467,6 +476,29 @@ describe('browser-page-model distillation (KTD-3)', () => {
     const domAction = model.actions.find((action) => action.provenance === 'dom');
     assert.strictEqual(domAction?.role, 'generic');
     assert.strictEqual(domAction ? refs.get(domAction.ref)?.fingerprint.role : undefined, '');
+  });
+
+  it('bounds concurrent CDP fingerprint requests for dense action inventories', async () => {
+    const nodes: RawAxNode[] = Array.from({ length: 40 }, (_, index) => ({
+      nodeId: `action-${index}`,
+      role: { value: 'button' },
+      name: { value: `Action ${index}` },
+      backendDOMNodeId: 500 + index,
+    }));
+    const source = fakeSource(makeExtraction(), nodes);
+    let active = 0;
+    let maxActive = 0;
+    source.callBackendNode = async <T>(): Promise<T> => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      active -= 1;
+      return { tag: 'button', type: 'button', role: 'button', editable: false, fileInput: false } as T;
+    };
+    const model = await distillPageModel(source, new RefTable(), { maxActions: 40 });
+    assert.equal(model.actions.length, 40);
+    assert.ok(maxActive > 1);
+    assert.ok(maxActive <= 12, `observed ${maxActive} concurrent fingerprint calls`);
   });
 
   it('never downgrades page links, buttons, or consent controls from fail-closed activation', async () => {

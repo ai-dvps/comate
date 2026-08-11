@@ -3,10 +3,12 @@ import { constants as fsConstants } from 'node:fs';
 import { chmod, lstat, mkdir, open, readdir, rm, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { getStorageDir } from '../storage/data-dir.js';
-import type { BrowserUploadCandidate } from './browser-upload-policy.js';
+import {
+  BROWSER_UPLOAD_MAX_TOTAL_BYTES,
+  type BrowserUploadCandidate,
+} from './browser-upload-policy.js';
 
 const STAGING_TTL_MS = 30 * 60 * 1000;
-const SESSION_MAX_BYTES = 500 * 1024 * 1024;
 const GLOBAL_MAX_BYTES = 1024 * 1024 * 1024;
 
 export interface StagedBrowserUpload {
@@ -25,11 +27,17 @@ interface StagingEntry extends StagedBrowserUpload {
 
 export class BrowserUploadStagingService {
   private readonly entries = new Map<string, StagingEntry>();
+  private readonly reservedSessionBytes = new Map<string, number>();
+  private reservedGlobalBytes = 0;
   private initialized: Promise<void> | null = null;
 
   constructor(
     private readonly root = path.join(getStorageDir(), 'browser-upload-staging'),
     private readonly now: () => number = () => Date.now(),
+    private readonly quotas = {
+      sessionBytes: BROWSER_UPLOAD_MAX_TOTAL_BYTES,
+      globalBytes: GLOBAL_MAX_BYTES,
+    },
   ) {}
 
   private key(sessionId: string, operationId: string): string {
@@ -38,7 +46,7 @@ export class BrowserUploadStagingService {
 
   private async initialize(): Promise<void> {
     if (!this.initialized) {
-      this.initialized = (async () => {
+      const initialization = (async () => {
         await mkdir(this.root, { recursive: true, mode: 0o700 });
         const rootStats = await lstat(this.root);
         if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) throw new Error('browser_upload_staging_root_unsafe');
@@ -46,6 +54,11 @@ export class BrowserUploadStagingService {
         const children = await readdir(this.root).catch(() => []);
         await Promise.all(children.map((child) => rm(path.join(this.root, child), { recursive: true, force: true })));
       })();
+      const recoverable = initialization.catch((error) => {
+        if (this.initialized === recoverable) this.initialized = null;
+        throw error;
+      });
+      this.initialized = recoverable;
     }
     return this.initialized;
   }
@@ -66,14 +79,18 @@ export class BrowserUploadStagingService {
     const sessionBytes = [...this.entries.values()].filter((entry) => entry.sessionId === sessionId)
       .reduce((sum, entry) => sum + entry.totalBytes, 0);
     const globalBytes = [...this.entries.values()].reduce((sum, entry) => sum + entry.totalBytes, 0);
-    if (sessionBytes + totalBytes > SESSION_MAX_BYTES || globalBytes + totalBytes > GLOBAL_MAX_BYTES) {
+    const reservedSessionBytes = this.reservedSessionBytes.get(sessionId) ?? 0;
+    if (sessionBytes + reservedSessionBytes + totalBytes > this.quotas.sessionBytes ||
+        globalBytes + this.reservedGlobalBytes + totalBytes > this.quotas.globalBytes) {
       throw new Error('browser_upload_staging_quota');
     }
+    this.reservedSessionBytes.set(sessionId, reservedSessionBytes + totalBytes);
+    this.reservedGlobalBytes += totalBytes;
     const directory = path.join(this.root, `${randomBytes(16).toString('hex')}`);
-    await mkdir(directory, { mode: 0o700 });
     const paths: string[] = [];
     const digests: string[] = [];
     try {
+      await mkdir(directory, { mode: 0o700 });
       for (let index = 0; index < files.length; index += 1) {
         const source = files[index];
         const extension = path.extname(source.candidate.basename).toLowerCase();
@@ -107,6 +124,11 @@ export class BrowserUploadStagingService {
     } catch (error) {
       await rm(directory, { recursive: true, force: true }).catch(() => undefined);
       throw error;
+    } finally {
+      const remainingSessionBytes = (this.reservedSessionBytes.get(sessionId) ?? totalBytes) - totalBytes;
+      if (remainingSessionBytes > 0) this.reservedSessionBytes.set(sessionId, remainingSessionBytes);
+      else this.reservedSessionBytes.delete(sessionId);
+      this.reservedGlobalBytes -= totalBytes;
     }
   }
 
@@ -121,12 +143,34 @@ export class BrowserUploadStagingService {
 
   async verify(staged: StagedBrowserUpload): Promise<boolean> {
     const entry = this.entries.get(this.key(staged.sessionId, staged.operationId));
-    if (!entry || entry.expiresAt < this.now() || entry.paths.length !== staged.paths.length) return false;
+    if (!entry || entry.expiresAt < this.now() || entry.paths.length !== staged.paths.length ||
+        entry.totalBytes !== staged.totalBytes || entry.expiresAt !== staged.expiresAt ||
+        !entry.paths.every((item, index) => item === staged.paths[index]) ||
+        !entry.digests.every((item, index) => item === staged.digests[index])) return false;
     let total = 0;
-    for (const stagedPath of entry.paths) {
-      const stats = await lstat(stagedPath).catch(() => null);
-      if (!stats?.isFile() || stats.nlink !== 1) return false;
-      total += stats.size;
+    for (let index = 0; index < entry.paths.length; index += 1) {
+      let handle: FileHandle | undefined;
+      try {
+        const noFollow = typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NOFOLLOW : 0;
+        handle = await open(entry.paths[index], fsConstants.O_RDONLY | noFollow);
+        const stats = await handle.stat();
+        if (!stats.isFile() || stats.nlink !== 1) return false;
+        const digest = createHash('sha256');
+        const buffer = Buffer.allocUnsafe(256 * 1024);
+        let position = 0;
+        while (position < stats.size) {
+          const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+          if (bytesRead === 0) return false;
+          digest.update(buffer.subarray(0, bytesRead));
+          position += bytesRead;
+        }
+        if (digest.digest('hex') !== entry.digests[index]) return false;
+        total += stats.size;
+      } catch {
+        return false;
+      } finally {
+        await handle?.close().catch(() => undefined);
+      }
     }
     return total === entry.totalBytes;
   }

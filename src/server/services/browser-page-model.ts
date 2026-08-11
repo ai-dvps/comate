@@ -176,6 +176,24 @@ export function sameBrowserDocumentIdentity(
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  task: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await task(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 export type RefBatchKey = BrowserDocumentIdentity;
 
 export type RefKind = 'form' | 'field' | 'action';
@@ -625,6 +643,7 @@ export function buildInspectElementScript(entry: RefEntry): string {
 // ---------------------------------------------------------------------------
 
 export const EXTRACTOR_MAX_CONTENT_CHARS = 4000;
+const ACTION_FINGERPRINT_CONCURRENCY = 12;
 
 export interface RawExtractedField {
   fieldIndex: number;
@@ -935,8 +954,19 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
   // Bounded visible DOM fallback for controls omitted from the AX widget spine.
   var MAX_CANDIDATE_SCAN = 2000, MAX_DOM_CANDIDATES = 200;
   var domCandidates = [], domCandidateObjects = [], domCandidateIdentityIndexes = [], totalDomCandidates = 0;
-  var candidateSeeds = document.querySelectorAll('a,button,[role],[onclick],[tabindex],div,span');
+  var candidateSeeds = [], candidateSeedSet = new WeakSet();
+  function appendCandidateSeeds(nodes) {
+    for (var ni = 0; ni < nodes.length && candidateSeeds.length < MAX_CANDIDATE_SCAN; ni++) {
+      if (candidateSeedSet.has(nodes[ni])) continue;
+      candidateSeedSet.add(nodes[ni]);
+      candidateSeeds.push(nodes[ni]);
+    }
+  }
+  appendCandidateSeeds(document.querySelectorAll('a,button,input[type="button"],input[type="submit"],input[type="reset"],input[type="image"],[role],[onclick],[tabindex],[style*="cursor"]'));
+  appendCandidateSeeds(document.querySelectorAll('div,span'));
+  var candidateEvidenceCache = new WeakMap();
   function candidateEvidence(el) {
+    if (candidateEvidenceCache.has(el)) return candidateEvidenceCache.get(el);
     var tag = el.tagName.toLowerCase(), role = (el.getAttribute('role') || '').toLowerCase();
     var nativeAction = (tag === 'a' && el.hasAttribute('href')) || tag === 'button' ||
       (tag === 'input' && /^(button|submit|reset|image)$/.test(fieldType(el, tag)));
@@ -954,7 +984,9 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
         });
       }
     } catch (e) { /* command-line API unavailable */ }
-    return nativeAction || handler || listener || keyboard || semantic || pointer;
+    var result = nativeAction || handler || listener || keyboard || semantic || pointer;
+    candidateEvidenceCache.set(el, result);
+    return result;
   }
   function candidateUsable(el) {
     var rect = el.getBoundingClientRect(), style = window.getComputedStyle(el);
@@ -981,14 +1013,18 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
     }
     return out.replace(/\\s+/g, ' ').trim().slice(0, 120);
   }
-  var candidateScanCount = Math.min(candidateSeeds.length, MAX_CANDIDATE_SCAN);
+  var candidateScanCount = candidateSeeds.length;
   for (var csi = 0; csi < candidateScanCount; csi++) {
     var seed = candidateSeeds[csi];
     if (seed.closest('[contenteditable],[role="textbox"]')) continue;
     if (!textWithoutEditable(seed, 100) && !seed.getAttribute('aria-label') && !seed.getAttribute('title')) continue;
-    var candidate = seed, hops = 0;
-    while (candidate && hops < 6 && !candidateEvidence(candidate)) { candidate = candidate.parentElement; hops += 1; }
-    if (!candidate || candidate === document.body || candidate === document.documentElement || !candidateEvidence(candidate)) continue;
+    var candidate = seed, hops = 0, candidateHasEvidence = candidateEvidence(candidate);
+    while (candidate && hops < 6 && !candidateHasEvidence) {
+      candidate = candidate.parentElement;
+      candidateHasEvidence = candidate ? candidateEvidence(candidate) : false;
+      hops += 1;
+    }
+    if (!candidate || candidate === document.body || candidate === document.documentElement || !candidateHasEvidence) continue;
     if (!candidateUsable(candidate)) continue;
     var cname = candidateName(candidate);
     if (!cname) continue;
@@ -1545,9 +1581,14 @@ async function distillPageModelOnce(
 
   const maxActions = options.maxActions ?? MAX_ACTIONS;
   const extractedActionInventory = extractActionInventory(safeAxNodes, maxActions);
-  const actionFingerprints = await Promise.all(extractedActionInventory.actions.map((action) =>
-    source.callBackendNode?.<ElementFingerprint>(action.backendNodeId, buildElementFingerprintFunction()) ?? Promise.resolve(null),
-  ));
+  const actionFingerprints = await mapWithConcurrency(
+    extractedActionInventory.actions,
+    ACTION_FINGERPRINT_CONCURRENCY,
+    (action) => source.callBackendNode?.<ElementFingerprint>(
+      action.backendNodeId,
+      buildElementFingerprintFunction(),
+    ) ?? Promise.resolve(null),
+  );
   if (actionFingerprints.some((fingerprint) => !fingerprint)) {
     throw new Error('CDP semantic fingerprint unavailable for an actionable page element');
   }

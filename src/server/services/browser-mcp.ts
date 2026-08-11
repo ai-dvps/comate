@@ -132,7 +132,7 @@ import {
 // policy modules can match names without loading the BrowserService chain.
 export { BROWSER_MCP_SERVER_KEY, BROWSER_TOOL_PREFIX };
 
-export const BROWSER_MCP_INSTRUCTIONS = `Use a fresh page model already returned by open or act instead of immediately re-reading the page. When no fresh model is available, use the embedded browser tools in this order:
+export const BROWSER_MCP_INSTRUCTIONS = `Mutation tools return only bounded receipts, never a page model. After every mutation, call getPageState before using element refs. Use the embedded browser tools in this order:
 1. getPageState — default page observation after an external or user-driven page change, a stale-ref error, or when reading another bounded inventory segment. It provides a page-level, text-only, token-bounded semantic view and element refs without requiring vision.
 2. findElements — search the complete internal element index when the page-state inventory is truncated or the target is not obvious.
 3. getElementDetails — inspect one known ref when more attributes or local context are needed.
@@ -1541,8 +1541,6 @@ export class BrowserToolContext {
         );
       }
 
-      if (authorizeDispatch && !await authorizeDispatch()) return mutationAuthorizationError();
-
       let receipt: BrowserOperationReceipt;
       if (args.action === 'fill') {
         if (!page.fillBackendNode) {
@@ -1553,6 +1551,7 @@ export class BrowserToolContext {
             'Reopen the browser session and refresh the page model.',
           );
         }
+        if (authorizeDispatch && !await authorizeDispatch()) return mutationAuthorizationError();
         receipt = await page.fillBackendNode(entry.backendNodeId, args.value ?? '');
       } else if (args.action === 'check') {
         if (!page.callBackendNode) {
@@ -1572,7 +1571,7 @@ export class BrowserToolContext {
             retrySafe: true, matchesRequested: true, delta: { kind: 'none', changed: false },
           };
         } else {
-          receipt = await page.clickBackendNode(entry.backendNodeId);
+          receipt = await page.clickBackendNode(entry.backendNodeId, authorizeDispatch);
           if (receipt.outcome === 'dispatched_verified') {
             try {
               const after = await page.callBackendNode<{ ok: boolean; checked?: boolean }>(
@@ -1599,6 +1598,7 @@ export class BrowserToolContext {
         let result: { ok: boolean; reason?: string; matches?: boolean } | null = null;
         let uncertainReceipt: BrowserOperationReceipt | undefined;
         try {
+          if (authorizeDispatch && !await authorizeDispatch()) return mutationAuthorizationError();
           result = await page.callBackendNode<{ ok: boolean; reason?: string; matches?: boolean }>(
             entry.backendNodeId, buildBackendActFunction(args.action, args.value),
           );
@@ -1921,8 +1921,7 @@ export class BrowserToolContext {
       }
 
       if (recordApproved && !await recordApproved()) return mutationAuthorizationError();
-      if (authorizeDispatch && !await authorizeDispatch()) return mutationAuthorizationError();
-      const receipt = await page.clickBackendNode(target.backendNodeId);
+      const receipt = await page.clickBackendNode(target.backendNodeId, authorizeDispatch);
       await this.uploadStaging.releaseSession(this.deps.sessionId);
       this.audit.logToolAction({
         workspaceId: this.deps.workspaceId,
@@ -2118,14 +2117,13 @@ export class BrowserToolContext {
 
       // Dispatch: click the approved submit control when given, else
       // requestSubmit() so validation + submit events fire.
-      if (authorizeDispatch && !await authorizeDispatch()) return mutationAuthorizationError();
       const dispatchBackendNodeId = controlEntry?.backendNodeId ?? target.backendNodeId;
       const dispatchFailure = controlEntry
         ? 'Failed to activate the submit control'
         : 'Form dispatch failed';
       try {
         if (controlEntry) {
-          const dispatchResult = await page.clickBackendNode(dispatchBackendNodeId);
+          const dispatchResult = await page.clickBackendNode(dispatchBackendNodeId, authorizeDispatch);
           if (dispatchResult?.outcome !== 'dispatched_verified') {
             return toolError(
               'browser_action_failed',
@@ -2137,6 +2135,7 @@ export class BrowserToolContext {
             );
           }
         } else {
+          if (authorizeDispatch && !await authorizeDispatch()) return mutationAuthorizationError();
           const dispatchResult = await page.callBackendNode?.<{ ok: boolean; reason?: string }>(
             dispatchBackendNodeId, buildBackendSubmitFunction(),
           );
