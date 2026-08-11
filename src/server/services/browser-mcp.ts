@@ -101,6 +101,13 @@ import { browserApiBrokerService, type BrowserApiBrokerExecutor } from './browse
 // policy modules can match names without loading the BrowserService chain.
 export { BROWSER_MCP_SERVER_KEY, BROWSER_TOOL_PREFIX };
 
+export const BROWSER_MCP_INSTRUCTIONS = `Use a fresh page model already returned by open or act instead of immediately re-reading the page. When no fresh model is available, use the embedded browser tools in this order:
+1. getPageState — default page observation after an external or user-driven page change, a stale-ref error, or when reading another bounded inventory segment. It provides a page-level, text-only, token-bounded semantic view and element refs without requiring vision.
+2. findElements — search the complete internal element index when the page-state inventory is truncated or the target is not obvious.
+3. getElementDetails — inspect one known ref when more attributes or local context are needed.
+4. act — interact with the chosen ref and use the fresh model it returns. Return to getPageState only when the page changes outside these tools or a ref becomes stale.
+5. takeScreenshot — optional and only for genuinely visual questions such as layout, overlap, charts, canvas, or image content. Do not use it for routine page understanding or element discovery, and do not use it as a substitute for getPageState.`;
+
 /**
  * browser-mcp — the first-class tool surface for the embedded controlled
  * browser (KTD-3). Thirteen tools on the `comate-browser` SDK MCP server
@@ -776,10 +783,9 @@ export class BrowserToolContext {
   }
 
   private async ensurePage(): Promise<BrowserCdpSession> {
-    // Any page-touching tool call (open/snapshot/act/submit/extract) plus
-    // requestHandoff counts as browser activity — reset the idle-reclaim
-    // timer (U3). handleClose does not route through here, so closing does
-    // not reset the clock it is ending.
+    // Every caller reaching the page counts as browser activity. handleClose
+    // intentionally bypasses this method, so closing does not reset the idle
+    // clock it is ending.
     this.svc.resetIdle(this.deps.sessionId);
     const key = this.deps.sessionId;
     const existing = this.pageRegistry.get(key);
@@ -875,8 +881,8 @@ export class BrowserToolContext {
       return toolError(
         'browser_ref_unknown',
         'ref_resolve',
-        `Unknown element ref "${ref}". Refs come from the most recent open/getPageState/snapshot/act page model.`,
-        'Call getPageState for fresh text-only refs, or snapshot when a screenshot is also needed.',
+        `Unknown element ref "${ref}". Refs come from the most recent open/getPageState/findElements/act page model.`,
+        'Call getPageState for a fresh text-only page state and current refs.',
       );
     }
     if (!probe) {
@@ -884,7 +890,7 @@ export class BrowserToolContext {
         'browser_probe_unavailable',
         'ref_resolve',
         'The browser could not verify the current document identity for this element ref.',
-        'Call getPageState or snapshot to rebuild the page model; if this persists, reopen the browser session.',
+        'Call getPageState to rebuild the page model; if this persists, reopen the browser session.',
       );
     }
     const documentChanged = entry.batch.docId !== probe.docId;
@@ -894,7 +900,7 @@ export class BrowserToolContext {
         'browser_ref_stale',
         'ref_resolve',
         `Element ref "${ref}" (${entry.role} "${entry.name}") was invalidated by a page change.`,
-        'Call getPageState (or snapshot when visual context is needed), then retry with the fresh ref.',
+        'Call getPageState, then retry with the fresh ref.',
       );
     }
     return entry;
@@ -1006,7 +1012,7 @@ export class BrowserToolContext {
             'browser_ref_unresolvable',
             'ref_resolve',
             `Action ref "${args.ref}" cannot be inspected by this browser runtime.`,
-            'Call snapshot for a fresh model or inspect the owning form/field ref instead.',
+            'Call getPageState for a fresh model or inspect the owning form/field ref instead.',
           );
         }
         raw = await page.inspectBackendNode(resolved.backendNodeId, buildInspectElementFunction());
@@ -1018,7 +1024,7 @@ export class BrowserToolContext {
           'browser_ref_unresolvable',
           'ref_resolve',
           `Element ref "${args.ref}" could not be resolved in the current document.`,
-          'Call snapshot to refresh the page model and retry with a current ref.',
+          'Call getPageState to refresh the page model and retry with a current ref.',
         );
       }
       return toolJson({ ok: true, ref: args.ref, element: sanitizeInspectedElement(raw) });
@@ -1224,40 +1230,36 @@ export class BrowserToolContext {
     }
   }
 
-  // -- snapshot ---------------------------------------------------------------
+  // -- optional visual observation -------------------------------------------
 
-  async handleSnapshot(args: { screenshot?: boolean }): Promise<CallToolResult> {
+  async handleTakeScreenshot(): Promise<CallToolResult> {
+    const gate = this.controlGate('control');
+    if (gate) return gate;
     try {
       const page = await this.ensurePage();
-      // The control gate runs before dispatching either CDP call.
-      if (args.screenshot) {
-        const gate = this.controlGate('control');
-        if (gate) return gate;
-      }
-      // Distill and screenshot are independent CDP round-trips — run them
-      // concurrently instead of serializing the screenshot behind the model.
-      const [model, screenshot] = await Promise.all([
-        this.distill(page),
-        args.screenshot ? page.captureScreenshot() : Promise.resolve(undefined),
+      const [screenshot, currentUrl] = await Promise.all([
+        page.captureScreenshot(),
+        page.evaluate<string>('(() => window.location.href)()'),
       ]);
-      const content: CallToolResult['content'] = [];
-      if (screenshot !== undefined) {
-        content.push({ type: 'image', data: screenshot, mimeType: 'image/jpeg' });
-        // Image exfil point toward the model — the FACT is audited; the
-        // image bytes never touch the audit table (KTD-9).
-        this.audit.logToolAction({
-          workspaceId: this.deps.workspaceId,
-          sessionId: this.deps.sessionId,
-          toolName: BROWSER_TOOL_NAMES.snapshot,
-          url: model.url,
-          outcome: 'ok',
-          detail: 'screenshot',
-        });
-      }
-      content.push({ type: 'text', text: JSON.stringify({ ok: true, model }) });
-      return { content };
+      // Image exfil point toward the model — the FACT is audited; the image
+      // bytes never touch the audit table (KTD-9). Taking a screenshot does
+      // not distill a new model, so it cannot invalidate existing refs.
+      this.audit.logToolAction({
+        workspaceId: this.deps.workspaceId,
+        sessionId: this.deps.sessionId,
+        toolName: BROWSER_TOOL_NAMES.takeScreenshot,
+        url: String(currentUrl).slice(0, 2048),
+        outcome: 'ok',
+        detail: 'screenshot',
+      });
+      return {
+        content: [
+          { type: 'image', data: screenshot, mimeType: 'image/jpeg' },
+          { type: 'text', text: JSON.stringify({ ok: true }) },
+        ],
+      };
     } catch (err) {
-      return this.toErrorResult(err, 'distill');
+      return this.toErrorResult(err, 'capture');
     }
   }
 
@@ -1290,7 +1292,7 @@ export class BrowserToolContext {
             'browser_ref_unresolvable',
             'ref_resolve',
             `Action ref "${args.ref}" cannot be checked for submit behavior by this browser runtime.`,
-            'Call snapshot for a fresh model, or use the form field ref when one is available.',
+            'Call getPageState for a fresh model, or use the form field ref when one is available.',
           );
         }
         const details = await page.inspectBackendNode(entry.backendNodeId, buildInspectElementFunction());
@@ -1299,7 +1301,7 @@ export class BrowserToolContext {
             'browser_ref_unresolvable',
             'ref_resolve',
             `Action ref "${args.ref}" no longer resolves to a live element.`,
-            'Call snapshot for a fresh page model.',
+            'Call getPageState for a fresh page model.',
           );
         }
         if (details.actions.includes('submit')) {
@@ -1307,7 +1309,7 @@ export class BrowserToolContext {
             'browser_use_submit_tool',
             'ref_resolve',
             `Ref "${args.ref}" (${entry.role} "${entry.name}") submits a form, so it requires user confirmation.`,
-            'Call snapshot or findElements for the owning form ref, then pass that form ref to submit.',
+            'Call getPageState or findElements for the owning form ref, then pass that form ref to submit.',
           );
         }
       }
@@ -1334,7 +1336,7 @@ export class BrowserToolContext {
             'browser_ref_unresolvable',
             'ref_resolve',
             `Action ref "${args.ref}" has no backend node.`,
-            'Call snapshot for a fresh page model.',
+            'Call getPageState for a fresh page model.',
           );
         }
         await page.clickBackendNode(entry.backendNodeId);
@@ -1344,7 +1346,7 @@ export class BrowserToolContext {
             'browser_ref_unresolvable',
             'ref_resolve',
             `Field ref "${args.ref}" has no locator.`,
-            'Call snapshot for a fresh page model.',
+            'Call getPageState for a fresh page model.',
           );
         }
         const result = await page.evaluate<{ ok: boolean; reason?: string }>(
@@ -1355,7 +1357,7 @@ export class BrowserToolContext {
             'browser_action_failed',
             'dispatch',
             `Action ${args.action} on "${entry.name}" failed: ${result.reason ?? 'unknown'}`,
-            'Call snapshot to re-read the page, verify the field state, and retry.',
+            'Call getPageState to re-read the page, verify the field state, and retry.',
           );
         }
       }
@@ -1437,7 +1439,7 @@ export class BrowserToolContext {
             'browser_field_unknown',
             'ref_resolve',
             `No field "${key}" in form ${formIndex}. Keys must be field refs (e5) or field names from the page model.`,
-            'Call snapshot for the current form field list.',
+            'Call getPageState for the current form field list.',
           );
         }
         if (!fieldEntry.xpath) {
@@ -1445,7 +1447,7 @@ export class BrowserToolContext {
             'browser_ref_unresolvable',
             'ref_resolve',
             `Field "${key}" has no locator.`,
-            'Call snapshot for a fresh page model.',
+            'Call getPageState for a fresh page model.',
           );
         }
         const fillResult = await page.evaluate<{ ok: boolean; reason?: string }>(
@@ -1456,7 +1458,7 @@ export class BrowserToolContext {
             'browser_action_failed',
             'dispatch',
             `Failed to fill field "${key}": ${fillResult.reason ?? 'unknown'}`,
-            'Call snapshot to verify the field state and retry.',
+            'Call getPageState to verify the field state and retry.',
           );
         }
       }
@@ -1470,7 +1472,7 @@ export class BrowserToolContext {
           'browser_form_gone',
           'toctou',
           'The form disappeared before its state could be captured.',
-          'Call snapshot to re-read the page and retry.',
+          'Call getPageState to re-read the page and retry.',
         );
       }
 
@@ -1535,7 +1537,7 @@ export class BrowserToolContext {
             'browser_form_gone',
             'toctou',
             'The form disappeared between approval and dispatch.',
-            'Call snapshot to re-read the page and retry.',
+            'Call getPageState to re-read the page and retry.',
           );
         }
         const diffs = diffSubmitSnapshots(approvedSnapshot, current);
@@ -1551,7 +1553,7 @@ export class BrowserToolContext {
             'browser_submit_toctou',
             'toctou',
             'The form kept changing after re-confirmation; submission aborted.',
-            'Call snapshot, verify the page is stable, and retry the submission.',
+            'Call getPageState, verify the page is stable, and retry the submission.',
           );
         }
         approvedSnapshot = current;
@@ -1573,7 +1575,7 @@ export class BrowserToolContext {
             'browser_action_failed',
             'dispatch',
             `${dispatchFailure}: ${dispatchResult.reason ?? 'unknown'}`,
-            'Call snapshot to re-read the page and retry.',
+            'Call getPageState to re-read the page and retry.',
           );
         }
       } catch (error) {
@@ -1984,7 +1986,7 @@ export class BrowserToolContext {
       'browser_cdp_error',
       stage,
       `Browser operation failed at stage "${stage}": ${message}`,
-      'Call snapshot to re-read the page; if the failure persists, the browser session may need to be reopened.',
+      'Call getPageState to re-read the page; if the failure persists, the browser session may need to be reopened.',
     );
   }
 }
@@ -2023,32 +2025,20 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     'open',
     'Navigate the embedded browser to an http(s) URL and return the distilled page model ' +
       '(forms, actions with element refs, main content). Starts the browser session on first use. ' +
-      'Use snapshot afterwards to refresh; use act/submit with the returned refs to interact.',
+      'Use the returned model directly; call getPageState later only after an external page change, ' +
+      'a stale-ref error, or when a bounded inventory needs another segment.',
     { url: z.string().describe('Full http(s) URL to navigate to') },
     async (args) => ctx.handleOpen(args),
-  );
-
-  const snapshotDef = tool(
-    'snapshot',
-    'Re-read the current page and return a fresh distilled page model with new element refs. ' +
-      'Refs from earlier models are invalidated by page changes — always snapshot after navigation ' +
-      'or when act/submit report stale refs. Optionally include a viewport screenshot.',
-    {
-      screenshot: z
-        .boolean()
-        .optional()
-        .describe('Include a JPEG screenshot image block (default false)'),
-    },
-    async (args) => ctx.handleSnapshot(args),
-    { annotations: { readOnlyHint: true, openWorldHint: true } },
   );
 
   const getPageStateDef = tool(
     'getPageState',
     'Return a fresh, text-only semantic view of the current page without raw HTML or a screenshot. ' +
       'The result combines a pruned accessibility outline with DOM-derived forms and fields, ' +
-      'fresh element refs, control states, a page revision, and bounded content. Use this first ' +
-      'to understand an unfamiliar page; use findElements for targeted discovery when the ' +
+      'fresh element refs, control states, a page revision, and bounded content. Use this as the ' +
+      'default observation when no fresh model was just returned, especially after external page ' +
+      'changes or stale-ref errors. Do not take a screenshot for ' +
+      'routine page understanding. Use findElements for targeted discovery when the ' +
       'inventory is truncated.',
     {
       offset: z.number().int().min(0).optional().describe('Element offset for reading the next bounded inventory segment (default 0)'),
@@ -2061,7 +2051,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
 
   const findElementsDef = tool(
     'findElements',
-    'Refresh the current accessibility-based page model and find elements by text or regular ' +
+    'After getPageState, search the complete internal accessibility index by text or regular ' +
       'expression, optionally narrowed by role. Returns fresh refs that can be passed to ' +
       'getElementDetails, act, or submit; arbitrary selectors and raw HTML are never accepted.',
     {
@@ -2077,11 +2067,11 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
 
   const getElementDetailsDef = tool(
     'getElementDetails',
-    'Return bounded details for one element ref already returned by open, getPageState, snapshot, findElements, ' +
-      'or act: tag, role/name, safe attributes, nearby text, limited descendants, owning-form ' +
+    'After getPageState or findElements identifies a ref, return bounded details for that one element: ' +
+      'tag, role/name, safe attributes, nearby text, limited descendants, owning-form ' +
       'structure, and possible actions. This tool does not search for elements; selectors and raw ' +
       'HTML are never accepted.',
-    { ref: z.string().describe('Element ref from the latest open/getPageState/snapshot/findElements/act model') },
+    { ref: z.string().describe('Element ref from the latest open/getPageState/findElements/act model') },
     async (args) => ctx.handleGetElementDetails(args),
     { annotations: { readOnlyHint: true, openWorldHint: true } },
   );
@@ -2125,8 +2115,9 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
 
   const actDef = tool(
     'act',
-    'Perform a single interaction (click/fill/select/check) on an element ref from the page ' +
-      'model, then return the resulting page delta and fresh model. Submitting a form is NOT ' +
+    'After choosing a ref with getPageState, findElements, and optionally getElementDetails, ' +
+      'perform a single interaction (click/fill/select/check) on that element. The result includes ' +
+      'the resulting page delta and fresh model. Submitting a form is NOT ' +
       'possible through act — submit-semantics controls require the submit tool (user confirmation).',
     {
       ref: z.string().describe('Element ref from the latest page model (e.g. "e7")'),
@@ -2137,6 +2128,17 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
         .describe('fill: text to enter; select: option value or label; check: "true"/"false" (omit to toggle)'),
     },
     async (args) => ctx.handleAct(args),
+  );
+
+  const takeScreenshotDef = tool(
+    'takeScreenshot',
+    'Capture a viewport JPEG only for genuinely visual questions such as layout, overlap, charts, ' +
+      'canvas, or image content. This is optional and only useful to a vision-capable model. Never ' +
+      'use it for routine page understanding or element discovery; use getPageState first. Taking ' +
+      'a screenshot does not refresh element refs.',
+    {},
+    async () => ctx.handleTakeScreenshot(),
+    { annotations: { readOnlyHint: true, openWorldHint: true } },
   );
 
   const submitBase = tool(
@@ -2220,13 +2222,13 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
   return [
     openDef,
     getPageStateDef,
-    snapshotDef,
     findElementsDef,
     getElementDetailsDef,
+    actDef,
+    takeScreenshotDef,
     startNetworkCaptureDef,
     stopNetworkCaptureDef,
     authenticatedRequestDef,
-    actDef,
     submitDef,
     extractDef,
     handoffDef,

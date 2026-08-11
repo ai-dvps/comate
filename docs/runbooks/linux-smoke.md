@@ -48,8 +48,9 @@ behavioral verification that needs a GUI.
 - [ ] Open the embedded browser panel; `comate-browser open` navigates the
       in-shell Chromium view (shell CDP path — `/api/health/browser` reports
       no failure class).
-- [ ] Run through the 13-tool core: open, getPageState, snapshot, findElements, getElementDetails,
-      startNetworkCapture / stopNetworkCapture, authenticatedRequest, act,
+- [ ] Run through the 13-tool core: open, getPageState, findElements, getElementDetails, act,
+      takeScreenshot (visual checks only),
+      startNetworkCapture / stopNetworkCapture, authenticatedRequest,
       submit, extract, requestHandoff, close.
 - [ ] Login persistence: log in to one site (remember-site), restart the app,
       confirm the session partition `persist:comate-browser-<sessionId>`
