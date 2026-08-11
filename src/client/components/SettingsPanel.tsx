@@ -83,7 +83,7 @@ function BrowserInsecureCertsToggle() {
       <button
         onClick={toggle}
         disabled={!loaded}
-        className={`relative w-9 h-5 rounded-full transition-colors ${
+        className={`relative w-9 h-5 shrink-0 rounded-full transition-colors ${
           value ? 'bg-accent' : 'bg-border'
         }`}
       >

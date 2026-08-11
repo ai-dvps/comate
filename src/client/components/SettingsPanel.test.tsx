@@ -210,6 +210,19 @@ describe('GeneralTab updater flow', () => {
     expect(slider.disabled).toBe(true);
   });
 
+  it('keeps the insecure certificates toggle at the same width as other toggles', async () => {
+    await renderWithAct(
+      <I18nextProvider i18n={i18n}>
+        <GeneralTab {...defaultProps} />
+      </I18nextProvider>,
+    );
+
+    const label = screen.getByText('Allow insecure certificates in embedded browser');
+    const toggle = label.parentElement?.parentElement?.querySelector('button');
+
+    expect(toggle).toHaveClass('shrink-0');
+  });
+
   it('renders the local footer with disabled actions when not dirty', async () => {
     await renderWithAct(
       <I18nextProvider i18n={i18n}>
