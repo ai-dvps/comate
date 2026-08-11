@@ -22,6 +22,12 @@ The set of runtime dependencies vendored alongside the Vendored Steel build prod
 
 ## Browser API automation
 
+### 受控激活 (controlled activation)
+内嵌浏览器对无法证明无外部副作用的页面控件执行一次点击或等价激活的流程。它以来源页、文档、元素身份和动作摘要为批准边界；批准后必须重新校验，且一次批准最多派发一次动作。
+
+### 浏览器动作回执 (browser operation receipt)
+浏览器工具对一次修改型动作返回的安全结果摘要，用来区分未派发、已派发且验证、已派发但仅观察到页面变化，以及派发结果未知。回执只携带恢复决策所需的长度、摘要、页面差分和重试安全性，不回显正文、敏感字段或文件内容。
+
 ### Sanitized API recipe
 A chat-resident description of an HTTP request discovered from one recorded browser action: request shape, variable inputs, authentication placeholders, expected response fields, and bounded response evidence. Credential values and detected secrets are removed before the recipe enters model context, and the recipe is not automatically persisted outside its originating task.
 
