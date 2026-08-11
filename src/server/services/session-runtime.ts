@@ -32,6 +32,7 @@ import {
   commitSessionNavigation,
   evaluateSessionNavigation,
   isBrowserSubmitClassified,
+  isBrowserActivationClassified,
   redactSubmitGateInput,
 } from './browser-gate-state.js';
 import { browserAuditService } from './browser-audit.js';
@@ -512,6 +513,16 @@ export class SessionRuntime {
       // and fires even when a workspace `.claude/settings.json` allow rule
       // short-circuits canUseTool entirely. The raw submit input is redacted
       // here (KTD-8: field names may flow, values never).
+      if (isBrowserActivationClassified(toolName, input)) {
+        diagLog(`[Runtime ${this.sessionId}] browser-activation-gate requestId=${requestId}`);
+        return this.requestToolApproval(requestId, toolName, options.toolUseID, input, {
+          title: options.title ?? 'Review page activation',
+          description: options.description ?? 'The activation handler will show a sanitized, target-bound manifest before dispatch.',
+          signal: options.signal,
+          decisionReasonType: options.decisionReasonType,
+        });
+      }
+
       if (isBrowserSubmitClassified(this.sessionId, toolName, input)) {
         diagLog(`[Runtime ${this.sessionId}] browser-submit-gate requestId=${requestId} tool=${toolName}`);
         return this.requestToolApproval(

@@ -245,6 +245,109 @@ export interface InspectedElement {
   occluded?: boolean;
 }
 
+export interface ActivationTargetSnapshot {
+  connected: boolean;
+  enabled: boolean;
+  visible: boolean;
+  inViewport: boolean;
+  occluded: boolean;
+  origin: string;
+  geometry: { x: number; y: number; width: number; height: number };
+  editorSummary: {
+    count: number;
+    filledCount: number;
+    totalLength: number;
+    /** Private replay/TOCTOU binding only; never render or audit this value. */
+    privateDigest: string;
+  };
+}
+
+/**
+ * Snapshot an approved activation target and the page's non-sensitive editor
+ * shape from the already resolved backend node. Raw editor text never crosses
+ * the CDP boundary; the digest is private handler state.
+ */
+export function buildActivationTargetSnapshotFunction(): string {
+  return `function __comateActivationSnapshot() {
+  var root = this;
+  function finite(value) { return Number.isFinite(value) ? Math.round(value * 10) / 10 : 0; }
+  function hash(value) {
+    var h = 2166136261, text = String(value || '');
+    for (var i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return (h >>> 0).toString(16);
+  }
+  function sensitive(el) {
+    var text = [el.getAttribute('type'), el.getAttribute('name'), el.getAttribute('id'),
+      el.getAttribute('autocomplete'), el.getAttribute('aria-label')].join(' ').toLowerCase();
+    return /password|passcode|one[- ]?time|otp|captcha|card|cvv|cvc|payment|oauth|authori[sz]|consent/.test(text);
+  }
+  if (!root || !root.tagName || !root.isConnected) return null;
+  var rect = root.getBoundingClientRect();
+  var ariaHidden = false, inert = false, ancestorStyleBlocked = false, ancestor = root;
+  while (ancestor) {
+    if (ancestor.hasAttribute && (ancestor.hasAttribute('hidden') || ancestor.hasAttribute('inert')) || ancestor.inert === true) inert = true;
+    if (String(ancestor.getAttribute && ancestor.getAttribute('aria-hidden') || '').trim().toLowerCase() === 'true') { ariaHidden = true; break; }
+    var ancestorStyle = window.getComputedStyle(ancestor);
+    var ancestorOpacity = Number(ancestorStyle.opacity || 1);
+    if (ancestorStyle.display === 'none' || ancestorStyle.visibility === 'hidden' || ancestorStyle.visibility === 'collapse' ||
+        ancestorStyle.pointerEvents === 'none' || !Number.isFinite(ancestorOpacity) || ancestorOpacity <= 0) ancestorStyleBlocked = true;
+    ancestor = ancestor.parentElement;
+  }
+  var visible = !ariaHidden && !inert && !ancestorStyleBlocked && rect.width > 0 && rect.height > 0;
+  var inViewport = visible && rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth;
+  var occluded = false;
+  if (inViewport) {
+    var x = Math.max(0, Math.min(window.innerWidth - 1, rect.left + rect.width / 2));
+    var y = Math.max(0, Math.min(window.innerHeight - 1, rect.top + rect.height / 2));
+    var hit = document.elementFromPoint(x, y);
+    occluded = !hit || (hit !== root && !root.contains(hit));
+  }
+  var editors = Array.prototype.slice.call(document.querySelectorAll('input,textarea,[contenteditable],[role="textbox"]'));
+  var count = 0, filledCount = 0, totalLength = 0, digestParts = [];
+  for (var i = 0; i < editors.length && count < 100; i++) {
+    var editor = editors[i];
+    var editorTag = editor.tagName.toLowerCase();
+    var editorType = String(editor.getAttribute('type') || 'text').toLowerCase();
+    if (editorTag === 'input' && /^(?:hidden|button|submit|reset|file|image|checkbox|radio|range|color)$/.test(editorType)) continue;
+    if (sensitive(editor) || editor.disabled) continue;
+    var raw = editor.isContentEditable || (editor.getAttribute('role') || '').toLowerCase() === 'textbox'
+      ? String(editor.textContent || '') : String(editor.value == null ? '' : editor.value);
+    var length = Math.min(raw.length, 1000000);
+    count += 1; totalLength += length; if (length > 0) filledCount += 1;
+    digestParts.push(length + ':' + hash(raw));
+  }
+  return {
+    connected: true,
+    enabled: !root.disabled && !inert && String(root.getAttribute('aria-disabled') || '').trim().toLowerCase() !== 'true',
+    visible: visible,
+    inViewport: inViewport,
+    occluded: occluded,
+    origin: window.location.origin,
+    geometry: { x: finite(rect.x), y: finite(rect.y), width: finite(rect.width), height: finite(rect.height) },
+    editorSummary: { count: count, filledCount: filledCount, totalLength: totalLength, privateDigest: hash(digestParts.join('|')) }
+  };
+}`;
+}
+
+/** Render-bounded page text for approval UI. It is always explicitly tagged untrusted. */
+export function sanitizeUntrustedPageText(value: unknown, limit = 160): { source: 'untrusted_page'; text: string } {
+  const text = String(value ?? '')
+    .normalize('NFKC')
+    .replace(/[\s\S]/gu, (character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code <= 0x1f || (code >= 0x7f && code <= 0x9f) ||
+        (code >= 0x200b && code <= 0x200f) || (code >= 0x202a && code <= 0x202e) ||
+        (code >= 0x2060 && code <= 0x206f) || code === 0xfeff ? ' ' : character;
+    })
+    .replace(/<[^>]*>|&(?:lt|gt|amp|quot|#\d+|#x[0-9a-f]+);/gi, ' ')
+    .replace(/\b(?:system|assistant|developer)\b\s*:?/gi, 'page ')
+    .replace(/[\u005b\u005d`*_{}#>|~]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, Math.max(0, Math.min(limit, 600)));
+  return { source: 'untrusted_page', text };
+}
+
 export class RefTable {
   private entries = new Map<string, RefEntry>();
   private batch: RefBatchKey | null = null;
