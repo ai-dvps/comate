@@ -411,6 +411,25 @@ describe('BrowserCdpSession trusted interaction adapter', () => {
     }
   });
 
+  it('assigns staged paths exactly once and verifies only the bounded file count', async () => {
+    const peer = await withInteractionPeer((command) => {
+      if (command.method === 'DOM.resolveNode') return { object: { objectId: 'file-node' } };
+      if (command.method === 'Runtime.callFunctionOn') return { result: { value: true } };
+      return {};
+    });
+    try {
+      const paths = ['/private/staging/a.png', '/private/staging/b.png'];
+      const receipt = await peer.page.setFileInputFiles!(61, paths);
+      assert.equal(receipt.outcome, 'dispatched_verified');
+      const assignments = peer.commands.filter((command) => command.method === 'DOM.setFileInputFiles');
+      assert.equal(assignments.length, 1);
+      assert.deepEqual(assignments[0].params, { backendNodeId: 61, files: paths });
+      assert.equal(JSON.stringify(receipt).includes('/private/staging'), false);
+    } finally {
+      await peer.close();
+    }
+  });
+
   it('falls back to a bounded CDP key event for contenteditable when Input.insertText is unsupported', async () => {
     const text = '中文段落\n第二行 😀';
     let calls = 0;

@@ -8,6 +8,7 @@ import {
   buildExtractorScript,
   buildInspectElementStateFunction,
   buildActivationTargetSnapshotFunction,
+  buildFileInputSnapshotFunction,
   buildInspectElementScript,
   buildSubmitSnapshotScript,
   diffPageModels,
@@ -270,6 +271,24 @@ describe('browser-page-model sensitivity ruleset (KTD-8)', () => {
       parent.style[property] = '';
     }
     dom.window.close();
+  });
+
+  it('accepts an associated visible label for a hidden file input and rejects directory semantics', () => {
+    const dom = new JSDOM('<!doctype html><body><label for="media">Add image</label><input id="media" type="file" hidden accept="image/*"></body>', {
+      url: 'https://example.test/editor', runScripts: 'outside-only',
+    });
+    const { window } = dom;
+    const input = window.document.getElementById('media') as HTMLInputElement;
+    const label = window.document.querySelector('label') as HTMLLabelElement;
+    input.getBoundingClientRect = () => ({ x: 0, y: 0, width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0, toJSON: () => ({}) });
+    label.getBoundingClientRect = () => ({ x: 1, y: 1, width: 80, height: 20, top: 1, left: 1, right: 81, bottom: 21, toJSON: () => ({}) });
+    const snapshotFn = window.eval(`(${buildFileInputSnapshotFunction()})`) as () => import('../browser-page-model.js').FileInputSnapshot;
+    const snapshot = snapshotFn.call(input);
+    assert.equal(snapshot.fileInput, true);
+    assert.equal(snapshot.associatedVisible, true);
+    assert.equal(snapshot.accept, 'image/*');
+    input.setAttribute('webkitdirectory', '');
+    assert.equal(snapshotFn.call(input).directory, true);
   });
 
   it('marks type=password sensitive', () => {

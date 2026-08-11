@@ -61,6 +61,7 @@ import {
   buildInspectElementFunction,
   buildInspectElementStateFunction,
   buildActivationTargetSnapshotFunction,
+  buildFileInputSnapshotFunction,
   buildSubmitSnapshotScript,
   diffPageModels,
   diffSubmitSnapshots,
@@ -78,8 +79,19 @@ import {
   buildElementFingerprintFunction,
   type SubmitSnapshot,
   type ActivationTargetSnapshot,
+  type FileInputSnapshot,
   sanitizeUntrustedPageText,
 } from './browser-page-model.js';
+import {
+  BrowserUploadPolicyError,
+  inspectBrowserUploadCandidates,
+  reopenApprovedBrowserUpload,
+  type BrowserUploadCandidate,
+} from './browser-upload-policy.js';
+import {
+  browserUploadStagingService,
+  type BrowserUploadStagingService,
+} from './browser-upload-staging.js';
 import {
   BrowserNetworkCaptureError,
   BrowserNetworkCaptureManager,
@@ -125,8 +137,9 @@ export const BROWSER_MCP_INSTRUCTIONS = `Use a fresh page model already returned
 2. findElements — search the complete internal element index when the page-state inventory is truncated or the target is not obvious.
 3. getElementDetails — inspect one known ref when more attributes or local context are needed.
 4. act — fill/select/check editable controls. act(click) never dispatches; use activate for page-supplied controls or submit for HTML form submission.
-5. activate — request a single handler-approved physical click for a page-supplied control. Its receipt is not proof of business success; observe afterward.
-6. takeScreenshot — optional and only for genuinely visual questions such as layout, overlap, charts, canvas, or image content. Do not use it for routine page understanding or element discovery, and do not use it as a substitute for getPageState.`;
+5. upload — assign approved workspace media to a file-input ref through the shell-owned browser only.
+6. activate — request a single handler-approved physical click for a page-supplied control. Its receipt is not proof of business success; observe afterward.
+7. takeScreenshot — optional and only for genuinely visual questions such as layout, overlap, charts, canvas, or image content. Do not use it for routine page understanding or element discovery, and do not use it as a substitute for getPageState.`;
 
 /**
  * browser-mcp — the first-class tool surface for the embedded controlled
@@ -201,6 +214,8 @@ export type BrowserApprovalRequester = (
 export interface BrowserMcpDeps {
   sessionId: string;
   workspaceId: string;
+  /** Canonical workspace root used by the dedicated local-file egress gate. */
+  workspaceFolder?: string;
   /** Generation of the task capability authorizing this MCP invocation. */
   runtimeGeneration?: string;
   /** Request-fresh capability identity; never cached in BrowserToolContext. */
@@ -239,6 +254,7 @@ export interface BrowserMcpDeps {
   /** Post-action settle delay before re-distilling (0 in tests). */
   settleMs?: number;
   mutationCoordinator?: BrowserMutationCoordinator;
+  uploadStaging?: BrowserUploadStagingService;
 }
 
 // ---------------------------------------------------------------------------
@@ -429,7 +445,7 @@ function mutationReceiptForResult(
     return payload.receipt as BrowserOperationReceipt;
   }
   if (!dispatchAuthorized) {
-    const denied = payload.submitted === false || payload.activated === false || payload.closed === false || payload.handoffCompleted === false;
+    const denied = payload.submitted === false || payload.activated === false || payload.uploaded === false || payload.closed === false || payload.handoffCompleted === false;
     return {
       outcome: 'not_dispatched', dispatchState: 'not_dispatched', verified: denied,
       retrySafe: true, reason: denied ? 'user_denied' : 'target_unavailable',
@@ -537,6 +553,27 @@ function activationHighRiskDrift(
   if (current.occluded) return 'target_occluded';
   if (current.origin !== approved.origin) return 'origin_changed';
   return undefined;
+}
+
+function fileInputUnsafe(snapshot: FileInputSnapshot | null): string | undefined {
+  if (!snapshot?.connected || !snapshot.fileInput) return 'target_changed';
+  if (!snapshot.enabled) return 'target_disabled';
+  if (snapshot.directory) return 'directory_input_unsupported';
+  if (!snapshot.associatedVisible) return 'target_not_user_visible';
+  return undefined;
+}
+
+function sameFileInputContract(left: FileInputSnapshot, right: FileInputSnapshot): boolean {
+  return left.origin === right.origin && left.fileInput === right.fileInput && left.enabled === right.enabled &&
+    left.multiple === right.multiple && left.accept === right.accept && left.directory === right.directory &&
+    left.associatedVisible === right.associatedVisible;
+}
+
+function uploadPolicyResult(error: unknown): CallToolResult {
+  if (error instanceof BrowserUploadPolicyError) {
+    return toolError(error.code, 'approval', error.message, 'Choose approved media files inside the workspace and start a new upload operation.');
+  }
+  return toolError('browser_upload_failed', 'dispatch', 'The approved upload could not be prepared safely.', 'Observe the file input and start a new upload operation.');
 }
 
 const UNAVAILABLE_RESOLUTIONS: Record<string, string> = {
@@ -929,6 +966,7 @@ export class BrowserToolContext {
   private readonly settleMs: number;
   private readonly audit: Pick<BrowserAuditService, 'logToolAction'>;
   private readonly authenticatedRequestBroker: BrowserApiBrokerExecutor;
+  private readonly uploadStaging: BrowserUploadStagingService;
   private networkCapture?: BrowserNetworkCaptureManager;
   private capturePrimarySessionId?: string;
   private captureAction = 'One explicitly bracketed browser action';
@@ -943,6 +981,7 @@ export class BrowserToolContext {
     this.settleMs = deps.settleMs ?? 300;
     this.audit = deps.audit ?? browserAuditService;
     this.authenticatedRequestBroker = deps.authenticatedRequestBroker ?? browserApiBrokerService;
+    this.uploadStaging = deps.uploadStaging ?? browserUploadStagingService;
   }
 
   /** Abort task-owned capture state without closing the shared browser page. */
@@ -954,6 +993,7 @@ export class BrowserToolContext {
     this.lastModel = null;
     this.pageStateCache = null;
     clearSubmitSemanticsRefs(this.deps.sessionId);
+    void this.uploadStaging.releaseSession(this.deps.sessionId);
   }
 
   private async ensurePage(): Promise<BrowserCdpSession> {
@@ -978,6 +1018,7 @@ export class BrowserToolContext {
     this.pageRegistry.set(key, connecting);
     try {
       const page = await connecting;
+      page.onDocumentChange?.(() => { void this.uploadStaging.releaseSession(this.deps.sessionId); });
       page.onClose(() => {
         if (this.pageRegistry.get(key) === connecting) {
           this.pageRegistry.delete(key);
@@ -988,6 +1029,7 @@ export class BrowserToolContext {
         // (session-level, KTD-4 ②).
         this.refTable.clear();
         this.lastModel = null;
+        void this.uploadStaging.releaseSession(this.deps.sessionId);
         this.pageStateCache = null;
         clearSubmitSemanticsRefs(key);
         this.networkCapture?.abort('connection_closed');
@@ -1359,6 +1401,7 @@ export class BrowserToolContext {
     try {
       const page = await this.ensurePage();
       if (authorizeDispatch && !await authorizeDispatch()) return mutationAuthorizationError();
+      await this.uploadStaging.releaseSession(this.deps.sessionId);
       // Remembered-site injection (U8, KTD-8): exactly once per browser
       // view, on the first open() whose site key has a stored context —
       // BEFORE the first navigation so the initial request already carries
@@ -1604,6 +1647,144 @@ export class BrowserToolContext {
     }
   }
 
+  // -- upload (workspace-contained, handler-approved file egress) ----------
+
+  async handleUpload(
+    args: { operationId: string; ref: string; paths: string[] },
+    extra?: unknown,
+    authorizeDispatch?: () => Promise<boolean>,
+    recordApproved?: () => Promise<boolean>,
+  ): Promise<CallToolResult> {
+    const gate = this.controlGate('control');
+    if (gate) return gate;
+    const signal = (extra as { signal?: AbortSignal } | undefined)?.signal;
+    const workspaceFolder = this.deps.workspaceFolder;
+    if (!workspaceFolder) {
+      return toolError('browser_upload_workspace_unavailable', 'approval', 'The browser invocation is not bound to a workspace folder.', 'Reload the task before uploading local files.');
+    }
+    let staged = false;
+    try {
+      const page = await this.ensurePage();
+      if (this.svc.getSession(this.deps.sessionId)?.targetKind !== 'shell') {
+        return toolError('browser_upload_target_untrusted', 'approval', 'Local file upload is available only in the shell-owned embedded browser.', 'Open this task in the desktop app embedded browser.');
+      }
+      const resolved = await this.resolveCurrentRef(page, args.ref);
+      if (!isRefEntry(resolved)) return resolved;
+      const target = resolved;
+      if (target.kind !== 'field' || target.interactionClass !== 'file-egress' || !target.fingerprint.fileInput ||
+          typeof target.backendNodeId !== 'number' || !page.callBackendNode || !page.setFileInputFiles) {
+        return toolError('browser_upload_target_invalid', 'ref_resolve', 'Upload requires a current file-input ref.', 'Choose the file-egress field ref from getPageState or findElements.');
+      }
+      const initial = await page.callBackendNode<FileInputSnapshot>(target.backendNodeId, buildFileInputSnapshotFunction());
+      const initialUnsafe = fileInputUnsafe(initial);
+      if (!initial || initialUnsafe) {
+        return toolError('browser_upload_target_unsafe', 'toctou', `The file input is unsafe: ${initialUnsafe ?? 'target_changed'}.`, 'Choose a visible enabled file input or its visible associated label.');
+      }
+      if (!initial.multiple && args.paths.length !== 1) {
+        return toolError('browser_upload_multiple_rejected', 'approval', 'This file input accepts exactly one file.', 'Choose one workspace media file.');
+      }
+      let candidates: BrowserUploadCandidate[];
+      try {
+        candidates = await inspectBrowserUploadCandidates(workspaceFolder, args.paths, initial.accept);
+      } catch (error) {
+        return uploadPolicyResult(error);
+      }
+      const parsedOrigin = originOf(initial.origin);
+      if (!parsedOrigin) {
+        return toolError('browser_upload_origin_invalid', 'toctou', 'The page origin could not be verified.', 'Navigate to a valid http(s) page and obtain a fresh file-input ref.');
+      }
+      const decision = await this.requestApproval({
+        toolName: BROWSER_TOOL_NAMES.upload,
+        title: `Share workspace media with ${parsedOrigin}`,
+        description: 'These local file bytes will become readable by the remote page through this file input.',
+        payload: {
+          kind: 'browser_upload',
+          warning: 'Uploading shares local workspace file bytes with the remote site.',
+          origin: parsedOrigin,
+          target: { role: { source: 'app', text: 'file input' }, accept: sanitizeUntrustedPageText(initial.accept, 200), multiple: initial.multiple },
+          files: candidates.map((candidate) => ({
+            source: 'workspace_file',
+            name: sanitizeUntrustedPageText(candidate.basename, 160).text,
+            mediaType: candidate.mimeType,
+            size: candidate.size,
+          })),
+          totalBytes: candidates.reduce((sum, candidate) => sum + candidate.size, 0),
+        },
+      }, signal);
+      if (!isApprovalDecision(decision)) return decision;
+      if (decision.behavior !== 'allow') return toolJson({ uploaded: false, reason: 'user_denied' });
+
+      const postGate = this.controlGate('control');
+      if (postGate) return postGate;
+      const currentResolved = await this.resolveCurrentRef(page, args.ref);
+      if (!isRefEntry(currentResolved) || !sameBrowserDocumentIdentity(currentResolved.batch, target.batch) ||
+          currentResolved.backendNodeId !== target.backendNodeId ||
+          !sameElementFingerprint(currentResolved.fingerprint, target.fingerprint) ||
+          currentResolved.interactionClass !== 'file-egress') {
+        return toolError('browser_upload_target_changed', 'toctou', 'The approved file input changed before assignment.', 'Observe the page and start a new upload operation.');
+      }
+      const current = await page.callBackendNode<FileInputSnapshot>(target.backendNodeId, buildFileInputSnapshotFunction());
+      if (!current || fileInputUnsafe(current) || !sameFileInputContract(initial, current)) {
+        return toolError('browser_upload_target_changed', 'toctou', 'The approved file-input contract changed before assignment.', 'Observe the page and start a new upload operation.');
+      }
+      if (recordApproved && !await recordApproved()) return mutationAuthorizationError();
+
+      const opened: Array<{ candidate: BrowserUploadCandidate; handle: Awaited<ReturnType<typeof reopenApprovedBrowserUpload>> }> = [];
+      let stagedUpload: Awaited<ReturnType<BrowserUploadStagingService['stage']>>;
+      try {
+        for (const candidate of candidates) {
+          opened.push({ candidate, handle: await reopenApprovedBrowserUpload(workspaceFolder, candidate) });
+        }
+        stagedUpload = await this.uploadStaging.stage(this.deps.sessionId, args.operationId, opened);
+        staged = true;
+      } catch (error) {
+        return uploadPolicyResult(error);
+      } finally {
+        await Promise.all(opened.map(({ handle }) => handle.close().catch(() => undefined)));
+      }
+      const finalResolved = await this.resolveCurrentRef(page, args.ref);
+      const finalSnapshot = await page.callBackendNode<FileInputSnapshot>(target.backendNodeId, buildFileInputSnapshotFunction());
+      if (!isRefEntry(finalResolved) || !sameBrowserDocumentIdentity(finalResolved.batch, target.batch) ||
+          finalResolved.backendNodeId !== target.backendNodeId ||
+          !sameElementFingerprint(finalResolved.fingerprint, target.fingerprint) || !finalSnapshot ||
+          fileInputUnsafe(finalSnapshot) || !sameFileInputContract(initial, finalSnapshot) ||
+          !await this.uploadStaging.verify(stagedUpload)) {
+        await this.uploadStaging.releaseOperation(this.deps.sessionId, args.operationId);
+        staged = false;
+        return toolError('browser_upload_target_changed', 'toctou', 'The approved upload changed while preparing file bytes.', 'Observe the page and start a new upload operation.');
+      }
+      if (authorizeDispatch && !await authorizeDispatch()) {
+        await this.uploadStaging.releaseOperation(this.deps.sessionId, args.operationId);
+        staged = false;
+        return mutationAuthorizationError();
+      }
+      const receipt = await page.setFileInputFiles(target.backendNodeId, stagedUpload.paths);
+      if (receipt.outcome === 'not_dispatched') {
+        await this.uploadStaging.releaseOperation(this.deps.sessionId, args.operationId);
+        staged = false;
+      }
+      this.audit.logToolAction({
+        workspaceId: this.deps.workspaceId,
+        sessionId: this.deps.sessionId,
+        toolName: BROWSER_TOOL_NAMES.upload,
+        url: parsedOrigin,
+        outcome: receipt.outcome === 'dispatched_verified' ? 'ok' : 'error',
+        detail: `upload=${receipt.outcome};count=${candidates.length};bytes=${stagedUpload.totalBytes}`,
+      });
+      return toolJson({
+        ok: receipt.outcome === 'dispatched_verified',
+        ref: args.ref,
+        receipt,
+        fileCount: candidates.length,
+        totalBytes: stagedUpload.totalBytes,
+        note: 'File assignment is not proof that the remote application finished reading or uploading the bytes.',
+      });
+    } catch (error) {
+      if (staged) await this.uploadStaging.releaseOperation(this.deps.sessionId, args.operationId);
+      return uploadPolicyResult(error);
+    }
+  }
+
   // -- activate (single-use handler-level approval, KTD5-KTD7) -------------
 
   async handleActivate(
@@ -1742,6 +1923,7 @@ export class BrowserToolContext {
       if (recordApproved && !await recordApproved()) return mutationAuthorizationError();
       if (authorizeDispatch && !await authorizeDispatch()) return mutationAuthorizationError();
       const receipt = await page.clickBackendNode(target.backendNodeId);
+      await this.uploadStaging.releaseSession(this.deps.sessionId);
       this.audit.logToolAction({
         workspaceId: this.deps.workspaceId,
         sessionId: this.deps.sessionId,
@@ -2446,7 +2628,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
       signal: (extra as { signal?: AbortSignal } | undefined)?.signal ?? new AbortController().signal,
       isCurrent: deps.isInvocationCurrent ?? (() => true),
     });
-    const approvalRequired = action === 'activation' || action === 'submit' || action === 'close' || action === 'control';
+    const approvalRequired = action === 'activation' || action === 'upload' || action === 'submit' || action === 'close' || action === 'control';
     const receipt = await mutations.execute(invocation, {
       action,
       privateParameters,
@@ -2619,6 +2801,34 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     _meta: { 'anthropic/requiresUserInteraction': true },
   };
 
+  const uploadBase = tool(
+    'upload',
+    'Assign approved image/video files from the current workspace to one file-input ref. ALWAYS ' +
+      'requires handler-level approval, rejects external CDP targets and unsafe paths, and returns only ' +
+      'a bounded assignment receipt. Paths must be workspace-relative; never pass absolute paths.',
+    {
+      operationId: operationIdSchema,
+      ref: z.string().describe('File-input field ref from the latest page model'),
+      paths: z.array(z.string().min(1).max(500)).min(1).max(18).describe('Workspace-relative approved media paths'),
+    },
+    async (args: { operationId?: string; ref: string; paths: string[] }, extra) => args.operationId
+      ? executeMutation(
+          args.operationId,
+          'upload',
+          { ref: args.ref, paths: args.paths },
+          extra,
+          (signal, authorize, recordApproved) => ctx.handleUpload(
+            { operationId: args.operationId!, ref: args.ref, paths: args.paths },
+            { ...(extra as object), signal },
+            authorize,
+            recordApproved,
+          ),
+        )
+      : toolError('browser_operation_id_required', 'dispatch', 'Mutation tools require an operationId.', 'Retry once with a new caller-stable operationId.'),
+    { annotations: { destructiveHint: true, openWorldHint: true } },
+  );
+  const uploadDef = { ...uploadBase, _meta: { 'anthropic/requiresUserInteraction': true } };
+
   const takeScreenshotDef = tool(
     'takeScreenshot',
     'Capture a viewport JPEG only for genuinely visual questions such as layout, overlap, charts, ' +
@@ -2740,6 +2950,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     findElementsDef,
     getElementDetailsDef,
     actDef,
+    uploadDef,
     activateDef,
     takeScreenshotDef,
     startNetworkCaptureDef,

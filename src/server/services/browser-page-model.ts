@@ -262,6 +262,53 @@ export interface ActivationTargetSnapshot {
   };
 }
 
+export interface FileInputSnapshot {
+  connected: boolean;
+  fileInput: boolean;
+  enabled: boolean;
+  multiple: boolean;
+  accept: string;
+  directory: boolean;
+  associatedVisible: boolean;
+  origin: string;
+}
+
+export function buildFileInputSnapshotFunction(): string {
+  return `function __comateFileInputSnapshot() {
+  var root = this;
+  if (!root || !root.tagName || !root.isConnected) return null;
+  var tag = root.tagName.toLowerCase(), type = String(root.getAttribute('type') || '').toLowerCase();
+  function visible(el) {
+    if (!el || !el.isConnected) return false;
+    var rect = el.getBoundingClientRect(), node = el;
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    while (node) {
+      if (node.hasAttribute('hidden') || node.hasAttribute('inert') || node.inert === true ||
+          String(node.getAttribute('aria-hidden') || '').trim().toLowerCase() === 'true') return false;
+      var style = window.getComputedStyle(node), opacity = Number(style.opacity || 1);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' ||
+          !Number.isFinite(opacity) || opacity <= 0) return false;
+      node = node.parentElement;
+    }
+    return true;
+  }
+  var associatedVisible = visible(root);
+  if (!associatedVisible && root.labels) {
+    for (var i = 0; i < root.labels.length; i++) if (visible(root.labels[i])) { associatedVisible = true; break; }
+  }
+  return {
+    connected: true,
+    fileInput: tag === 'input' && type === 'file',
+    enabled: !root.disabled && String(root.getAttribute('aria-disabled') || '').trim().toLowerCase() !== 'true',
+    multiple: root.hasAttribute('multiple'),
+    accept: String(root.getAttribute('accept') || '').trim().slice(0, 500),
+    directory: root.hasAttribute('webkitdirectory') || root.hasAttribute('directory'),
+    associatedVisible: associatedVisible,
+    origin: window.location.origin
+  };
+}`;
+}
+
 /**
  * Snapshot an approved activation target and the page's non-sensitive editor
  * shape from the already resolved backend node. Raw editor text never crosses

@@ -25,6 +25,7 @@ export const BROWSER_TOOL_NAMES = {
   authenticatedRequest: `${BROWSER_TOOL_PREFIX}authenticatedRequest`,
   act: `${BROWSER_TOOL_PREFIX}act`,
   activate: `${BROWSER_TOOL_PREFIX}activate`,
+  upload: `${BROWSER_TOOL_PREFIX}upload`,
   submit: `${BROWSER_TOOL_PREFIX}submit`,
   extract: `${BROWSER_TOOL_PREFIX}extract`,
   requestHandoff: `${BROWSER_TOOL_PREFIX}requestHandoff`,

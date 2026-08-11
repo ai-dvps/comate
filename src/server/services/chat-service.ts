@@ -524,12 +524,14 @@ export class ChatService {
    */
   async resolveBrowserMcpDeps(sessionId: string): Promise<{
     workspaceId: string;
+    workspaceFolder: string;
     approvalRequester: BrowserApprovalRequester;
   } | null> {
     const workspace = await this.findWorkspaceForSession(sessionId);
     if (!workspace) return null;
     return {
       workspaceId: workspace.id,
+      workspaceFolder: workspace.folderPath,
       approvalRequester: this.browserApprovalRequester,
     };
   }
