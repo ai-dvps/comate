@@ -453,7 +453,8 @@ describe('browser-page-model distillation (KTD-3)', () => {
     const source = fakeSource(extraction, [{
       nodeId: 'ax-duplicate', role: { value: 'button' }, name: { value: 'AX preferred name' }, backendDOMNodeId: 106,
     }]);
-    const model = await distillPageModel(source, new RefTable());
+    const refs = new RefTable();
+    const model = await distillPageModel(source, refs);
 
     assert.deepStrictEqual(
       model.actions.map(({ name, role, provenance, interactionClass }) => ({ name, role, provenance, interactionClass })),
@@ -463,6 +464,9 @@ describe('browser-page-model distillation (KTD-3)', () => {
       ],
     );
     assert.strictEqual(model.actionInventory.total, 2);
+    const domAction = model.actions.find((action) => action.provenance === 'dom');
+    assert.strictEqual(domAction?.role, 'generic');
+    assert.strictEqual(domAction ? refs.get(domAction.ref)?.fingerprint.role : undefined, '');
   });
 
   it('never downgrades page links, buttons, or consent controls from fail-closed activation', async () => {

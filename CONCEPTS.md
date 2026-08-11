@@ -28,6 +28,12 @@ The set of runtime dependencies vendored alongside the Vendored Steel build prod
 ### 浏览器动作回执 (browser operation receipt)
 浏览器工具对一次修改型动作返回的安全结果摘要，用来区分未派发、已派发且验证、已派发但仅观察到页面变化，以及派发结果未知。回执只携带恢复决策所需的长度、摘要、页面差分和重试安全性，不回显正文、敏感字段或文件内容。
 
+### 工作区文件出站 (workspace file egress)
+内嵌浏览器把本地媒体字节交给远程页面文件输入的专用批准流程。它只接受工作区相对路径，并在批准前验证媒体类型与文件身份；批准后从安全重开的文件句柄复制到进程私有暂存，再对壳拥有的浏览器视图执行一次文件赋值。外部 CDP、路径漂移或目标漂移都必须拒绝。
+
+### 浏览器安全清单 (browser security manifest)
+提交、受控激活和工作区文件出站共用的应用自有审批呈现。清单始终完整显示解析后的来源、受信任警告、明确标注的未受信任页面文本、文件元数据或漂移摘要，不把安全字段藏在“显示更多”后；通用 `canUseTool` 层只分类，绑定目标的 handler 是唯一审批权威。
+
 ### Sanitized API recipe
 A chat-resident description of an HTTP request discovered from one recorded browser action: request shape, variable inputs, authentication placeholders, expected response fields, and bounded response evidence. Credential values and detected secrets are removed before the recipe enters model context, and the recipe is not automatically persisted outside its originating task.
 
