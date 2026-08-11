@@ -1113,6 +1113,9 @@ export class SessionRuntime {
     if (this.stopFenceActive) {
       return Promise.resolve({ behavior: 'deny', message: 'Session stopped by user.' });
     }
+    if (this.pendingApprovals.has(requestId)) {
+      throw new Error(`Duplicate pending approval requestId: ${requestId}`);
+    }
     const timerInfo = options.timeout ? this.startTimeoutTimer(requestId, options.timeout) : undefined;
     this.emitter.emitPendingApproval(
       requestId,
@@ -1155,6 +1158,9 @@ export class SessionRuntime {
   ): Promise<PermissionResult> {
     if (this.stopFenceActive) {
       return Promise.resolve({ behavior: 'deny', message: 'Session stopped by user.' });
+    }
+    if (this.pendingApprovals.has(requestId)) {
+      throw new Error(`Duplicate pending approval requestId: ${requestId}`);
     }
     const timerInfo = options.timeout ? this.startTimeoutTimer(requestId, options.timeout) : undefined;
     this.emitter.emitPendingQuestion(requestId, questions, timerInfo?.expiresAt);

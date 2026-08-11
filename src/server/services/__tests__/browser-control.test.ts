@@ -14,6 +14,8 @@ import {
   type ApprovalCardTimeout,
 } from '../browser-control.js';
 import type { BrowserCdpSession, BrowserOperationReceipt } from '../browser-cdp.js';
+import { BrowserMutationCoordinator } from '../browser-mutation-coordinator.js';
+import { SqliteStore } from '../../storage/sqlite-store.js';
 import {
   startFakeBrowserShell,
   type FakeBrowserShell,
@@ -263,6 +265,7 @@ interface Harness {
   events: BrowserServiceEvent[];
   storageDir: string;
   call: (name: string, args: Record<string, unknown>, extra?: unknown) => Promise<CallToolResult>;
+  callTool: (name: string, args: Record<string, unknown>, extra?: unknown) => Promise<CallToolResult>;
 }
 
 async function makeHarness(): Promise<Harness> {
@@ -282,11 +285,13 @@ async function makeHarness(): Promise<Harness> {
 
   const channel = new FakeApprovalChannel();
   const timer = new FakeTimer();
+  const mutationCoordinator = new BrowserMutationCoordinator({ store: new SqliteStore(':memory:') });
   const control = new BrowserControlService({
     browserService: service,
     resolveApprovalCard: channel.resolveCard,
     timeoutApprovalCard: channel.timeoutCard,
     timer,
+    cancelMutations: (sessionId, reason) => mutationCoordinator.cancelSession(sessionId, reason),
   });
 
   const page = new FakePage(makeExtraction());
@@ -299,9 +304,27 @@ async function makeHarness(): Promise<Harness> {
     connectPage: async () => page,
     pageRegistry: new Map(),
     settleMs: 0,
+    mutationCoordinator,
+    runtimeGeneration: 'runtime-test',
+    capabilityId: 'capability-test',
+    principalId: 'principal-test',
+    isInvocationCurrent: () => true,
   };
+  const contextRegistry = new Map<string, import('../browser-mcp.js').BrowserToolContext>();
+  deps.contextRegistry = contextRegistry;
   const definitions = buildBrowserToolDefinitions(deps);
   const tools = new Map<string, BrowserToolDefinition>(definitions.map((d) => [d.name, d]));
+  const context = contextRegistry.get(deps.sessionId)!;
+  let operationCounter = 0;
+  const mutationTools = new Set(['open', 'act', 'submit', 'requestHandoff', 'close']);
+  const callTool = async (name: string, args: Record<string, unknown>, extra?: unknown): Promise<CallToolResult> => {
+    const definition = tools.get(name);
+    assert.ok(definition, `tool ${name} must exist`);
+    const input = mutationTools.has(name) && !(args as Record<string, unknown>).operationId
+      ? { ...(args as Record<string, unknown>), operationId: `control-op-${++operationCounter}` }
+      : args;
+    return definition.handler(input, extra ?? {});
+  };
   return {
     service,
     control,
@@ -312,10 +335,14 @@ async function makeHarness(): Promise<Harness> {
     events,
     storageDir,
     call: async (name, args, extra) => {
-      const definition = tools.get(name);
-      assert.ok(definition, `tool ${name} must exist`);
-      return definition.handler(args, extra ?? {});
+      if (name === 'open') return context.handleOpen(args as never);
+      if (name === 'act') return context.handleAct(args as never);
+      if (name === 'submit') return context.handleSubmit(args as never, extra ?? {});
+      if (name === 'requestHandoff') return context.handleRequestHandoff(args as never, extra ?? {});
+      if (name === 'close') return context.handleClose(args as never, extra ?? {});
+      return callTool(name, args, extra);
     },
+    callTool,
   };
 }
 
@@ -757,23 +784,28 @@ describe('browser-control races and declines', () => {
     assert.strictEqual(h.service.getControlState('sess-1'), 'agent_in_control');
   });
 
-  it('a second handoff request while one is pending fails recoverably', async () => {
+  it('serializes a second handoff request until the first handoff completes', async () => {
     const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
 
-    const first = h.call('requestHandoff', { reason: 'first' });
+    const first = h.callTool('requestHandoff', { reason: 'first' });
     await flush();
-    const second = await h.call('requestHandoff', { reason: 'second' });
-    assert.strictEqual(second.isError, true);
-    assert.strictEqual(errorCode(second), 'browser_handoff_already_pending');
-    // Exactly one card exists — the first handoff is unaffected.
+    const second = h.callTool('requestHandoff', { reason: 'second' });
+    // The per-session mutation coordinator keeps the second handler out of
+    // the control state machine while the first approval flow owns the mutex.
     assert.strictEqual(h.channel.cards.length, 1);
 
     h.control.takeover('sess-1');
     await flush();
     h.control.handback('sess-1');
     const firstResult = await first;
-    assert.strictEqual(resultPayload(firstResult).handoffCompleted, true);
+    assert.strictEqual((resultPayload(firstResult).receipt as { outcome: string }).outcome, 'dispatched_verified');
+
+    await flush();
+    assert.strictEqual(h.channel.cards.length, 3);
+    h.channel.lastCard().resolve({ behavior: 'deny', message: 'User denied this tool call.' });
+    const secondResult = await second;
+    assert.strictEqual((resultPayload(secondResult).receipt as { outcome: string }).outcome, 'not_dispatched');
   });
 
   it('user denies the takeover card → declined, no diff, state restored', async () => {

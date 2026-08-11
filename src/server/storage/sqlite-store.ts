@@ -266,6 +266,30 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_browser_audit_workspace_created
         ON browser_audit (workspace_id, created_at DESC)
     `);
+    // Browser mutation ledger (U8/KTD6-KTD7). Its shape is deliberately
+    // private and minimal: the only parameter-derived value is the replay
+    // binding digest. There are no raw parameter, page text, URL, path,
+    // filename, or exception columns.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS browser_operation_ledger (
+        operation_id TEXT PRIMARY KEY,
+        principal_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        runtime_generation TEXT NOT NULL,
+        capability_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        parameter_digest TEXT NOT NULL,
+        state TEXT NOT NULL,
+        receipt_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_browser_operation_session_state
+        ON browser_operation_ledger (session_id, state, created_at)
+    `);
     // bot_escalation_ledger (U8 phase-2, KTD-16): persistent approval ledger
     // for out-of-sandbox escalation requests. One row per pending approval
     // (id = the approval requestId); the row is the durable record a boot
@@ -575,6 +599,7 @@ export class SqliteStore {
     this.migrateTodoContentColumn();
     this.migrateTodoExecutionSchema();
     this.migrateBotEscalationLedgerSchema();
+    this.migrateBrowserOperationLedgerSchema();
   }
 
   private migrateTodoExecutionSchema(): void {
@@ -881,6 +906,16 @@ export class SqliteStore {
     this.setMigrationState(10, new Date().toISOString(), {
       ...previous,
       bot_escalation_ledger_schema: true,
+    });
+  }
+
+  private migrateBrowserOperationLedgerSchema(): void {
+    const version = this.getMigrationVersion();
+    if (version !== null && version >= 11) return;
+    const previous = this.getMigrationState().snapshot;
+    this.setMigrationState(11, new Date().toISOString(), {
+      ...previous,
+      browser_operation_ledger_schema: true,
     });
   }
 
@@ -1980,6 +2015,7 @@ export class SqliteStore {
       this.db.prepare('DELETE FROM task_runs WHERE task_id IN (SELECT id FROM scheduled_tasks WHERE workspace_id = ?)').run(id);
       this.db.prepare('DELETE FROM scheduled_tasks WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM workspace_prompt_history WHERE workspace_id = ?').run(id);
+      this.deleteBrowserOperationsForWorkspace(id);
       this.deleteBrowserAuditForWorkspace(id);
       this.getAnalyticsCache().clearByWorkspace(id);
     }
@@ -3731,6 +3767,93 @@ export class SqliteStore {
   }
 
   // -------------------------------------------------------------------------
+  // browser_operation_ledger (U8/KTD6-KTD7)
+  // -------------------------------------------------------------------------
+
+  deleteBrowserOperationsForWorkspace(workspaceId: string): number {
+    return this.db.prepare('DELETE FROM browser_operation_ledger WHERE workspace_id = ?').run(workspaceId).changes;
+  }
+
+  proposeBrowserOperation(input: ProposeBrowserOperationInput): BrowserOperationEntry {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO browser_operation_ledger
+        (operation_id, principal_id, workspace_id, session_id, runtime_generation,
+         capability_id, action, parameter_digest, state, receipt_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'proposed', NULL, ?, ?)
+    `).run(
+      input.operationId, input.principalId, input.workspaceId, input.sessionId,
+      input.runtimeGeneration, input.capabilityId, input.action,
+      input.parameterDigest, now, now,
+    );
+    return this.getBrowserOperation(input.operationId)!;
+  }
+
+  getBrowserOperation(operationId: string): BrowserOperationEntry | null {
+    const row = this.db.prepare(
+      'SELECT * FROM browser_operation_ledger WHERE operation_id = ?',
+    ).get(operationId) as RawBrowserOperationRow | undefined;
+    return row ? parseBrowserOperationRow(row) : null;
+  }
+
+  markBrowserOperationApproved(operationId: string): boolean {
+    return this.transitionBrowserOperation(operationId, ['proposed'], 'approved') > 0;
+  }
+
+  markBrowserOperationDispatchIntent(operationId: string): boolean {
+    return this.transitionBrowserOperation(operationId, ['proposed', 'approved'], 'dispatch_intent') > 0;
+  }
+
+  completeBrowserOperation(operationId: string, receipt: BrowserOperationStoredReceipt): boolean {
+    const result = this.db.prepare(`
+      UPDATE browser_operation_ledger
+      SET state = 'terminal', receipt_json = ?, updated_at = ?
+      WHERE operation_id = ? AND state != 'terminal'
+    `).run(JSON.stringify(receipt), new Date().toISOString(), operationId);
+    return result.changes > 0;
+  }
+
+  recoverBrowserOperations(): { notDispatched: number; unknown: number } {
+    return this.db.transaction(() => {
+      const now = new Date().toISOString();
+      const notDispatched: BrowserOperationStoredReceipt = {
+        outcome: 'not_dispatched', dispatchState: 'not_dispatched', verified: false,
+        retrySafe: true, reason: 'runtime_replaced', delta: { kind: 'none', changed: false },
+      };
+      const unknown: BrowserOperationStoredReceipt = {
+        outcome: 'outcome_unknown', dispatchState: 'dispatched', verified: false,
+        retrySafe: false, reason: 'dispatch_failed', delta: { kind: 'none', changed: false },
+      };
+      const before = this.db.prepare(`
+        UPDATE browser_operation_ledger SET state = 'terminal', receipt_json = ?, updated_at = ?
+        WHERE state IN ('proposed', 'approved')
+      `).run(JSON.stringify(notDispatched), now).changes;
+      const after = this.db.prepare(`
+        UPDATE browser_operation_ledger SET state = 'terminal', receipt_json = ?, updated_at = ?
+        WHERE state = 'dispatch_intent'
+      `).run(JSON.stringify(unknown), now).changes;
+      return { notDispatched: before, unknown: after };
+    })();
+  }
+
+  listBrowserOperationColumns(): string[] {
+    return (this.db.prepare('PRAGMA table_info(browser_operation_ledger)').all() as Array<{ name: string }>)
+      .map((column) => column.name);
+  }
+
+  private transitionBrowserOperation(
+    operationId: string,
+    from: BrowserOperationState[],
+    to: BrowserOperationState,
+  ): number {
+    const placeholders = from.map(() => '?').join(', ');
+    return this.db.prepare(`
+      UPDATE browser_operation_ledger SET state = ?, updated_at = ?
+      WHERE operation_id = ? AND state IN (${placeholders})
+    `).run(to, new Date().toISOString(), operationId, ...from).changes;
+  }
+
+  // -------------------------------------------------------------------------
   // bot_escalation_ledger (U8 phase-2, KTD-16): durable approval ledger for
   // out-of-sandbox escalations. Rows are created when the gate registers a
   // pending approval and transition exactly once (pending → approved/denied/
@@ -4295,6 +4418,123 @@ function parseBrowserAuditRow(row: RawBrowserAuditRow): BrowserAuditEntry {
     potentialSubmit: row.potential_submit === 1,
     detail: row.detail,
     createdAt: row.created_at,
+  };
+}
+
+export type BrowserOperationState = 'proposed' | 'approved' | 'dispatch_intent' | 'terminal';
+
+export interface BrowserOperationStoredReceipt {
+  outcome: 'not_dispatched' | 'dispatched_verified' | 'outcome_unknown';
+  dispatchState: 'not_dispatched' | 'dispatched';
+  verified: boolean;
+  retrySafe: boolean;
+  reason?: string;
+  matchesRequested?: boolean;
+  normalizedLength?: number;
+  delta: { kind: 'none' | 'activation' | 'field'; changed: boolean };
+}
+
+export interface ProposeBrowserOperationInput {
+  operationId: string;
+  principalId: string;
+  workspaceId: string;
+  sessionId: string;
+  runtimeGeneration: string;
+  capabilityId: string;
+  action: string;
+  parameterDigest: string;
+}
+
+export interface BrowserOperationEntry extends ProposeBrowserOperationInput {
+  state: BrowserOperationState;
+  receipt: BrowserOperationStoredReceipt | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface RawBrowserOperationRow {
+  operation_id: string;
+  principal_id: string;
+  workspace_id: string;
+  session_id: string;
+  runtime_generation: string;
+  capability_id: string;
+  action: string;
+  parameter_digest: string;
+  state: string;
+  receipt_json: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+const BROWSER_OPERATION_STATES = new Set<BrowserOperationState>([
+  'proposed', 'approved', 'dispatch_intent', 'terminal',
+]);
+const BROWSER_OPERATION_OUTCOMES = new Set<BrowserOperationStoredReceipt['outcome']>([
+  'not_dispatched', 'dispatched_verified', 'outcome_unknown',
+]);
+const BROWSER_OPERATION_REASONS = new Set([
+  'target_unavailable', 'target_disabled', 'target_not_visible', 'target_occluded',
+  'target_frame_mismatch', 'unsupported_target', 'unsupported_input_command',
+  'dispatch_failed', 'verification_mismatch', 'runtime_replaced',
+  'control_taken_over', 'cancelled', 'user_denied', 'target_changed',
+]);
+
+function unknownBrowserOperationReceipt(): BrowserOperationStoredReceipt {
+  return {
+    outcome: 'outcome_unknown', dispatchState: 'dispatched', verified: false,
+    retrySafe: false, reason: 'dispatch_failed', delta: { kind: 'none', changed: false },
+  };
+}
+
+function parseBrowserOperationReceipt(json: string | null): BrowserOperationStoredReceipt | null {
+  if (json === null) return null;
+  let value: unknown;
+  try { value = JSON.parse(json); } catch { return null; }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const receipt = value as Record<string, unknown>;
+  const delta = receipt.delta;
+  if (!BROWSER_OPERATION_OUTCOMES.has(receipt.outcome as BrowserOperationStoredReceipt['outcome']) ||
+      (receipt.dispatchState !== 'not_dispatched' && receipt.dispatchState !== 'dispatched') ||
+      typeof receipt.verified !== 'boolean' || typeof receipt.retrySafe !== 'boolean' ||
+      !delta || typeof delta !== 'object' || Array.isArray(delta)) return null;
+  const parsedDelta = delta as Record<string, unknown>;
+  if ((parsedDelta.kind !== 'none' && parsedDelta.kind !== 'activation' && parsedDelta.kind !== 'field') ||
+      typeof parsedDelta.changed !== 'boolean') return null;
+  if (receipt.reason !== undefined &&
+      (typeof receipt.reason !== 'string' || receipt.reason.length > 128 || !BROWSER_OPERATION_REASONS.has(receipt.reason))) return null;
+  if (receipt.matchesRequested !== undefined && typeof receipt.matchesRequested !== 'boolean') return null;
+  if (receipt.normalizedLength !== undefined &&
+      (typeof receipt.normalizedLength !== 'number' || !Number.isSafeInteger(receipt.normalizedLength) || receipt.normalizedLength < 0 ||
+       receipt.normalizedLength > 10_000_000)) return null;
+  if (receipt.outcome === 'dispatched_verified' &&
+      (receipt.dispatchState !== 'dispatched' || receipt.verified !== true || receipt.retrySafe !== false)) return null;
+  if (receipt.outcome === 'outcome_unknown' &&
+      (receipt.dispatchState !== 'dispatched' || receipt.verified !== false || receipt.retrySafe !== false)) return null;
+  if (receipt.outcome === 'not_dispatched' &&
+      (receipt.dispatchState !== 'not_dispatched' || receipt.retrySafe !== true)) return null;
+  return receipt as unknown as BrowserOperationStoredReceipt;
+}
+
+function parseBrowserOperationRow(row: RawBrowserOperationRow): BrowserOperationEntry {
+  const validState = BROWSER_OPERATION_STATES.has(row.state as BrowserOperationState);
+  const parsedReceipt = parseBrowserOperationReceipt(row.receipt_json);
+  const corrupted = !validState ||
+    (row.state === 'terminal' && parsedReceipt === null) ||
+    (row.state !== 'terminal' && row.receipt_json !== null);
+  return {
+    operationId: row.operation_id,
+    principalId: row.principal_id,
+    workspaceId: row.workspace_id,
+    sessionId: row.session_id,
+    runtimeGeneration: row.runtime_generation,
+    capabilityId: row.capability_id,
+    action: row.action,
+    parameterDigest: row.parameter_digest,
+    state: corrupted ? 'terminal' : row.state as BrowserOperationState,
+    receipt: corrupted ? unknownBrowserOperationReceipt() : parsedReceipt,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 

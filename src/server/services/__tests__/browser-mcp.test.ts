@@ -4,6 +4,7 @@ import assert from 'node:assert';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Options, SDKSessionInfo, SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import { sharedContractFixtures } from '@comate/api-contracts';
@@ -31,7 +32,8 @@ import { CdpError } from '../browser-cdp.js';
 import { ChatService } from '../chat-service.js';
 import { SessionRuntime } from '../session-runtime.js';
 import { SdkClient } from '../sdk-client.js';
-import { store as workspaceStore } from '../../storage/sqlite-store.js';
+import { SqliteStore, store as workspaceStore } from '../../storage/sqlite-store.js';
+import { BrowserMutationCoordinator } from '../browser-mutation-coordinator.js';
 import { SESSION_TOKEN_ENV } from '../session-capability-service.js';
 import type { BrowserAuditToolInput } from '../browser-audit.js';
 
@@ -47,6 +49,7 @@ import type { BrowserAuditToolInput } from '../browser-audit.js';
 
 interface FakePageOptions {
   extraction: RawPageExtraction;
+  extractError?: Error;
   postSubmitExtraction?: RawPageExtraction;
   axNodes?: RawAxNode[];
   probe?: { docId: string; domEpoch: number } | null;
@@ -134,6 +137,7 @@ class FakePage implements BrowserCdpSession {
   }
 
   async extractPageModel(): Promise<import('../browser-page-model.js').PageExtractionBundle> {
+    if (this.options.extractError) throw this.options.extractError;
     const extraction = this.submitDispatched && this.options.postSubmitExtraction
       ? this.options.postSubmitExtraction
       : this.options.extraction;
@@ -381,6 +385,20 @@ function makeSubmitSnapshot(overrides: Partial<SubmitSnapshot> = {}): SubmitSnap
 // Harness
 // ---------------------------------------------------------------------------
 
+function recordingOperationStore(): { operationStore: SqliteStore; sequence: string[] } {
+  const operationStore = new SqliteStore(':memory:');
+  const sequence: string[] = [];
+  const proposed = operationStore.proposeBrowserOperation.bind(operationStore);
+  const approved = operationStore.markBrowserOperationApproved.bind(operationStore);
+  const intent = operationStore.markBrowserOperationDispatchIntent.bind(operationStore);
+  const terminal = operationStore.completeBrowserOperation.bind(operationStore);
+  operationStore.proposeBrowserOperation = (input) => { sequence.push('proposed'); return proposed(input); };
+  operationStore.markBrowserOperationApproved = (operationId) => { sequence.push('approved'); return approved(operationId); };
+  operationStore.markBrowserOperationDispatchIntent = (operationId) => { sequence.push('dispatch_intent'); return intent(operationId); };
+  operationStore.completeBrowserOperation = (operationId, receipt) => { sequence.push('terminal'); return terminal(operationId, receipt); };
+  return { operationStore, sequence };
+}
+
 interface Harness {
   ctx: {
     browserService: BrowserService;
@@ -388,9 +406,11 @@ interface Harness {
     approvals: BrowserApprovalRequest[];
     approvalDecisions: BrowserApprovalDecision[];
     auditActions: BrowserAuditToolInput[];
+    operationStore: SqliteStore;
   };
   tools: Map<string, BrowserToolDefinition>;
   call: (name: string, args: Record<string, unknown>, extra?: unknown) => Promise<CallToolResult>;
+  callTool: (name: string, args: Record<string, unknown>, extra?: unknown) => Promise<CallToolResult>;
   storageDir: string;
   shell: FakeBrowserShell;
 }
@@ -412,6 +432,9 @@ async function makeHarness(options: {
   misconfigured?: boolean;
   currentPageUrl?: (baseUrl: string) => Promise<string | null>;
   exportContext?: (baseUrl: string) => Promise<unknown>;
+  isInvocationCurrent?: () => boolean;
+  approvalRequester?: BrowserMcpDeps['approvalRequester'];
+  operationStore?: SqliteStore;
 }): Promise<Harness> {
   const storageDir = mkdtempSync(path.join(tmpdir(), 'comate-browser-mcp-'));
   const shell = await startFakeBrowserShell();
@@ -444,33 +467,87 @@ async function makeHarness(options: {
   const approvals: BrowserApprovalRequest[] = [];
   const auditActions: BrowserAuditToolInput[] = [];
   const decisions = [...(options.approvalDecisions ?? [])];
+  const operationStore = options.operationStore ?? new SqliteStore(':memory:');
+  const mutationCoordinator = new BrowserMutationCoordinator({ store: operationStore });
   const deps: BrowserMcpDeps = {
     sessionId: 'chat-session-1',
     workspaceId: 'workspace-1',
     browserService,
-    handoffControl: new BrowserControlService({ browserService }),
+    handoffControl: new BrowserControlService({
+      browserService,
+      cancelMutations: (sessionId, reason) => mutationCoordinator.cancelSession(sessionId, reason),
+    }),
     connectPage: async () => options.page,
     pageRegistry: new Map(),
     settleMs: 0,
+    mutationCoordinator,
+    runtimeGeneration: 'runtime-test',
+    capabilityId: 'capability-test',
+    principalId: 'principal-test',
+    isInvocationCurrent: options.isInvocationCurrent ?? (() => true),
     audit: { logToolAction: (input) => { auditActions.push(input); return null; } },
   };
-  if (options.withApprovalRequester !== false) {
+  if (options.approvalRequester) {
+    deps.approvalRequester = options.approvalRequester;
+  } else if (options.withApprovalRequester !== false) {
     deps.approvalRequester = async (_sessionId, request) => {
       approvals.push(request);
       return decisions.length > 0 ? decisions.shift()! : { behavior: 'allow' };
     };
   }
 
+  const contextRegistry = new Map<string, import('../browser-mcp.js').BrowserToolContext>();
+  deps.contextRegistry = contextRegistry;
   const definitions = buildBrowserToolDefinitions(deps);
   const tools = new Map(definitions.map((definition) => [definition.name, definition]));
+  const context = contextRegistry.get(deps.sessionId)!;
+  let operationCounter = 0;
+  const mutationTools = new Set(['open', 'act', 'submit', 'requestHandoff', 'close']);
+  const callTool = async (name: string, args: Record<string, unknown>, extra?: unknown): Promise<CallToolResult> => {
+    const definition = tools.get(name);
+    assert.ok(definition, `tool ${name} must exist`);
+    const input = mutationTools.has(name) && !(args as Record<string, unknown>).operationId
+      ? { ...(args as Record<string, unknown>), operationId: `test-op-${++operationCounter}` }
+      : args;
+    return definition.handler(input, extra ?? {});
+  };
   return {
-    ctx: { browserService, page: options.page, approvals, approvalDecisions: decisions, auditActions },
+    ctx: { browserService, page: options.page, approvals, approvalDecisions: decisions, auditActions, operationStore },
     tools,
     call: async (name, args, extra) => {
-      const definition = tools.get(name);
-      assert.ok(definition, `tool ${name} must exist`);
-      return definition.handler(args, extra ?? {});
+      if (name === 'act') return context.handleAct(args as never);
+      if (name === 'submit') return context.handleSubmit(args as never, extra ?? {});
+      if (name === 'requestHandoff') return context.handleRequestHandoff(args as never, extra ?? {});
+      if (name === 'close') return context.handleClose(args as never, extra ?? {});
+      const result = await callTool(name, args, extra);
+      if (name !== 'open') return result;
+      const receipt = resultPayload(result).receipt as { outcome?: string } | undefined;
+      if (receipt?.outcome !== 'dispatched_verified') return result;
+      const observed = await tools.get('getPageState')!.handler({}, extra ?? {});
+      const state = resultPayload(observed).state as {
+        elements: Array<{ ref: string; kind: string; name: string; parentRef?: string; sensitive?: boolean }>;
+        [key: string]: unknown;
+      };
+      const forms = state.elements.filter((element) => element.kind === 'form').map((form) => ({
+        ref: form.ref,
+        name: form.name,
+        fields: state.elements.filter((element) => element.kind === 'field' && element.parentRef === form.ref),
+      }));
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            ok: true,
+            model: {
+              ...state,
+              forms,
+              actions: state.elements.filter((element) => element.kind === 'action'),
+            },
+          }),
+        }],
+      };
     },
+    callTool,
     storageDir,
     shell,
   };
@@ -529,6 +606,14 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     assert.equal(schema.safeParse(sharedContractFixtures.brokerRequest).success, true);
     assert.equal(schema.safeParse({ ...sharedContractFixtures.brokerRequest, unexpected: true }).success, false);
   });
+
+  it('fails closed in the mutation handler when operationId is missing', async () => {
+    const defs = buildBrowserToolDefinitions({ sessionId: 'required-id', workspaceId: 'w' });
+    const result = await defs.find((definition) => definition.name === 'open')!
+      .handler({ url: 'https://example.test' }, {});
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual((resultPayload(result).error as { code: string }).code, 'browser_operation_id_required');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -558,15 +643,25 @@ describe('browser-mcp page observation', () => {
     assert.strictEqual(model.forms[0].fields[1].sensitive, true);
   });
 
+  it('returns outcome_unknown when open fails after navigation was authorized', async () => {
+    const page = new FakePage({ extraction: makeExtraction(), extractError: new Error('post-navigation extraction failed') });
+    harness = await makeHarness({ page });
+    const result = await harness.tools.get('open')!.handler({
+      operationId: 'open-post-navigation-error', url: 'https://shop.example/checkout',
+    }, {});
+    const receipt = resultPayload(result).receipt as { outcome: string; retrySafe: boolean };
+    assert.strictEqual(page.navigated.length, 1);
+    assert.strictEqual(receipt.outcome, 'outcome_unknown');
+    assert.strictEqual(receipt.retrySafe, false);
+  });
+
   it('open rejects non-http(s) and malformed URLs', async () => {
     harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     const jsResult = await harness.call('open', { url: 'javascript:alert(1)' });
-    assert.strictEqual(jsResult.isError, true);
-    assert.strictEqual((resultPayload(jsResult).error as { code: string }).code, 'browser_url_scheme');
+    assert.strictEqual((resultPayload(jsResult).receipt as { outcome: string }).outcome, 'not_dispatched');
 
     const badResult = await harness.call('open', { url: 'not a url' });
-    assert.strictEqual(badResult.isError, true);
-    assert.strictEqual((resultPayload(badResult).error as { code: string }).code, 'browser_url_invalid');
+    assert.strictEqual((resultPayload(badResult).receipt as { outcome: string }).outcome, 'not_dispatched');
     assert.deepStrictEqual(harness.ctx.page.navigated, [], 'no navigation on rejected URLs');
   });
 
@@ -576,11 +671,10 @@ describe('browser-mcp page observation', () => {
       misconfigured: true,
     });
     const result = await harness.call('open', { url: 'https://shop.example/' });
-    assert.strictEqual(result.isError, true);
-    const error = resultPayload(result).error as { code: string; stage: string; resolution: string };
-    assert.strictEqual(error.code, 'browser_start_failed');
-    assert.strictEqual(error.stage, 'session_start');
-    assert.match(error.resolution, /health\/browser|desktop app|COMATE_BROWSER_CDP_TARGET/);
+    const receipt = resultPayload(result).receipt as { outcome: string; dispatchState: string; retrySafe: boolean };
+    assert.strictEqual(receipt.outcome, 'not_dispatched');
+    assert.strictEqual(receipt.dispatchState, 'not_dispatched');
+    assert.strictEqual(receipt.retrySafe, true);
   });
 
   it('takeScreenshot returns an image block for optional visual reasoning', async () => {
@@ -974,7 +1068,7 @@ describe('browser-mcp act', () => {
     harness = await makeHarness({ page });
     const opened = await harness.call('open', { url: 'https://shop.example/checkout' });
     const agreeRef = (resultPayload(opened).model as { forms: Array<{ fields: Array<{ ref: string; name?: string }> }> })
-      .forms[0].fields.find((field) => field.name === 'agree')!.ref;
+      .forms[0].fields.find((field) => field.name === 'Agree')!.ref;
     const result = await harness.call('act', { ref: agreeRef, action: 'check', value: 'true' });
     const payload = resultPayload(result);
     assert.equal(payload.ok, false, JSON.stringify(payload));
@@ -1003,7 +1097,7 @@ describe('browser-mcp act', () => {
     harness = await makeHarness({ page });
     const opened = await harness.call('open', { url: 'https://shop.example/checkout' });
     const planRef = (resultPayload(opened).model as { forms: Array<{ fields: Array<{ ref: string; name?: string }> }> })
-      .forms[0].fields.find((field) => field.name === 'plan')!.ref;
+      .forms[0].fields.find((field) => field.name === 'Plan')!.ref;
     const result = await harness.call('act', { ref: planRef, action: 'select', value: 'pro' });
     const payload = resultPayload(result);
     assert.equal(payload.ok, false, JSON.stringify(payload));
@@ -1142,10 +1236,7 @@ describe('browser-mcp submit handler-level gate', () => {
     // only influence the SDK's canUseTool evaluation, which this handler does
     // not consult. The requester invocation below is the assertion of that
     // structural property.
-    const result = await harness.call('submit', {
-      ref: formRef,
-      fields: { email: 'a@b.c', cardNumber: '4111111111111111' },
-    });
+    const result = await harness.call('submit', { ref: formRef });
     assert.strictEqual(result.isError, undefined);
     const payload = resultPayload(result);
     assert.strictEqual(payload.submitted, true);
@@ -1166,6 +1257,40 @@ describe('browser-mcp submit handler-level gate', () => {
     // The raw password/card value appears nowhere in the serialized card.
     assert.ok(!JSON.stringify(cardPayload).includes('4111'));
     assert.ok(!JSON.stringify(cardPayload).includes('deadbeef'));
+  });
+
+  it('persists approved before dispatch_intent for handler-owned submit approval', async () => {
+    const { operationStore, sequence } = recordingOperationStore();
+    const page = new FakePage({ extraction: makeExtraction(), submitSnapshots: [makeSubmitSnapshot()] });
+    harness = await makeHarness({ page, operationStore });
+    const { formRef } = await openAndGetFormRef(harness);
+    sequence.length = 0;
+    await harness.callTool('submit', { ref: formRef });
+    assert.deepStrictEqual(sequence, ['proposed', 'approved', 'dispatch_intent', 'terminal']);
+  });
+
+  it('revalidates request-fresh authority after approval and releases the mutation mutex', async () => {
+    const page = new FakePage({ extraction: makeExtraction(), submitSnapshots: [makeSubmitSnapshot()] });
+    let current = true;
+    let approvalCount = 0;
+    harness = await makeHarness({
+      page,
+      isInvocationCurrent: () => current,
+      approvalRequester: async () => {
+        approvalCount += 1;
+        if (approvalCount === 1) current = false;
+        return { behavior: 'allow' };
+      },
+    });
+    const { formRef } = await openAndGetFormRef(harness);
+    const stale = await harness.callTool('submit', { ref: formRef });
+    assert.strictEqual((resultPayload(stale).receipt as { outcome: string }).outcome, 'not_dispatched');
+    assert.strictEqual(page.dispatchScripts.length, 0, 'stale runtime performs zero dispatch');
+
+    current = true;
+    const next = await harness.callTool('submit', { ref: formRef });
+    assert.strictEqual(next.isError, undefined, 'mutex released for a fresh operation');
+    assert.strictEqual(page.dispatchScripts.length, 1);
   });
 
   for (const testCase of [
@@ -1423,6 +1548,35 @@ describe('browser-mcp extract', () => {
 // ---------------------------------------------------------------------------
 
 describe('browser-mcp requestHandoff', () => {
+  it('persists approved before control ownership changes', async () => {
+    const { operationStore, sequence } = recordingOperationStore();
+    const harness = await makeHarness({
+      page: new FakePage({ extraction: makeExtraction() }),
+      approvalDecisions: [{ behavior: 'allow' }, { behavior: 'allow' }],
+      operationStore,
+    });
+    await harness.call('open', { url: 'https://shop.example/checkout' });
+    sequence.length = 0;
+    const result = await harness.callTool('requestHandoff', { reason: 'Complete login' });
+    assert.strictEqual((resultPayload(result).receipt as { outcome: string }).outcome, 'dispatched_verified');
+    assert.deepStrictEqual(sequence, ['proposed', 'approved', 'dispatch_intent', 'terminal']);
+    rmSync(harness.storageDir, { recursive: true, force: true });
+  });
+
+  it('returns not_dispatched when the user declines takeover approval', async () => {
+    const harness = await makeHarness({
+      page: new FakePage({ extraction: makeExtraction() }),
+      approvalDecisions: [{ behavior: 'deny', message: 'No takeover' }],
+    });
+    await harness.call('open', { url: 'https://shop.example/checkout' });
+    const result = await harness.callTool('requestHandoff', { reason: 'CAPTCHA on the login page' });
+    const receipt = resultPayload(result).receipt as { outcome: string; dispatchState: string; retrySafe: boolean };
+    assert.strictEqual(receipt.outcome, 'not_dispatched');
+    assert.strictEqual(receipt.dispatchState, 'not_dispatched');
+    assert.strictEqual(receipt.retrySafe, true);
+    rmSync(harness.storageDir, { recursive: true, force: true });
+  });
+
   it('fails closed when no approval channel is wired, leaving no stuck handoff', async () => {
     const harness = await makeHarness({
       page: new FakePage({ extraction: makeExtraction() }),
@@ -1442,6 +1596,21 @@ describe('browser-mcp requestHandoff', () => {
 });
 
 describe('browser-mcp close (U2)', () => {
+  it('persists approved before closing the live browser', async () => {
+    const { operationStore, sequence } = recordingOperationStore();
+    const harness = await makeHarness({
+      page: new FakePage({ extraction: makeExtraction() }),
+      approvalDecisions: [{ behavior: 'allow' }],
+      operationStore,
+    });
+    await harness.call('open', { url: 'https://shop.example/checkout' });
+    sequence.length = 0;
+    const result = await harness.callTool('close', { reason: 'done' });
+    assert.strictEqual((resultPayload(result).receipt as { outcome: string }).outcome, 'dispatched_verified');
+    assert.deepStrictEqual(sequence, ['proposed', 'approved', 'dispatch_intent', 'terminal']);
+    rmSync(harness.storageDir, { recursive: true, force: true });
+  });
+
   it('asks the user to confirm, then tears down on allow', async () => {
     const harness = await makeHarness({
       page: new FakePage({ extraction: makeExtraction() }),
@@ -1545,7 +1714,7 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
     const second = buildBrowserToolDefinitions(deps);
     const openFirst = first.find((definition) => definition.name === 'open');
     const stateSecond = second.find((definition) => definition.name === 'getPageState');
-    await openFirst?.handler({ url: 'https://shop.example/' }, {});
+    await openFirst?.handler({ operationId: randomUUID(), url: 'https://shop.example/' }, {});
     await stateSecond?.handler({}, {});
     assert.strictEqual(dials, 1, 'runtime rebuild reuses the live connection');
   });
@@ -1567,7 +1736,7 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
     const defs = buildBrowserToolDefinitions(deps);
     const open = defs.find((definition) => definition.name === 'open');
     const takeScreenshot = defs.find((definition) => definition.name === 'takeScreenshot');
-    await open?.handler({ url: 'https://shop.example/' }, {});
+    await open?.handler({ operationId: randomUUID(), url: 'https://shop.example/' }, {});
     pages[0].close(); // view crash / socket drop
     const result = await takeScreenshot?.handler({}, {});
     assert.strictEqual(result?.isError, undefined);
@@ -1592,9 +1761,17 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
       sessionId: 'inspect-session', workspaceId: 'w', browserService: service,
       connectPage: async () => page, pageRegistry: new Map(), contextRegistry, settleMs: 0,
     };
+    const observeAfterOpen = async (definitions: BrowserToolDefinition[]) => {
+      const opened = await definitions.find((definition) => definition.name === 'open')!
+        .handler({ operationId: randomUUID(), url: 'https://shop.example/' }, {});
+      assert.strictEqual((resultPayload(opened).receipt as { outcome: string }).outcome, 'dispatched_verified');
+      const observed = await definitions.find((definition) => definition.name === 'getPageState')!.handler({}, {});
+      return (resultPayload(observed).state as {
+        elements: Array<{ ref: string; kind: string }>;
+      }).elements;
+    };
     const first = buildBrowserToolDefinitions(deps);
-    const opened = await first.find((definition) => definition.name === 'open')!.handler({ url: 'https://shop.example/' }, {});
-    const fieldRef = (resultPayload(opened).model as { forms: Array<{ fields: Array<{ ref: string }> }> }).forms[0].fields[0].ref;
+    const fieldRef = (await observeAfterOpen(first)).find((element) => element.kind === 'field')!.ref;
     const second = buildBrowserToolDefinitions(deps);
     const details = second.find((definition) => definition.name === 'getElementDetails')!;
     const inspected = await details.handler({ ref: fieldRef }, {});
@@ -1616,16 +1793,14 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
       connectPage: async () => changedPage, pageRegistry: new Map(), contextRegistry, settleMs: 0,
     };
     const changedDefs = buildBrowserToolDefinitions(changedDeps);
-    const changedOpen = await changedDefs.find((definition) => definition.name === 'open')!.handler({ url: 'https://shop.example/' }, {});
-    const changedModel = resultPayload(changedOpen).model as {
-      forms: Array<{ fields: Array<{ ref: string }> }>;
-      actions: Array<{ ref: string }>;
-    };
+    const changedElements = await observeAfterOpen(changedDefs);
+    const changedFieldRef = changedElements.find((element) => element.kind === 'field')!.ref;
+    const changedActionRef = changedElements.find((element) => element.kind === 'action')!.ref;
     const changedField = await changedDefs.find((definition) => definition.name === 'getElementDetails')!
-      .handler({ ref: changedModel.forms[0].fields[0].ref }, {});
+      .handler({ ref: changedFieldRef }, {});
     assert.strictEqual(changedField.isError, undefined, 'backend-node field refs survive same-document mutations');
     const changedAction = await changedDefs.find((definition) => definition.name === 'getElementDetails')!
-      .handler({ ref: changedModel.actions[0].ref }, {});
+      .handler({ ref: changedActionRef }, {});
     assert.strictEqual(changedAction.isError, undefined, 'stable backend-node refs survive same-document mutations');
 
     const stalePage = new FakePage({
@@ -1637,8 +1812,7 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
       sessionId: 'stale-session',
       connectPage: async () => stalePage,
     });
-    const staleOpen = await staleDefs.find((definition) => definition.name === 'open')!.handler({ url: 'https://shop.example/' }, {});
-    const staleRef = (resultPayload(staleOpen).model as { forms: Array<{ fields: Array<{ ref: string }> }> }).forms[0].fields[0].ref;
+    const staleRef = (await observeAfterOpen(staleDefs)).find((element) => element.kind === 'field')!.ref;
     stalePage.setDocumentIdentity({ targetId: 'target-1', sessionId: 'session-1', frameId: 'frame-1', loaderId: 'other-doc', generation: 1 });
     const stale = resultPayload(await staleDefs.find((definition) => definition.name === 'getElementDetails')!.handler({ ref: staleRef }, {})).error as { code: string };
     assert.equal(stale.code, 'browser_ref_stale');
@@ -1649,8 +1823,7 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
       sessionId: 'no-probe-session',
       connectPage: async () => noProbePage,
     });
-    const noProbeOpen = await noProbeDefs.find((definition) => definition.name === 'open')!.handler({ url: 'https://shop.example/' }, {});
-    const noProbeRef = (resultPayload(noProbeOpen).model as { forms: Array<{ fields: Array<{ ref: string }> }> }).forms[0].fields[0].ref;
+    const noProbeRef = (await observeAfterOpen(noProbeDefs)).find((element) => element.kind === 'field')!.ref;
     noProbePage.setDocumentIdentity(null);
     const unavailable = resultPayload(await noProbeDefs.find((definition) => definition.name === 'getElementDetails')!.handler({ ref: noProbeRef }, {})).error as { code: string };
     assert.equal(unavailable.code, 'browser_document_identity_unavailable');

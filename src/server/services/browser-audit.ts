@@ -110,6 +110,15 @@ export interface BrowserBrokerAuditInput {
   status?: number;
 }
 
+export interface BrowserMutationAuditInput {
+  workspaceId: string;
+  sessionId: string;
+  action: string;
+  /** Bounded operation correlation only; never a replay-binding digest. */
+  operationId: string;
+  outcome: CreateBrowserAuditInput['outcome'];
+}
+
 export class BrowserAuditService {
   private readonly store: SqliteStore;
 
@@ -190,6 +199,17 @@ export class BrowserAuditService {
       siteKey: input.siteKey,
       outcome: input.outcome,
       detail: `correlation=${input.correlationId} approval=${input.approval}${status}`,
+    });
+  }
+
+  logMutation(input: BrowserMutationAuditInput): BrowserAuditEntry | null {
+    return this.record({
+      workspaceId: input.workspaceId,
+      sessionId: input.sessionId,
+      category: 'tool',
+      action: `mutation:${input.action}`,
+      outcome: input.outcome,
+      detail: `correlation=${input.operationId}`,
     });
   }
 
