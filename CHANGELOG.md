@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Browser element discovery is now explicit** — The embedded browser adds `findElements` for locating controls by text, regex, or accessibility role, and renames the old ref-only `inspectElement` operation to `getElementDetails`. Read-only details tolerate same-document changes only for stable backend-node refs, while actions and form refs keep strict stale-ref protection.
 - **Edit tool changes now appear as one unified diff** — Replacements, additions, and deletions are shown in a single read-only diff instead of separate Before and After blocks, while file metadata and Replace all status remain visible.
 - **Process Region detail drawer now opens and closes smoothly** — The side pane expands from the right when opened, supports resizing up to 800px, and finishes its exit motion before it is removed while respecting reduced-motion preferences.
 - **Process Region items now expand and collapse smoothly** — Tool details and thinking blocks animate to their measured content height inside the side drawer while respecting reduced-motion preferences.
