@@ -13,6 +13,19 @@ const ACTIVITY_LAYOUT_STYLES = `
   .max-w-full { max-width: 100%; }
 `
 
+const TOOLBAR_LAYOUT_STYLES = `
+  [data-testid="prompt-input-toolbar"] { display: flex; align-items: center; gap: 4px; padding-inline: 8px; }
+  [data-testid="prompt-input-toolbar"] > div { display: flex; align-items: center; gap: 4px; }
+  [data-testid="prompt-input-toolbar"] .hidden { display: none; }
+  [data-testid="prompt-input-toolbar"] .inline-flex { display: inline-flex; }
+  [data-testid="prompt-input-toolbar"] .justify-between { justify-content: space-between; }
+  [data-testid="prompt-input-toolbar"] .justify-end { justify-content: flex-end; }
+  [data-testid="prompt-input-toolbar"] .ml-auto { margin-left: auto; }
+  [data-testid="prompt-input-toolbar"] .min-w-0 { min-width: 0; }
+  [data-testid="prompt-input-toolbar"] .overflow-hidden { overflow: hidden; }
+  [data-testid="prompt-input-toolbar"] .shrink-0 { flex-shrink: 0; }
+`
+
 function renderWithI18n(ui: React.ReactElement) {
   return render(
     <I18nextProvider i18n={i18n}>
@@ -122,23 +135,40 @@ const appSettingsMock = vi.hoisted(() => ({
   useModifierToSubmit: false,
 }))
 
+const toolbarControlMock = vi.hoisted(() => ({
+  forceWideControls: false,
+}))
+
 vi.mock('../hooks/use-app-settings', () => ({
   useAppSettings: () => ({ useModifierToSubmit: appSettingsMock.useModifierToSubmit }),
 }))
 
 vi.mock('./ProviderSelector', () => ({
   default: ({ disabled }: { disabled?: boolean; hideNameBelowSm?: boolean }) => (
-    <div data-testid="provider-selector" data-disabled={disabled ? 'true' : 'false'} />
+    <div
+      data-testid="provider-selector"
+      data-disabled={disabled ? 'true' : 'false'}
+      style={toolbarControlMock.forceWideControls ? { minWidth: '160px' } : undefined}
+    />
   ),
 }))
 
 vi.mock('./ApprovalModeToggle', () => ({
-  default: () => <div data-testid="approval-mode-toggle" />,
+  default: () => (
+    <div
+      data-testid="approval-mode-toggle"
+      style={toolbarControlMock.forceWideControls ? { minWidth: '160px' } : undefined}
+    />
+  ),
 }))
 
 vi.mock('./FastModeToggle', () => ({
   default: ({ disabled }: { disabled?: boolean }) => (
-    <div data-testid="fast-mode-toggle" data-disabled={disabled ? 'true' : 'false'} />
+    <div
+      data-testid="fast-mode-toggle"
+      data-disabled={disabled ? 'true' : 'false'}
+      style={toolbarControlMock.forceWideControls ? { minWidth: '160px' } : undefined}
+    />
   ),
 }))
 
@@ -155,6 +185,7 @@ describe('PromptInput browser', () => {
     filesMock.results = []
     filesMock.truncated = false
     appSettingsMock.useModifierToSubmit = false
+    toolbarControlMock.forceWideControls = false
     if (!Element.prototype.scrollIntoView) {
       Element.prototype.scrollIntoView = vi.fn()
     }
@@ -1040,6 +1071,54 @@ describe('PromptInput browser', () => {
       expect(queryControl('send')).toBeInTheDocument()
     },
   )
+
+  it('keeps the send button inside the input card when optional controls exceed the toolbar width', async () => {
+    toolbarControlMock.forceWideControls = true
+    chatStoreMock.setDraft(DEFAULT_PROPS.sessionId, 'x')
+    renderWithI18n(
+      <>
+        <style>{TOOLBAR_LAYOUT_STYLES}</style>
+        <div style={{ width: '380px' }}>
+          <PromptInput {...DEFAULT_PROPS} />
+        </div>
+      </>,
+    )
+
+    const sendButton = await waitFor(() => {
+      const button = queryControl('send')
+      expect(button).toBeInTheDocument()
+      return button!
+    })
+    const cardRect = inputCardElement().getBoundingClientRect()
+    const sendRect = sendButton.getBoundingClientRect()
+
+    expect(sendRect.right).toBeLessThanOrEqual(cardRect.right)
+    expect(sendRect.left).toBeGreaterThanOrEqual(cardRect.left)
+  })
+
+  it('keeps the stop button inside the input card when optional controls exceed the toolbar width', async () => {
+    toolbarControlMock.forceWideControls = true
+    chatStoreMock.setDraft(DEFAULT_PROPS.sessionId, 'x')
+    renderWithI18n(
+      <>
+        <style>{TOOLBAR_LAYOUT_STYLES}</style>
+        <div style={{ width: '380px' }}>
+          <PromptInput {...DEFAULT_PROPS} isStreaming />
+        </div>
+      </>,
+    )
+
+    const stopButton = await waitFor(() => {
+      const button = screen.queryByRole('button', { name: /stop/i })
+      expect(button).toBeInTheDocument()
+      return button!
+    })
+    const cardRect = inputCardElement().getBoundingClientRect()
+    const stopRect = stopButton.getBoundingClientRect()
+
+    expect(stopRect.right).toBeLessThanOrEqual(cardRect.right)
+    expect(stopRect.left).toBeGreaterThanOrEqual(cardRect.left)
+  })
 
   it('keeps slash and at triggers working when toolbar buttons are hidden', async () => {
     renderAtWidth(230)

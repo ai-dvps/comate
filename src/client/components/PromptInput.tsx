@@ -1125,8 +1125,8 @@ export default function PromptInput({
                 </div>
               </div>
             </div>
-            <div data-testid="prompt-input-toolbar" className="flex items-center justify-between px-2 pb-2 pt-1 gap-1">
-              <div className="flex items-center gap-1">
+            <div data-testid="prompt-input-toolbar" className="flex items-center px-2 pb-2 pt-1 gap-1">
+              <div className="flex min-w-0 items-center gap-1 overflow-hidden">
                 <CommandPicker
                   ref={pickerHandleRef}
                   workspaceId={workspaceId}
@@ -1209,7 +1209,7 @@ export default function PromptInput({
                   }
                 />
               </div>
-              <div className="flex items-center gap-1">
+              <div className="ml-auto flex min-w-0 items-center justify-end gap-1 overflow-hidden">
                 {sessionId && !isBotSession && (
                   <>
                     <BackendSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} hideNameBelowSm />
@@ -1228,15 +1228,17 @@ export default function PromptInput({
                     <X className="w-4 h-4" />
                   </button>
                 )}
+                {!isComposerLocked && useModifierToSubmit && (
+                  <span className="text-[10px] text-text-tertiary select-none hidden sm:inline">
+                    {/Mac|iPod|iPhone|iPad/.test(navigator.platform) ? 'Cmd+Enter' : 'Ctrl+Enter'}
+                  </span>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
                 {isComposerLocked ? (
                   stopControl
                 ) : (
                   <>
-                    {useModifierToSubmit && (
-                      <span className="text-[10px] text-text-tertiary select-none hidden sm:inline">
-                        {/Mac|iPod|iPhone|iPad/.test(navigator.platform) ? 'Cmd+Enter' : 'Ctrl+Enter'}
-                      </span>
-                    )}
                     {isStreaming && stopControl}
                     <button
                       onClick={handleSend}
