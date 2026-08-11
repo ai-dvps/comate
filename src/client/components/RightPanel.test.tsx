@@ -187,6 +187,23 @@ describe('RightPanel', () => {
     expect(screen.getByTestId('right-panel-list-sidebar')).toBeInTheDocument()
   })
 
+  it('keeps the native browser surface clear of the panel resize handle', () => {
+    useRightPanelStore.setState({ activeListTab: 'browser' })
+
+    renderWithI18n(
+      <RightPanel
+        width={640}
+        isCollapsed={false}
+        toggleCollapse={vi.fn()}
+        onWidthChange={vi.fn()}
+        workspaceId="ws1"
+      />,
+    )
+
+    const browserSurface = screen.getByTestId('browser-pane').parentElement
+    expect(browserSurface).toHaveStyle({ left: '4px' })
+  })
+
   it('expands to show the list sidebar and hides the content panel when no tabs are open', () => {
     renderWithI18n(
       <RightPanel
