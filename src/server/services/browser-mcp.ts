@@ -506,6 +506,8 @@ interface FoundElement {
   name: string;
   context?: string;
   submitSemantics?: boolean;
+  provenance?: import('./browser-page-model.js').ElementProvenance;
+  interactionClass?: import('./browser-page-model.js').InteractionClass;
 }
 
 async function forEachWithConcurrency<T>(
@@ -554,7 +556,7 @@ function findElementsInModel(model: PageModel, args: FindElementsArgs, regex?: R
   const candidates: FoundElement[] = [];
   for (const form of model.forms) {
     const formName = form.name ?? `form ${form.formIndex}`;
-    candidates.push({ ref: form.ref, kind: 'form', role: 'form', name: formName });
+    candidates.push({ ref: form.ref, kind: 'form', role: 'form', name: formName, interactionClass: form.interactionClass });
     for (const field of form.fields) {
       candidates.push({
         ref: field.ref,
@@ -563,6 +565,7 @@ function findElementsInModel(model: PageModel, args: FindElementsArgs, regex?: R
         name: field.label || field.name || field.type,
         context: formName,
         ...(field.submitSemantics ? { submitSemantics: true } : {}),
+        interactionClass: field.interactionClass,
       });
     }
   }
@@ -572,7 +575,9 @@ function findElementsInModel(model: PageModel, args: FindElementsArgs, regex?: R
       kind: 'action',
       role: action.role,
       name: action.name,
-      ...(model.title ? { context: model.title } : {}),
+      ...(action.context ? { context: action.context } : model.title ? { context: model.title } : {}),
+      provenance: action.provenance,
+      interactionClass: action.interactionClass,
     });
   }
 

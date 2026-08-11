@@ -1,6 +1,7 @@
 import '../../test-utils/test-env.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
+import { JSDOM } from 'jsdom';
 import {
   RefTable,
   buildPageState,
@@ -151,6 +152,7 @@ function fakeSource(extraction: RawPageExtraction, axNodes: RawAxNode[]): PageMo
         ...extraction.forms.flatMap((form) => [form, ...form.fields]),
         ...(extraction.standalone.length > 0 ? [{}] : []),
         ...extraction.standalone,
+        ...(extraction.domCandidates ?? []),
       ].map((_item, index) => 100 + index),
     }),
     callBackendNode: async <T>(backendNodeId: number): Promise<T | null> => {
@@ -161,6 +163,41 @@ function fakeSource(extraction: RawPageExtraction, axNodes: RawAxNode[]): PageMo
       return { tag, type: tag === 'button' ? 'submit' : tag, role, editable: false, fileInput: false } as T;
     },
   };
+}
+
+function runExtractor(html: string): RawPageExtraction {
+  const dom = new JSDOM(html, { url: 'https://creator.example/editor', runScripts: 'dangerously' });
+  const { window } = dom;
+  Object.defineProperty(window.HTMLElement.prototype, 'getClientRects', {
+    configurable: true,
+    value: function getClientRects() {
+      const element = this as HTMLElement;
+      return element.hidden || element.style.display === 'none' || element.hasAttribute('data-zero') ? [] : [element.getBoundingClientRect()];
+    },
+  });
+  Object.defineProperty(window.HTMLElement.prototype, 'getBoundingClientRect', {
+    configurable: true,
+    value: function getBoundingClientRect() {
+      const element = this as HTMLElement;
+      if (element.hidden || element.style.display === 'none' || element.hasAttribute('data-zero')) {
+        return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON() {} };
+      }
+      const index = Number(element.getAttribute('data-index') ?? 1);
+      const left = index * 2;
+      return { left, top: 10, right: left + 10, bottom: 30, width: 10, height: 20, x: left, y: 10, toJSON() {} };
+    },
+  });
+  Object.defineProperty(window.document, 'elementFromPoint', {
+    configurable: true,
+    value: (x: number) => {
+      const index = Math.round((x - 5) / 2);
+      const target = window.document.querySelector(`[data-index="${index}"]`);
+      return target?.hasAttribute('data-occluded') ? window.document.getElementById('overlay') : target;
+    },
+  });
+  const extraction = window.eval(buildExtractorScript()) as RawPageExtraction;
+  dom.window.close();
+  return extraction;
 }
 
 describe('browser-page-model sensitivity ruleset (KTD-8)', () => {
@@ -270,6 +307,176 @@ describe('browser-page-model accessibility tree processing', () => {
 });
 
 describe('browser-page-model distillation (KTD-3)', () => {
+  it('extracts only useful visible DOM candidates and bounds large inventories', () => {
+    const many = Array.from({ length: 2_100 }, (_, index) => `<div onclick="void 0" data-index="${index + 20}">Action ${index}</div>`).join('');
+    const extraction = runExtractor(`<!doctype html><body>
+      <div id="entry" style="cursor:pointer" data-index="1">写长文</div>
+      <p data-index="2">ordinary paragraph</p>
+      <div hidden onclick="void 0" data-index="3">hidden action</div>
+      <div inert onclick="void 0" data-index="4">inert action</div>
+      <div data-zero onclick="void 0" data-index="5">zero action</div>
+      <div data-occluded onclick="void 0" data-index="6">occluded action</div>
+      <div id="overlay"></div>
+      <div style="cursor:pointer" data-index="7"></div>
+      <div style="cursor:pointer" data-index="8">Parent <span style="cursor:pointer" data-index="9">Child action</span></div>
+      ${many}
+    </body>`);
+
+    assert.ok(extraction.domCandidates?.some((candidate) => candidate.name === '写长文'));
+    for (const rejected of ['ordinary paragraph', 'hidden action', 'inert action', 'zero action', 'occluded action']) {
+      assert.ok(!extraction.domCandidates?.some((candidate) => candidate.name === rejected), rejected);
+    }
+    assert.strictEqual(extraction.domCandidates?.length, 200);
+    assert.strictEqual(extraction.domCandidateInventory?.truncated, true);
+    assert.strictEqual(extraction.domCandidates?.filter((candidate) => /Parent|Child action/.test(candidate.name)).length, 1);
+    assert.ok(extraction.domCandidates?.some((candidate) => candidate.name === 'Child action'));
+  });
+
+  it('extracts only the outer editable root and associated non-directory file input', () => {
+    const sentinel = 'PRIVATE_ARTICLE_SENTINEL_中文_🚀';
+    const extraction = runExtractor(`<!doctype html><body>
+      <div contenteditable="true" aria-label="正文" data-index="1">${sentinel}<span contenteditable="true" aria-label="nested">子编辑器</span></div>
+      <textarea aria-label="标题" data-index="2">short title</textarea>
+      <label data-index="3">添加图片<input type="file" style="display:none" multiple accept="image/png,image/jpeg"></label>
+      <input type="file" style="display:none" aria-label="unassociated">
+      <label data-index="4">上传文件夹<input type="file" style="display:none" webkitdirectory></label>
+    </body>`);
+
+    assert.deepStrictEqual([...extraction.standalone].map((field) => field.label), ['标题', '添加图片', '正文']);
+    const editable = extraction.standalone.filter((field) => field.contentLength !== undefined);
+    assert.strictEqual(editable.length, 1);
+    assert.strictEqual(editable[0].type, 'div');
+    const upload = extraction.standalone.find((field) => field.type === 'file');
+    assert.deepStrictEqual({ multiple: upload?.multiple, accept: upload?.accept }, { multiple: true, accept: 'image/png,image/jpeg' });
+    assert.ok(!extraction.contentText.includes(sentinel));
+    assert.ok(!JSON.stringify(extraction.domCandidates).includes(sentinel));
+  });
+
+  it('rebuilds once when candidate mapping crosses a document generation', async () => {
+    const extraction = makeExtraction();
+    let generation = 0;
+    let extracts = 0;
+    const source = fakeSource(extraction, []);
+    source.getDocumentIdentity = () => ({
+      targetId: 'target-1', sessionId: 'session-1', frameId: 'frame-1', loaderId: 'doc-1', generation,
+    });
+    source.extractPageModel = async () => {
+      extracts += 1;
+      if (extracts === 1) generation = 1;
+      return {
+        extraction,
+        backendNodeIds: extraction.forms.flatMap((form) => [form, ...form.fields]).map((_item, index) => 100 + index),
+      };
+    };
+
+    const model = await distillPageModel(source, new RefTable());
+    assert.strictEqual(extracts, 2);
+    assert.strictEqual(model.forms.length, 1);
+  });
+
+  it('merges bounded DOM actions by backend node with AX semantics winning', async () => {
+    const extraction = makeExtraction({
+      domCandidates: [
+        {
+          name: '写长文',
+          context: '创作中心',
+          tag: 'div',
+          type: 'div',
+          role: 'generic',
+          xpath: '/html/body/div[1]',
+        },
+        {
+          name: 'AX preferred name',
+          context: 'duplicate fallback',
+          tag: 'div',
+          type: 'div',
+          role: 'generic',
+          xpath: '/html/body/div[2]',
+        },
+      ],
+      domCandidateInventory: { total: 2, returned: 2, truncated: false },
+    });
+    const source = fakeSource(extraction, [{
+      nodeId: 'ax-duplicate', role: { value: 'button' }, name: { value: 'AX preferred name' }, backendDOMNodeId: 106,
+    }]);
+    const model = await distillPageModel(source, new RefTable());
+
+    assert.deepStrictEqual(
+      model.actions.map(({ name, role, provenance, interactionClass }) => ({ name, role, provenance, interactionClass })),
+      [
+        { name: 'AX preferred name', role: 'button', provenance: 'ax', interactionClass: 'ambiguous-activation' },
+        { name: '写长文', role: 'generic', provenance: 'dom', interactionClass: 'ambiguous-activation' },
+      ],
+    );
+    assert.strictEqual(model.actionInventory.total, 2);
+  });
+
+  it('never downgrades page links, buttons, or consent controls from fail-closed activation', async () => {
+    const model = await distillPageModel(fakeSource(makeExtraction(), [
+      { nodeId: 'link', role: { value: 'link' }, name: { value: 'https://example.test/local' }, backendDOMNodeId: 201 },
+      { nodeId: 'button', role: { value: 'button' }, name: { value: 'Preview' }, backendDOMNodeId: 202 },
+      { nodeId: 'consent', role: { value: 'button' }, name: { value: 'Authorize OAuth consent' }, backendDOMNodeId: 203 },
+    ]), new RefTable());
+    assert.deepStrictEqual(model.actions.map(({ role, interactionClass }) => ({ role, interactionClass })), [
+      { role: 'link', interactionClass: 'ambiguous-activation' },
+      { role: 'button', interactionClass: 'ambiguous-activation' },
+      { role: 'button', interactionClass: 'human-only' },
+    ]);
+  });
+
+  it('models outer editable roots and associated file inputs without echoing long-form text', async () => {
+    const sentinel = 'PRIVATE_ARTICLE_SENTINEL_中文_🚀';
+    const extraction = makeExtraction({
+      forms: [],
+      standalone: [
+        {
+          fieldIndex: -1, label: '正文', tag: 'div', type: 'div', role: 'textbox',
+          required: false, disabled: false, readOnly: false, visible: true, inViewport: true,
+          sensitive: false, filled: true, contentLength: sentinel.length, submitSemantics: false,
+          xpath: '/html/body/div[1]',
+        },
+        {
+          fieldIndex: -1, label: '添加图片', tag: 'input', type: 'file', role: 'button',
+          required: false, disabled: false, readOnly: false, visible: false, inViewport: false,
+          sensitive: false, filled: false, submitSemantics: false, multiple: true, accept: 'image/png,image/jpeg',
+          xpath: '/html/body/input[1]',
+        },
+      ],
+      contentText: sentinel,
+      contentTruncated: false,
+      sourceInventory: { formCount: 0, fieldCount: 2 },
+      stats: { linkCount: 0, buttonCount: 1, hasPasswordField: false },
+    });
+    const model = await distillPageModel(fakeSource(extraction, []), new RefTable());
+    const fields = model.forms[0].fields;
+
+    assert.deepStrictEqual(fields.map(({ label, role, interactionClass }) => ({ label, role, interactionClass })), [
+      { label: '正文', role: 'textbox', interactionClass: 'edit' },
+      { label: '添加图片', role: 'button', interactionClass: 'file-egress' },
+    ]);
+    assert.strictEqual(fields[0].filled, true);
+    assert.strictEqual(fields[0].contentLength, sentinel.length);
+    assert.strictEqual('value' in fields[0], false);
+    assert.strictEqual(fields[1].multiple, true);
+    assert.strictEqual(fields[1].accept, 'image/png,image/jpeg');
+    assert.ok(!JSON.stringify(model).includes(sentinel));
+  });
+
+  it('classifies human-gated fields as handoff-only', async () => {
+    const extraction = makeExtraction();
+    extraction.forms[0].fields.push({
+      fieldIndex: 4, label: 'Preview', tag: 'button', type: 'button', required: false,
+      disabled: false, readOnly: false, sensitive: false, filled: false,
+      submitSemantics: false, xpath: '/html[1]/body[1]/form[1]/button[2]',
+    });
+    const model = await distillPageModel(fakeSource(extraction, []), new RefTable());
+    assert.strictEqual(model.forms[0].fields.find((field) => field.name === 'cardNumber')?.interactionClass, 'human-only');
+    assert.strictEqual(model.forms[0].fields.find((field) => field.name === 'password')?.interactionClass, 'human-only');
+    assert.strictEqual(model.forms[0].fields.find((field) => field.name === 'email')?.interactionClass, 'edit');
+    assert.strictEqual(model.forms[0].fields.find((field) => field.label === 'Pay now')?.interactionClass, 'html-submit');
+    assert.strictEqual(model.forms[0].fields.find((field) => field.label === 'Preview')?.interactionClass, 'ambiguous-activation');
+  });
+
   it('maps the exact extracted objects without an XPath identity re-query', async () => {
     const extraction = makeExtraction();
     const source = {
