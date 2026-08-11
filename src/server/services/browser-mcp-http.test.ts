@@ -125,7 +125,7 @@ describe('browser-mcp-http (U6)', { concurrency: false }, () => {
     assert.equal(res.json.result.serverInfo.name, 'comate-browser');
     assert.equal(res.json.result.serverInfo.version, '0.3.0');
     assert.match(res.json.result.instructions, /fresh page model already returned by open or act/i);
-    assert.match(res.json.result.instructions, /getPageState[\s\S]*findElements[\s\S]*getElementDetails[\s\S]*act[\s\S]*activate[\s\S]*takeScreenshot/);
+    assert.match(res.json.result.instructions, /getPageState[\s\S]*findElements[\s\S]*getElementDetails[\s\S]*act[\s\S]*upload[\s\S]*activate[\s\S]*takeScreenshot/);
     assert.match(res.json.result.instructions, /takeScreenshot.*only.*visual/i);
   });
 
@@ -133,7 +133,7 @@ describe('browser-mcp-http (U6)', { concurrency: false }, () => {
     const res = await post('s1', { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     assert.equal(res.status, 200);
     const names = res.json.result.tools.map((t: { name: string }) => t.name);
-    for (const expected of ['open', 'getPageState', 'findElements', 'getElementDetails', 'act', 'activate', 'takeScreenshot', 'submit', 'extract', 'authenticatedRequest', 'requestHandoff', 'close']) {
+    for (const expected of ['open', 'getPageState', 'findElements', 'getElementDetails', 'act', 'upload', 'activate', 'takeScreenshot', 'submit', 'extract', 'authenticatedRequest', 'requestHandoff', 'close']) {
       assert.ok(names.includes(expected), `tool ${expected} listed`);
     }
     assert.ok(!names.includes('snapshot'), 'legacy snapshot tool is not exposed');

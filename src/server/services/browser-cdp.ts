@@ -289,6 +289,7 @@ export interface BrowserCdpSession {
   getFullAXTree(): Promise<RawAxNode[]>;
   clickBackendNode(backendNodeId: number): Promise<BrowserOperationReceipt>;
   fillBackendNode?(backendNodeId: number, text: string): Promise<BrowserOperationReceipt>;
+  setFileInputFiles?(backendNodeId: number, paths: string[]): Promise<BrowserOperationReceipt>;
   getDocumentIdentity?(): BrowserDocumentIdentity | null;
   extractPageModel?(expression: string): Promise<PageExtractionBundle>;
   callBackendNode?<T>(backendNodeId: number, functionDeclaration: string): Promise<T | null>;
@@ -318,6 +319,7 @@ export interface BrowserCdpSession {
    */
   getCookiesForUrls?(urls: string[]): Promise<Array<Record<string, unknown>>>;
   onClose(listener: () => void): void;
+  onDocumentChange?(listener: () => void): void;
   close(): void;
 }
 
@@ -429,6 +431,7 @@ function unsupportedCommand(error: unknown): boolean {
 class BrowserCdpSessionImpl implements BrowserCdpSession {
   private closedFlag = false;
   private readonly closeListeners = new Set<() => void>();
+  private readonly documentChangeListeners = new Set<() => void>();
   private offConnectionClose?: () => void;
   private offTargetDetached?: () => void;
   private readonly lifecycleTeardowns: Array<() => void> = [];
@@ -459,21 +462,25 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
         this.mainFrameId = frame.id;
         if (frame.loaderId) this.loaderId = frame.loaderId;
         this.refreshDocumentIdentity();
+        this.notifyDocumentChange();
       }),
       connection.on('DOM.documentUpdated', (event) => {
         if (event.sessionId !== this.sessionId) return;
         this.documentGeneration += 1;
         this.refreshDocumentIdentity();
+        this.notifyDocumentChange();
       }),
       connection.on('Runtime.executionContextsCleared', (event) => {
         if (event.sessionId !== this.sessionId) return;
         this.documentGeneration += 1;
         this.refreshDocumentIdentity();
+        this.notifyDocumentChange();
       }),
       connection.on('Runtime.executionContextDestroyed', (event) => {
         if (event.sessionId !== this.sessionId) return;
         this.documentGeneration += 1;
         this.refreshDocumentIdentity();
+        this.notifyDocumentChange();
       }),
       connection.on('Inspector.detached', (event) => {
         if (event.sessionId === this.sessionId) this.markClosed();
@@ -527,6 +534,10 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
     this.closeListeners.add(listener);
   }
 
+  onDocumentChange(listener: () => void): void {
+    this.documentChangeListeners.add(listener);
+  }
+
   close(): void {
     this.markClosed();
     this.connection.close();
@@ -549,6 +560,13 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
       }
     }
     this.closeListeners.clear();
+    this.documentChangeListeners.clear();
+  }
+
+  private notifyDocumentChange(): void {
+    for (const listener of [...this.documentChangeListeners]) {
+      try { listener(); } catch { /* Lifecycle listeners must not break CDP dispatch. */ }
+    }
   }
 
   private refreshDocumentIdentity(): void {
@@ -841,6 +859,43 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
       };
     } catch {
       return notDispatched('target_unavailable');
+    } finally {
+      if (objectId) {
+        await this.connection.send('Runtime.releaseObject', { objectId }, this.sessionId).catch(() => undefined);
+      }
+    }
+  }
+
+  async setFileInputFiles(backendNodeId: number, paths: string[]): Promise<BrowserOperationReceipt> {
+    if (paths.length === 0 || paths.length > 18) return notDispatched('unsupported_target');
+    try {
+      await this.connection.send('DOM.setFileInputFiles', { backendNodeId, files: paths }, this.sessionId);
+    } catch {
+      return outcomeUnknown('field');
+    }
+    let objectId: string | undefined;
+    try {
+      const resolved = await this.connection.send<{ object?: { objectId?: string } }>(
+        'DOM.resolveNode', { backendNodeId }, this.sessionId,
+      );
+      objectId = resolved.object?.objectId;
+      if (!objectId) return outcomeUnknown('field');
+      const verified = await this.connection.send<EvaluateResult>('Runtime.callFunctionOn', {
+        objectId,
+        functionDeclaration: `function () {
+          return !!this && this.tagName && this.tagName.toLowerCase() === 'input' &&
+            (this.getAttribute('type') || '').toLowerCase() === 'file' &&
+            !!this.files && this.files.length === ${paths.length};
+        }`,
+        returnByValue: true,
+      }, this.sessionId);
+      if (verified.result?.value !== true) return outcomeUnknown('field');
+      return {
+        outcome: 'dispatched_verified', dispatchState: 'dispatched', verified: true,
+        retrySafe: false, matchesRequested: true, delta: { kind: 'field', changed: true },
+      };
+    } catch {
+      return outcomeUnknown('field');
     } finally {
       if (objectId) {
         await this.connection.send('Runtime.releaseObject', { objectId }, this.sessionId).catch(() => undefined);

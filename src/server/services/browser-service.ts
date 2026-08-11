@@ -127,6 +127,8 @@ export interface BrowserSessionInfo {
   baseUrl: string;
   userDataDir: string;
   startedAt: number;
+  /** Upload may egress local bytes only through the shell-attested view. */
+  targetKind: 'shell' | 'external';
 }
 
 export interface BrowserStateEvent {
@@ -211,6 +213,7 @@ interface RegistryEntry {
   /** Set when teardown is in flight so an exit is not treated as a crash. */
   expectingExit: boolean;
   startedAt: number;
+  targetKind: 'shell' | 'external' | null;
   /**
    * Per-session CSPRNG token, minted once per registry entry and used as the
    * view's CDP marker (`about:blank#comate-view-<token>` — how the sidecar
@@ -657,6 +660,7 @@ export class BrowserService {
       starting: null,
       expectingExit: false,
       startedAt: 0,
+      targetKind: null,
       viewerToken,
       siteAuthEligible: false,
       lastActivityAt: 0,
@@ -1262,6 +1266,7 @@ export class BrowserService {
     if (target.kind === 'misconfigured') {
       throw this.unavailable(sessionId, workspaceId, 'browser_start_failed', target.reason);
     }
+    entry.targetKind = target.kind;
     return this.spawnNativeForSession(sessionId, workspaceId, viewerToken, target, entry);
   }
 
@@ -1695,6 +1700,7 @@ export class BrowserService {
       baseUrl: handle?.baseUrl ?? '',
       userDataDir: handle?.userDataDir ?? '',
       startedAt: entry.startedAt,
+      targetKind: entry.targetKind ?? 'external',
     };
   }
 }

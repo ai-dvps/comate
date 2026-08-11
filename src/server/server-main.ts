@@ -14,6 +14,7 @@ import backendRoutes from './routes/backends.js';
 import { createBrowserMcpHttpRouter } from './services/browser-mcp-http.js';
 import { createScheduledTasksMcpHttpRouter, resolveScheduledTasksMcpDeps } from './services/scheduled-tasks-mcp.js';
 import { chatService } from './services/chat-service.js';
+import { browserUploadStagingService } from './services/browser-upload-staging.js';
 import { setBoundPort } from './utils/self-port.js';
 import workspaceCommandsRoutes from './routes/workspace-commands.js';
 import gitStatusRoutes from './routes/git-status.js';
@@ -141,6 +142,9 @@ function ensureComateBuiltInMarketplace(): void {
 }
 
 ensureComateBuiltInMarketplace();
+void browserUploadStagingService.cleanupOrphans().catch((error) => {
+  diagLog(`[browser-upload] startup staging cleanup failed: ${error instanceof Error ? error.name : 'unknown'}`);
+});
 
 // U12 (KTD-28): mint the per-boot desktop GUI credential before any request
 // can arrive. Delivered to the local client out-of-band: the sidecar ready

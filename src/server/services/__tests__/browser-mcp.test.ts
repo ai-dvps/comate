@@ -1,7 +1,7 @@
 import '../../test-utils/test-env.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { randomUUID } from 'node:crypto';
@@ -36,6 +36,7 @@ import { SqliteStore, store as workspaceStore } from '../../storage/sqlite-store
 import { BrowserMutationCoordinator } from '../browser-mutation-coordinator.js';
 import { SESSION_TOKEN_ENV } from '../session-capability-service.js';
 import type { BrowserAuditToolInput } from '../browser-audit.js';
+import { BrowserUploadStagingService } from '../browser-upload-staging.js';
 
 /**
  * browser-mcp tests — the first-class tool surface (KTD-3), the handler-level
@@ -67,6 +68,8 @@ interface FakePageOptions {
   checkStates?: Array<{ ok: boolean; checked?: boolean } | Error>;
   selectDispatchError?: Error;
   activationSnapshots?: Array<import('../browser-page-model.js').ActivationTargetSnapshot | null>;
+  fileInputSnapshots?: Array<import('../browser-page-model.js').FileInputSnapshot | null>;
+  uploadReceipt?: import('../browser-cdp.js').BrowserOperationReceipt;
 }
 
 class FakeNetworkTransport implements BrowserNetworkCaptureTransport {
@@ -104,6 +107,7 @@ class FakePage implements BrowserCdpSession {
   screenshots = 0;
   clickedBackendNodes: number[] = [];
   filledBackendNodes: Array<{ backendNodeId: number; text: string }> = [];
+  assignedFiles: Array<{ backendNodeId: number; paths: string[] }> = [];
   actScripts: string[] = [];
   dispatchScripts: string[] = [];
   private readonly options: FakePageOptions;
@@ -113,6 +117,7 @@ class FakePage implements BrowserCdpSession {
   private currentIdentity: import('../browser-page-model.js').BrowserDocumentIdentity | null;
   private checkStates: Array<{ ok: boolean; checked?: boolean } | Error>;
   private activationSnapshots: Array<import('../browser-page-model.js').ActivationTargetSnapshot | null>;
+  private fileInputSnapshots: Array<import('../browser-page-model.js').FileInputSnapshot | null>;
   private backendFingerprints: Record<number, import('../browser-page-model.js').ElementFingerprint | null>;
 
   constructor(options: FakePageOptions) {
@@ -123,6 +128,7 @@ class FakePage implements BrowserCdpSession {
       : options.documentIdentity;
     this.checkStates = [...(options.checkStates ?? [])];
     this.activationSnapshots = [...(options.activationSnapshots ?? [])];
+    this.fileInputSnapshots = [...(options.fileInputSnapshots ?? [])];
     this.backendFingerprints = { ...(options.backendFingerprints ?? {}) };
   }
 
@@ -162,6 +168,13 @@ class FakePage implements BrowserCdpSession {
   }
 
   async callBackendNode<T>(backendNodeId: number, functionDeclaration: string): Promise<T | null> {
+    if (functionDeclaration.includes('__comateFileInputSnapshot')) {
+      const next = this.fileInputSnapshots.length > 1 ? this.fileInputSnapshots.shift() : this.fileInputSnapshots[0];
+      return (next === undefined ? {
+        connected: true, fileInput: true, enabled: true, multiple: false, accept: 'image/*',
+        directory: false, associatedVisible: true, origin: new URL(this.options.extraction.url).origin,
+      } : next) as T | null;
+    }
     if (functionDeclaration.includes('__comateActivationSnapshot')) {
       const next = this.activationSnapshots.length > 1
         ? this.activationSnapshots.shift()
@@ -288,6 +301,13 @@ class FakePage implements BrowserCdpSession {
       outcome: 'dispatched_verified', dispatchState: 'dispatched', verified: true,
       retrySafe: false, matchesRequested: true, normalizedLength: text.length,
       delta: { kind: 'field', changed: true },
+    };
+  }
+  async setFileInputFiles(backendNodeId: number, paths: string[]): Promise<import('../browser-cdp.js').BrowserOperationReceipt> {
+    this.assignedFiles.push({ backendNodeId, paths: [...paths] });
+    return this.options.uploadReceipt ?? {
+      outcome: 'dispatched_verified', dispatchState: 'dispatched', verified: true,
+      retrySafe: false, matchesRequested: true, delta: { kind: 'field', changed: true },
     };
   }
   async inspectBackendNode(): Promise<import('../browser-page-model.js').InspectedElement | null> {
@@ -513,6 +533,8 @@ async function makeHarness(options: {
   const deps: BrowserMcpDeps = {
     sessionId: 'chat-session-1',
     workspaceId: 'workspace-1',
+    workspaceFolder: storageDir,
+    uploadStaging: new BrowserUploadStagingService(path.join(storageDir, 'upload-staging')),
     browserService,
     handoffControl: new BrowserControlService({
       browserService,
@@ -543,7 +565,7 @@ async function makeHarness(options: {
   const tools = new Map(definitions.map((definition) => [definition.name, definition]));
   const context = contextRegistry.get(deps.sessionId)!;
   let operationCounter = 0;
-  const mutationTools = new Set(['open', 'act', 'activate', 'submit', 'requestHandoff', 'close']);
+  const mutationTools = new Set(['open', 'act', 'upload', 'activate', 'submit', 'requestHandoff', 'close']);
   const callTool = async (name: string, args: Record<string, unknown>, extra?: unknown): Promise<CallToolResult> => {
     const definition = tools.get(name);
     assert.ok(definition, `tool ${name} must exist`);
@@ -557,6 +579,7 @@ async function makeHarness(options: {
     tools,
     call: async (name, args, extra) => {
       if (name === 'act') return context.handleAct(args as never);
+      if (name === 'upload') return context.handleUpload(args as never, extra ?? {});
       if (name === 'activate') return context.handleActivate(args as never, extra ?? {});
       if (name === 'submit') return context.handleSubmit(args as never, extra ?? {});
       if (name === 'requestHandoff') return context.handleRequestHandoff(args as never, extra ?? {});
@@ -610,7 +633,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.deepStrictEqual(
       [...harness.tools.keys()].sort(),
-      ['act', 'activate', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getElementDetails', 'getPageState', 'open', 'requestHandoff', 'startNetworkCapture', 'stopNetworkCapture', 'submit', 'takeScreenshot'],
+      ['act', 'activate', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getElementDetails', 'getPageState', 'open', 'requestHandoff', 'startNetworkCapture', 'stopNetworkCapture', 'submit', 'takeScreenshot', 'upload'],
     );
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
@@ -637,7 +660,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const defs = buildBrowserToolDefinitions({ sessionId: 's', workspaceId: 'w' });
     assert.deepEqual(
       defs.map((d) => d.name),
-      ['open', 'getPageState', 'findElements', 'getElementDetails', 'act', 'activate', 'takeScreenshot', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'submit', 'extract', 'requestHandoff', 'close'],
+      ['open', 'getPageState', 'findElements', 'getElementDetails', 'act', 'upload', 'activate', 'takeScreenshot', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'submit', 'extract', 'requestHandoff', 'close'],
     );
     assert.match(defs.find((definition) => definition.name === 'getPageState')?.description ?? '', /default observation/i);
     assert.match(defs.find((definition) => definition.name === 'takeScreenshot')?.description ?? '', /only.*visual/i);
@@ -1201,6 +1224,52 @@ describe('browser-mcp act', () => {
       assert.deepStrictEqual(page.clickedBackendNodes, []);
     });
   }
+
+  it('assigns one approved workspace image to a file-input ref through private staging', async () => {
+    const extraction = makeExtraction();
+    extraction.forms[0].fields.push({
+      fieldIndex: 3, name: 'media', label: 'Upload media', tag: 'input', type: 'file',
+      required: false, disabled: false, readOnly: false, sensitive: false, filled: false,
+      submitSemantics: false, accept: 'image/*', multiple: false,
+      xpath: '/html[1]/body[1]/form[1]/input[4]',
+    });
+    const page = new FakePage({ extraction });
+    harness = await makeHarness({ page });
+    const opened = await harness.call('open', { url: extraction.url });
+    const fileRef = (resultPayload(opened).model as { forms: Array<{ fields: Array<{ ref: string }> }> }).forms[0].fields[3].ref;
+    mkdirSync(path.join(harness.storageDir, 'media'), { recursive: true });
+    writeFileSync(path.join(harness.storageDir, 'media', 'cover.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]));
+    const result = await harness.callTool('upload', { operationId: 'upload-image-1', ref: fileRef, paths: ['media/cover.png'] });
+    assert.equal((resultPayload(result).receipt as { outcome: string }).outcome, 'dispatched_verified');
+    assert.equal(page.assignedFiles.length, 1);
+    assert.equal(page.assignedFiles[0].backendNodeId, 104);
+    assert.notEqual(page.assignedFiles[0].paths[0], path.join(harness.storageDir, 'media', 'cover.png'));
+    assert.equal(harness.ctx.approvals.at(-1)?.payload.kind, 'browser_upload');
+  });
+
+  it('rejects a non-shell CDP target before inspecting local file paths or requesting approval', async () => {
+    const extraction = makeExtraction();
+    extraction.forms[0].fields.push({
+      fieldIndex: 3, name: 'media', label: 'Upload media', tag: 'input', type: 'file',
+      required: false, disabled: false, readOnly: false, sensitive: false, filled: false,
+      submitSemantics: false, accept: 'image/*', multiple: false,
+      xpath: '/html[1]/body[1]/form[1]/input[4]',
+    });
+    const page = new FakePage({ extraction });
+    harness = await makeHarness({ page });
+    const opened = await harness.call('open', { url: extraction.url });
+    const ref = (resultPayload(opened).model as { forms: Array<{ fields: Array<{ ref: string }> }> }).forms[0].fields[3].ref;
+    const original = harness.ctx.browserService.getSession.bind(harness.ctx.browserService);
+    harness.ctx.browserService.getSession = (sessionId) => {
+      const info = original(sessionId);
+      return info ? { ...info, targetKind: 'external' } : undefined;
+    };
+    const result = await harness.call('upload', { operationId: 'upload-external', ref, paths: ['does-not-exist.png'] });
+    assert.equal(result.isError, true);
+    assert.equal((resultPayload(result).error as { code: string }).code, 'browser_upload_target_untrusted');
+    assert.equal(harness.ctx.approvals.length, 0);
+    assert.equal(page.assignedFiles.length, 0);
+  });
 
   it('requires handler approval for activation and sanitizes page-supplied manifest text', async () => {
     const page = new FakePage({

@@ -27,6 +27,7 @@ import {
 
 export interface BrowserMcpHttpDeps {
   workspaceId: string;
+  workspaceFolder?: string;
   approvalRequester: BrowserMcpDeps['approvalRequester'];
 }
 
@@ -132,6 +133,7 @@ export function createBrowserMcpHttpRouter(
       for (const def of buildBrowserToolDefinitions({
         sessionId,
         workspaceId: deps.workspaceId,
+        workspaceFolder: deps.workspaceFolder,
         runtimeGeneration: deps.runtimeGeneration,
         apiBrokerAuthorized: deps.apiBrokerAuthorized,
         capabilityId: deps.capabilityId,
