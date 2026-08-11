@@ -18,6 +18,7 @@
  * submit return a structured stale-ref error instead of acting on ghosts.
  */
 
+import { randomBytes } from 'node:crypto';
 import { originOf } from './browser-origin.js';
 
 // ---------------------------------------------------------------------------
@@ -78,6 +79,8 @@ export interface PageModelField {
   label: string;
   tag: string;
   type: string;
+  /** Normalized accessibility-style role used by discovery and ref metadata. */
+  role: string;
   required: boolean;
   sensitive: boolean;
   autocomplete?: string;
@@ -181,11 +184,11 @@ export class RefTable {
   private batch: RefBatchKey | null = null;
   private counter = 0;
   /**
-   * Per-batch nonce baked into every ref string (e.g. `e7-q3`). Without it a
+   * Per-batch nonce baked into every ref string (e.g. `e7-a1b2c3d4e5f60708`). Without it a
    * ref from an old batch could alias a different element minted at the same
    * counter position in the new batch, silently acting on the wrong node.
    */
-  private nonce = '00';
+  private nonce = '0000000000000000';
 
   get batchKey(): RefBatchKey | null {
     return this.batch;
@@ -196,7 +199,7 @@ export class RefTable {
     this.batch = batch;
     this.entries.clear();
     this.counter = 0;
-    this.nonce = Math.random().toString(36).slice(2, 4).padEnd(2, '0');
+    this.nonce = randomBytes(8).toString('hex');
   }
 
   clear(): void {
@@ -220,8 +223,8 @@ export class RefTable {
   }
 
   /**
-   * A ref is only usable while the page still sits in the batch it was minted
-   * from (KTD-3: DOM change invalidates the whole batch).
+   * Check whether a ref is safe for a mutation that requires an exact
+   * document + DOM-epoch match with the batch that minted it.
    */
   isCurrent(ref: string, current: RefBatchKey): boolean {
     const entry = this.entries.get(ref);
@@ -315,7 +318,13 @@ export function buildInspectElementFunction(): string {
   if (tag === 'input' || tag === 'textarea') actions.push('fill');
   if (tag === 'select') actions.push('select');
   if (tag === 'input' && /^(checkbox|radio)$/i.test(root.getAttribute('type') || '')) actions.push('check');
-  if (form && (tag === 'form' || /^(submit|image)$/i.test(root.getAttribute('type') || ''))) actions.push('submit');
+  var rootType = (root.getAttribute('type') || '').toLowerCase();
+  var submitsForm = form && (
+    tag === 'form' ||
+    (tag === 'input' && /^(submit|image)$/.test(rootType)) ||
+    (tag === 'button' && rootType !== 'button' && rootType !== 'reset')
+  );
+  if (submitsForm) actions.push('submit');
   var result = {
     tag: tag,
     attributes: attributes,
@@ -362,6 +371,9 @@ export interface RawExtractedField {
   label: string;
   tag: string;
   type: string;
+  role?: string;
+  multiple?: boolean;
+  size?: number;
   required: boolean;
   autocomplete?: string;
   disabled: boolean;
@@ -492,6 +504,9 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
       label: labelFor(el),
       tag: tag,
       type: type,
+      role: el.getAttribute('role') || undefined,
+      multiple: el.multiple === true,
+      size: typeof el.size === 'number' ? el.size : undefined,
       required: el.required === true,
       autocomplete: el.getAttribute('autocomplete') || undefined,
       disabled: el.disabled === true,
@@ -710,9 +725,10 @@ function mapRawField(
   rawField: RawExtractedField,
   placement: { formIndex: number; fieldIndex: number; submitSemantics: boolean },
 ): PageModelField {
+  const role = normalizedFieldRole(rawField);
   const entry = refTable.mint({
     kind: 'field',
-    role: rawField.tag === 'button' ? 'button' : rawField.type,
+    role,
     name: rawField.label || rawField.name || '',
     xpath: rawField.xpath,
     formIndex: placement.formIndex,
@@ -724,6 +740,7 @@ function mapRawField(
     label: rawField.label,
     tag: rawField.tag,
     type: rawField.type,
+    role,
     required: rawField.required,
     sensitive: rawField.sensitive,
     submitSemantics: placement.submitSemantics,
@@ -736,6 +753,22 @@ function mapRawField(
     modelField.value = rawField.value.slice(0, VALUE_CAP);
   }
   return modelField;
+}
+
+function normalizedFieldRole(
+  field: Pick<RawExtractedField, 'tag' | 'type' | 'role' | 'multiple' | 'size'>,
+): string {
+  if (field.role) return field.role.toLowerCase();
+  const tag = field.tag.toLowerCase();
+  const type = field.type.toLowerCase();
+  if (tag === 'button' || (tag === 'input' && ['button', 'submit', 'reset', 'image'].includes(type))) return 'button';
+  if (tag === 'select') return field.multiple || (field.size ?? 0) > 1 ? 'listbox' : 'combobox';
+  if (tag === 'textarea') return 'textbox';
+  if (tag === 'input' && (type === 'checkbox' || type === 'radio')) return type;
+  if (tag === 'input' && type === 'number') return 'spinbutton';
+  if (tag === 'input' && type === 'range') return 'slider';
+  if (tag === 'input' && type === 'search') return 'searchbox';
+  return tag === 'input' ? 'textbox' : tag;
 }
 
 /**

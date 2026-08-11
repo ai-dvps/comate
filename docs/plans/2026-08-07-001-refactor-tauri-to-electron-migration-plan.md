@@ -58,7 +58,7 @@ deepened: 2026-08-07
 
 **内嵌浏览器**
 
-- R5. 内嵌浏览器由壳内 Chromium 承载，不再捆绑 Chrome for Testing 与 Vendored Steel;11 个 comate-browser 工具（open、snapshot、inspectElement、startNetworkCapture、stopNetworkCapture、authenticatedRequest、act、submit、extract、requestHandoff、close）能力对齐。
+- R5. 内嵌浏览器由壳内 Chromium 承载，不再捆绑 Chrome for Testing 与 Vendored Steel;12 个 comate-browser 工具（open、snapshot、findElements、getElementDetails、startNetworkCapture、stopNetworkCapture、authenticatedRequest、act、submit、extract、requestHandoff、close）能力对齐。
 - R6. 浏览器登录态（cookies、token、storage）持久化语义保持，authenticated-request broker 与 sanitized API recipe 链路在原生栈上不断。
 - R7. 观看与接管体验对齐：原生浏览器视图取代 iframe 查看器与 loopback 代理，requestHandoff 接管流程保持。
 - R8. 浏览器 CDP 目标可配置（壳内 Chromium 或外部回退路径），发布后不重发版即可回退。

@@ -9,7 +9,7 @@
  * flatten attach, page ops, network capture, fingerprint parity (KTD-12),
  * browser-context isolation (partition stand-in, KTD-10), cold-start retry,
  * target-destroyed detection, session-context export.
- * PART B (tool parity, appended by the U7 service work): the 11 comate-browser
+ * PART B (tool parity, appended by the U7 service work): the 12 comate-browser
  * tools driven through BrowserToolContext + BrowserService against the same
  * endpoint via COMATE_BROWSER_CDP_TARGET (AE2 mechanism, R8).
  *
@@ -501,7 +501,7 @@ try {
   });
 
   // -------------------------------------------------------------------------
-  // PART B — tool parity (AE2 mechanism): the 11 comate-browser tools driven
+  // PART B — tool parity (AE2 mechanism): the 12 comate-browser tools driven
   // through BrowserToolContext + BrowserService against this same Chromium as
   // an EXTERNAL CDP endpoint (COMATE_BROWSER_CDP_TARGET, R8). No release —
   // the tools keep serving off a plain debug-port Chromium.
@@ -558,15 +558,19 @@ try {
 
   let echoLinkRef = '';
   let nameFieldRef = '';
-  await check('B2 snapshot + inspectElement: refs resolve to live elements', async () => {
+  await check('B2 findElements + getElementDetails: fresh refs resolve to live elements', async () => {
     const out = resultJson(await ctxA.handleSnapshot({}));
     const model = out['model'] as PageModelShape;
-    const form = model.forms[0]!;
-    nameFieldRef = form.fields.find((f) => f.name === 'name')!.ref;
-    echoLinkRef = model.actions.find((a) => a.name === 'echo link')!.ref;
-    assert(nameFieldRef && echoLinkRef, `refs missing: ${JSON.stringify(model.forms)}`);
-    const inspected = resultJson(await ctxA.handleInspectElement({ ref: echoLinkRef }));
-    assert(inspected['ok'] === true, `inspectElement failed: ${JSON.stringify(inspected)}`);
+    const found = resultJson(await ctxA.handleFindElements({ text: 'echo link', role: 'link', exact: true }));
+    const matches = found['matches'] as Array<{ ref: string; name: string }>;
+    echoLinkRef = matches[0]?.ref ?? '';
+    assert(echoLinkRef, `link ref missing: ${JSON.stringify(model.actions)}`);
+    const inspected = resultJson(await ctxA.handleGetElementDetails({ ref: echoLinkRef }));
+    assert(inspected['ok'] === true, `getElementDetails failed: ${JSON.stringify(inspected)}`);
+    const fieldFound = resultJson(await ctxA.handleFindElements({ text: 'Name', role: 'textbox', exact: true }));
+    const fieldMatches = fieldFound['matches'] as Array<{ ref: string; name: string }>;
+    nameFieldRef = fieldMatches[0]?.ref ?? '';
+    assert(nameFieldRef, `name field ref missing: ${JSON.stringify(fieldMatches)}`);
   });
 
   await check('B3 act: fill/select/check through backend-node + in-page scripts', async () => {

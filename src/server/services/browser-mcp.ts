@@ -101,7 +101,7 @@ export { BROWSER_MCP_SERVER_KEY, BROWSER_TOOL_PREFIX };
 
 /**
  * browser-mcp — the first-class tool surface for the embedded controlled
- * browser (KTD-3). Eleven tools on the `comate-browser` SDK MCP server
+ * browser (KTD-3). Twelve tools on the `comate-browser` SDK MCP server
  * (tool names `mcp__comate-browser__*`), injected into GUI chat sessions
  * only (KTD-4 ③: bot sessions never get this server).
  *
@@ -482,6 +482,93 @@ function sanitizeInspectedElement(raw: InspectedElement): InspectedElement {
   };
 }
 
+interface FindElementsArgs {
+  text?: string;
+  regex?: string;
+  role?: string;
+  exact?: boolean;
+  limit?: number;
+}
+
+interface FoundElement {
+  ref: string;
+  kind: 'action' | 'field' | 'form';
+  role: string;
+  name: string;
+  context?: string;
+  submitSemantics?: boolean;
+}
+
+function parseFindRegex(source: string): RegExp {
+  const literal = /^\/(.*)\/([dgimsuvy]*)$/.exec(source);
+  const pattern = literal ? literal[1] : source;
+  const flags = literal ? literal[2].replace(/[gy]/g, '') : 'i';
+  // Native RegExp runs on the server event loop. Keep this query surface to a
+  // linear-time subset: no groups, repetition, lookarounds, or backreferences.
+  // Literal metacharacters remain available when escaped.
+  let escaped = false;
+  let inClass = false;
+  for (const char of pattern) {
+    if (escaped) {
+      if (/[1-9k]/.test(char)) throw new Error('backreferences are not supported');
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (char === '[') inClass = true;
+    else if (char === ']') inClass = false;
+    else if (!inClass && /[()*+?{}]/.test(char)) throw new Error('repetition and groups are not supported');
+  }
+  return new RegExp(pattern, flags);
+}
+
+function findElementsInModel(model: PageModel, args: FindElementsArgs, regex?: RegExp): FoundElement[] {
+  const candidates: FoundElement[] = [];
+  for (const form of model.forms) {
+    const formName = form.name ?? `form ${form.formIndex}`;
+    candidates.push({ ref: form.ref, kind: 'form', role: 'form', name: formName });
+    for (const field of form.fields) {
+      candidates.push({
+        ref: field.ref,
+        kind: 'field',
+        role: field.role,
+        name: field.label || field.name || field.type,
+        context: formName,
+        ...(field.submitSemantics ? { submitSemantics: true } : {}),
+      });
+    }
+  }
+  for (const action of model.actions) {
+    candidates.push({
+      ref: action.ref,
+      kind: 'action',
+      role: action.role,
+      name: action.name,
+      ...(model.title ? { context: model.title } : {}),
+    });
+  }
+
+  const text = args.text?.trim();
+  const normalizedText = text?.toLocaleLowerCase();
+  const role = args.role?.trim().toLowerCase();
+  return candidates.filter((candidate) => {
+    if (role && candidate.role.toLowerCase() !== role) return false;
+    const name = candidate.name.trim();
+    const haystack = [name, candidate.context].filter(Boolean).join('\n');
+    if (text) {
+      return args.exact === true
+        ? name.localeCompare(text, undefined, { sensitivity: 'accent' }) === 0
+        : haystack.toLocaleLowerCase().includes(normalizedText!);
+    }
+    return regex
+      ? regex.test(name) || (candidate.context !== undefined && regex.test(candidate.context))
+      : true;
+  });
+}
+
 function normalizedHeaders(raw: Record<string, unknown> | undefined): Record<string, string> {
   const output: Record<string, string> = {};
   for (const [name, value] of Object.entries(raw ?? {})) {
@@ -753,7 +840,11 @@ export class BrowserToolContext {
     return model;
   }
 
-  private resolveCurrentRef(ref: string, probe: RefBatchKey | null): RefEntry | CallToolResult {
+  private resolveCurrentRef(
+    ref: string,
+    probe: RefBatchKey | null,
+    epochPolicy: 'exact' | 'same-document' = 'exact',
+  ): RefEntry | CallToolResult {
     const entry = this.refTable.get(ref);
     if (!entry) {
       return toolError(
@@ -763,7 +854,17 @@ export class BrowserToolContext {
         'Call the snapshot tool to get a fresh page model with current refs.',
       );
     }
-    if (!probe || !this.refTable.isCurrent(ref, probe)) {
+    if (!probe) {
+      return toolError(
+        'browser_probe_unavailable',
+        'ref_resolve',
+        'The browser could not verify the current document identity for this element ref.',
+        'Call snapshot to rebuild the page model; if this persists, reopen the browser session.',
+      );
+    }
+    const documentChanged = entry.batch.docId !== probe.docId;
+    const epochChanged = entry.batch.domEpoch !== probe.domEpoch;
+    if (documentChanged || (epochPolicy === 'exact' && epochChanged)) {
       return toolError(
         'browser_ref_stale',
         'ref_resolve',
@@ -774,14 +875,58 @@ export class BrowserToolContext {
     return entry;
   }
 
-  // -- selected element inspection -----------------------------------------
+  // -- element discovery + selected element details ------------------------
 
-  async handleInspectElement(args: { ref: string }): Promise<CallToolResult> {
+  async handleFindElements(args: FindElementsArgs): Promise<CallToolResult> {
+    try {
+      const text = args.text?.trim();
+      const regex = args.regex?.trim();
+      const role = args.role?.trim();
+      if ((!text && !regex && !role) || (text && regex)) {
+        return toolError(
+          'browser_find_invalid_query',
+          'distill',
+          'findElements requires text, regex, or role; text and regex cannot be combined.',
+          'Provide text or regex, optionally narrowed by role.',
+        );
+      }
+      let compiledRegex: RegExp | undefined;
+      try {
+        compiledRegex = regex ? parseFindRegex(regex) : undefined;
+      } catch {
+        return toolError(
+          'browser_find_invalid_query',
+          'distill',
+          `Invalid regular expression "${regex ?? ''}".`,
+          'Provide a valid JavaScript regular expression, optionally in /pattern/flags form.',
+        );
+      }
+      const model = await this.distill(await this.ensurePage());
+      const matches = findElementsInModel(model, { ...args, text, regex, role }, compiledRegex);
+      const limit = Math.min(Math.max(Math.floor(args.limit ?? 20), 1), 100);
+      return toolJson({
+        ok: true,
+        url: model.url,
+        title: model.title,
+        matches: matches.slice(0, limit),
+        total: matches.length,
+        truncated: matches.length > limit,
+      });
+    } catch (err) {
+      return this.toErrorResult(err, 'distill');
+    }
+  }
+
+  async handleGetElementDetails(args: { ref: string }): Promise<CallToolResult> {
     const gate = this.controlGate('control');
     if (gate) return gate;
     try {
       const page = await this.ensurePage();
-      const resolved = this.resolveCurrentRef(args.ref, await this.readProbe(page));
+      const known = this.refTable.get(args.ref);
+      const epochPolicy = known?.kind === 'action' && typeof known.backendNodeId === 'number'
+        ? 'same-document'
+        : 'exact';
+      const resolved = this.resolveCurrentRef(args.ref, await this.readProbe(page), epochPolicy);
       if (!isRefEntry(resolved)) return resolved;
       let raw: InspectedElement | null;
       if (resolved.kind === 'action' && typeof resolved.backendNodeId === 'number') {
@@ -1067,6 +1212,33 @@ export class BrowserToolContext {
           `Ref "${args.ref}" (${entry.role} "${entry.name}") submits a form, so it requires user confirmation.`,
           'Call the submit tool with this ref (or its form ref) instead — it will ask the user to confirm.',
         );
+      }
+      if (args.action === 'click' && entry.kind === 'action') {
+        if (!page.inspectBackendNode || typeof entry.backendNodeId !== 'number') {
+          return toolError(
+            'browser_ref_unresolvable',
+            'ref_resolve',
+            `Action ref "${args.ref}" cannot be checked for submit behavior by this browser runtime.`,
+            'Call snapshot for a fresh model, or use the form field ref when one is available.',
+          );
+        }
+        const details = await page.inspectBackendNode(entry.backendNodeId, buildInspectElementFunction());
+        if (!details) {
+          return toolError(
+            'browser_ref_unresolvable',
+            'ref_resolve',
+            `Action ref "${args.ref}" no longer resolves to a live element.`,
+            'Call snapshot for a fresh page model.',
+          );
+        }
+        if (details.actions.includes('submit')) {
+          return toolError(
+            'browser_use_submit_tool',
+            'ref_resolve',
+            `Ref "${args.ref}" (${entry.role} "${entry.name}") submits a form, so it requires user confirmation.`,
+            'Call snapshot or findElements for the owning form ref, then pass that form ref to submit.',
+          );
+        }
       }
       if (entry.kind === 'action' && args.action !== 'click') {
         return toolError(
@@ -1800,13 +1972,30 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     { annotations: { readOnlyHint: true, openWorldHint: true } },
   );
 
-  const inspectElementDef = tool(
-    'inspectElement',
-    'Inspect one current element ref and return a bounded safe summary: tag, role/name, safe ' +
-      'attributes, nearby text, limited descendants, owning-form structure, and possible actions. ' +
-      'Only refs from the latest page model are accepted; selectors and raw HTML are never returned.',
-    { ref: z.string().describe('Element ref from the latest open/snapshot/act model') },
-    async (args) => ctx.handleInspectElement(args),
+  const findElementsDef = tool(
+    'findElements',
+    'Refresh the current accessibility-based page model and find elements by text or regular ' +
+      'expression, optionally narrowed by role. Returns fresh refs that can be passed to ' +
+      'getElementDetails, act, or submit; arbitrary selectors and raw HTML are never accepted.',
+    {
+      text: z.string().max(300).optional().describe('Case-insensitive text to find in element names or nearby context'),
+      regex: z.string().max(200).optional().describe('Safe JavaScript regex subset without groups, repetition, lookarounds, or backreferences; optionally /pattern/flags; cannot be combined with text'),
+      role: z.string().max(80).optional().describe('Exact accessibility role filter, such as button or link'),
+      exact: z.boolean().optional().describe('With text, require an exact element-name match instead of a substring match'),
+      limit: z.number().int().min(1).max(100).optional().describe('Maximum matches to return (default 20)'),
+    },
+    async (args) => ctx.handleFindElements(args),
+    { annotations: { readOnlyHint: true, openWorldHint: true } },
+  );
+
+  const getElementDetailsDef = tool(
+    'getElementDetails',
+    'Return bounded details for one element ref already returned by open, snapshot, findElements, ' +
+      'or act: tag, role/name, safe attributes, nearby text, limited descendants, owning-form ' +
+      'structure, and possible actions. This tool does not search for elements; selectors and raw ' +
+      'HTML are never accepted.',
+    { ref: z.string().describe('Element ref from the latest open/snapshot/findElements/act model') },
+    async (args) => ctx.handleGetElementDetails(args),
     { annotations: { readOnlyHint: true, openWorldHint: true } },
   );
 
@@ -1944,7 +2133,8 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
   return [
     openDef,
     snapshotDef,
-    inspectElementDef,
+    findElementsDef,
+    getElementDetailsDef,
     startNetworkCaptureDef,
     stopNetworkCaptureDef,
     authenticatedRequestDef,

@@ -194,7 +194,7 @@ The browser MCP gains four tools; the existing `act` tool remains the action exe
 
 | Tool | Responsibility | Model-visible result |
 |---|---|---|
-| `inspectElement` | Resolve one current element ref and return its bounded local context, form association, and action clues. | Positive-shape element details with sensitive values omitted. |
+| `getElementDetails` | Resolve one current element ref and return its bounded local context, form association, and action clues. | Positive-shape element details with sensitive values omitted. |
 | `startNetworkCapture` | Open one action-scoped network admission window for the current browser task. | Opaque capture ID and lifecycle state. |
 | `stopNetworkCapture` | Close admission, drain admitted request chains to a deadline, rank likely API calls, and sanitize them. | Versioned candidate recipes, bounded samples, and explicit omission/truncation reasons. |
 | `authenticatedRequest` | Validate or execute one normalized recipe through server-held site authentication. | Bounded sanitized response, approval state, audit ID, and typed recovery information. |
@@ -216,7 +216,7 @@ Define the wire-only Zod schemas in a small workspace package consumed by the se
 
 #### KTD-2: Selected-element inspection extends the existing page-model ref discipline
 
-`inspectElement` accepts only a ref from the latest distilled page model and resolves it through the existing current-ref/epoch checks. The result is a bounded positive shape: tag, role/name, safe attributes, nearby text and descendants, owning form summary, and candidate actions. It does not accept arbitrary selectors or return `outerHTML`, scripts, hidden credential fields, or the full document. Any page mutation that invalidates the ref produces the existing stale-ref recovery path.
+`getElementDetails` accepts only a ref from the latest distilled page model and resolves it within the current document. The result is a bounded positive shape: tag, role/name, safe attributes, nearby text and descendants, owning form summary, and candidate actions. It does not search for elements, accept arbitrary selectors, or return `outerHTML`, scripts, hidden credential fields, or the full document. `findElements` refreshes the accessibility-based page model and returns fresh refs filtered by text, regular expression, and role.
 
 #### KTD-3: Network capture is passive, action-scoped, session-aware, and hop-oriented
 
@@ -479,7 +479,7 @@ MCP results include a short agent recovery instruction. CLI JSON mode preserves 
 **Implementation notes:**
 
 - Add bounded local element drill-down through the existing RefTable and page epoch; keep arbitrary selectors and raw HTML out of the contract.
-- Register `inspectElement`, `startNetworkCapture`, and `stopNetworkCapture` with honest read/open-world annotations and stable recovery guidance.
+- Register `findElements`, `getElementDetails`, `startNetworkCapture`, and `stopNetworkCapture` with honest read/open-world annotations and stable recovery guidance.
 - Associate capture state with the Comate session, not the transient MCP transport; abort it through existing browser close/service teardown hooks.
 - Rank likely REST/GraphQL API calls using positive metadata such as resource type, content type, initiator, URL shape, and bounded structured responses; retain lower-ranked candidates without claiming certainty.
 

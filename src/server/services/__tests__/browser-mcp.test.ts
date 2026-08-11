@@ -48,7 +48,7 @@ interface FakePageOptions {
   extraction: RawPageExtraction;
   postSubmitExtraction?: RawPageExtraction;
   axNodes?: RawAxNode[];
-  probe?: { docId: string; domEpoch: number };
+  probe?: { docId: string; domEpoch: number } | null;
   submitSnapshots?: Array<SubmitSnapshot | null>;
   submitDispatchError?: Error;
   extractResults?: Record<string, unknown>;
@@ -102,10 +102,10 @@ class FakePage implements BrowserCdpSession {
     this.submitSnapshots = [...(options.submitSnapshots ?? [])];
   }
 
-  get probe(): { docId: string; domEpoch: number } {
-    return (
-      this.options.probe ?? { docId: this.options.extraction.docId, domEpoch: this.options.extraction.domEpoch }
-    );
+  get probe(): { docId: string; domEpoch: number } | null {
+    return this.options.probe === undefined
+      ? { docId: this.options.extraction.docId, domEpoch: this.options.extraction.domEpoch }
+      : this.options.probe;
   }
 
   async evaluate<T>(expression: string): Promise<T> {
@@ -378,7 +378,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.deepStrictEqual(
       [...harness.tools.keys()].sort(),
-      ['act', 'authenticatedRequest', 'close', 'extract', 'inspectElement', 'open', 'requestHandoff', 'snapshot', 'startNetworkCapture', 'stopNetworkCapture', 'submit'],
+      ['act', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getElementDetails', 'open', 'requestHandoff', 'snapshot', 'startNetworkCapture', 'stopNetworkCapture', 'submit'],
     );
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
@@ -387,7 +387,8 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.strictEqual(harness.tools.get('snapshot')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('extract')?.annotations?.readOnlyHint, true);
-    assert.strictEqual(harness.tools.get('inspectElement')?.annotations?.readOnlyHint, true);
+    assert.strictEqual(harness.tools.get('findElements')?.annotations?.readOnlyHint, true);
+    assert.strictEqual(harness.tools.get('getElementDetails')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('startNetworkCapture')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('stopNetworkCapture')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('submit')?.annotations?.destructiveHint, true);
@@ -403,7 +404,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const defs = buildBrowserToolDefinitions({ sessionId: 's', workspaceId: 'w' });
     assert.deepEqual(
       defs.map((d) => d.name),
-      ['open', 'snapshot', 'inspectElement', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'act', 'submit', 'extract', 'requestHandoff', 'close'],
+      ['open', 'snapshot', 'findElements', 'getElementDetails', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'act', 'submit', 'extract', 'requestHandoff', 'close'],
     );
     assert.strictEqual(BROWSER_TOOL_PREFIX, 'mcp__comate-browser__');
     const authenticated = defs.find((definition) => definition.name === 'authenticatedRequest');
@@ -477,6 +478,63 @@ describe('browser-mcp open/snapshot', () => {
     assert.ok(image.data.length > 0, 'bare base64 payload');
     assert.strictEqual(harness.ctx.page.screenshots, 1);
   });
+
+  it('findElements refreshes the model and filters refs by text and role', async () => {
+    harness = await makeHarness({
+      page: new FakePage({
+        extraction: makeExtraction(),
+        axNodes: [
+          { nodeId: '1', role: { value: 'button' }, name: { value: 'Open creator assistant' }, backendDOMNodeId: 77 },
+          { nodeId: '2', role: { value: 'link' }, name: { value: 'Creator help' }, backendDOMNodeId: 78 },
+        ],
+      }),
+    });
+    const result = await harness.call('findElements', {
+      text: 'creator assistant',
+      role: 'button',
+      exact: false,
+      limit: 5,
+    });
+    assert.strictEqual(result.isError, undefined);
+    const payload = resultPayload(result) as {
+      matches: Array<{ ref: string; kind: string; role: string; name: string }>;
+      total: number;
+    };
+    assert.strictEqual(payload.total, 1);
+    assert.deepStrictEqual(
+      payload.matches.map(({ kind, role, name }) => ({ kind, role, name })),
+      [{ kind: 'action', role: 'button', name: 'Open creator assistant' }],
+    );
+    assert.match(payload.matches[0].ref, /^e\d+-[a-f0-9]{16}$/);
+
+    const fieldResult = await harness.call('findElements', {
+      text: 'Pay now',
+      role: 'button',
+      exact: true,
+    });
+    const fieldPayload = resultPayload(fieldResult) as {
+      matches: Array<{ kind: string; submitSemantics?: boolean }>;
+    };
+    assert.strictEqual(fieldPayload.matches.length, 1);
+    assert.strictEqual(fieldPayload.matches[0].kind, 'field');
+    assert.strictEqual(fieldPayload.matches[0].submitSemantics, true);
+
+    const regexResult = await harness.call('findElements', {
+      regex: '/^Creator help$/i',
+      role: 'link',
+    });
+    const regexPayload = resultPayload(regexResult) as { matches: Array<{ name: string }> };
+    assert.deepStrictEqual(regexPayload.matches.map(({ name }) => name), ['Creator help']);
+  });
+
+  it('findElements rejects ambiguous or empty queries', async () => {
+    harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+    for (const args of [{}, { text: 'pay', regex: '/pay/i' }, { regex: '[' }, { regex: '/^(a+)+$/' }]) {
+      const result = await harness.call('findElements', args);
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual((resultPayload(result).error as { code: string }).code, 'browser_find_invalid_query');
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -527,6 +585,7 @@ describe('browser-mcp act', () => {
       axNodes: [
         { nodeId: '1', role: { value: 'button' }, name: { value: 'Apply coupon' }, backendDOMNodeId: 77 },
       ],
+      inspectResult: { tag: 'button', attributes: {}, descendants: [], descendantsTruncated: false, actions: ['click'] },
     });
     harness = await makeHarness({ page });
     const result = await harness.call('open', { url: 'https://shop.example/checkout' });
@@ -565,6 +624,23 @@ describe('browser-mcp act', () => {
     assert.strictEqual(error.code, 'browser_use_submit_tool');
     assert.ok(error.resolution.includes('submit'));
     assert.strictEqual(harness.ctx.page.actScripts.length, 0, 'submit control never clicked via act');
+  });
+
+  it('routes AX action refs that resolve to submit controls to the submit tool', async () => {
+    const page = new FakePage({
+      extraction: makeExtraction(),
+      axNodes: [
+        { nodeId: '1', role: { value: 'button' }, name: { value: 'Pay now' }, backendDOMNodeId: 77 },
+      ],
+      inspectResult: { tag: 'button', attributes: {}, descendants: [], descendantsTruncated: false, actions: ['click', 'submit'] },
+    });
+    harness = await makeHarness({ page });
+    const opened = await harness.call('open', { url: 'https://shop.example/checkout' });
+    const actionRef = (resultPayload(opened).model as { actions: Array<{ ref: string }> }).actions[0].ref;
+    const result = await harness.call('act', { ref: actionRef, action: 'click' });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual((resultPayload(result).error as { code: string }).code, 'browser_use_submit_tool');
+    assert.deepStrictEqual(page.clickedBackendNodes, [], 'submit action never clicked via act');
   });
 
   it('blocks act while the user is in control (recoverable)', async () => {
@@ -1066,27 +1142,66 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
     const opened = await first.find((definition) => definition.name === 'open')!.handler({ url: 'https://shop.example/' }, {});
     const fieldRef = (resultPayload(opened).model as { forms: Array<{ fields: Array<{ ref: string }> }> }).forms[0].fields[0].ref;
     const second = buildBrowserToolDefinitions(deps);
-    const inspect = second.find((definition) => definition.name === 'inspectElement')!;
-    const inspected = await inspect.handler({ ref: fieldRef }, {});
+    const details = second.find((definition) => definition.name === 'getElementDetails')!;
+    const inspected = await details.handler({ ref: fieldRef }, {});
     const serialized = JSON.stringify(resultPayload(inspected));
     assert.match(serialized, /Email address/);
     assert.doesNotMatch(serialized, /must-not-pass|onclick|steal/);
-    const forged = resultPayload(await inspect.handler({ ref: 'e999-forged' }, {})).error as { code: string };
+    const forged = resultPayload(await details.handler({ ref: 'e999-forged' }, {})).error as { code: string };
     assert.equal(forged.code, 'browser_ref_unknown');
+
+    const changedPage = new FakePage({
+      extraction: makeExtraction(), probe: { docId: 'doc-1', domEpoch: 1 },
+      axNodes: [
+        { nodeId: '1', role: { value: 'button' }, name: { value: 'Open assistant' }, backendDOMNodeId: 77 },
+      ],
+      inspectResult: { tag: 'input', attributes: {}, descendants: [], descendantsTruncated: false, actions: [] },
+    });
+    const changedDeps: BrowserMcpDeps = {
+      sessionId: 'changed-session', workspaceId: 'w', browserService: service,
+      connectPage: async () => changedPage, pageRegistry: new Map(), contextRegistry, settleMs: 0,
+    };
+    const changedDefs = buildBrowserToolDefinitions(changedDeps);
+    const changedOpen = await changedDefs.find((definition) => definition.name === 'open')!.handler({ url: 'https://shop.example/' }, {});
+    const changedModel = resultPayload(changedOpen).model as {
+      forms: Array<{ fields: Array<{ ref: string }> }>;
+      actions: Array<{ ref: string }>;
+    };
+    const changedField = await changedDefs.find((definition) => definition.name === 'getElementDetails')!
+      .handler({ ref: changedModel.forms[0].fields[0].ref }, {});
+    assert.strictEqual(
+      (resultPayload(changedField).error as { code: string }).code,
+      'browser_ref_stale',
+      'XPath-backed field refs remain strict across DOM mutations',
+    );
+    const changedAction = await changedDefs.find((definition) => definition.name === 'getElementDetails')!
+      .handler({ ref: changedModel.actions[0].ref }, {});
+    assert.strictEqual(changedAction.isError, undefined, 'stable backend-node refs survive same-document mutations');
 
     const stalePage = new FakePage({
       extraction: makeExtraction(), probe: { docId: 'other-doc', domEpoch: 1 },
       inspectResult: { tag: 'input', attributes: {}, descendants: [], descendantsTruncated: false, actions: [] },
     });
-    const staleDeps: BrowserMcpDeps = {
-      sessionId: 'stale-session', workspaceId: 'w', browserService: service,
-      connectPage: async () => stalePage, pageRegistry: new Map(), contextRegistry, settleMs: 0,
-    };
-    const staleDefs = buildBrowserToolDefinitions(staleDeps);
+    const staleDefs = buildBrowserToolDefinitions({
+      ...changedDeps,
+      sessionId: 'stale-session',
+      connectPage: async () => stalePage,
+    });
     const staleOpen = await staleDefs.find((definition) => definition.name === 'open')!.handler({ url: 'https://shop.example/' }, {});
     const staleRef = (resultPayload(staleOpen).model as { forms: Array<{ fields: Array<{ ref: string }> }> }).forms[0].fields[0].ref;
-    const stale = resultPayload(await staleDefs.find((definition) => definition.name === 'inspectElement')!.handler({ ref: staleRef }, {})).error as { code: string };
+    const stale = resultPayload(await staleDefs.find((definition) => definition.name === 'getElementDetails')!.handler({ ref: staleRef }, {})).error as { code: string };
     assert.equal(stale.code, 'browser_ref_stale');
+
+    const noProbePage = new FakePage({ extraction: makeExtraction(), probe: null });
+    const noProbeDefs = buildBrowserToolDefinitions({
+      ...changedDeps,
+      sessionId: 'no-probe-session',
+      connectPage: async () => noProbePage,
+    });
+    const noProbeOpen = await noProbeDefs.find((definition) => definition.name === 'open')!.handler({ url: 'https://shop.example/' }, {});
+    const noProbeRef = (resultPayload(noProbeOpen).model as { forms: Array<{ fields: Array<{ ref: string }> }> }).forms[0].fields[0].ref;
+    const unavailable = resultPayload(await noProbeDefs.find((definition) => definition.name === 'getElementDetails')!.handler({ ref: noProbeRef }, {})).error as { code: string };
+    assert.equal(unavailable.code, 'browser_probe_unavailable');
   });
 
   it('preserves capture across stateless builds, ranks APIs, and removes credential sentinels', async () => {

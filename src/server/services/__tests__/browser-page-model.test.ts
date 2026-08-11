@@ -276,12 +276,39 @@ describe('browser-page-model distillation (KTD-3)', () => {
     assert.strictEqual(refTable.get(actionRef)?.backendNodeId, 22);
     assert.strictEqual(refTable.get(fieldRef)?.submitSemantics, false);
     assert.strictEqual(refTable.get(formRef)?.formIndex, 0);
+    assert.match(fieldRef, /^e\d+-[a-f0-9]{16}$/, 'refs include a collision-resistant batch nonce');
 
-    assert.strictEqual(refTable.isCurrent(fieldRef, { docId: 'doc-1', domEpoch: 0 }), true);
+    const nextModel = await distillPageModel(fakeSource(makeExtraction(), makeAxNodes()), refTable);
+    assert.notStrictEqual(
+      nextModel.forms[0].fields[0].ref,
+      fieldRef,
+      'a new distillation batch cannot alias the previous batch ref',
+    );
+    assert.strictEqual(refTable.get(fieldRef), undefined, 'the previous batch ref is removed');
+
+    const currentFieldRef = nextModel.forms[0].fields[0].ref;
+    assert.strictEqual(refTable.isCurrent(currentFieldRef, { docId: 'doc-1', domEpoch: 0 }), true);
     // DOM mutation bumps the epoch: the whole batch is dead.
-    assert.strictEqual(refTable.isCurrent(fieldRef, { docId: 'doc-1', domEpoch: 1 }), false);
+    assert.strictEqual(refTable.isCurrent(currentFieldRef, { docId: 'doc-1', domEpoch: 1 }), false);
     // Navigation changes the document: the whole batch is dead.
-    assert.strictEqual(refTable.isCurrent(fieldRef, { docId: 'doc-2', domEpoch: 0 }), false);
+    assert.strictEqual(refTable.isCurrent(currentFieldRef, { docId: 'doc-2', domEpoch: 0 }), false);
+  });
+
+  it('normalizes common implicit and explicit field roles', async () => {
+    const extraction = makeExtraction();
+    const base = extraction.forms[0].fields[1];
+    extraction.forms[0].fields = [
+      { ...base, fieldIndex: 0, type: 'number', label: 'Quantity' },
+      { ...base, fieldIndex: 1, type: 'range', label: 'Volume' },
+      { ...base, fieldIndex: 2, type: 'search', label: 'Search' },
+      { ...base, fieldIndex: 3, tag: 'select', type: 'select', multiple: true, label: 'Tags' },
+      { ...base, fieldIndex: 4, type: 'checkbox', role: 'switch', label: 'Enabled' },
+    ];
+    const model = await distillPageModel(fakeSource(extraction, []), new RefTable());
+    assert.deepStrictEqual(
+      model.forms[0].fields.map((field) => field.role),
+      ['spinbutton', 'slider', 'searchbox', 'listbox', 'switch'],
+    );
   });
 
   it('re-distillation replaces the batch wholesale', async () => {
