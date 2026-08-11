@@ -5,6 +5,7 @@ import { WebSocketServer } from 'ws';
 import {
   CdpConnection,
   CdpNetworkCaptureTransport,
+  connectShellPage,
   retryDuringColdStart,
 } from '../browser-cdp.js';
 import type { CdpEventEnvelope } from '../browser-network-capture.js';
@@ -44,6 +45,70 @@ describe('CdpConnection event envelopes', () => {
     assert.equal(calls, 0);
     connection.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+});
+
+describe('BrowserCdpSession lifecycle', () => {
+  it('closes the page session when its flattened target detaches', async () => {
+    const server = new WebSocketServer({ port: 0 });
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+
+    const peerPromise = new Promise<import('ws').WebSocket>((resolve) => {
+      server.once('connection', (peer) => {
+        peer.on('message', (raw) => {
+          const command = JSON.parse(String(raw)) as { id: number; method: string };
+          const result = command.method === 'Target.attachToTarget'
+            ? { sessionId: 'page-session' }
+            : {};
+          peer.send(JSON.stringify({ id: command.id, result }));
+        });
+        resolve(peer);
+      });
+    });
+
+    const page = await connectShellPage({
+      port: address.port,
+      browserWsUrl: `ws://127.0.0.1:${address.port}`,
+      targetId: 'page-target',
+      fingerprint: false,
+      connectReadyTimeoutMs: 0,
+    });
+    const peer = await peerPromise;
+    let closeCalls = 0;
+    let closeTimeout: NodeJS.Timeout | undefined;
+    const closed = new Promise<void>((resolve) => {
+      page.onClose(() => {
+        closeCalls += 1;
+        resolve();
+      });
+    });
+    const closedOrTimedOut = Promise.race([
+      closed,
+      new Promise<never>((_resolve, reject) => {
+        closeTimeout = setTimeout(
+          () => reject(new Error('target detach did not close the page session')),
+          1_000,
+        );
+      }),
+    ]);
+
+    try {
+      peer.send(JSON.stringify({
+        method: 'Target.detachedFromTarget',
+        params: { sessionId: 'page-session', targetId: 'page-target' },
+      }));
+      await closedOrTimedOut;
+
+      assert.equal(page.closed, true);
+      assert.equal(closeCalls, 1);
+    } finally {
+      if (closeTimeout) clearTimeout(closeTimeout);
+      page.close();
+      assert.equal(closeCalls, 1, 'target detach and connection close notify once');
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
 
