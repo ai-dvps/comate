@@ -69,7 +69,10 @@ import {
   type RefBatchKey,
   type RefEntry,
   type ElementFingerprint,
+  type ElementProvenance,
+  type InteractionClass,
   sameElementFingerprint,
+  sameBrowserDocumentIdentity,
   buildElementFingerprintFunction,
   type SubmitSnapshot,
 } from './browser-page-model.js';
@@ -222,8 +225,7 @@ export interface BrowserMcpDeps {
 }
 
 // ---------------------------------------------------------------------------
-// In-page action scripts (XPath-ref resolution; backend-node clicks go
-// through DOM.resolveNode in browser-cdp).
+// In-page helpers bound to an already resolved backend-node object.
 // ---------------------------------------------------------------------------
 
 function buildBackendActFunction(action: string, value: string | undefined): string {
@@ -503,8 +505,34 @@ interface FoundElement {
   name: string;
   context?: string;
   submitSemantics?: boolean;
-  provenance?: import('./browser-page-model.js').ElementProvenance;
-  interactionClass?: import('./browser-page-model.js').InteractionClass;
+  provenance?: ElementProvenance;
+  interactionClass?: InteractionClass;
+}
+
+function unknownMutationReceipt(
+  kind: 'activation' | 'field',
+  changed = false,
+): BrowserOperationReceipt {
+  return {
+    outcome: 'outcome_unknown',
+    dispatchState: 'dispatched',
+    verified: false,
+    retrySafe: false,
+    reason: 'dispatch_failed',
+    delta: { kind, changed },
+  };
+}
+
+function verificationMismatchReceipt(changed: boolean): BrowserOperationReceipt {
+  return {
+    outcome: 'outcome_unknown',
+    dispatchState: 'dispatched',
+    verified: false,
+    retrySafe: false,
+    matchesRequested: false,
+    reason: 'verification_mismatch',
+    delta: { kind: 'field', changed },
+  };
 }
 
 async function forEachWithConcurrency<T>(
@@ -927,13 +955,13 @@ export class BrowserToolContext {
   }): Promise<CallToolResult> {
     try {
       const page = await this.ensurePage();
-      const probe = args.offset && args.offset > 0 ? this.readDocumentIdentity(page) : null;
+      const documentIdentity = args.offset && args.offset > 0 ? this.readDocumentIdentity(page) : null;
       const cachedBatch = this.refTable.batchKey;
       const canReuseCache =
         this.pageStateCache !== null &&
-        probe !== null &&
+        documentIdentity !== null &&
         cachedBatch !== null &&
-        JSON.stringify(cachedBatch) === JSON.stringify(probe);
+        sameBrowserDocumentIdentity(cachedBatch, documentIdentity);
       const model = canReuseCache
         ? this.pageStateCache!
         : await this.distill(page, {
@@ -1012,7 +1040,6 @@ export class BrowserToolContext {
       const page = await this.ensurePage();
       const resolved = await this.resolveCurrentRef(page, args.ref);
       if (!isRefEntry(resolved)) return resolved;
-      let raw: InspectedElement | null;
       if (!page.inspectBackendNode) {
         return toolError(
           'browser_ref_unresolvable', 'ref_resolve',
@@ -1020,7 +1047,7 @@ export class BrowserToolContext {
           'Reopen the browser session and refresh the page model.',
         );
       }
-      raw = await page.inspectBackendNode(resolved.backendNodeId, buildInspectElementFunction());
+      const raw = await page.inspectBackendNode(resolved.backendNodeId, buildInspectElementFunction());
       if (!raw) {
         return toolError(
           'browser_ref_unresolvable',
@@ -1346,10 +1373,7 @@ export class BrowserToolContext {
 
       let receipt: BrowserOperationReceipt;
       if (args.action === 'click') {
-        receipt = await page.clickBackendNode(entry.backendNodeId) ?? {
-          outcome: 'outcome_unknown', dispatchState: 'dispatched', verified: false,
-          retrySafe: false, reason: 'dispatch_failed', delta: { kind: 'activation', changed: false },
-        };
+        receipt = await page.clickBackendNode(entry.backendNodeId);
       } else if (args.action === 'fill') {
         if (!page.fillBackendNode) {
           return toolError(
@@ -1378,10 +1402,7 @@ export class BrowserToolContext {
             retrySafe: true, matchesRequested: true, delta: { kind: 'none', changed: false },
           };
         } else {
-          receipt = await page.clickBackendNode(entry.backendNodeId) ?? {
-            outcome: 'outcome_unknown', dispatchState: 'dispatched', verified: false,
-            retrySafe: false, reason: 'dispatch_failed', delta: { kind: 'field', changed: false },
-          };
+          receipt = await page.clickBackendNode(entry.backendNodeId);
           if (receipt.outcome === 'dispatched_verified') {
             try {
               const after = await page.callBackendNode<{ ok: boolean; checked?: boolean }>(
@@ -1390,17 +1411,9 @@ export class BrowserToolContext {
               const matches = after?.ok === true && after.checked === desired;
               receipt = matches
                 ? { ...receipt, matchesRequested: true, delta: { kind: 'field', changed: true } }
-                : {
-                    outcome: 'outcome_unknown', dispatchState: 'dispatched', verified: false,
-                    retrySafe: false, matchesRequested: false, reason: 'verification_mismatch',
-                    delta: { kind: 'field', changed: true },
-                  };
+                : verificationMismatchReceipt(true);
             } catch {
-              receipt = {
-                outcome: 'outcome_unknown', dispatchState: 'dispatched', verified: false,
-                retrySafe: false, matchesRequested: false, reason: 'verification_mismatch',
-                delta: { kind: 'field', changed: true },
-              };
+              receipt = verificationMismatchReceipt(true);
             }
           }
         }
@@ -1420,10 +1433,7 @@ export class BrowserToolContext {
             entry.backendNodeId, buildBackendActFunction(args.action, args.value),
           );
         } catch {
-          uncertainReceipt = {
-            outcome: 'outcome_unknown', dispatchState: 'dispatched', verified: false,
-            retrySafe: false, reason: 'dispatch_failed', delta: { kind: 'field', changed: false },
-          };
+          uncertainReceipt = unknownMutationReceipt('field');
         }
         if (uncertainReceipt) {
           // A select Runtime command may have delivered input/change before

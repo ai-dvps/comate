@@ -135,13 +135,6 @@ function makeAxNodes(): RawAxNode[] {
 
 function fakeSource(extraction: RawPageExtraction, axNodes: RawAxNode[]): PageModelSource {
   return {
-    evaluate: async <T>(expression: string): Promise<T> => {
-      assert.ok(
-        expression.includes('__comateProbe'),
-        'distiller must evaluate the extractor script',
-      );
-      return extraction as T;
-    },
     getFullAXTree: async () => axNodes,
     getDocumentIdentity: () => ({
       targetId: 'target-1', sessionId: 'session-1', frameId: 'frame-1', loaderId: extraction.docId, generation: 0,
@@ -480,7 +473,6 @@ describe('browser-page-model distillation (KTD-3)', () => {
   it('maps the exact extracted objects without an XPath identity re-query', async () => {
     const extraction = makeExtraction();
     const source = {
-      evaluate: async <T>(): Promise<T> => extraction as T,
       getFullAXTree: async () => [],
       getDocumentIdentity: () => ({
         targetId: 'target-1', sessionId: 'session-1', frameId: 'frame-1', loaderId: 'doc-1', generation: 0,

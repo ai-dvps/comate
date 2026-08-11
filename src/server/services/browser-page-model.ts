@@ -169,6 +169,13 @@ export interface BrowserDocumentIdentity {
   generation: number;
 }
 
+export function sameBrowserDocumentIdentity(
+  left: BrowserDocumentIdentity,
+  right: BrowserDocumentIdentity,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 export type RefBatchKey = BrowserDocumentIdentity;
 
 export type RefKind = 'form' | 'field' | 'action';
@@ -532,6 +539,8 @@ export interface RawPageExtraction {
   sourceInventory?: { formCount: number; fieldCount: number };
 }
 
+const HUMAN_ONLY_PATTERN = /captcha|oauth|authori[sz](e|ation)|consent|one[- ]?time|otp|payment|card|cvv|cvc/i;
+
 export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHARS): string {
   return `(() => {
   ${IN_PAGE_SENSITIVE_FN}
@@ -847,7 +856,7 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
       type: ctag === 'input' ? fieldType(candidate, ctag) : ctag,
       role: (candidate.getAttribute('role') || '').toLowerCase().slice(0, 80) || (ctag === 'a' ? 'link' : ctag === 'button' ? 'button' : 'generic'),
       xpath: getXPath(candidate),
-      humanOnly: /captcha|oauth|authori[sz](e|ation)|consent|one[- ]?time|otp|payment|card|cvv|cvc/i.test(cname)
+      humanOnly: new RegExp(${JSON.stringify(HUMAN_ONLY_PATTERN.source)}, 'i').test(cname)
     };
     if (replaceIndex >= 0) {
       domCandidates[replaceIndex] = candidateRecord;
@@ -1105,7 +1114,6 @@ export function extractAlertsFromAxTree(nodes: RawAxNode[], maxAlerts = 5): stri
 
 /** CDP surface the distiller needs (real: browser-cdp; tests: fake). */
 export interface PageModelSource {
-  evaluate<T>(expression: string): Promise<T>;
   getFullAXTree(): Promise<RawAxNode[]>;
   getDocumentIdentity?(): BrowserDocumentIdentity | null;
   extractPageModel?(expression: string): Promise<PageExtractionBundle>;
@@ -1121,8 +1129,6 @@ const VALUE_CAP = 80;
 const PAGE_URL_CAP = 2048;
 const PAGE_TITLE_CAP = 300;
 const FORM_NAME_CAP = 160;
-const HUMAN_ONLY_PATTERN = /captcha|oauth|authori[sz](e|ation)|consent|one[- ]?time|otp|payment|card|cvv|cvc/i;
-
 function capPageString(value: string, limit: number): string {
   return value.slice(0, limit);
 }
@@ -1133,6 +1139,20 @@ function classifyPageType(extraction: RawPageExtraction, formCount: number): Pag
   if (extraction.contentText.length > 1500 && extraction.stats.linkCount < 30) return 'article';
   if (extraction.stats.linkCount > 50) return 'listing';
   return 'unknown';
+}
+
+function classifyFieldInteraction(
+  rawField: RawExtractedField,
+  tag: string,
+  type: string,
+  submitSemantics: boolean,
+  editable: boolean,
+): InteractionClass {
+  const identity = [rawField.name, rawField.id, rawField.label].filter(Boolean).join(' ');
+  if (rawField.sensitive || isSensitiveField(rawField) || HUMAN_ONLY_PATTERN.test(identity)) return 'human-only';
+  if (tag === 'input' && type === 'file') return 'file-egress';
+  if (submitSemantics) return 'html-submit';
+  return editable ? 'edit' : 'ambiguous-activation';
 }
 
 /**
@@ -1152,16 +1172,13 @@ function mapRawField(
   const fieldIsEditable = tag === 'textarea' || tag === 'select' ||
     (tag === 'input' && !['button', 'submit', 'reset', 'image', 'file'].includes(type)) ||
     rawField.contentLength !== undefined || role === 'textbox' || role === 'searchbox' || role === 'combobox';
-  const interactionClass: InteractionClass =
-    rawField.sensitive || isSensitiveField(rawField) || HUMAN_ONLY_PATTERN.test([rawField.name, rawField.id, rawField.label].filter(Boolean).join(' '))
-      ? 'human-only'
-      : rawField.tag.toLowerCase() === 'input' && rawField.type.toLowerCase() === 'file'
-        ? 'file-egress'
-        : placement.submitSemantics
-          ? 'html-submit'
-          : fieldIsEditable
-            ? 'edit'
-            : 'ambiguous-activation';
+  const interactionClass = classifyFieldInteraction(
+    rawField,
+    tag,
+    type,
+    placement.submitSemantics,
+    fieldIsEditable,
+  );
   const entry = refTable.mint({
     kind: 'field',
     role,
@@ -1296,7 +1313,7 @@ async function distillPageModelOnce(
     throw new Error('CDP backend-node identity unavailable for a mutable page element');
   }
   const afterResolution = source.getDocumentIdentity?.();
-  if (!afterResolution || JSON.stringify(afterResolution) !== JSON.stringify(identity)) {
+  if (!afterResolution || !sameBrowserDocumentIdentity(afterResolution, identity)) {
     throw new Error('CDP document identity changed during page distillation');
   }
   let resolvedIndex = 0;
@@ -1385,7 +1402,7 @@ async function distillPageModelOnce(
     throw new Error('CDP semantic fingerprint unavailable for an actionable page element');
   }
   const afterFingerprints = source.getDocumentIdentity?.();
-  if (!afterFingerprints || JSON.stringify(afterFingerprints) !== JSON.stringify(identity)) {
+  if (!afterFingerprints || !sameBrowserDocumentIdentity(afterFingerprints, identity)) {
     throw new Error('CDP document identity changed while fingerprinting page actions');
   }
   const actions: PageModelAction[] = extractedActionInventory.actions.map((action, index) => {
