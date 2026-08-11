@@ -130,6 +130,27 @@ const fixture = createServer((req, res) => {
     res.end(`<!doctype html><title>login</title><script>localStorage.setItem('session', 'abc123');</script>logged in`);
     return;
   }
+  if (url.pathname === '/interaction') {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(`<!doctype html><title>interaction</title><body>
+      <label>Article body <textarea name="article">old textarea</textarea></label>
+      <div role="textbox" aria-label="Rich body" contenteditable="true">old rich body</div>
+      <button type="button" aria-label="Trusted click">Trusted click</button>
+      <script>
+        window.fixtureEvents = { clickCount: 0, clickTrusted: false, beforeinput: 0, input: 0, change: 0 };
+        document.querySelector('[aria-label="Trusted click"]').addEventListener('click', (event) => {
+          window.fixtureEvents.clickCount += 1;
+          window.fixtureEvents.clickTrusted = event.isTrusted;
+        });
+        document.querySelectorAll('textarea,[contenteditable]').forEach((element) => {
+          element.addEventListener('beforeinput', () => { window.fixtureEvents.beforeinput += 1; });
+          element.addEventListener('input', () => { window.fixtureEvents.input += 1; });
+          element.addEventListener('change', () => { window.fixtureEvents.change += 1; });
+        });
+      </script>
+    </body>`);
+    return;
+  }
   if (url.pathname === '/form') {
     res.writeHead(200, { 'content-type': 'text/html' });
     res.end(`<!doctype html><title>form</title><body>
@@ -269,27 +290,54 @@ try {
     assert(parseCdpPageBaseUrl('http://127.0.0.1:8080/') === null, 'plain baseUrl must not parse as CDP page');
   });
 
-  await check('A2 attach by targetId: evaluate / navigate / AX tree / screenshot / backend click', async () => {
+  await check('A2 trusted backend click + Chinese textarea/contenteditable replacement', async () => {
     const page = await connectShellPage({ port: debugPort, targetId: targetA.targetId });
     try {
       assert((await page.evaluate<number>('1 + 1')) === 2, 'evaluate failed');
-      await page.navigate(`${fixtureOrigin}/form`);
+      await page.navigate(`${fixtureOrigin}/interaction`);
       const title = await page.evaluate<string>('document.title');
-      assert(title === 'form', `title ${title}`);
+      assert(title === 'interaction', `title ${title}`);
       const axTree = await page.getFullAXTree();
       assert(axTree.length > 3, `AX tree too small: ${axTree.length}`);
-      const linkNode = axTree.find((node) => node.name?.value === 'echo link');
-      const backendNodeId = linkNode?.backendDOMNodeId;
-      assert(typeof backendNodeId === 'number', 'no backend node id for link');
+      const clickNode = axTree.find((node) => node.name?.value === 'Trusted click');
+      let textareaBackendNodeId: number | undefined;
+      let richBackendNodeId: number | undefined;
+      for (const node of axTree) {
+        if (typeof node.backendDOMNodeId !== 'number') continue;
+        const identity = await page.callBackendNode?.<{ tag: string; label: string }>(
+          node.backendDOMNodeId,
+          `function () { return { tag: (this.tagName || '').toLowerCase(), label: this.getAttribute && this.getAttribute('aria-label') || '' }; }`,
+        );
+        if (identity?.tag === 'textarea') textareaBackendNodeId = node.backendDOMNodeId;
+        if (identity?.label === 'Rich body') richBackendNodeId = node.backendDOMNodeId;
+      }
+      assert(typeof clickNode?.backendDOMNodeId === 'number', 'no backend node id for trusted button');
+      assert(typeof textareaBackendNodeId === 'number', 'no backend node id for textarea');
+      assert(typeof richBackendNodeId === 'number', 'no backend node id for contenteditable');
       const screenshot = await page.captureScreenshot();
       assert(screenshot.length > 1000 && !screenshot.startsWith('data:'), 'screenshot shape wrong');
-      await page.clickBackendNode(backendNodeId);
-      for (let i = 0; i < 50; i += 1) {
-        const href = await page.evaluate<string>('location.href');
-        if (href.startsWith(`${fixtureOrigin}/echo`)) return;
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      throw new Error('backend-node click did not navigate to /echo');
+      const clickReceipt = await page.clickBackendNode(clickNode.backendDOMNodeId);
+      assert(clickReceipt?.outcome === 'dispatched_verified', `click receipt ${JSON.stringify(clickReceipt)}`);
+      const clickState = await page.evaluate<{ clickCount: number; clickTrusted: boolean }>('window.fixtureEvents');
+      assert(clickState.clickCount === 1, `click count ${clickState.clickCount}`);
+      assert(clickState.clickTrusted === true, 'pointer click was not trusted');
+
+      const textareaText = `第一段\n第二段 😀\n${'长文本'.repeat(2_000)}`;
+      const richText = '富文本第一段\n富文本第二段 👩🏽‍💻';
+      const textareaReceipt = await page.fillBackendNode?.(textareaBackendNodeId, textareaText);
+      const richReceipt = await page.fillBackendNode?.(richBackendNodeId, richText);
+      assert(textareaReceipt?.outcome === 'dispatched_verified', `textarea receipt ${JSON.stringify(textareaReceipt)}`);
+      assert(richReceipt?.outcome === 'dispatched_verified', `rich receipt ${JSON.stringify(richReceipt)}`);
+      assert(JSON.stringify(textareaReceipt).includes('第一段') === false, 'textarea receipt echoed body text');
+      const textState = await page.evaluate<{ textarea: string; rich: string; beforeinput: number; input: number }>(`({
+        textarea: document.querySelector('textarea').value,
+        rich: document.querySelector('[contenteditable]').innerText,
+        beforeinput: window.fixtureEvents.beforeinput,
+        input: window.fixtureEvents.input
+      })`);
+      assert(textState.textarea === textareaText, 'textarea replacement mismatch');
+      assert(textState.rich === richText, 'contenteditable replacement mismatch');
+      assert(textState.beforeinput >= 2 && textState.input >= 2, `input events ${JSON.stringify(textState)}`);
     } finally {
       page.close();
     }
@@ -312,7 +360,7 @@ try {
     const page = await connectBrowserPage(baseUrl);
     try {
       const href = await page.evaluate<string>('location.href');
-      assert(href.startsWith(`${fixtureOrigin}/echo`), `dispatcher attached to wrong target: ${href}`);
+      assert(href.startsWith(`${fixtureOrigin}/interaction`), `dispatcher attached to wrong target: ${href}`);
     } finally {
       page.close();
     }

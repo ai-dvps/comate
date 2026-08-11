@@ -60,6 +60,9 @@ interface FakePageOptions {
   currentUrl?: string;
   screenshotError?: Error;
   networkTransport?: BrowserNetworkCaptureTransport;
+  fillReceipt?: import('../browser-cdp.js').BrowserOperationReceipt;
+  checkStates?: Array<{ ok: boolean; checked?: boolean } | Error>;
+  selectDispatchError?: Error;
 }
 
 class FakeNetworkTransport implements BrowserNetworkCaptureTransport {
@@ -96,6 +99,7 @@ class FakePage implements BrowserCdpSession {
   navigated: string[] = [];
   screenshots = 0;
   clickedBackendNodes: number[] = [];
+  filledBackendNodes: Array<{ backendNodeId: number; text: string }> = [];
   actScripts: string[] = [];
   dispatchScripts: string[] = [];
   private readonly options: FakePageOptions;
@@ -103,6 +107,7 @@ class FakePage implements BrowserCdpSession {
   private submitDispatched = false;
   private closeListeners = new Set<() => void>();
   private currentIdentity: import('../browser-page-model.js').BrowserDocumentIdentity | null;
+  private checkStates: Array<{ ok: boolean; checked?: boolean } | Error>;
 
   constructor(options: FakePageOptions) {
     this.options = options;
@@ -110,6 +115,7 @@ class FakePage implements BrowserCdpSession {
     this.currentIdentity = options.documentIdentity === undefined
       ? { targetId: 'target-1', sessionId: 'session-1', frameId: 'frame-1', loaderId: options.extraction.docId, generation: 0 }
       : options.documentIdentity;
+    this.checkStates = [...(options.checkStates ?? [])];
   }
 
   get probe(): { docId: string; domEpoch: number } | null {
@@ -162,8 +168,22 @@ class FakePage implements BrowserCdpSession {
       if (!field) return null;
       const tag = field.tag.toLowerCase();
       const type = field.type.toLowerCase();
-      const role = field.role?.toLowerCase() ?? (tag === 'button' ? 'button' : type === 'search' ? 'searchbox' : 'textbox');
+      const role = field.role?.toLowerCase() ?? (
+        tag === 'button' ? 'button'
+          : tag === 'select' ? 'combobox'
+            : type === 'checkbox' || type === 'radio' ? type
+              : type === 'search' ? 'searchbox'
+                : 'textbox'
+      );
       return { tag, type, role, editable: tag === 'input' || tag === 'textarea' || tag === 'select' || role === 'textbox', fileInput: tag === 'input' && type === 'file' } as T;
+    }
+    if (functionDeclaration.includes('checked: this.checked')) {
+      const next = this.checkStates.shift() ?? { ok: true, checked: false };
+      if (next instanceof Error) throw next;
+      return next as T;
+    }
+    if (functionDeclaration.includes('var action = "select"') && this.options.selectDispatchError) {
+      throw this.options.selectDispatchError;
     }
     const isBackendSubmit = functionDeclaration.includes('var form = this');
     const isBackendClick = functionDeclaration.includes('"click"');
@@ -222,8 +242,24 @@ class FakePage implements BrowserCdpSession {
   async getFullAXTree(): Promise<RawAxNode[]> {
     return this.options.axNodes ?? [];
   }
-  async clickBackendNode(backendNodeId: number): Promise<void> {
+  async clickBackendNode(backendNodeId: number): Promise<import('../browser-cdp.js').BrowserOperationReceipt> {
     this.clickedBackendNodes.push(backendNodeId);
+    if (this.options.submitDispatchError) {
+      this.submitDispatched = true;
+      throw this.options.submitDispatchError;
+    }
+    return {
+      outcome: 'dispatched_verified', dispatchState: 'dispatched', verified: true,
+      retrySafe: false, delta: { kind: 'activation', changed: false },
+    };
+  }
+  async fillBackendNode(backendNodeId: number, text: string): Promise<import('../browser-cdp.js').BrowserOperationReceipt> {
+    this.filledBackendNodes.push({ backendNodeId, text });
+    return this.options.fillReceipt ?? {
+      outcome: 'dispatched_verified', dispatchState: 'dispatched', verified: true,
+      retrySafe: false, matchesRequested: true, normalizedLength: text.length,
+      delta: { kind: 'field', changed: true },
+    };
   }
   async inspectBackendNode(): Promise<import('../browser-page-model.js').InspectedElement | null> {
     if (this.options.inspectError) throw this.options.inspectError;
@@ -872,18 +908,107 @@ describe('browser-mcp act', () => {
     };
   }
 
-  it('fills a field ref and returns the delta + fresh model', async () => {
+  it('fills through trusted backend input and returns a text-free receipt without a page model', async () => {
     harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     const { emailRef } = await openAndGetRefs(harness);
     const result = await harness.call('act', { ref: emailRef, action: 'fill', value: 'me@example.com' });
     assert.strictEqual(result.isError, undefined);
     const payload = resultPayload(result);
     assert.strictEqual(payload.ok, true);
-    assert.ok(payload.delta, 'delta present');
-    assert.ok(payload.model, 'fresh model present');
-    assert.strictEqual(harness.ctx.page.actScripts.length, 1);
-    assert.doesNotMatch(harness.ctx.page.actScripts[0], /XPathResult|document\.evaluate/);
-    assert.ok(harness.ctx.page.actScripts[0].includes('me@example.com'));
+    assert.equal('model' in payload, false, 'mutation receipts are separate from PageModel observation');
+    assert.equal('delta' in payload, false);
+    assert.deepEqual(harness.ctx.page.filledBackendNodes, [{ backendNodeId: 101, text: 'me@example.com' }]);
+    assert.equal(harness.ctx.page.actScripts.length, 0);
+    assert.equal(JSON.stringify(payload).includes('me@example.com'), false, 'receipt does not echo supplied text');
+    assert.deepEqual(payload.receipt, {
+      outcome: 'dispatched_verified', dispatchState: 'dispatched', verified: true,
+      retrySafe: false, matchesRequested: true, normalizedLength: 14,
+      delta: { kind: 'field', changed: true },
+    });
+  });
+
+  it('fails closed for human-only fields without invoking the trusted adapter', async () => {
+    harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+    const { cardRef } = await openAndGetRefs(harness);
+    const result = await harness.call('act', { ref: cardRef, action: 'fill', value: '4111111111111111' });
+    assert.equal(result.isError, true);
+    assert.equal((resultPayload(result).error as { code: string }).code, 'browser_handoff_required');
+    assert.deepEqual(harness.ctx.page.filledBackendNodes, []);
+    assert.equal(JSON.stringify(resultPayload(result)).includes('4111111111111111'), false);
+  });
+
+  it('preserves an unknown fill receipt without retrying or echoing the supplied text', async () => {
+    const page = new FakePage({
+      extraction: makeExtraction(),
+      fillReceipt: {
+        outcome: 'outcome_unknown', dispatchState: 'dispatched', verified: false,
+        retrySafe: false, reason: 'dispatch_failed', delta: { kind: 'field', changed: false },
+      },
+    });
+    harness = await makeHarness({ page });
+    const { emailRef } = await openAndGetRefs(harness);
+    const secretText = '可能已写入的中文 😀';
+    const result = await harness.call('act', { ref: emailRef, action: 'fill', value: secretText });
+    const payload = resultPayload(result);
+    assert.equal(payload.ok, false, JSON.stringify(payload));
+    assert.equal((payload.receipt as { outcome: string }).outcome, 'outcome_unknown');
+    assert.equal((payload.receipt as { retrySafe: boolean }).retrySafe, false);
+    assert.equal(page.filledBackendNodes.length, 1, 'adapter is never retried after ambiguous dispatch');
+    assert.equal(JSON.stringify(payload).includes(secretText), false);
+  });
+
+  it('returns unknown without retry after a successful check click loses its verification context', async () => {
+    const extraction = makeExtraction();
+    extraction.forms[0].fields.push({
+      fieldIndex: 3, name: 'agree', label: 'Agree', tag: 'input', type: 'checkbox',
+      required: false, disabled: false, readOnly: false, sensitive: false, value: 'false',
+      filled: false, submitSemantics: false, xpath: '/html[1]/body[1]/form[1]/input[3]',
+    });
+    const page = new FakePage({
+      extraction,
+      checkStates: [
+        { ok: true, checked: false },
+        new CdpError('CDP Runtime.callFunctionOn failed: Execution context was destroyed', 'Runtime.callFunctionOn'),
+      ],
+    });
+    harness = await makeHarness({ page });
+    const opened = await harness.call('open', { url: 'https://shop.example/checkout' });
+    const agreeRef = (resultPayload(opened).model as { forms: Array<{ fields: Array<{ ref: string; name?: string }> }> })
+      .forms[0].fields.find((field) => field.name === 'agree')!.ref;
+    const result = await harness.call('act', { ref: agreeRef, action: 'check', value: 'true' });
+    const payload = resultPayload(result);
+    assert.equal(payload.ok, false, JSON.stringify(payload));
+    assert.deepEqual(payload.receipt, {
+      outcome: 'outcome_unknown', dispatchState: 'dispatched', verified: false,
+      retrySafe: false, matchesRequested: false, reason: 'verification_mismatch',
+      delta: { kind: 'field', changed: true },
+    });
+    assert.equal(page.clickedBackendNodes.length, 1, 'physical check click is never retried');
+  });
+
+  it('returns unknown without retry when select may have dispatched before context destruction', async () => {
+    const extraction = makeExtraction();
+    extraction.forms[0].fields.push({
+      fieldIndex: 3, name: 'plan', label: 'Plan', tag: 'select', type: 'select-one',
+      required: false, disabled: false, readOnly: false, sensitive: false, value: 'free',
+      filled: true, submitSemantics: false, xpath: '/html[1]/body[1]/form[1]/select[1]',
+    });
+    const page = new FakePage({
+      extraction,
+      selectDispatchError: new CdpError(
+        'CDP Runtime.callFunctionOn failed: Execution context was destroyed',
+        'Runtime.callFunctionOn',
+      ),
+    });
+    harness = await makeHarness({ page });
+    const opened = await harness.call('open', { url: 'https://shop.example/checkout' });
+    const planRef = (resultPayload(opened).model as { forms: Array<{ fields: Array<{ ref: string; name?: string }> }> })
+      .forms[0].fields.find((field) => field.name === 'plan')!.ref;
+    const result = await harness.call('act', { ref: planRef, action: 'select', value: 'pro' });
+    const payload = resultPayload(result);
+    assert.equal(payload.ok, false, JSON.stringify(payload));
+    assert.equal((payload.receipt as { outcome: string }).outcome, 'outcome_unknown');
+    assert.equal((payload.receipt as { retrySafe: boolean }).retrySafe, false);
   });
 
   it('clicks an action ref through its backend node', async () => {
@@ -916,7 +1041,7 @@ describe('browser-mcp act', () => {
 
     const current = await harness.call('act', { ref: emailRef, action: 'fill', value: 'x' });
     assert.strictEqual(current.isError, undefined, 'unrelated mutation does not invalidate a backend-node ref');
-    assert.ok(page.actScripts.length > 0);
+    assert.deepEqual(page.filledBackendNodes, [{ backendNodeId: 101, text: 'x' }]);
   });
 
   it('does not retarget a ref when a same-position field is replaced', async () => {
@@ -1086,7 +1211,7 @@ describe('browser-mcp submit handler-level gate', () => {
       assert.strictEqual((payload.model as { title: string }).title, 'Submitted');
       if (testCase.refKind === 'control') {
         assert.strictEqual(page.dispatchScripts.length, 0);
-        assert.ok(page.actScripts.some((script) => script.includes('"click"')));
+        assert.deepEqual(page.clickedBackendNodes, [103]);
       }
     });
   }
@@ -1214,9 +1339,7 @@ describe('browser-mcp submit handler-level gate', () => {
     assert.strictEqual(result.isError, undefined);
     assert.strictEqual(resultPayload(result).submitted, true);
     assert.strictEqual(page.dispatchScripts.length, 0, 'requestSubmit not used for control refs');
-    const clickScript = page.actScripts.find((script) => script.includes('"click"'));
-    assert.ok(clickScript, 'control clicked via its xpath');
-    assert.doesNotMatch(clickScript, /XPathResult|document\.evaluate/);
+    assert.deepEqual(page.clickedBackendNodes, [103], 'control clicked through trusted backend input');
   });
 
   it('blocks submit while the user is in control', async () => {

@@ -217,6 +217,276 @@ describe('BrowserCdpSession exact-object extraction', () => {
   });
 });
 
+describe('BrowserCdpSession trusted interaction adapter', () => {
+  async function withInteractionPeer(
+    respond: (command: { id: number; method: string; params: Record<string, unknown> }) =>
+      | unknown
+      | { protocolError: { code: number; message: string } }
+      | undefined,
+  ): Promise<{
+    page: Awaited<ReturnType<typeof connectShellPage>>;
+    commands: Array<{ method: string; params: Record<string, unknown> }>;
+    close: () => Promise<void>;
+  }> {
+    const server = new WebSocketServer({ port: 0 });
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    server.once('connection', (peer) => {
+      peer.on('message', (raw) => {
+        const command = JSON.parse(String(raw)) as { id: number; method: string; params: Record<string, unknown> };
+        commands.push({ method: command.method, params: command.params });
+        let result: unknown;
+        if (command.method === 'Target.attachToTarget') result = { sessionId: 'page-session' };
+        else if (command.method === 'Page.getFrameTree') result = { frameTree: { frame: { id: 'main-frame', loaderId: 'loader-1' } } };
+        else result = respond(command);
+        if (result !== undefined) {
+          const protocolError = result && typeof result === 'object' && 'protocolError' in result
+            ? (result as { protocolError: { code: number; message: string } }).protocolError
+            : undefined;
+          peer.send(JSON.stringify(protocolError
+            ? { id: command.id, error: protocolError }
+            : { id: command.id, result }));
+        }
+      });
+    });
+    const page = await connectShellPage({
+      port: address.port,
+      browserWsUrl: `ws://127.0.0.1:${address.port}`,
+      targetId: 'page-target',
+      fingerprint: false,
+      connectReadyTimeoutMs: 0,
+      commandTimeoutMs: 25,
+    });
+    return {
+      page,
+      commands,
+      close: async () => {
+        page.close();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      },
+    };
+  }
+
+  it('scrolls, hit-tests, and emits exactly one trusted mouse press/release pair', async () => {
+    const peer = await withInteractionPeer((command) => {
+      if (command.method === 'DOM.resolveNode') return { object: { objectId: 'target-node' } };
+      if (command.method === 'Runtime.callFunctionOn') {
+        return { result: { value: { connected: true, enabled: true } } };
+      }
+      if (command.method === 'DOM.getBoxModel') {
+        return { model: { content: [10, 20, 110, 20, 110, 60, 10, 60] } };
+      }
+      if (command.method === 'DOM.getNodeForLocation') {
+        return { backendNodeId: 42, frameId: 'main-frame' };
+      }
+      return {};
+    });
+    try {
+      const receipt = await peer.page.clickBackendNode(42);
+      assert.deepEqual(receipt, {
+        outcome: 'dispatched_verified',
+        dispatchState: 'dispatched',
+        verified: true,
+        retrySafe: false,
+        delta: { kind: 'activation', changed: false },
+      });
+      assert.deepEqual(
+        peer.commands.filter((command) => command.method === 'Input.dispatchMouseEvent').map((command) => command.params.type),
+        ['mousePressed', 'mouseReleased'],
+      );
+      assert.equal(
+        peer.commands.some((command) => command.method === 'Runtime.callFunctionOn' && String(command.params.functionDeclaration).includes('.click(')),
+        false,
+      );
+    } finally {
+      await peer.close();
+    }
+  });
+
+  it('does not dispatch when the fresh hit test is occluded', async () => {
+    const peer = await withInteractionPeer((command) => {
+      if (command.method === 'DOM.getBoxModel') {
+        return { model: { content: [0, 0, 40, 0, 40, 40, 0, 40] } };
+      }
+      if (command.method === 'DOM.getNodeForLocation') {
+        return { backendNodeId: 99, frameId: 'main-frame' };
+      }
+      if (command.method === 'DOM.resolveNode') return { object: { objectId: 'node' } };
+      if (command.method === 'Runtime.callFunctionOn') {
+        return String(command.params.functionDeclaration).includes('target.contains')
+          ? { result: { value: false } }
+          : { result: { value: { connected: true, enabled: true } } };
+      }
+      return {};
+    });
+    try {
+      const receipt = await peer.page.clickBackendNode(42);
+      assert.equal(receipt.outcome, 'not_dispatched');
+      assert.equal(receipt.retrySafe, true);
+      assert.equal(receipt.reason, 'target_occluded');
+      assert.equal(peer.commands.some((command) => command.method === 'Input.dispatchMouseEvent'), false);
+    } finally {
+      await peer.close();
+    }
+  });
+
+  it('returns unknown and prohibits retry when the mouse press may have timed out', async () => {
+    const peer = await withInteractionPeer((command) => {
+      if (command.method === 'DOM.resolveNode') return { object: { objectId: 'target-node' } };
+      if (command.method === 'Runtime.callFunctionOn') {
+        return { result: { value: { connected: true, enabled: true } } };
+      }
+      if (command.method === 'DOM.getBoxModel') {
+        return { model: { content: [0, 0, 40, 0, 40, 40, 0, 40] } };
+      }
+      if (command.method === 'DOM.getNodeForLocation') {
+        return { backendNodeId: 42, frameId: 'main-frame' };
+      }
+      if (command.method === 'Input.dispatchMouseEvent' && command.params.type === 'mousePressed') return undefined;
+      return {};
+    });
+    try {
+      const receipt = await peer.page.clickBackendNode(42);
+      assert.equal(receipt.outcome, 'outcome_unknown');
+      assert.equal(receipt.dispatchState, 'dispatched');
+      assert.equal(receipt.retrySafe, false);
+      assert.deepEqual(
+        peer.commands.filter((command) => command.method === 'Input.dispatchMouseEvent').map((command) => command.params.type),
+        ['mousePressed'],
+      );
+    } finally {
+      await peer.close();
+    }
+  });
+
+  it('does not retarget or dispatch when the approved node disappears during geometry lookup', async () => {
+    const peer = await withInteractionPeer((command) => {
+      if (command.method === 'DOM.resolveNode') return { object: { objectId: 'target-node' } };
+      if (command.method === 'Runtime.callFunctionOn') {
+        return { result: { value: { connected: true, enabled: true } } };
+      }
+      if (command.method === 'DOM.getBoxModel') {
+        return { protocolError: { code: -32000, message: 'Could not find node with given id' } };
+      }
+      return {};
+    });
+    try {
+      const receipt = await peer.page.clickBackendNode(42);
+      assert.equal(receipt.outcome, 'not_dispatched');
+      assert.equal(receipt.reason, 'target_unavailable');
+      assert.equal(peer.commands.some((command) => command.method === 'Input.dispatchMouseEvent'), false);
+    } finally {
+      await peer.close();
+    }
+  });
+
+  it('replaces long Chinese textarea text and returns only normalized verification metadata', async () => {
+    const text = `第一段\n第二段 😀\n${'长文本'.repeat(5_000)}`;
+    let calls = 0;
+    const peer = await withInteractionPeer((command) => {
+      if (command.method === 'DOM.resolveNode') return { object: { objectId: 'textarea-node' } };
+      if (command.method === 'Runtime.callFunctionOn') {
+        calls += 1;
+        return calls === 1
+          ? { result: { value: { kind: 'textarea', editable: true } } }
+          : { result: { value: { matches: true, normalizedLength: text.length } } };
+      }
+      return {};
+    });
+    try {
+      const receipt = await peer.page.fillBackendNode(51, text);
+      assert.equal(receipt.outcome, 'dispatched_verified');
+      assert.equal(receipt.verified, true);
+      assert.equal(receipt.matchesRequested, true);
+      assert.equal(receipt.normalizedLength, text.length);
+      assert.equal(JSON.stringify(receipt).includes('第一段'), false, 'receipt never echoes supplied text');
+      assert.deepEqual(
+        peer.commands.filter((command) => command.method === 'Input.insertText').map((command) => command.params.text),
+        [text],
+      );
+    } finally {
+      await peer.close();
+    }
+  });
+
+  it('falls back to a bounded CDP key event for contenteditable when Input.insertText is unsupported', async () => {
+    const text = '中文段落\n第二行 😀';
+    let calls = 0;
+    const peer = await withInteractionPeer((command) => {
+      if (command.method === 'DOM.resolveNode') return { object: { objectId: 'editable-node' } };
+      if (command.method === 'Runtime.callFunctionOn') {
+        calls += 1;
+        return calls === 1
+          ? { result: { value: { kind: 'contenteditable', editable: true } } }
+          : { result: { value: { matches: true, normalizedLength: text.length } } };
+      }
+      if (command.method === 'Input.insertText') {
+        return { protocolError: { code: -32601, message: "'Input.insertText' wasn't found" } };
+      }
+      return {};
+    });
+    try {
+      const receipt = await peer.page.fillBackendNode(52, text);
+      assert.equal(receipt.outcome, 'dispatched_verified');
+      assert.deepEqual(
+        peer.commands.filter((command) => command.method === 'Input.dispatchKeyEvent').map((command) => command.params),
+        [{ type: 'char', text, unmodifiedText: text }],
+      );
+    } finally {
+      await peer.close();
+    }
+  });
+
+  it('uses the same bounded key-event fallback for input and textarea targets', async () => {
+    for (const kind of ['input', 'textarea'] as const) {
+      const text = `${kind} 中文\n😀`;
+      let calls = 0;
+      const peer = await withInteractionPeer((command) => {
+        if (command.method === 'DOM.resolveNode') return { object: { objectId: `${kind}-node` } };
+        if (command.method === 'Runtime.callFunctionOn') {
+          calls += 1;
+          return calls === 1
+            ? { result: { value: { kind, editable: true } } }
+            : { result: { value: { matches: true, normalizedLength: text.length } } };
+        }
+        if (command.method === 'Input.insertText') {
+          return { protocolError: { code: -32601, message: 'Method not found' } };
+        }
+        return {};
+      });
+      try {
+        const receipt = await peer.page.fillBackendNode(54, text);
+        assert.equal(receipt.outcome, 'dispatched_verified');
+        assert.equal(peer.commands.filter((command) => command.method === 'Input.dispatchKeyEvent').length, 1);
+      } finally {
+        await peer.close();
+      }
+    }
+  });
+
+  it('returns unknown without verification or retry after a possible text dispatch timeout', async () => {
+    const peer = await withInteractionPeer((command) => {
+      if (command.method === 'DOM.resolveNode') return { object: { objectId: 'textarea-node' } };
+      if (command.method === 'Runtime.callFunctionOn') {
+        return { result: { value: { kind: 'textarea', editable: true } } };
+      }
+      if (command.method === 'Input.insertText') return undefined;
+      return {};
+    });
+    try {
+      const receipt = await peer.page.fillBackendNode(53, 'possibly inserted');
+      assert.equal(receipt.outcome, 'outcome_unknown');
+      assert.equal(receipt.verified, false);
+      assert.equal(receipt.retrySafe, false);
+      assert.equal(peer.commands.filter((command) => command.method === 'Runtime.callFunctionOn').length, 1);
+    } finally {
+      await peer.close();
+    }
+  });
+});
+
 describe('CdpNetworkCaptureTransport', () => {
   it('recursively enables Network for page and iframe targets without freezing workers', async () => {
     const commands: Array<{ method: string; sessionId?: string; params: Record<string, unknown> }> = [];

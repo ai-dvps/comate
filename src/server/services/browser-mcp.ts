@@ -48,7 +48,12 @@ import {
   type HandoffEndReason,
   type HandoffPhase,
 } from './browser-control.js';
-import { CdpError, connectBrowserPage, type BrowserCdpSession } from './browser-cdp.js';
+import {
+  CdpError,
+  connectBrowserPage,
+  type BrowserCdpSession,
+  type BrowserOperationReceipt,
+} from './browser-cdp.js';
 import {
   RefTable,
   buildPageState,
@@ -229,16 +234,6 @@ function buildBackendActFunction(action: string, value: string | undefined): str
   if (!el) return { ok: false, reason: 'element_not_found' };
   try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) {}
   var tag = el.tagName ? el.tagName.toLowerCase() : '';
-  if (action === 'click') { el.click(); return { ok: true }; }
-  if (action === 'fill') {
-    if (tag !== 'input' && tag !== 'textarea') return { ok: false, reason: 'not_fillable' };
-    var proto = tag === 'input' ? window.HTMLInputElement.prototype : window.HTMLTextAreaElement.prototype;
-    var desc = Object.getOwnPropertyDescriptor(proto, 'value');
-    if (desc && desc.set) { desc.set.call(el, value); } else { el.value = value; }
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-    return { ok: true };
-  }
   if (action === 'select') {
     if (tag !== 'select') return { ok: false, reason: 'not_a_select' };
     var opts = el.options, found = false;
@@ -249,17 +244,19 @@ function buildBackendActFunction(action: string, value: string | undefined): str
     if (!found) return { ok: false, reason: 'option_not_found' };
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
-    return { ok: true };
-  }
-  if (action === 'check') {
-    var type = (el.getAttribute('type') || '').toLowerCase();
-    if (tag !== 'input' || (type !== 'checkbox' && type !== 'radio')) return { ok: false, reason: 'not_checkable' };
-    var desired = value === '' ? !el.checked : (value === 'true' || value === '1' || value === 'on');
-    if (el.checked !== desired) el.click();
-    return { ok: true };
+    return { ok: true, matches: el.value === opts[el.selectedIndex].value };
   }
   return { ok: false, reason: 'unknown_action' };
 }`;
+}
+
+function buildBackendCheckStateFunction(): string {
+  return `function () {
+    var tag = this && this.tagName ? this.tagName.toLowerCase() : '';
+    var type = this && this.getAttribute ? (this.getAttribute('type') || '').toLowerCase() : '';
+    if (tag !== 'input' || (type !== 'checkbox' && type !== 'radio')) return { ok: false };
+    return { ok: true, checked: this.checked === true };
+  }`;
 }
 
 function buildBackendSubmitFunction(): string {
@@ -1275,21 +1272,34 @@ export class BrowserToolContext {
     if (gate) return gate;
     try {
       const page = await this.ensurePage();
+      const knownEntry = this.refTable.get(args.ref);
+      // A stale submit classification may over-confirm but must never lower
+      // risk. Route known submit controls before any liveness/fingerprint
+      // failure can turn this into a generic action error.
+      if (args.action === 'click' && knownEntry?.submitSemantics) {
+        return toolError(
+          'browser_use_submit_tool',
+          'ref_resolve',
+          `Ref "${args.ref}" (${knownEntry.role} "${knownEntry.name}") submits a form, so it requires user confirmation.`,
+          'Call the submit tool with this ref (or its form ref) instead — it will ask the user to confirm.',
+        );
+      }
       const resolved = await this.resolveCurrentRef(page, args.ref);
       if (!isRefEntry(resolved)) return resolved;
       const entry = resolved;
 
+      if (entry.interactionClass === 'human-only') {
+        return toolError(
+          'browser_handoff_required',
+          'dispatch',
+          `Ref "${args.ref}" is a human-only control and cannot be automated.`,
+          'Call requestHandoff so the user can complete this control directly.',
+        );
+      }
+
       // Submit-semantics controls are routed to the submit tool so its
       // handler-level confirmation gate cannot be bypassed via act (KTD-4 ②;
       // U4 adds the canUseTool twin of this classification).
-      if (args.action === 'click' && entry.submitSemantics) {
-        return toolError(
-          'browser_use_submit_tool',
-          'ref_resolve',
-          `Ref "${args.ref}" (${entry.role} "${entry.name}") submits a form, so it requires user confirmation.`,
-          'Call the submit tool with this ref (or its form ref) instead — it will ask the user to confirm.',
-        );
-      }
       if (args.action === 'click' && entry.kind === 'action') {
         if (!page.inspectBackendNode || typeof entry.backendNodeId !== 'number') {
           return toolError(
@@ -1334,8 +1344,66 @@ export class BrowserToolContext {
         );
       }
 
-      if (entry.kind === 'action') {
-        await page.clickBackendNode(entry.backendNodeId);
+      let receipt: BrowserOperationReceipt;
+      if (args.action === 'click') {
+        receipt = await page.clickBackendNode(entry.backendNodeId) ?? {
+          outcome: 'outcome_unknown', dispatchState: 'dispatched', verified: false,
+          retrySafe: false, reason: 'dispatch_failed', delta: { kind: 'activation', changed: false },
+        };
+      } else if (args.action === 'fill') {
+        if (!page.fillBackendNode) {
+          return toolError(
+            'browser_ref_unresolvable',
+            'ref_resolve',
+            `Field ref "${args.ref}" cannot be filled through trusted browser input.`,
+            'Reopen the browser session and refresh the page model.',
+          );
+        }
+        receipt = await page.fillBackendNode(entry.backendNodeId, args.value ?? '');
+      } else if (args.action === 'check') {
+        if (!page.callBackendNode) {
+          return toolError('browser_ref_unresolvable', 'ref_resolve', `Field ref "${args.ref}" cannot be checked by backend identity.`, 'Reopen the browser session and refresh the page model.');
+        }
+        const before = await page.callBackendNode<{ ok: boolean; checked?: boolean }>(
+          entry.backendNodeId, buildBackendCheckStateFunction(),
+        );
+        if (!before?.ok || typeof before.checked !== 'boolean') {
+          return toolError('browser_action_failed', 'dispatch', `Action check on "${entry.name}" failed: not_checkable`, 'Call getPageState and choose a checkbox or radio field.');
+        }
+        const requested = args.value ?? '';
+        const desired = requested === '' ? !before.checked : ['true', '1', 'on'].includes(requested.toLowerCase());
+        if (before.checked === desired) {
+          receipt = {
+            outcome: 'not_dispatched', dispatchState: 'not_dispatched', verified: true,
+            retrySafe: true, matchesRequested: true, delta: { kind: 'none', changed: false },
+          };
+        } else {
+          receipt = await page.clickBackendNode(entry.backendNodeId) ?? {
+            outcome: 'outcome_unknown', dispatchState: 'dispatched', verified: false,
+            retrySafe: false, reason: 'dispatch_failed', delta: { kind: 'field', changed: false },
+          };
+          if (receipt.outcome === 'dispatched_verified') {
+            try {
+              const after = await page.callBackendNode<{ ok: boolean; checked?: boolean }>(
+                entry.backendNodeId, buildBackendCheckStateFunction(),
+              );
+              const matches = after?.ok === true && after.checked === desired;
+              receipt = matches
+                ? { ...receipt, matchesRequested: true, delta: { kind: 'field', changed: true } }
+                : {
+                    outcome: 'outcome_unknown', dispatchState: 'dispatched', verified: false,
+                    retrySafe: false, matchesRequested: false, reason: 'verification_mismatch',
+                    delta: { kind: 'field', changed: true },
+                  };
+            } catch {
+              receipt = {
+                outcome: 'outcome_unknown', dispatchState: 'dispatched', verified: false,
+                retrySafe: false, matchesRequested: false, reason: 'verification_mismatch',
+                delta: { kind: 'field', changed: true },
+              };
+            }
+          }
+        }
       } else {
         if (!page.callBackendNode) {
           return toolError(
@@ -1345,41 +1413,56 @@ export class BrowserToolContext {
             'Reopen the browser session and refresh the page model.',
           );
         }
-        const result = await page.callBackendNode<{ ok: boolean; reason?: string }>(
-          entry.backendNodeId, buildBackendActFunction(args.action, args.value),
-        );
-        if (!result?.ok) {
+        let result: { ok: boolean; reason?: string; matches?: boolean } | null = null;
+        let uncertainReceipt: BrowserOperationReceipt | undefined;
+        try {
+          result = await page.callBackendNode<{ ok: boolean; reason?: string; matches?: boolean }>(
+            entry.backendNodeId, buildBackendActFunction(args.action, args.value),
+          );
+        } catch {
+          uncertainReceipt = {
+            outcome: 'outcome_unknown', dispatchState: 'dispatched', verified: false,
+            retrySafe: false, reason: 'dispatch_failed', delta: { kind: 'field', changed: false },
+          };
+        }
+        if (uncertainReceipt) {
+          // A select Runtime command may have delivered input/change before
+          // its response was lost. Preserve the unknown receipt; never retry.
+          receipt = uncertainReceipt;
+        } else if (!result?.ok || result.matches !== true) {
           return toolError(
             'browser_action_failed',
             'dispatch',
             `Action ${args.action} on "${entry.name}" failed: ${result?.reason ?? 'unknown'}`,
             'Call getPageState to re-read the page, verify the field state, and retry.',
           );
+        } else {
+          receipt = {
+            outcome: 'dispatched_verified',
+            dispatchState: 'dispatched',
+            verified: true,
+            retrySafe: false, matchesRequested: true,
+            delta: { kind: 'field', changed: true },
+          };
         }
       }
-
-      await this.settle();
-      const prevModel = this.lastModel;
-      const model = await this.distill(page);
-      const delta = diffPageModels(prevModel, model);
       diagLog(`[browser-mcp] act session=${this.deps.sessionId} ref=${args.ref} action=${args.action}`);
-      // RISK-1: a click that cannot be proven harmless (not submit-semantics,
-      // so no confirmation gate) followed by a navigation is flagged as a
-      // POTENTIAL submit — the navigation is the observable proxy; a POST
-      // without navigation (fetch/XHR) remains unobservable and is the
-      // documented residual.
       this.audit.logToolAction({
         workspaceId: this.deps.workspaceId,
         sessionId: this.deps.sessionId,
         toolName: BROWSER_TOOL_NAMES.act,
-        url: model.url,
+        url: this.lastModel?.url ?? '',
         fieldNames: [entry.name],
-        outcome: 'ok',
-        potentialSubmit:
-          args.action === 'click' && !entry.submitSemantics && prevModel?.url !== model.url,
-        detail: `action=${args.action}`,
+        outcome: receipt.verified ? 'ok' : 'error',
+        potentialSubmit: args.action === 'click' && !entry.submitSemantics,
+        detail: `action=${args.action};outcome=${receipt.outcome}`,
       });
-      return toolJson({ ok: true, ref: args.ref, action: args.action, delta, model });
+      return toolJson({
+        ok: receipt.verified && receipt.matchesRequested !== false,
+        ref: args.ref,
+        action: args.action,
+        receipt,
+      });
     } catch (err) {
       return this.toErrorResult(err, 'dispatch');
     }
@@ -1437,23 +1520,23 @@ export class BrowserToolContext {
             'Call getPageState for the current form field list.',
           );
         }
-        if (!page.callBackendNode) {
+        if (!page.fillBackendNode) {
           return toolError(
             'browser_ref_unresolvable',
             'ref_resolve',
-            `Field "${key}" cannot be dispatched by backend identity.`,
+            `Field "${key}" cannot be filled through trusted browser input.`,
             'Reopen the browser session and refresh the page model.',
           );
         }
-        const fillResult = await page.callBackendNode<{ ok: boolean; reason?: string }>(
-          fieldEntry.backendNodeId, buildBackendActFunction('fill', value),
-        );
-        if (!fillResult?.ok) {
+        const fillResult = await page.fillBackendNode(fieldEntry.backendNodeId, value);
+        if (fillResult.outcome !== 'dispatched_verified' || fillResult.matchesRequested !== true) {
           return toolError(
             'browser_action_failed',
             'dispatch',
-            `Failed to fill field "${key}": ${fillResult?.reason ?? 'unknown'}`,
-            'Call getPageState to verify the field state and retry.',
+            `Failed to fill field "${key}": ${fillResult.outcome}`,
+            fillResult.retrySafe
+              ? 'Call getPageState to verify the field state and retry.'
+              : 'Do not retry automatically; call getPageState to determine whether the field changed.',
           );
         }
       }
@@ -1557,22 +1640,35 @@ export class BrowserToolContext {
 
       // Dispatch: click the approved submit control when given, else
       // requestSubmit() so validation + submit events fire.
-      const dispatchFunction = controlEntry
-        ? buildBackendActFunction('click', undefined)
-        : buildBackendSubmitFunction();
       const dispatchBackendNodeId = controlEntry?.backendNodeId ?? target.backendNodeId;
       const dispatchFailure = controlEntry
         ? 'Failed to activate the submit control'
         : 'Form dispatch failed';
       try {
-        const dispatchResult = await page.callBackendNode?.<{ ok: boolean; reason?: string }>(dispatchBackendNodeId, dispatchFunction);
-        if (!dispatchResult?.ok) {
-          return toolError(
-            'browser_action_failed',
-            'dispatch',
-            `${dispatchFailure}: ${dispatchResult?.reason ?? 'unknown'}`,
-            'Call getPageState to re-read the page and retry.',
+        if (controlEntry) {
+          const dispatchResult = await page.clickBackendNode(dispatchBackendNodeId);
+          if (dispatchResult?.outcome !== 'dispatched_verified') {
+            return toolError(
+              'browser_action_failed',
+              'dispatch',
+              `${dispatchFailure}: ${dispatchResult?.outcome ?? 'unknown'}`,
+              dispatchResult?.retrySafe === false
+                ? 'Do not retry automatically; call getPageState to determine whether the activation occurred.'
+                : 'Call getPageState to re-read the page and retry.',
+            );
+          }
+        } else {
+          const dispatchResult = await page.callBackendNode?.<{ ok: boolean; reason?: string }>(
+            dispatchBackendNodeId, buildBackendSubmitFunction(),
           );
+          if (!dispatchResult?.ok) {
+            return toolError(
+              'browser_action_failed',
+              'dispatch',
+              `${dispatchFailure}: ${dispatchResult?.reason ?? 'unknown'}`,
+              'Call getPageState to re-read the page and retry.',
+            );
+          }
         }
       } catch (error) {
         if (!isSubmitNavigationRace(error)) throw error;
