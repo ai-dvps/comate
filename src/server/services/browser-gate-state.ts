@@ -105,6 +105,14 @@ export function isBrowserSubmitClassified(
   return false;
 }
 
+/** UI/defense-in-depth classification; handler approval remains authoritative. */
+export function isBrowserActivationClassified(
+  toolName: string,
+  input: Record<string, unknown>,
+): boolean {
+  return toolName === BROWSER_TOOL_NAMES.activate && typeof input.ref === 'string';
+}
+
 /**
  * Redact a submit-classified call's raw input for the canUseTool-layer
  * approval card. The submit tool's `fields` values may include credentials

@@ -316,7 +316,7 @@ async function makeHarness(): Promise<Harness> {
   const tools = new Map<string, BrowserToolDefinition>(definitions.map((d) => [d.name, d]));
   const context = contextRegistry.get(deps.sessionId)!;
   let operationCounter = 0;
-  const mutationTools = new Set(['open', 'act', 'submit', 'requestHandoff', 'close']);
+  const mutationTools = new Set(['open', 'act', 'activate', 'submit', 'requestHandoff', 'close']);
   const callTool = async (name: string, args: Record<string, unknown>, extra?: unknown): Promise<CallToolResult> => {
     const definition = tools.get(name);
     assert.ok(definition, `tool ${name} must exist`);

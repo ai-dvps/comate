@@ -18,6 +18,7 @@ import {
   evaluateSessionNavigation,
   getVisitedDomains,
   isBrowserSubmitClassified,
+  isBrowserActivationClassified,
   isSubmitSemanticsRef,
   redactSubmitGateInput,
   registrableDomain,
@@ -149,6 +150,12 @@ describe('submit classification (canUseTool-layer rules)', () => {
   it('submit tool is always submit-classified', () => {
     assert.ok(isBrowserSubmitClassified(SESSION, BROWSER_TOOL_NAMES.submit, { ref: 'e1-aa' }));
     assert.ok(isBrowserSubmitClassified(SESSION, BROWSER_TOOL_NAMES.submit, {}));
+  });
+
+  it('dedicated page activation is always activation-classified', () => {
+    assert.ok(isBrowserActivationClassified(BROWSER_TOOL_NAMES.activate, { ref: 'e1-aa' }));
+    assert.ok(!isBrowserActivationClassified(BROWSER_TOOL_NAMES.activate, {}));
+    assert.ok(!isBrowserActivationClassified(BROWSER_TOOL_NAMES.act, { ref: 'e1-aa', action: 'click' }));
   });
 
   it('act click is classified only for refs with submit semantics', () => {
@@ -323,6 +330,18 @@ describe('session-runtime browser gates', { concurrency: false }, () => {
     runtime!.resolveApproval('r-submit', { behavior: 'allow' });
     const result = await promise;
     assert.strictEqual(result?.behavior, 'allow');
+  });
+
+  it('AE4 defense gate: auto mode still asks before dedicated page activation', async () => {
+    openRuntime();
+    runtime!.setApprovalMode('auto');
+    const promise = callTool(BROWSER_TOOL_NAMES.activate, { operationId: 'op-1', ref: 'e7-aa' }, 'r-activate');
+    const pending = pendingApprovalEvents();
+    assert.strictEqual(pending.length, 1);
+    assert.strictEqual(pending[0].toolName, BROWSER_TOOL_NAMES.activate);
+    assert.strictEqual(events.some((event) => event.type === 'auto_approval'), false);
+    runtime!.resolveApproval('r-activate', { behavior: 'allow' });
+    assert.strictEqual((await promise)?.behavior, 'allow');
   });
 
   it('lets authenticatedRequest use only its handler-owned approval gate', async () => {

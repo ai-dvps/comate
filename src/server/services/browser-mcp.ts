@@ -60,6 +60,7 @@ import {
   buildPageState,
   buildInspectElementFunction,
   buildInspectElementStateFunction,
+  buildActivationTargetSnapshotFunction,
   buildSubmitSnapshotScript,
   diffPageModels,
   diffSubmitSnapshots,
@@ -76,6 +77,8 @@ import {
   sameBrowserDocumentIdentity,
   buildElementFingerprintFunction,
   type SubmitSnapshot,
+  type ActivationTargetSnapshot,
+  sanitizeUntrustedPageText,
 } from './browser-page-model.js';
 import {
   BrowserNetworkCaptureError,
@@ -121,12 +124,13 @@ export const BROWSER_MCP_INSTRUCTIONS = `Use a fresh page model already returned
 1. getPageState — default page observation after an external or user-driven page change, a stale-ref error, or when reading another bounded inventory segment. It provides a page-level, text-only, token-bounded semantic view and element refs without requiring vision.
 2. findElements — search the complete internal element index when the page-state inventory is truncated or the target is not obvious.
 3. getElementDetails — inspect one known ref when more attributes or local context are needed.
-4. act — interact with the chosen ref and use the fresh model it returns. Return to getPageState only when the page changes outside these tools or a ref becomes stale.
-5. takeScreenshot — optional and only for genuinely visual questions such as layout, overlap, charts, canvas, or image content. Do not use it for routine page understanding or element discovery, and do not use it as a substitute for getPageState.`;
+4. act — fill/select/check editable controls. act(click) never dispatches; use activate for page-supplied controls or submit for HTML form submission.
+5. activate — request a single handler-approved physical click for a page-supplied control. Its receipt is not proof of business success; observe afterward.
+6. takeScreenshot — optional and only for genuinely visual questions such as layout, overlap, charts, canvas, or image content. Do not use it for routine page understanding or element discovery, and do not use it as a substitute for getPageState.`;
 
 /**
  * browser-mcp — the first-class tool surface for the embedded controlled
- * browser (KTD-3). Thirteen tools on the `comate-browser` SDK MCP server
+ * browser (KTD-3). Fourteen tools on the `comate-browser` SDK MCP server
  * (tool names `mcp__comate-browser__*`), injected into GUI chat sessions
  * only (KTD-4 ③: bot sessions never get this server).
  *
@@ -139,9 +143,8 @@ export const BROWSER_MCP_INSTRUCTIONS = `Use a fresh page model already returned
  *    closed. TOCTOU: after approval and before dispatch the form's action +
  *    field values are re-read over CDP and diffed against the approved
  *    snapshot — any mismatch aborts and re-confirms once, then fails.
- *  - act on submit-semantics controls (type=submit / in-form buttons) is
- *    refused here and routed to the submit tool, so the obvious gate bypass
- *    is closed at the handler level too (U4 adds the canUseTool twin).
+ *  - act(click) never dispatches. Page controls route to activate and form
+ *    submissions route to submit, both with handler-owned approval.
  *  - Confirmation payloads pass through the KTD-8 sanitization ruleset:
  *    sensitive fields are listed by name only; values never enter the
  *    pending_approval event stream.
@@ -426,7 +429,7 @@ function mutationReceiptForResult(
     return payload.receipt as BrowserOperationReceipt;
   }
   if (!dispatchAuthorized) {
-    const denied = payload.submitted === false || payload.closed === false || payload.handoffCompleted === false;
+    const denied = payload.submitted === false || payload.activated === false || payload.closed === false || payload.handoffCompleted === false;
     return {
       outcome: 'not_dispatched', dispatchState: 'not_dispatched', verified: denied,
       retrySafe: true, reason: denied ? 'user_denied' : 'target_unavailable',
@@ -465,6 +468,75 @@ function isApprovalDecision(
   value: BrowserApprovalDecision | CallToolResult,
 ): value is BrowserApprovalDecision {
   return typeof (value as BrowserApprovalDecision).behavior === 'string';
+}
+
+function publicEditorSummary(snapshot: ActivationTargetSnapshot): Record<string, number> {
+  return {
+    editorCount: snapshot.editorSummary.count,
+    filledEditorCount: snapshot.editorSummary.filledCount,
+    totalEditorLength: snapshot.editorSummary.totalLength,
+  };
+}
+
+function activationClassificationError(target: RefEntry): CallToolResult | undefined {
+  if (target.interactionClass === 'human-only') {
+    return toolError('browser_handoff_required', 'dispatch', 'This page control is human-only.', 'Call requestHandoff so the user can complete it directly.');
+  }
+  if (target.submitSemantics) {
+    return toolError('browser_use_submit_tool', 'ref_resolve', 'This page control submits an HTML form.', 'Call submit with this ref or its owning form ref.');
+  }
+  if (target.interactionClass === 'file-egress') {
+    return toolError('browser_use_upload_tool', 'ref_resolve', 'File-input refs cannot be activated through a generic page click.', 'Use the dedicated approved workspace upload tool when it is available.');
+  }
+  if (target.kind !== 'action' || target.interactionClass !== 'ambiguous-activation' ||
+      typeof target.backendNodeId !== 'number') {
+    return toolError(
+      'browser_activation_unsupported',
+      'ref_resolve',
+      'This ref is not an ambiguous page action and cannot use generic activation.',
+      target.kind === 'field'
+        ? 'Use act with fill, select, or check for editable field refs.'
+        : 'Choose an action ref from getPageState or findElements.',
+    );
+  }
+  return undefined;
+}
+
+function activationApprovalTarget(entry: RefEntry, details: InspectedElement): Record<string, unknown> {
+  const target: Record<string, unknown> = {
+    role: sanitizeUntrustedPageText(details.role ?? entry.role, 80),
+    name: sanitizeUntrustedPageText(details.name ?? entry.name, 160),
+  };
+  const nearby = sanitizeUntrustedPageText(details.nearbyText ?? '', 240);
+  if (nearby.text) target.nearbyContext = nearby;
+  return target;
+}
+
+function activationSafeDifferences(
+  approved: ActivationTargetSnapshot,
+  current: ActivationTargetSnapshot,
+): string[] {
+  const differences: string[] = [];
+  if (JSON.stringify(approved.geometry) !== JSON.stringify(current.geometry)) differences.push('target_geometry_changed');
+  if (
+    approved.editorSummary.count !== current.editorSummary.count ||
+    approved.editorSummary.filledCount !== current.editorSummary.filledCount ||
+    approved.editorSummary.totalLength !== current.editorSummary.totalLength ||
+    approved.editorSummary.privateDigest !== current.editorSummary.privateDigest
+  ) differences.push('editor_summary_changed');
+  return differences;
+}
+
+function activationHighRiskDrift(
+  approved: ActivationTargetSnapshot,
+  current: ActivationTargetSnapshot,
+): string | undefined {
+  if (!current.connected) return 'target_disconnected';
+  if (!current.enabled) return 'target_disabled';
+  if (!current.visible || !current.inViewport) return 'target_not_visible';
+  if (current.occluded) return 'target_occluded';
+  if (current.origin !== approved.origin) return 'origin_changed';
+  return undefined;
 }
 
 const UNAVAILABLE_RESOLUTIONS: Record<string, string> = {
@@ -1238,11 +1310,11 @@ export class BrowserToolContext {
   private async requestApproval(request: Omit<BrowserApprovalRequest, 'signal'>, signal?: AbortSignal): Promise<BrowserApprovalDecision | CallToolResult> {
     const requester = this.deps.approvalRequester;
     if (!requester) {
-      // Fail closed: no approval channel means NO submit, ever.
+      // Fail closed: no approval channel means no handler-owned external write.
       return toolError(
         'browser_approval_unavailable',
         'approval',
-        'No approval channel is wired for this session, so form submission is not permitted.',
+        'No approval channel is wired for this session, so this browser mutation is not permitted.',
         'This is an internal wiring issue — the chat session must provide an approval requester.',
       );
     }
@@ -1253,12 +1325,12 @@ export class BrowserToolContext {
         signal,
       });
     } catch (err) {
-      diagWarn('[browser-mcp] approval round-trip failed:', err);
+      diagWarn(`[browser-mcp] approval round-trip failed type=${err instanceof Error ? err.name : 'unknown'}`);
       return toolError(
         'browser_approval_failed',
         'approval',
-        `The approval round-trip failed: ${err instanceof Error ? err.message : String(err)}`,
-        'Retry the submit; if it persists, reload the chat session.',
+        'The approval round-trip failed before a decision was recorded.',
+        'Observe the current browser state; if the approval channel is available, start a new operation.',
       );
     }
   }
@@ -1377,20 +1449,25 @@ export class BrowserToolContext {
   ): Promise<CallToolResult> {
     const gate = this.controlGate('control');
     if (gate) return gate;
-    try {
-      const page = await this.ensurePage();
+    if (args.action === 'click') {
       const knownEntry = this.refTable.get(args.ref);
-      // A stale submit classification may over-confirm but must never lower
-      // risk. Route known submit controls before any liveness/fingerprint
-      // failure can turn this into a generic action error.
-      if (args.action === 'click' && knownEntry?.submitSemantics) {
+      if (knownEntry?.submitSemantics) {
         return toolError(
           'browser_use_submit_tool',
           'ref_resolve',
-          `Ref "${args.ref}" (${knownEntry.role} "${knownEntry.name}") submits a form, so it requires user confirmation.`,
-          'Call the submit tool with this ref (or its form ref) instead — it will ask the user to confirm.',
+          `Ref "${args.ref}" submits a form and cannot be clicked through act.`,
+          'Call submit with this ref (or its owning form ref); submit always asks for handler-level approval.',
         );
       }
+      return toolError(
+        'browser_use_activation_tool',
+        'ref_resolve',
+        `Ref "${args.ref}" is page-supplied and cannot be clicked through act.`,
+        'Call activate with a new caller-stable operationId and this ref; activate always asks for handler-level approval.',
+      );
+    }
+    try {
+      const page = await this.ensurePage();
       const resolved = await this.resolveCurrentRef(page, args.ref);
       if (!isRefEntry(resolved)) return resolved;
       const entry = resolved;
@@ -1404,37 +1481,7 @@ export class BrowserToolContext {
         );
       }
 
-      // Submit-semantics controls are routed to the submit tool so its
-      // handler-level confirmation gate cannot be bypassed via act (KTD-4 ②;
-      // U4 adds the canUseTool twin of this classification).
-      if (args.action === 'click' && entry.kind === 'action') {
-        if (!page.inspectBackendNode || typeof entry.backendNodeId !== 'number') {
-          return toolError(
-            'browser_ref_unresolvable',
-            'ref_resolve',
-            `Action ref "${args.ref}" cannot be checked for submit behavior by this browser runtime.`,
-            'Call getPageState for a fresh model, or use the form field ref when one is available.',
-          );
-        }
-        const details = await page.inspectBackendNode(entry.backendNodeId, buildInspectElementFunction());
-        if (!details) {
-          return toolError(
-            'browser_ref_unresolvable',
-            'ref_resolve',
-            `Action ref "${args.ref}" no longer resolves to a live element.`,
-            'Call getPageState for a fresh page model.',
-          );
-        }
-        if (details.actions.includes('submit')) {
-          return toolError(
-            'browser_use_submit_tool',
-            'ref_resolve',
-            `Ref "${args.ref}" (${entry.role} "${entry.name}") submits a form, so it requires user confirmation.`,
-            'Call getPageState or findElements for the owning form ref, then pass that form ref to submit.',
-          );
-        }
-      }
-      if (entry.kind === 'action' && args.action !== 'click') {
+      if (entry.kind === 'action') {
         return toolError(
           'browser_action_unsupported',
           'ref_resolve',
@@ -1454,9 +1501,7 @@ export class BrowserToolContext {
       if (authorizeDispatch && !await authorizeDispatch()) return mutationAuthorizationError();
 
       let receipt: BrowserOperationReceipt;
-      if (args.action === 'click') {
-        receipt = await page.clickBackendNode(entry.backendNodeId);
-      } else if (args.action === 'fill') {
+      if (args.action === 'fill') {
         if (!page.fillBackendNode) {
           return toolError(
             'browser_ref_unresolvable',
@@ -1546,7 +1591,6 @@ export class BrowserToolContext {
         url: this.lastModel?.url ?? '',
         fieldNames: [entry.name],
         outcome: receipt.verified ? 'ok' : 'error',
-        potentialSubmit: args.action === 'click' && !entry.submitSemantics,
         detail: `action=${args.action};outcome=${receipt.outcome}`,
       });
       return toolJson({
@@ -1554,6 +1598,163 @@ export class BrowserToolContext {
         ref: args.ref,
         action: args.action,
         receipt,
+      });
+    } catch (err) {
+      return this.toErrorResult(err, 'dispatch');
+    }
+  }
+
+  // -- activate (single-use handler-level approval, KTD5-KTD7) -------------
+
+  async handleActivate(
+    args: { ref: string },
+    extra?: unknown,
+    authorizeDispatch?: () => Promise<boolean>,
+    recordApproved?: () => Promise<boolean>,
+  ): Promise<CallToolResult> {
+    const gate = this.controlGate('control');
+    if (gate) return gate;
+    const signal = (extra as { signal?: AbortSignal } | undefined)?.signal;
+    try {
+      // Reject known non-action classes before live resolution. This cannot
+      // grant authority: it only keeps field/file refs out of the generic
+      // activation path (and preserves their specialized guidance).
+      const knownTarget = this.refTable.get(args.ref);
+      const knownClassificationError = knownTarget && activationClassificationError(knownTarget);
+      if (knownClassificationError) return knownClassificationError;
+
+      const page = await this.ensurePage();
+      const resolved = await this.resolveCurrentRef(page, args.ref);
+      if (!isRefEntry(resolved)) return resolved;
+      const target = resolved;
+      const classificationError = activationClassificationError(target);
+      if (classificationError) return classificationError;
+      if (!page.callBackendNode) {
+        return toolError('browser_activation_unsupported', 'ref_resolve', 'The current browser cannot safely inspect this action for activation.', 'Observe the page in a browser runtime with trusted backend-node inspection.');
+      }
+
+      const details = await page.inspectBackendNode?.(target.backendNodeId, buildInspectElementFunction());
+      const initial = await page.callBackendNode<ActivationTargetSnapshot>(
+        target.backendNodeId,
+        buildActivationTargetSnapshotFunction(),
+      );
+      if (!details || !initial) {
+        return toolError('browser_ref_unresolvable', 'ref_resolve', 'The activation target no longer resolves.', 'Call getPageState and choose a fresh ref.');
+      }
+      if (details.actions.includes('submit')) {
+        return toolError('browser_use_submit_tool', 'ref_resolve', 'This page control resolves to an HTML form submission.', 'Call submit with the control ref or its owning form ref.');
+      }
+      const initialRisk = activationHighRiskDrift(initial, initial);
+      if (initialRisk) {
+        return toolError('browser_activation_target_unsafe', 'toctou', `Activation target is unsafe: ${initialRisk}.`, 'Observe the page and choose a visible, enabled, unobscured control.');
+      }
+      const parsedOrigin = originOf(initial.origin);
+      if (!parsedOrigin) {
+        return toolError('browser_activation_origin_invalid', 'toctou', 'The page origin could not be verified.', 'Navigate with open to a valid http(s) page and obtain a fresh ref.');
+      }
+
+      // Single-use in-memory approval authority. The durable ledger binds the
+      // operationId to the private `{ref}` digest; this stricter runtime-only
+      // binding carries page state that must never enter approval/audit/MCP.
+      const approvalBinding = Object.freeze({
+        document: Object.freeze({ ...target.batch }),
+        backendNodeId: target.backendNodeId,
+        fingerprint: Object.freeze({ ...target.fingerprint }),
+        actionClass: target.interactionClass ?? 'ambiguous-activation',
+        origin: parsedOrigin,
+      });
+
+      let approvedSnapshot = initial;
+      let approvedDetails = details;
+      let differences: string[] = [];
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const reconfirmation = attempt > 0;
+        const payload: Record<string, unknown> = {
+          kind: 'browser_activation',
+          warning: 'This control is supplied by the remote page and may cause an external change.',
+          origin: parsedOrigin,
+          target: activationApprovalTarget(target, approvedDetails),
+          editorSummary: publicEditorSummary(approvedSnapshot),
+        };
+        if (reconfirmation) {
+          payload.reconfirmation = true;
+          payload.differences = differences;
+        }
+        const decision = await this.requestApproval({
+          toolName: BROWSER_TOOL_NAMES.activate,
+          title: reconfirmation ? `Confirm updated page activation on ${parsedOrigin}` : `Confirm page activation on ${parsedOrigin}`,
+          description: reconfirmation
+            ? 'The non-sensitive page summary changed. Review the updated manifest before activating once.'
+            : 'Review this single-use activation. Page-provided labels are shown as untrusted data.',
+          payload,
+        }, signal);
+        if (!isApprovalDecision(decision)) return decision;
+        if (decision.behavior !== 'allow') {
+          this.audit.logToolAction({
+            workspaceId: this.deps.workspaceId,
+            sessionId: this.deps.sessionId,
+            toolName: BROWSER_TOOL_NAMES.activate,
+            url: parsedOrigin,
+            outcome: 'denied',
+            detail: 'activation=user_denied',
+          });
+          return toolJson({ activated: false, reason: 'user_denied' });
+        }
+
+        const postGate = this.controlGate('control');
+        if (postGate) return postGate;
+        const currentResolved = await this.resolveCurrentRef(page, args.ref);
+        if (!isRefEntry(currentResolved) ||
+            !sameBrowserDocumentIdentity(currentResolved.batch, approvalBinding.document) ||
+            currentResolved.backendNodeId !== approvalBinding.backendNodeId ||
+            !sameElementFingerprint(currentResolved.fingerprint, approvalBinding.fingerprint) ||
+            (currentResolved.interactionClass ?? 'ambiguous-activation') !== approvalBinding.actionClass) {
+          return toolError('browser_activation_target_changed', 'toctou', 'The approved page target changed before dispatch.', 'The approval was consumed. Observe the page and start a new operation.');
+        }
+        const current = await page.callBackendNode<ActivationTargetSnapshot>(
+          approvalBinding.backendNodeId,
+          buildActivationTargetSnapshotFunction(),
+        );
+        if (!current) {
+          return toolError('browser_activation_target_changed', 'toctou', 'The approved page target disappeared before dispatch.', 'The approval was consumed. Observe the page and start a new operation.');
+        }
+        const currentDetails = await page.inspectBackendNode?.(approvalBinding.backendNodeId, buildInspectElementFunction());
+        if (!currentDetails || currentDetails.actions.includes('submit')) {
+          return toolError('browser_activation_target_changed', 'toctou', 'The approved page target semantics changed before dispatch.', 'The approval was consumed. Observe the page and start a new operation.');
+        }
+        const highRisk = activationHighRiskDrift(approvedSnapshot, current);
+        if (highRisk) {
+          return toolError('browser_activation_target_changed', 'toctou', `The approved page target is no longer safe: ${highRisk}.`, 'The approval was consumed. Observe the page and start a new operation.');
+        }
+        differences = activationSafeDifferences(approvedSnapshot, current);
+        if (JSON.stringify(activationApprovalTarget(target, approvedDetails)) !==
+            JSON.stringify(activationApprovalTarget(target, currentDetails))) {
+          differences.push('target_summary_changed');
+        }
+        if (differences.length === 0) break;
+        if (attempt > 0) {
+          return toolError('browser_activation_toctou', 'toctou', 'The activation summary kept changing after reconfirmation.', 'The approval was consumed. Observe the stable page and start a new operation.');
+        }
+        approvedSnapshot = current;
+        approvedDetails = currentDetails;
+      }
+
+      if (recordApproved && !await recordApproved()) return mutationAuthorizationError();
+      if (authorizeDispatch && !await authorizeDispatch()) return mutationAuthorizationError();
+      const receipt = await page.clickBackendNode(target.backendNodeId);
+      this.audit.logToolAction({
+        workspaceId: this.deps.workspaceId,
+        sessionId: this.deps.sessionId,
+        toolName: BROWSER_TOOL_NAMES.activate,
+        url: parsedOrigin,
+        outcome: receipt.outcome === 'dispatched_verified' ? 'ok' : 'error',
+        detail: `activation=${receipt.outcome}`,
+      });
+      return toolJson({
+        ok: receipt.outcome === 'dispatched_verified',
+        ref: args.ref,
+        receipt,
+        note: 'Activation dispatch is not proof that the remote application completed its business action. Observe the page before concluding success.',
       });
     } catch (err) {
       return this.toErrorResult(err, 'dispatch');
@@ -2245,7 +2446,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
       signal: (extra as { signal?: AbortSignal } | undefined)?.signal ?? new AbortController().signal,
       isCurrent: deps.isInvocationCurrent ?? (() => true),
     });
-    const approvalRequired = action === 'submit' || action === 'close' || action === 'control';
+    const approvalRequired = action === 'activation' || action === 'submit' || action === 'close' || action === 'control';
     const receipt = await mutations.execute(invocation, {
       action,
       privateParameters,
@@ -2301,7 +2502,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     'findElements',
     'After getPageState, search the complete internal accessibility index by text or regular ' +
       'expression, optionally narrowed by role. Returns fresh refs that can be passed to ' +
-      'getElementDetails, act, or submit; arbitrary selectors and raw HTML are never accepted.',
+      'getElementDetails, act (editing only), activate, or submit; arbitrary selectors and raw HTML are never accepted.',
     {
       text: z.string().max(300).optional().describe('Case-insensitive text to find in element names or nearby context'),
       regex: z.string().max(200).optional().describe('Safe JavaScript regex subset without groups, repetition, lookarounds, or backreferences; optionally /pattern/flags; cannot be combined with text'),
@@ -2364,9 +2565,9 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
   const actDef = tool(
     'act',
     'After choosing a ref with getPageState, findElements, and optionally getElementDetails, ' +
-      'perform a single interaction (click/fill/select/check) on that element. The result includes ' +
-      'a text-free bounded receipt; call getPageState explicitly to observe the page. Submitting a form is NOT ' +
-      'possible through act — submit-semantics controls require the submit tool (user confirmation).',
+      'perform one editing interaction (fill/select/check). click is intentionally non-dispatching: ' +
+      'every page-supplied click must use activate, while HTML submit controls use submit. The result ' +
+      'includes a text-free bounded receipt; call getPageState explicitly to observe the page.',
     {
       operationId: operationIdSchema,
       ref: z.string().describe('Element ref from the latest page model (e.g. "e7")'),
@@ -2386,6 +2587,37 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
         )
       : toolError('browser_operation_id_required', 'dispatch', 'Mutation tools require an operationId.', 'Retry once with a new caller-stable operationId.'),
   );
+
+  const activateBase = tool(
+    'activate',
+    'Activate one page-supplied control with a trusted physical click. ALWAYS requires handler-level ' +
+      'user approval, including in auto mode and for anchors, safe-looking hrefs, or local-looking labels. ' +
+      'The approval binds a sanitized origin, target identity, and non-sensitive editor summary; the target ' +
+      'is revalidated before at most one dispatch. The receipt never claims business success.',
+    {
+      operationId: operationIdSchema,
+      ref: z.string().describe('Page action ref from the latest page model'),
+    },
+    async (args: { operationId?: string; ref: string }, extra) => args.operationId
+      ? executeMutation(
+          args.operationId,
+          'activation',
+          { ref: args.ref },
+          extra,
+          (signal, authorize, recordApproved) => ctx.handleActivate(
+            { ref: args.ref },
+            { ...(extra as object), signal },
+            authorize,
+            recordApproved,
+          ),
+        )
+      : toolError('browser_operation_id_required', 'dispatch', 'Mutation tools require an operationId.', 'Retry once with a new caller-stable operationId.'),
+    { annotations: { destructiveHint: true, openWorldHint: true } },
+  );
+  const activateDef = {
+    ...activateBase,
+    _meta: { 'anthropic/requiresUserInteraction': true },
+  };
 
   const takeScreenshotDef = tool(
     'takeScreenshot',
@@ -2508,6 +2740,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     findElementsDef,
     getElementDetailsDef,
     actDef,
+    activateDef,
     takeScreenshotDef,
     startNetworkCaptureDef,
     stopNetworkCaptureDef,

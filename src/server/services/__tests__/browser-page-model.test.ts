@@ -7,6 +7,7 @@ import {
   buildPageState,
   buildExtractorScript,
   buildInspectElementStateFunction,
+  buildActivationTargetSnapshotFunction,
   buildInspectElementScript,
   buildSubmitSnapshotScript,
   diffPageModels,
@@ -228,6 +229,47 @@ describe('browser-page-model sensitivity ruleset (KTD-8)', () => {
     assert.match(script, /getBoundingClientRect/);
     assert.match(script, /elementFromPoint/);
     assert.doesNotMatch(script, /querySelectorAll|closest\(['"]form|outerHTML|innerHTML/);
+  });
+
+  it('activation snapshot fails visibility/enabled closed for hidden, inert, transparent, and ARIA states', () => {
+    const dom = new JSDOM('<!doctype html><body><div id="parent"><button id="target">Go</button></div></body>', {
+      url: 'https://example.test/editor',
+      runScripts: 'outside-only',
+    });
+    const { window } = dom;
+    const target = window.document.getElementById('target') as HTMLButtonElement;
+    const parent = window.document.getElementById('parent') as HTMLElement;
+    target.getBoundingClientRect = () => ({ x: 1, y: 2, width: 80, height: 20, top: 2, left: 1, right: 81, bottom: 22, toJSON: () => ({}) });
+    Object.defineProperty(window.document, 'elementFromPoint', { value: () => target, configurable: true });
+    const snapshotFn = window.eval(`(${buildActivationTargetSnapshotFunction()})`) as () => import('../browser-page-model.js').ActivationTargetSnapshot;
+    const read = () => snapshotFn.call(target);
+
+    assert.deepStrictEqual({ visible: read().visible, enabled: read().enabled }, { visible: true, enabled: true });
+    target.style.opacity = '0';
+    assert.strictEqual(read().visible, false);
+    target.style.opacity = '1';
+    parent.hidden = true;
+    assert.strictEqual(read().visible, false);
+    parent.hidden = false;
+    parent.setAttribute('inert', '');
+    assert.deepStrictEqual({ visible: read().visible, enabled: read().enabled }, { visible: false, enabled: false });
+    parent.removeAttribute('inert');
+    parent.setAttribute('aria-hidden', 'TRUE');
+    assert.strictEqual(read().visible, false);
+    parent.removeAttribute('aria-hidden');
+    target.setAttribute('aria-disabled', ' TrUe ');
+    assert.strictEqual(read().enabled, false);
+    target.removeAttribute('aria-disabled');
+    for (const [property, value] of [
+      ['opacity', '0'],
+      ['visibility', 'hidden'],
+      ['pointerEvents', 'none'],
+    ] as const) {
+      parent.style[property] = value;
+      assert.strictEqual(read().visible, false, `ancestor ${property}:${value} fails closed`);
+      parent.style[property] = '';
+    }
+    dom.window.close();
   });
 
   it('marks type=password sensitive', () => {
