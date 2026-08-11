@@ -67,6 +67,40 @@ export interface CdpConnectionOptions {
   connectRetryIntervalMs?: number;
 }
 
+export type BrowserMutationOutcome =
+  | 'not_dispatched'
+  | 'dispatched_verified'
+  | 'outcome_unknown';
+
+export type BrowserMutationReason =
+  | 'target_unavailable'
+  | 'target_disabled'
+  | 'target_not_visible'
+  | 'target_occluded'
+  | 'target_frame_mismatch'
+  | 'unsupported_target'
+  | 'unsupported_input_command'
+  | 'dispatch_failed'
+  | 'verification_mismatch';
+
+/**
+ * Text-free mutation result. It deliberately reports transport/DOM evidence,
+ * never business success and never the supplied or resulting field value.
+ */
+export interface BrowserOperationReceipt {
+  outcome: BrowserMutationOutcome;
+  dispatchState: 'not_dispatched' | 'dispatched';
+  verified: boolean;
+  retrySafe: boolean;
+  matchesRequested?: boolean;
+  normalizedLength?: number;
+  reason?: BrowserMutationReason;
+  delta: {
+    kind: 'none' | 'activation' | 'field';
+    changed: boolean;
+  };
+}
+
 /** Raw CDP transport: id-matched commands + method-keyed event listeners. */
 export class CdpConnection {
   private readonly ws: WebSocket;
@@ -248,7 +282,8 @@ export interface BrowserCdpSession {
   evaluate<T>(expression: string): Promise<T>;
   navigate(url: string): Promise<void>;
   getFullAXTree(): Promise<RawAxNode[]>;
-  clickBackendNode(backendNodeId: number): Promise<void>;
+  clickBackendNode(backendNodeId: number): Promise<BrowserOperationReceipt | void>;
+  fillBackendNode?(backendNodeId: number, text: string): Promise<BrowserOperationReceipt>;
   getDocumentIdentity?(): BrowserDocumentIdentity | null;
   extractPageModel?(expression: string): Promise<PageExtractionBundle>;
   callBackendNode?<T>(backendNodeId: number, functionDeclaration: string): Promise<T | null>;
@@ -307,11 +342,84 @@ function isPositivePageExtraction(value: unknown): value is RawPageExtraction {
     !!candidate.stats && typeof candidate.stats === 'object' && !Array.isArray(candidate.stats);
 }
 
-const CLICK_FN = `function () {
-  try { this.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) {}
-  this.click();
-  return true;
+const READ_INTERACTION_STATE_FN = `function () {
+  var ariaDisabled = (this.getAttribute && this.getAttribute('aria-disabled') || '').toLowerCase();
+  return {
+    connected: this.isConnected === true,
+    enabled: !this.disabled && ariaDisabled !== 'true'
+  };
 }`;
+
+const ALLOWED_HIT_TEST_FN = `function (target) {
+  return !!target && target.isConnected === true && (this === target || target.contains(this));
+}`;
+
+const PREPARE_TEXT_REPLACEMENT_FN = `function () {
+  if (this.isConnected !== true) return { editable: false };
+  var tag = this.tagName ? this.tagName.toLowerCase() : '';
+  if (tag === 'input' || tag === 'textarea') {
+    if (this.disabled || this.readOnly) return { editable: false };
+    try { this.setSelectionRange(0, String(this.value == null ? '' : this.value).length); }
+    catch (e) { return { editable: false }; }
+    return { kind: tag, editable: true };
+  }
+  var ce = (this.getAttribute && this.getAttribute('contenteditable') || '').toLowerCase();
+  var contenteditable = this.isContentEditable === true || ce === '' || ce === 'true' || ce === 'plaintext-only';
+  var role = (this.getAttribute && this.getAttribute('role') || '').toLowerCase();
+  if (!contenteditable && role !== 'textbox') return { editable: false };
+  var selection = this.ownerDocument && this.ownerDocument.getSelection ? this.ownerDocument.getSelection() : null;
+  if (!selection) return { editable: false };
+  var range = this.ownerDocument.createRange();
+  range.selectNodeContents(this);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return { kind: 'contenteditable', editable: true };
+}`;
+
+const VERIFY_TEXT_REPLACEMENT_FN = `function (expected) {
+  function normalize(value) { return String(value == null ? '' : value).replace(/\\r\\n?/g, '\\n'); }
+  if (this.isConnected !== true) return { matches: false, normalizedLength: 0 };
+  var tag = this.tagName ? this.tagName.toLowerCase() : '';
+  var actual = tag === 'input' || tag === 'textarea'
+    ? this.value
+    : (typeof this.innerText === 'string' ? this.innerText : this.textContent);
+  actual = normalize(actual);
+  expected = normalize(expected);
+  return { matches: actual === expected, normalizedLength: actual.length };
+}`;
+
+const NATIVE_TEXT_FALLBACK_FN = `function (value) {
+  if (this.isConnected !== true) return { ok: false };
+  var tag = this.tagName ? this.tagName.toLowerCase() : '';
+  if (tag !== 'input' && tag !== 'textarea') return { ok: false };
+  var proto = tag === 'input' ? window.HTMLInputElement.prototype : window.HTMLTextAreaElement.prototype;
+  var descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+  if (!descriptor || !descriptor.set) return { ok: false };
+  descriptor.set.call(this, value);
+  this.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
+  this.dispatchEvent(new Event('change', { bubbles: true }));
+  return { ok: true };
+}`;
+
+function notDispatched(reason: BrowserMutationReason): BrowserOperationReceipt {
+  return {
+    outcome: 'not_dispatched', dispatchState: 'not_dispatched', verified: false,
+    retrySafe: true, reason, delta: { kind: 'none', changed: false },
+  };
+}
+
+function outcomeUnknown(kind: 'activation' | 'field'): BrowserOperationReceipt {
+  return {
+    outcome: 'outcome_unknown', dispatchState: 'dispatched', verified: false,
+    retrySafe: false, reason: 'dispatch_failed', delta: { kind, changed: false },
+  };
+}
+
+function unsupportedCommand(error: unknown): boolean {
+  return error instanceof CdpError && (
+    error.code === -32601 || /wasn't found|method not found|unknown method/i.test(error.message)
+  );
+}
 
 class BrowserCdpSessionImpl implements BrowserCdpSession {
   private closedFlag = false;
@@ -556,25 +664,175 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
     return result.nodes ?? [];
   }
 
-  async clickBackendNode(backendNodeId: number): Promise<void> {
-    const { object } = await this.connection.send<{ object: { objectId?: string } }>(
-      'DOM.resolveNode',
-      { backendNodeId },
-      this.sessionId,
-    );
-    if (!object.objectId) {
-      throw new CdpError('Failed to resolve element for click', 'DOM.resolveNode');
-    }
+  async clickBackendNode(backendNodeId: number): Promise<BrowserOperationReceipt> {
+    let targetObjectId: string | undefined;
     try {
-      await this.connection.send(
-        'Runtime.callFunctionOn',
-        { objectId: object.objectId, functionDeclaration: CLICK_FN, returnByValue: true },
+      const resolved = await this.connection.send<{ object?: { objectId?: string } }>(
+        'DOM.resolveNode', { backendNodeId }, this.sessionId,
+      );
+      targetObjectId = resolved.object?.objectId;
+      if (!targetObjectId) return notDispatched('target_unavailable');
+      const stateResult = await this.connection.send<EvaluateResult>('Runtime.callFunctionOn', {
+        objectId: targetObjectId,
+        functionDeclaration: READ_INTERACTION_STATE_FN,
+        returnByValue: true,
+      }, this.sessionId);
+      const state = stateResult.result?.value as { connected?: boolean; enabled?: boolean } | undefined;
+      if (!state?.connected) return notDispatched('target_unavailable');
+      if (!state.enabled) return notDispatched('target_disabled');
+
+      await this.connection.send('DOM.scrollIntoViewIfNeeded', { backendNodeId }, this.sessionId);
+      const box = await this.connection.send<{ model?: { content?: number[]; border?: number[] } }>(
+        'DOM.getBoxModel', { backendNodeId }, this.sessionId,
+      );
+      const quad = box.model?.content ?? box.model?.border;
+      if (!quad || quad.length < 8 || quad.some((value) => !Number.isFinite(value))) {
+        return notDispatched('target_not_visible');
+      }
+      const xs = [quad[0], quad[2], quad[4], quad[6]];
+      const ys = [quad[1], quad[3], quad[5], quad[7]];
+      const x = xs.reduce((sum, value) => sum + value, 0) / xs.length;
+      const y = ys.reduce((sum, value) => sum + value, 0) / ys.length;
+      if (Math.max(...xs) - Math.min(...xs) <= 0 || Math.max(...ys) - Math.min(...ys) <= 0) {
+        return notDispatched('target_not_visible');
+      }
+
+      const hit = await this.connection.send<{ backendNodeId?: number; frameId?: string }>(
+        'DOM.getNodeForLocation',
+        { x: Math.round(x), y: Math.round(y), includeUserAgentShadowDOM: true, ignorePointerEventsNone: false },
         this.sessionId,
       );
+      if (hit.frameId && this.mainFrameId && hit.frameId !== this.mainFrameId) {
+        return notDispatched('target_frame_mismatch');
+      }
+      if (typeof hit.backendNodeId !== 'number') return notDispatched('target_occluded');
+      if (hit.backendNodeId !== backendNodeId) {
+        let hitObjectId: string | undefined;
+        try {
+          const hitResolved = await this.connection.send<{ object?: { objectId?: string } }>(
+            'DOM.resolveNode', { backendNodeId: hit.backendNodeId }, this.sessionId,
+          );
+          hitObjectId = hitResolved.object?.objectId;
+          if (!hitObjectId) return notDispatched('target_occluded');
+          const allowed = await this.connection.send<EvaluateResult>('Runtime.callFunctionOn', {
+            objectId: hitObjectId,
+            functionDeclaration: ALLOWED_HIT_TEST_FN,
+            arguments: [{ objectId: targetObjectId }],
+            returnByValue: true,
+          }, this.sessionId);
+          if (allowed.result?.value !== true) return notDispatched('target_occluded');
+        } finally {
+          if (hitObjectId) {
+            await this.connection.send('Runtime.releaseObject', { objectId: hitObjectId }, this.sessionId).catch(() => undefined);
+          }
+        }
+      }
+
+      try {
+        await this.connection.send('Input.dispatchMouseEvent', {
+          type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1,
+        }, this.sessionId);
+      } catch {
+        return outcomeUnknown('activation');
+      }
+      try {
+        await this.connection.send('Input.dispatchMouseEvent', {
+          type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1,
+        }, this.sessionId);
+      } catch {
+        return outcomeUnknown('activation');
+      }
+      return {
+        outcome: 'dispatched_verified', dispatchState: 'dispatched', verified: true,
+        retrySafe: false, delta: { kind: 'activation', changed: false },
+      };
+    } catch {
+      return notDispatched('target_unavailable');
     } finally {
-      await this.connection
-        .send('Runtime.releaseObject', { objectId: object.objectId }, this.sessionId)
-        .catch(() => undefined);
+      if (targetObjectId) {
+        await this.connection.send('Runtime.releaseObject', { objectId: targetObjectId }, this.sessionId).catch(() => undefined);
+      }
+    }
+  }
+
+  async fillBackendNode(backendNodeId: number, text: string): Promise<BrowserOperationReceipt> {
+    if (text.length > 1_000_000) return notDispatched('unsupported_target');
+    let objectId: string | undefined;
+    try {
+      const resolved = await this.connection.send<{ object?: { objectId?: string } }>(
+        'DOM.resolveNode', { backendNodeId }, this.sessionId,
+      );
+      objectId = resolved.object?.objectId;
+      if (!objectId) return notDispatched('target_unavailable');
+      await this.connection.send('DOM.focus', { backendNodeId }, this.sessionId);
+      const prepared = await this.connection.send<EvaluateResult>('Runtime.callFunctionOn', {
+        objectId, functionDeclaration: PREPARE_TEXT_REPLACEMENT_FN, returnByValue: true,
+      }, this.sessionId);
+      const preparation = prepared.result?.value as { kind?: string; editable?: boolean } | undefined;
+      if (!preparation?.editable) return notDispatched('unsupported_target');
+
+      try {
+        await this.connection.send('Input.insertText', { text }, this.sessionId);
+      } catch (insertError) {
+        if (!unsupportedCommand(insertError)) return outcomeUnknown('field');
+        try {
+          await this.connection.send('Input.dispatchKeyEvent', {
+            type: 'char', text, unmodifiedText: text,
+          }, this.sessionId);
+        } catch (keyError) {
+          if (!unsupportedCommand(keyError)) return outcomeUnknown('field');
+          if (preparation.kind !== 'input' && preparation.kind !== 'textarea') {
+            return notDispatched('unsupported_input_command');
+          }
+          try {
+            const fallback = await this.connection.send<EvaluateResult>('Runtime.callFunctionOn', {
+              objectId,
+              functionDeclaration: NATIVE_TEXT_FALLBACK_FN,
+              arguments: [{ value: text }],
+              returnByValue: true,
+            }, this.sessionId);
+            if ((fallback.result?.value as { ok?: boolean } | undefined)?.ok !== true) {
+              return notDispatched('unsupported_input_command');
+            }
+          } catch {
+            return outcomeUnknown('field');
+          }
+        }
+      }
+
+      let verification: { matches?: boolean; normalizedLength?: number } | undefined;
+      try {
+        const result = await this.connection.send<EvaluateResult>('Runtime.callFunctionOn', {
+          objectId,
+          functionDeclaration: VERIFY_TEXT_REPLACEMENT_FN,
+          arguments: [{ value: text }],
+          returnByValue: true,
+        }, this.sessionId);
+        verification = result.result?.value as { matches?: boolean; normalizedLength?: number } | undefined;
+      } catch {
+        return outcomeUnknown('field');
+      }
+      const normalizedLength = Number.isFinite(verification?.normalizedLength)
+        ? Math.max(0, Math.min(1_000_000, Math.floor(verification!.normalizedLength!)))
+        : undefined;
+      if (verification?.matches !== true) {
+        return {
+          outcome: 'outcome_unknown', dispatchState: 'dispatched', verified: false,
+          retrySafe: false, matchesRequested: false, ...(normalizedLength !== undefined ? { normalizedLength } : {}),
+          reason: 'verification_mismatch', delta: { kind: 'field', changed: true },
+        };
+      }
+      return {
+        outcome: 'dispatched_verified', dispatchState: 'dispatched', verified: true,
+        retrySafe: false, matchesRequested: true, ...(normalizedLength !== undefined ? { normalizedLength } : {}),
+        delta: { kind: 'field', changed: true },
+      };
+    } catch {
+      return notDispatched('target_unavailable');
+    } finally {
+      if (objectId) {
+        await this.connection.send('Runtime.releaseObject', { objectId }, this.sessionId).catch(() => undefined);
+      }
     }
   }
 
