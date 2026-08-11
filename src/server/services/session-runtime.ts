@@ -22,7 +22,7 @@ import type { Provider } from '../models/provider.js';
 import type { BotEscalationAudience } from '../storage/sqlite-store.js';
 import type { McpToolAnnotations } from './mcp-tool-classification.js';
 import { PushableIterator } from './pushable-iterator.js';
-import { SseEmitter } from './sse-emitter.js';
+import { containsEdeDiagnostic, SseEmitter } from './sse-emitter.js';
 import { SdkClient } from './sdk-client.js';
 import { ClaudeBackendDriver, type BackendDriver } from './backend-driver.js';
 import { diagLog } from '../utils/diag-logger.js';
@@ -383,9 +383,11 @@ export class SessionRuntime {
         }
       }
 
-      this.emitter.emitErrorNote(
-        `Stream error: ${message}`,
-      );
+      if (!containsEdeDiagnostic(message)) {
+        this.emitter.emitErrorNote(
+          `Stream error: ${message}`,
+        );
+      }
     } finally {
       if (this.stopping) {
         this.hardCloseForStop(

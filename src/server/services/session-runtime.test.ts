@@ -1202,6 +1202,57 @@ describe('session-runtime rate-limit errors', { concurrency: false }, () => {
   });
 });
 
+describe('session-runtime EDE diagnostics', { concurrency: false }, () => {
+  let runtime: SessionRuntime | undefined;
+
+  afterEach(async () => {
+    if (runtime && !runtime.isClosed()) {
+      await runtime.close();
+    }
+    runtime = undefined;
+  });
+
+  it('does not surface the SDK wrapper error after an EDE result', async () => {
+    const diagnostic = '[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use';
+    const events: SseEvent[] = [];
+    const query = {
+      interrupt: () => Promise.resolve({ still_queued: [] }),
+      close: () => {},
+    } as unknown as Query;
+    const messages = (async function* () {
+      yield {
+        type: 'result',
+        subtype: 'error_during_execution',
+        is_error: true,
+        duration_ms: 0,
+        duration_api_ms: 0,
+        num_turns: 0,
+        total_cost_usd: 0,
+        session_id: 's1',
+        errors: [diagnostic],
+      } as SDKMessage;
+      throw new Error(`Claude Code returned an error result: ${diagnostic}`);
+    })();
+    const sdkClient = {
+      createStreamingQuery: () => ({ query, messages }),
+    } as unknown as SdkClient;
+
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      sdkClient,
+      (_id, event) => events.push(event),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.strictEqual(events.filter((event) => event.type === 'result').length, 1);
+    assert.strictEqual(events.filter((event) => event.type === 'error_note').length, 0);
+  });
+});
+
 describe('session-runtime context_usage emission', { concurrency: false }, () => {
   let runtime: SessionRuntime | undefined;
 
