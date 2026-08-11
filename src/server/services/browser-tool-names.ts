@@ -17,9 +17,9 @@ export const BROWSER_TOOL_PREFIX = `mcp__${BROWSER_MCP_SERVER_KEY}__`;
 export const BROWSER_TOOL_NAMES = {
   open: `${BROWSER_TOOL_PREFIX}open`,
   getPageState: `${BROWSER_TOOL_PREFIX}getPageState`,
-  snapshot: `${BROWSER_TOOL_PREFIX}snapshot`,
   findElements: `${BROWSER_TOOL_PREFIX}findElements`,
   getElementDetails: `${BROWSER_TOOL_PREFIX}getElementDetails`,
+  takeScreenshot: `${BROWSER_TOOL_PREFIX}takeScreenshot`,
   startNetworkCapture: `${BROWSER_TOOL_PREFIX}startNetworkCapture`,
   stopNetworkCapture: `${BROWSER_TOOL_PREFIX}stopNetworkCapture`,
   authenticatedRequest: `${BROWSER_TOOL_PREFIX}authenticatedRequest`,

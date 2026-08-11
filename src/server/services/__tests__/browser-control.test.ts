@@ -554,11 +554,11 @@ describe('browser-control mutual exclusion', () => {
 
     // After handback the same calls run (gate lifted — table: allow_tool_call).
     h.control.handback('sess-1');
-    const snapshot = await h.call('snapshot', {});
-    assert.strictEqual(snapshot.isError, undefined);
+    const pageState = await h.call('getPageState', {});
+    assert.strictEqual(pageState.isError, undefined);
   });
 
-  it('screenshot is hard-blocked during takeover; the sanitized model stays available', async () => {
+  it('takeScreenshot is hard-blocked during takeover; the text page state stays available', async () => {
     const h = track(await makeHarness());
     await h.call('open', { url: 'https://shop.example/checkout' });
 
@@ -569,20 +569,20 @@ describe('browser-control mutual exclusion', () => {
     h.page.extraction = userDrivenExtraction();
 
     // Pixels cannot be sanitized — hard block (recoverable error, no capture).
-    const shot = await h.call('snapshot', { screenshot: true });
+    const shot = await h.call('takeScreenshot', {});
     assert.strictEqual(shot.isError, true);
     assert.strictEqual(errorCode(shot), 'browser_user_in_control');
     assert.strictEqual(h.page.screenshots, 0, 'no pixel capture during takeover');
 
     // The distilled model stays available and carries no pixels/field values.
-    const modelResult = await h.call('snapshot', {});
-    assert.strictEqual(modelResult.isError, undefined);
+    const stateResult = await h.call('getPageState', {});
+    assert.strictEqual(stateResult.isError, undefined);
     assert.strictEqual(
-      modelResult.content.some((block) => block.type === 'image'),
+      stateResult.content.some((block) => block.type === 'image'),
       false,
       'no image block',
     );
-    const serialized = JSON.stringify(resultPayload(modelResult));
+    const serialized = JSON.stringify(resultPayload(stateResult));
     assert.ok(!serialized.includes('hunter2'));
 
     h.control.handback('sess-1');

@@ -14,6 +14,8 @@ export interface StatelessMcpHttpRouterOptions<TDeps, TAuthContext = unknown> {
   /** MCP server identity reported to clients. */
   name: string;
   version: string;
+  /** Model-facing guidance returned during MCP initialization. */
+  instructions?: string;
   /** Per-surface Bearer token (each MCP surface owns its secret). */
   token?: string;
   authorizeRequest?: (
@@ -69,7 +71,10 @@ export function createStatelessMcpHttpRouter<TDeps, TAuthContext = unknown>(opti
       res.status(404).json({ error: 'Session not found or not eligible' });
       return;
     }
-    const server = new McpServer({ name: options.name, version: options.version });
+    const server = new McpServer(
+      { name: options.name, version: options.version },
+      options.instructions ? { instructions: options.instructions } : undefined,
+    );
     options.registerTools(server, sessionId, deps);
 
     const transport = new StreamableHTTPServerTransport({

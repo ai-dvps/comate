@@ -45,7 +45,7 @@ import {
  * U4: browser permission gates.
  *  - canUseTool-layer submit classification (first gate + UI entry, KTD-4 ②)
  *  - auto-mode first-cross-domain navigation confirmation + audit markers
- *  - readonly-mode snapshot/extract auto-approval
+ *  - readonly-mode page observation/screenshot/extract auto-approval
  *  - bot triple defense: explicit deny on BOTH bot canUseTool paths (dynamic
  *    bot-level + legacy workspace-level), admin included; category backstop
  *  - U9-dependent drive-by fixture: cross-origin POST resolving an approval
@@ -388,8 +388,8 @@ describe('session-runtime browser gates', { concurrency: false }, () => {
     openRuntime();
     runtime!.setApprovalMode('readonly');
 
-    const snapshot = await callTool(BROWSER_TOOL_NAMES.snapshot, {}, 'r-snap');
-    assert.strictEqual(snapshot?.behavior, 'allow');
+    const screenshot = await callTool(BROWSER_TOOL_NAMES.takeScreenshot, {}, 'r-shot');
+    assert.strictEqual(screenshot?.behavior, 'allow');
     const pageState = await callTool(BROWSER_TOOL_NAMES.getPageState, {}, 'r-page-state');
     assert.strictEqual(pageState?.behavior, 'allow');
     const extract = await callTool(BROWSER_TOOL_NAMES.extract, { schema: { t: { source: 'text' } } }, 'r-extract');

@@ -310,7 +310,7 @@ describe('resolveEffectivePolicy', () => {
 describe('browser category (U4, KTD-4 ①)', () => {
   const BROWSER_TOOLS = [
     'mcp__comate-browser__open',
-    'mcp__comate-browser__snapshot',
+    'mcp__comate-browser__takeScreenshot',
     'mcp__comate-browser__act',
     'mcp__comate-browser__submit',
     'mcp__comate-browser__extract',
@@ -354,9 +354,9 @@ describe('browser category (U4, KTD-4 ①)', () => {
     const policy: ToolPermissionPolicy = {
       posture: 'custom',
       categoryDefaults: { ...SAFE_PRESET.categoryDefaults },
-      overrides: { 'mcp__comate-browser__snapshot': 'allow' },
+      overrides: { 'mcp__comate-browser__takeScreenshot': 'allow' },
     };
-    assert.equal(evaluateToolPermission(policy, 'mcp__comate-browser__snapshot'), 'allow');
+    assert.equal(evaluateToolPermission(policy, 'mcp__comate-browser__takeScreenshot'), 'allow');
     assert.equal(evaluateToolPermission(policy, 'mcp__comate-browser__act'), 'deny');
   });
 

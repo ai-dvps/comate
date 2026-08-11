@@ -14,7 +14,11 @@
  */
 
 import { Router } from 'express';
-import { buildBrowserToolDefinitions, type BrowserMcpDeps } from './browser-mcp.js';
+import {
+  BROWSER_MCP_INSTRUCTIONS,
+  buildBrowserToolDefinitions,
+  type BrowserMcpDeps,
+} from './browser-mcp.js';
 import { createStatelessMcpHttpRouter } from './mcp-http-router.js';
 import {
   sessionCapabilityService,
@@ -64,7 +68,8 @@ export function createBrowserMcpHttpRouter(
   const capabilities = options?.capabilities ?? sessionCapabilityService;
   return createStatelessMcpHttpRouter<AuthorizedBrowserMcpHttpDeps, BrowserMcpAuthorization>({
     name: 'comate-browser',
-    version: '0.2.0',
+    version: '0.3.0',
+    instructions: BROWSER_MCP_INSTRUCTIONS,
     logTag: 'browser-mcp-http',
     authorizeRequest: (req, sessionId) => {
       if (!isLoopbackHost(req.headers.host) || !originAllowed(req.headers.origin, req.headers.host)) {

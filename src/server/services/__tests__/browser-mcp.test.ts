@@ -33,6 +33,7 @@ import { SessionRuntime } from '../session-runtime.js';
 import { SdkClient } from '../sdk-client.js';
 import { store as workspaceStore } from '../../storage/sqlite-store.js';
 import { SESSION_TOKEN_ENV } from '../session-capability-service.js';
+import type { BrowserAuditToolInput } from '../browser-audit.js';
 
 /**
  * browser-mcp tests — the first-class tool surface (KTD-3), the handler-level
@@ -54,6 +55,8 @@ interface FakePageOptions {
   extractResults?: Record<string, unknown>;
   inspectResult?: Record<string, unknown>;
   inspectError?: Error;
+  currentUrl?: string;
+  screenshotError?: Error;
   networkTransport?: BrowserNetworkCaptureTransport;
 }
 
@@ -120,6 +123,9 @@ class FakePage implements BrowserCdpSession {
     if (expression.includes('window.__comateProbe')) {
       return this.probe as T; // READ_PROBE_SCRIPT
     }
+    if (expression.includes('window.location.href')) {
+      return (this.options.currentUrl ?? this.options.extraction.url) as T;
+    }
     if (expression.includes('__comateInspectElement')) {
       return (this.options.inspectResult ?? null) as T;
     }
@@ -161,6 +167,7 @@ class FakePage implements BrowserCdpSession {
   }
   async captureScreenshot(): Promise<string> {
     this.screenshots += 1;
+    if (this.options.screenshotError) throw this.options.screenshotError;
     return 'aGVsbG8';
   }
   cookieWrites: Array<Array<Record<string, unknown>>> = [];
@@ -279,6 +286,7 @@ interface Harness {
     page: FakePage;
     approvals: BrowserApprovalRequest[];
     approvalDecisions: BrowserApprovalDecision[];
+    auditActions: BrowserAuditToolInput[];
   };
   tools: Map<string, BrowserToolDefinition>;
   call: (name: string, args: Record<string, unknown>, extra?: unknown) => Promise<CallToolResult>;
@@ -333,6 +341,7 @@ async function makeHarness(options: {
   });
 
   const approvals: BrowserApprovalRequest[] = [];
+  const auditActions: BrowserAuditToolInput[] = [];
   const decisions = [...(options.approvalDecisions ?? [])];
   const deps: BrowserMcpDeps = {
     sessionId: 'chat-session-1',
@@ -342,6 +351,7 @@ async function makeHarness(options: {
     connectPage: async () => options.page,
     pageRegistry: new Map(),
     settleMs: 0,
+    audit: { logToolAction: (input) => { auditActions.push(input); return null; } },
   };
   if (options.withApprovalRequester !== false) {
     deps.approvalRequester = async (_sessionId, request) => {
@@ -353,7 +363,7 @@ async function makeHarness(options: {
   const definitions = buildBrowserToolDefinitions(deps);
   const tools = new Map(definitions.map((definition) => [definition.name, definition]));
   return {
-    ctx: { browserService, page: options.page, approvals, approvalDecisions: decisions },
+    ctx: { browserService, page: options.page, approvals, approvalDecisions: decisions, auditActions },
     tools,
     call: async (name, args, extra) => {
       const definition = tools.get(name);
@@ -380,14 +390,14 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.deepStrictEqual(
       [...harness.tools.keys()].sort(),
-      ['act', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getElementDetails', 'getPageState', 'open', 'requestHandoff', 'snapshot', 'startNetworkCapture', 'stopNetworkCapture', 'submit'],
+      ['act', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getElementDetails', 'getPageState', 'open', 'requestHandoff', 'startNetworkCapture', 'stopNetworkCapture', 'submit', 'takeScreenshot'],
     );
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
 
-  it('annotates snapshot/extract read-only and marks submit destructive + requiresUserInteraction', async () => {
+  it('annotates page observation tools read-only and marks submit destructive + requiresUserInteraction', async () => {
     const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
-    assert.strictEqual(harness.tools.get('snapshot')?.annotations?.readOnlyHint, true);
+    assert.strictEqual(harness.tools.get('takeScreenshot')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('getPageState')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('extract')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('findElements')?.annotations?.readOnlyHint, true);
@@ -407,8 +417,10 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const defs = buildBrowserToolDefinitions({ sessionId: 's', workspaceId: 'w' });
     assert.deepEqual(
       defs.map((d) => d.name),
-      ['open', 'getPageState', 'snapshot', 'findElements', 'getElementDetails', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'act', 'submit', 'extract', 'requestHandoff', 'close'],
+      ['open', 'getPageState', 'findElements', 'getElementDetails', 'act', 'takeScreenshot', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'submit', 'extract', 'requestHandoff', 'close'],
     );
+    assert.match(defs.find((definition) => definition.name === 'getPageState')?.description ?? '', /default observation/i);
+    assert.match(defs.find((definition) => definition.name === 'takeScreenshot')?.description ?? '', /only.*visual/i);
     assert.strictEqual(BROWSER_TOOL_PREFIX, 'mcp__comate-browser__');
     const authenticated = defs.find((definition) => definition.name === 'authenticatedRequest');
     assert.ok(authenticated?.inputSchema && 'safeParse' in authenticated.inputSchema);
@@ -419,10 +431,10 @@ describe('browser-mcp tool surface (KTD-3)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// open / snapshot
+// page observation
 // ---------------------------------------------------------------------------
 
-describe('browser-mcp open/snapshot', () => {
+describe('browser-mcp page observation', () => {
   let harness: Harness;
   afterEach(() => {
     rmSync(harness.storageDir, { recursive: true, force: true });
@@ -470,16 +482,67 @@ describe('browser-mcp open/snapshot', () => {
     assert.match(error.resolution, /health\/browser|desktop app|COMATE_BROWSER_CDP_TARGET/);
   });
 
-  it('snapshot returns a fresh model and an image block when requested', async () => {
-    harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+  it('takeScreenshot returns an image block for optional visual reasoning', async () => {
+    harness = await makeHarness({
+      page: new FakePage({
+        extraction: makeExtraction(),
+        currentUrl: 'https://shop.example/checkout?token=secret',
+      }),
+    });
     await harness.call('open', { url: 'https://shop.example/checkout' });
-    const result = await harness.call('snapshot', { screenshot: true });
+    const result = await harness.call('takeScreenshot', {});
     assert.strictEqual(result.isError, undefined);
     const image = result.content.find((block) => block.type === 'image');
     assert.ok(image && image.type === 'image', 'image block present');
     assert.strictEqual(image.mimeType, 'image/jpeg');
     assert.ok(image.data.length > 0, 'bare base64 payload');
     assert.strictEqual(harness.ctx.page.screenshots, 1);
+    assert.strictEqual(harness.ctx.auditActions.at(-1)?.url, 'https://shop.example/checkout?token=secret');
+  });
+
+  it('takeScreenshot maps capture failures to a structured capture error', async () => {
+    harness = await makeHarness({
+      page: new FakePage({
+        extraction: makeExtraction(),
+        screenshotError: new Error('capture unavailable'),
+      }),
+    });
+    await harness.call('open', { url: 'https://shop.example/checkout' });
+
+    const result = await harness.call('takeScreenshot', {});
+    const error = resultPayload(result).error as { code: string; stage: string; message: string };
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(error.code, 'browser_cdp_error');
+    assert.strictEqual(error.stage, 'capture');
+    assert.match(error.message, /capture unavailable/);
+  });
+
+  it('takeScreenshot preserves refs from the current text page state', async () => {
+    const page = new FakePage({
+      extraction: makeExtraction(),
+      axNodes: [
+        { nodeId: '1', role: { value: 'button' }, name: { value: 'Continue' }, backendDOMNodeId: 77 },
+      ],
+      inspectResult: {
+        tag: 'button',
+        attributes: {},
+        descendants: [],
+        descendantsTruncated: false,
+        actions: ['click'],
+      },
+    });
+    harness = await makeHarness({ page });
+    const pageState = resultPayload(await harness.call('getPageState', {})).state as {
+      elements: Array<{ ref: string; kind: string }>;
+    };
+    const action = pageState.elements.find((element) => element.kind === 'action');
+    assert.ok(action);
+
+    await harness.call('takeScreenshot', {});
+    const acted = await harness.call('act', { ref: action.ref, action: 'click' });
+
+    assert.strictEqual(acted.isError, undefined, JSON.stringify(resultPayload(acted)));
+    assert.deepStrictEqual(page.clickedBackendNodes, [77]);
   });
 
   it('getPageState returns a bounded text-only semantic inventory with fresh refs', async () => {
@@ -745,7 +808,7 @@ describe('browser-mcp act', () => {
     assert.strictEqual(stale.isError, true);
     const error = resultPayload(stale).error as { code: string; resolution: string };
     assert.strictEqual(error.code, 'browser_ref_stale');
-    assert.ok(error.resolution.includes('snapshot'));
+    assert.ok(error.resolution.includes('getPageState'));
     assert.strictEqual(page.actScripts.length, 0, 'no dispatch for invalid refs');
   });
 
@@ -1224,9 +1287,9 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
     const first = buildBrowserToolDefinitions(deps);
     const second = buildBrowserToolDefinitions(deps);
     const openFirst = first.find((definition) => definition.name === 'open');
-    const snapSecond = second.find((definition) => definition.name === 'snapshot');
+    const stateSecond = second.find((definition) => definition.name === 'getPageState');
     await openFirst?.handler({ url: 'https://shop.example/' }, {});
-    await snapSecond?.handler({}, {});
+    await stateSecond?.handler({}, {});
     assert.strictEqual(dials, 1, 'runtime rebuild reuses the live connection');
   });
 
@@ -1246,10 +1309,10 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
     const deps = { sessionId: 'chat-session-1', workspaceId: 'w', browserService: service, connectPage, pageRegistry: registry, settleMs: 0 };
     const defs = buildBrowserToolDefinitions(deps);
     const open = defs.find((definition) => definition.name === 'open');
-    const snapshot = defs.find((definition) => definition.name === 'snapshot');
+    const takeScreenshot = defs.find((definition) => definition.name === 'takeScreenshot');
     await open?.handler({ url: 'https://shop.example/' }, {});
     pages[0].close(); // view crash / socket drop
-    const result = await snapshot?.handler({}, {});
+    const result = await takeScreenshot?.handler({}, {});
     assert.strictEqual(result?.isError, undefined);
     assert.strictEqual(dials, 2, 'dead connection evicted, fresh dial made');
   });

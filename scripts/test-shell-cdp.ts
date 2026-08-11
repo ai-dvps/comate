@@ -9,7 +9,7 @@
  * flatten attach, page ops, network capture, fingerprint parity (KTD-12),
  * browser-context isolation (partition stand-in, KTD-10), cold-start retry,
  * target-destroyed detection, session-context export.
- * PART B (tool parity, appended by the U7 service work): the 12 comate-browser
+ * PART B (tool parity, appended by the U7 service work): the 13 comate-browser
  * tools driven through BrowserToolContext + BrowserService against the same
  * endpoint via COMATE_BROWSER_CDP_TARGET (AE2 mechanism, R8).
  *
@@ -501,7 +501,7 @@ try {
   });
 
   // -------------------------------------------------------------------------
-  // PART B — tool parity (AE2 mechanism): the 12 comate-browser tools driven
+  // PART B — tool parity (AE2 mechanism): the 13 comate-browser tools driven
   // through BrowserToolContext + BrowserService against this same Chromium as
   // an EXTERNAL CDP endpoint (COMATE_BROWSER_CDP_TARGET, R8). No release —
   // the tools keep serving off a plain debug-port Chromium.
@@ -559,12 +559,10 @@ try {
   let echoLinkRef = '';
   let nameFieldRef = '';
   await check('B2 findElements + getElementDetails: fresh refs resolve to live elements', async () => {
-    const out = resultJson(await ctxA.handleSnapshot({}));
-    const model = out['model'] as PageModelShape;
     const found = resultJson(await ctxA.handleFindElements({ text: 'echo link', role: 'link', exact: true }));
     const matches = found['matches'] as Array<{ ref: string; name: string }>;
     echoLinkRef = matches[0]?.ref ?? '';
-    assert(echoLinkRef, `link ref missing: ${JSON.stringify(model.actions)}`);
+    assert(echoLinkRef, `link ref missing: ${JSON.stringify(matches)}`);
     const inspected = resultJson(await ctxA.handleGetElementDetails({ ref: echoLinkRef }));
     assert(inspected['ok'] === true, `getElementDetails failed: ${JSON.stringify(inspected)}`);
     const fieldFound = resultJson(await ctxA.handleFindElements({ text: 'Name', role: 'textbox', exact: true }));
@@ -579,10 +577,10 @@ try {
   });
 
   await check('B4 submit-semantics guard: act(click) on a submit control is refused', async () => {
-    // Refs rotate on every distill (B3's act re-distilled) — re-snapshot.
-    const snap = resultJson(await ctxA.handleSnapshot({}));
-    const model = snap['model'] as PageModelShape;
-    const submit = model.forms[0]!.fields.find((f) => f.submitSemantics)!;
+    // Refs rotate on every distill (B3's act re-distilled) — re-read state.
+    const pageState = resultJson(await ctxA.handleGetPageState({}));
+    const state = pageState['state'] as { elements: Array<{ ref: string; submitSemantics?: boolean }> };
+    const submit = state.elements.find((element) => element.submitSemantics)!;
     const res = (await ctxA.handleAct({ ref: submit.ref, action: 'click' })) as ToolResult;
     toolResults.push(res.content?.find((c) => c.type === 'text')?.text ?? '');
     assert(res.isError === true, 'submit control click must be gated');
@@ -593,9 +591,10 @@ try {
   });
 
   await check('B5 submit: approval-gated form submission navigates', async () => {
-    const snap = resultJson(await ctxA.handleSnapshot({}));
-    const model = snap['model'] as PageModelShape;
-    const out = resultJson(await ctxA.handleSubmit({ ref: model.forms[0]!.ref, fields: {} }));
+    const pageState = resultJson(await ctxA.handleGetPageState({}));
+    const state = pageState['state'] as { elements: Array<{ ref: string; kind: string }> };
+    const form = state.elements.find((element) => element.kind === 'form')!;
+    const out = resultJson(await ctxA.handleSubmit({ ref: form.ref, fields: {} }));
     assert(out['submitted'] === true, `submit failed: ${JSON.stringify(out)}`);
     const submitted = out['model'] as PageModelShape | undefined;
     assert(
@@ -629,9 +628,9 @@ try {
     assert(typeof stopped['captureId'] === 'string', 'no captureId');
   });
 
-  await check('B8 snapshot with screenshot returns an image block', async () => {
-    const res = (await ctxA.handleSnapshot({ screenshot: true })) as ToolResult;
-    assert(!res.isError, 'screenshot snapshot errored');
+  await check('B8 takeScreenshot returns an image block', async () => {
+    const res = (await ctxA.handleTakeScreenshot()) as ToolResult;
+    assert(!res.isError, 'takeScreenshot errored');
     const image = res.content?.find((c) => c.type === 'image');
     assert(image?.data && image.mimeType === 'image/jpeg', 'no jpeg image block');
   });
