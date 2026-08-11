@@ -50,6 +50,8 @@ interface FakePageOptions {
   postSubmitExtraction?: RawPageExtraction;
   axNodes?: RawAxNode[];
   probe?: { docId: string; domEpoch: number } | null;
+  documentIdentity?: import('../browser-page-model.js').BrowserDocumentIdentity | null;
+  backendFingerprints?: Record<number, import('../browser-page-model.js').ElementFingerprint | null>;
   submitSnapshots?: Array<SubmitSnapshot | null>;
   submitDispatchError?: Error;
   extractResults?: Record<string, unknown>;
@@ -100,16 +102,76 @@ class FakePage implements BrowserCdpSession {
   private submitSnapshots: Array<SubmitSnapshot | null>;
   private submitDispatched = false;
   private closeListeners = new Set<() => void>();
+  private currentIdentity: import('../browser-page-model.js').BrowserDocumentIdentity | null;
 
   constructor(options: FakePageOptions) {
     this.options = options;
     this.submitSnapshots = [...(options.submitSnapshots ?? [])];
+    this.currentIdentity = options.documentIdentity === undefined
+      ? { targetId: 'target-1', sessionId: 'session-1', frameId: 'frame-1', loaderId: options.extraction.docId, generation: 0 }
+      : options.documentIdentity;
   }
 
   get probe(): { docId: string; domEpoch: number } | null {
     return this.options.probe === undefined
       ? { docId: this.options.extraction.docId, domEpoch: this.options.extraction.domEpoch }
       : this.options.probe;
+  }
+
+  getDocumentIdentity(): import('../browser-page-model.js').BrowserDocumentIdentity | null {
+    if (this.options.probe === null) return null;
+    return this.currentIdentity ? { ...this.currentIdentity } : null;
+  }
+
+  setDocumentIdentity(identity: import('../browser-page-model.js').BrowserDocumentIdentity | null): void {
+    this.currentIdentity = identity;
+  }
+
+  async extractPageModel(): Promise<import('../browser-page-model.js').PageExtractionBundle> {
+    const extraction = this.submitDispatched && this.options.postSubmitExtraction
+      ? this.options.postSubmitExtraction
+      : this.options.extraction;
+    return {
+      extraction,
+      backendNodeIds: [
+        ...extraction.forms.flatMap((form) => [form, ...form.fields]),
+        ...(extraction.standalone.length > 0 ? [{}] : []),
+        ...extraction.standalone,
+      ].map((_item, index) => 100 + index),
+    };
+  }
+
+  async callBackendNode<T>(backendNodeId: number, functionDeclaration: string): Promise<T | null> {
+    if (functionDeclaration.includes('fileInput:')) {
+      if (Object.prototype.hasOwnProperty.call(this.options.backendFingerprints ?? {}, backendNodeId)) {
+        return (this.options.backendFingerprints?.[backendNodeId] ?? null) as T | null;
+      }
+      if (backendNodeId === 100) {
+        return (this.options.extraction.forms.length > 0
+          ? { tag: 'form', type: 'form', role: 'form', editable: false, fileInput: false }
+          : { tag: 'body', type: 'body', role: '', editable: false, fileInput: false }) as T;
+      }
+      const action = this.options.axNodes?.find((node) => node.backendDOMNodeId === backendNodeId);
+      if (action) {
+        return { tag: 'button', type: 'submit', role: String(action.role?.value ?? 'button').toLowerCase(), editable: false, fileInput: false } as T;
+      }
+      const field = this.options.extraction.forms.flatMap((form) => form.fields)[backendNodeId - 101]
+        ?? this.options.extraction.standalone[backendNodeId - 100];
+      if (!field) return null;
+      const tag = field.tag.toLowerCase();
+      const type = field.type.toLowerCase();
+      const role = field.role?.toLowerCase() ?? (tag === 'button' ? 'button' : type === 'search' ? 'searchbox' : 'textbox');
+      return { tag, type, role, editable: tag === 'input' || tag === 'textarea' || tag === 'select', fileInput: tag === 'input' && type === 'file' } as T;
+    }
+    const isBackendSubmit = functionDeclaration.includes('var form = this');
+    const isBackendClick = functionDeclaration.includes('"click"');
+    if (isBackendSubmit || isBackendClick) this.submitDispatched = true;
+    this.actScripts.push(functionDeclaration);
+    if (isBackendSubmit) this.dispatchScripts.push(functionDeclaration);
+    if (this.options.submitDispatchError && (isBackendSubmit || isBackendClick)) {
+      throw this.options.submitDispatchError;
+    }
+    return { ok: true } as T;
   }
 
   async evaluate<T>(expression: string): Promise<T> {
@@ -201,6 +263,7 @@ function makeExtraction(overrides: Partial<RawPageExtraction> = {}): RawPageExtr
     forms: [
       {
         formIndex: 0,
+        xpath: '/html[1]/body[1]/form[1]',
         name: 'payment',
         action: 'https://shop.example/pay',
         method: 'post',
@@ -772,7 +835,7 @@ describe('browser-mcp act', () => {
     assert.ok(payload.delta, 'delta present');
     assert.ok(payload.model, 'fresh model present');
     assert.strictEqual(harness.ctx.page.actScripts.length, 1);
-    assert.ok(harness.ctx.page.actScripts[0].includes('/html[1]/body[1]/form[1]/input[1]'));
+    assert.doesNotMatch(harness.ctx.page.actScripts[0], /XPathResult|document\.evaluate/);
     assert.ok(harness.ctx.page.actScripts[0].includes('me@example.com'));
   });
 
@@ -792,7 +855,7 @@ describe('browser-mcp act', () => {
     assert.deepStrictEqual(page.clickedBackendNodes, [77]);
   });
 
-  it('rejects unknown and stale refs with structured errors', async () => {
+  it('rejects unknown refs while same-document DOM churn keeps backend refs valid', async () => {
     const page = new FakePage({
       extraction: makeExtraction(),
       probe: { docId: 'doc-1', domEpoch: 9 }, // DOM moved on since the distill
@@ -804,12 +867,36 @@ describe('browser-mcp act', () => {
     assert.strictEqual(unknown.isError, true);
     assert.strictEqual((resultPayload(unknown).error as { code: string }).code, 'browser_ref_unknown');
 
-    const stale = await harness.call('act', { ref: emailRef, action: 'fill', value: 'x' });
-    assert.strictEqual(stale.isError, true);
-    const error = resultPayload(stale).error as { code: string; resolution: string };
-    assert.strictEqual(error.code, 'browser_ref_stale');
-    assert.ok(error.resolution.includes('getPageState'));
-    assert.strictEqual(page.actScripts.length, 0, 'no dispatch for invalid refs');
+    const current = await harness.call('act', { ref: emailRef, action: 'fill', value: 'x' });
+    assert.strictEqual(current.isError, undefined, 'unrelated mutation does not invalidate a backend-node ref');
+    assert.ok(page.actScripts.length > 0);
+  });
+
+  it('does not retarget a ref when a same-position field is replaced', async () => {
+    const page = new FakePage({ extraction: makeExtraction(), backendFingerprints: { 101: null } });
+    harness = await makeHarness({ page });
+    const { emailRef } = await openAndGetRefs(harness);
+    const result = await harness.call('act', { ref: emailRef, action: 'fill', value: 'x' });
+    assert.equal((resultPayload(result).error as { code: string }).code, 'browser_ref_stale');
+    assert.equal(page.actScripts.length, 0);
+  });
+
+  it('fails closed after document replacement and semantic fingerprint drift', async () => {
+    const page = new FakePage({ extraction: makeExtraction() });
+    harness = await makeHarness({ page });
+    const { emailRef } = await openAndGetRefs(harness);
+    page.setDocumentIdentity({ targetId: 'target-1', sessionId: 'session-1', frameId: 'frame-1', loaderId: 'loader-2', generation: 1 });
+    const navigated = await harness.call('act', { ref: emailRef, action: 'fill', value: 'x' });
+    assert.equal((resultPayload(navigated).error as { code: string }).code, 'browser_ref_stale');
+
+    const changed = new FakePage({
+      extraction: makeExtraction(),
+      backendFingerprints: { 101: { tag: 'input', type: 'file', role: 'textbox', editable: true, fileInput: true } },
+    });
+    harness = await makeHarness({ page: changed });
+    const refs = await openAndGetRefs(harness);
+    const mismatched = await harness.call('act', { ref: refs.emailRef, action: 'fill', value: 'x' });
+    assert.equal((resultPayload(mismatched).error as { code: string }).code, 'browser_ref_stale');
   });
 
   it('routes submit-semantics clicks to the submit tool', async () => {
@@ -1082,7 +1169,7 @@ describe('browser-mcp submit handler-level gate', () => {
     assert.strictEqual(page.dispatchScripts.length, 0, 'requestSubmit not used for control refs');
     const clickScript = page.actScripts.find((script) => script.includes('"click"'));
     assert.ok(clickScript, 'control clicked via its xpath');
-    assert.ok(clickScript.includes('/html[1]/body[1]/form[1]/button[1]'));
+    assert.doesNotMatch(clickScript, /XPathResult|document\.evaluate/);
   });
 
   it('blocks submit while the user is in control', async () => {
@@ -1366,11 +1453,7 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
     };
     const changedField = await changedDefs.find((definition) => definition.name === 'getElementDetails')!
       .handler({ ref: changedModel.forms[0].fields[0].ref }, {});
-    assert.strictEqual(
-      (resultPayload(changedField).error as { code: string }).code,
-      'browser_ref_stale',
-      'XPath-backed field refs remain strict across DOM mutations',
-    );
+    assert.strictEqual(changedField.isError, undefined, 'backend-node field refs survive same-document mutations');
     const changedAction = await changedDefs.find((definition) => definition.name === 'getElementDetails')!
       .handler({ ref: changedModel.actions[0].ref }, {});
     assert.strictEqual(changedAction.isError, undefined, 'stable backend-node refs survive same-document mutations');
@@ -1386,10 +1469,11 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
     });
     const staleOpen = await staleDefs.find((definition) => definition.name === 'open')!.handler({ url: 'https://shop.example/' }, {});
     const staleRef = (resultPayload(staleOpen).model as { forms: Array<{ fields: Array<{ ref: string }> }> }).forms[0].fields[0].ref;
+    stalePage.setDocumentIdentity({ targetId: 'target-1', sessionId: 'session-1', frameId: 'frame-1', loaderId: 'other-doc', generation: 1 });
     const stale = resultPayload(await staleDefs.find((definition) => definition.name === 'getElementDetails')!.handler({ ref: staleRef }, {})).error as { code: string };
     assert.equal(stale.code, 'browser_ref_stale');
 
-    const noProbePage = new FakePage({ extraction: makeExtraction(), probe: null });
+    const noProbePage = new FakePage({ extraction: makeExtraction() });
     const noProbeDefs = buildBrowserToolDefinitions({
       ...changedDeps,
       sessionId: 'no-probe-session',
@@ -1397,8 +1481,9 @@ describe('browser-mcp page registry (KTD-5 rebind)', () => {
     });
     const noProbeOpen = await noProbeDefs.find((definition) => definition.name === 'open')!.handler({ url: 'https://shop.example/' }, {});
     const noProbeRef = (resultPayload(noProbeOpen).model as { forms: Array<{ fields: Array<{ ref: string }> }> }).forms[0].fields[0].ref;
+    noProbePage.setDocumentIdentity(null);
     const unavailable = resultPayload(await noProbeDefs.find((definition) => definition.name === 'getElementDetails')!.handler({ ref: noProbeRef }, {})).error as { code: string };
-    assert.equal(unavailable.code, 'browser_probe_unavailable');
+    assert.equal(unavailable.code, 'browser_document_identity_unavailable');
   });
 
   it('preserves capture across stateless builds, ranks APIs, and removes credential sentinels', async () => {

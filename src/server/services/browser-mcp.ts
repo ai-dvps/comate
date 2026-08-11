@@ -50,12 +50,10 @@ import {
 } from './browser-control.js';
 import { CdpError, connectBrowserPage, type BrowserCdpSession } from './browser-cdp.js';
 import {
-  READ_PROBE_SCRIPT,
   RefTable,
   buildPageState,
   buildInspectElementFunction,
   buildInspectElementStateFunction,
-  buildInspectElementScript,
   buildSubmitSnapshotScript,
   diffPageModels,
   diffSubmitSnapshots,
@@ -65,6 +63,9 @@ import {
   type InspectedElement,
   type RefBatchKey,
   type RefEntry,
+  type ElementFingerprint,
+  sameElementFingerprint,
+  buildElementFingerprintFunction,
   type SubmitSnapshot,
 } from './browser-page-model.js';
 import {
@@ -220,12 +221,11 @@ export interface BrowserMcpDeps {
 // through DOM.resolveNode in browser-cdp).
 // ---------------------------------------------------------------------------
 
-function buildActScript(xpath: string, action: string, value: string | undefined): string {
-  return `(() => {
-  var xpath = ${JSON.stringify(xpath)};
+function buildBackendActFunction(action: string, value: string | undefined): string {
+  return `function () {
   var action = ${JSON.stringify(action)};
   var value = ${JSON.stringify(value ?? '')};
-  var el = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+  var el = this;
   if (!el) return { ok: false, reason: 'element_not_found' };
   try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) {}
   var tag = el.tagName ? el.tagName.toLowerCase() : '';
@@ -259,12 +259,12 @@ function buildActScript(xpath: string, action: string, value: string | undefined
     return { ok: true };
   }
   return { ok: false, reason: 'unknown_action' };
-})()`;
+}`;
 }
 
-function buildRequestSubmitScript(formIndex: number): string {
-  return `(() => {
-  var form = document.forms[${JSON.stringify(formIndex)}];
+function buildBackendSubmitFunction(): string {
+  return `function () {
+  var form = this;
   if (!form) return { ok: false, reason: 'form_gone' };
   try {
     if (form.requestSubmit) { form.requestSubmit(); } else { form.submit(); }
@@ -272,7 +272,7 @@ function buildRequestSubmitScript(formIndex: number): string {
   } catch (e) {
     return { ok: false, reason: 'dispatch_failed: ' + (e && e.message ? e.message : String(e)) };
   }
-})()`;
+}`;
 }
 
 function isSubmitNavigationRace(error: unknown): boolean {
@@ -844,12 +844,8 @@ export class BrowserToolContext {
     return null;
   }
 
-  private async readProbe(page: BrowserCdpSession): Promise<RefBatchKey | null> {
-    try {
-      return await page.evaluate<RefBatchKey | null>(READ_PROBE_SCRIPT);
-    } catch {
-      return null;
-    }
+  private readDocumentIdentity(page: BrowserCdpSession): RefBatchKey | null {
+    return page.getDocumentIdentity?.() ?? null;
   }
 
   private async distill(
@@ -871,11 +867,10 @@ export class BrowserToolContext {
     return model;
   }
 
-  private resolveCurrentRef(
+  private async resolveCurrentRef(
+    page: BrowserCdpSession,
     ref: string,
-    probe: RefBatchKey | null,
-    epochPolicy: 'exact' | 'same-document' = 'exact',
-  ): RefEntry | CallToolResult {
+  ): Promise<RefEntry | CallToolResult> {
     const entry = this.refTable.get(ref);
     if (!entry) {
       return toolError(
@@ -885,21 +880,36 @@ export class BrowserToolContext {
         'Call getPageState for a fresh text-only page state and current refs.',
       );
     }
-    if (!probe) {
+    const identity = this.readDocumentIdentity(page);
+    if (!identity) {
       return toolError(
-        'browser_probe_unavailable',
+        'browser_document_identity_unavailable',
         'ref_resolve',
         'The browser could not verify the current document identity for this element ref.',
         'Call getPageState to rebuild the page model; if this persists, reopen the browser session.',
       );
     }
-    const documentChanged = entry.batch.docId !== probe.docId;
-    const epochChanged = entry.batch.domEpoch !== probe.domEpoch;
-    if (documentChanged || (epochPolicy === 'exact' && epochChanged)) {
+    if (!this.refTable.isCurrent(ref, identity)) {
       return toolError(
         'browser_ref_stale',
         'ref_resolve',
         `Element ref "${ref}" (${entry.role} "${entry.name}") was invalidated by a page change.`,
+        'Call getPageState, then retry with the fresh ref.',
+      );
+    }
+    if (!page.callBackendNode) {
+      return toolError('browser_ref_unresolvable', 'ref_resolve', 'The browser runtime cannot re-resolve this backend node.', 'Reopen the browser session and refresh the page model.');
+    }
+    let current: ElementFingerprint | null = null;
+    try {
+      current = await page.callBackendNode<ElementFingerprint>(entry.backendNodeId, buildElementFingerprintFunction());
+    } catch {
+      current = null;
+    }
+    if (!current || !sameElementFingerprint(entry.fingerprint, current)) {
+      return toolError(
+        'browser_ref_stale', 'ref_resolve',
+        `Element ref "${ref}" (${entry.role} "${entry.name}") no longer resolves to the same semantic element.`,
         'Call getPageState, then retry with the fresh ref.',
       );
     }
@@ -915,14 +925,13 @@ export class BrowserToolContext {
   }): Promise<CallToolResult> {
     try {
       const page = await this.ensurePage();
-      const probe = args.offset && args.offset > 0 ? await this.readProbe(page) : null;
+      const probe = args.offset && args.offset > 0 ? this.readDocumentIdentity(page) : null;
       const cachedBatch = this.refTable.batchKey;
       const canReuseCache =
         this.pageStateCache !== null &&
         probe !== null &&
         cachedBatch !== null &&
-        cachedBatch.docId === probe.docId &&
-        cachedBatch.domEpoch === probe.domEpoch;
+        JSON.stringify(cachedBatch) === JSON.stringify(probe);
       const model = canReuseCache
         ? this.pageStateCache!
         : await this.distill(page, {
@@ -999,26 +1008,17 @@ export class BrowserToolContext {
     if (gate) return gate;
     try {
       const page = await this.ensurePage();
-      const known = this.refTable.get(args.ref);
-      const epochPolicy = known?.kind === 'action' && typeof known.backendNodeId === 'number'
-        ? 'same-document'
-        : 'exact';
-      const resolved = this.resolveCurrentRef(args.ref, await this.readProbe(page), epochPolicy);
+      const resolved = await this.resolveCurrentRef(page, args.ref);
       if (!isRefEntry(resolved)) return resolved;
       let raw: InspectedElement | null;
-      if (resolved.kind === 'action' && typeof resolved.backendNodeId === 'number') {
-        if (!page.inspectBackendNode) {
-          return toolError(
-            'browser_ref_unresolvable',
-            'ref_resolve',
-            `Action ref "${args.ref}" cannot be inspected by this browser runtime.`,
-            'Call getPageState for a fresh model or inspect the owning form/field ref instead.',
-          );
-        }
-        raw = await page.inspectBackendNode(resolved.backendNodeId, buildInspectElementFunction());
-      } else {
-        raw = await page.evaluate<InspectedElement | null>(buildInspectElementScript(resolved));
+      if (!page.inspectBackendNode) {
+        return toolError(
+          'browser_ref_unresolvable', 'ref_resolve',
+          `Ref "${args.ref}" cannot be inspected by backend identity in this browser runtime.`,
+          'Reopen the browser session and refresh the page model.',
+        );
       }
+      raw = await page.inspectBackendNode(resolved.backendNodeId, buildInspectElementFunction());
       if (!raw) {
         return toolError(
           'browser_ref_unresolvable',
@@ -1270,8 +1270,7 @@ export class BrowserToolContext {
     if (gate) return gate;
     try {
       const page = await this.ensurePage();
-      const probe = await this.readProbe(page);
-      const resolved = this.resolveCurrentRef(args.ref, probe);
+      const resolved = await this.resolveCurrentRef(page, args.ref);
       if (!isRefEntry(resolved)) return resolved;
       const entry = resolved;
 
@@ -1331,32 +1330,24 @@ export class BrowserToolContext {
       }
 
       if (entry.kind === 'action') {
-        if (typeof entry.backendNodeId !== 'number') {
-          return toolError(
-            'browser_ref_unresolvable',
-            'ref_resolve',
-            `Action ref "${args.ref}" has no backend node.`,
-            'Call getPageState for a fresh page model.',
-          );
-        }
         await page.clickBackendNode(entry.backendNodeId);
       } else {
-        if (!entry.xpath) {
+        if (!page.callBackendNode) {
           return toolError(
             'browser_ref_unresolvable',
             'ref_resolve',
-            `Field ref "${args.ref}" has no locator.`,
-            'Call getPageState for a fresh page model.',
+            `Field ref "${args.ref}" cannot be dispatched by backend identity.`,
+            'Reopen the browser session and refresh the page model.',
           );
         }
-        const result = await page.evaluate<{ ok: boolean; reason?: string }>(
-          buildActScript(entry.xpath, args.action, args.value),
+        const result = await page.callBackendNode<{ ok: boolean; reason?: string }>(
+          entry.backendNodeId, buildBackendActFunction(args.action, args.value),
         );
-        if (!result.ok) {
+        if (!result?.ok) {
           return toolError(
             'browser_action_failed',
             'dispatch',
-            `Action ${args.action} on "${entry.name}" failed: ${result.reason ?? 'unknown'}`,
+            `Action ${args.action} on "${entry.name}" failed: ${result?.reason ?? 'unknown'}`,
             'Call getPageState to re-read the page, verify the field state, and retry.',
           );
         }
@@ -1400,8 +1391,7 @@ export class BrowserToolContext {
     const signal = (extra as { signal?: AbortSignal } | undefined)?.signal;
     try {
       const page = await this.ensurePage();
-      const probe = await this.readProbe(page);
-      const resolved = this.resolveCurrentRef(args.ref, probe);
+      const resolved = await this.resolveCurrentRef(page, args.ref);
       if (!isRefEntry(resolved)) return resolved;
       const target = resolved;
 
@@ -1442,22 +1432,22 @@ export class BrowserToolContext {
             'Call getPageState for the current form field list.',
           );
         }
-        if (!fieldEntry.xpath) {
+        if (!page.callBackendNode) {
           return toolError(
             'browser_ref_unresolvable',
             'ref_resolve',
-            `Field "${key}" has no locator.`,
-            'Call getPageState for a fresh page model.',
+            `Field "${key}" cannot be dispatched by backend identity.`,
+            'Reopen the browser session and refresh the page model.',
           );
         }
-        const fillResult = await page.evaluate<{ ok: boolean; reason?: string }>(
-          buildActScript(fieldEntry.xpath, 'fill', value),
+        const fillResult = await page.callBackendNode<{ ok: boolean; reason?: string }>(
+          fieldEntry.backendNodeId, buildBackendActFunction('fill', value),
         );
-        if (!fillResult.ok) {
+        if (!fillResult?.ok) {
           return toolError(
             'browser_action_failed',
             'dispatch',
-            `Failed to fill field "${key}": ${fillResult.reason ?? 'unknown'}`,
+            `Failed to fill field "${key}": ${fillResult?.reason ?? 'unknown'}`,
             'Call getPageState to verify the field state and retry.',
           );
         }
@@ -1562,19 +1552,20 @@ export class BrowserToolContext {
 
       // Dispatch: click the approved submit control when given, else
       // requestSubmit() so validation + submit events fire.
-      const dispatchScript = controlEntry?.xpath
-        ? buildActScript(controlEntry.xpath, 'click', undefined)
-        : buildRequestSubmitScript(formIndex);
-      const dispatchFailure = controlEntry?.xpath
+      const dispatchFunction = controlEntry
+        ? buildBackendActFunction('click', undefined)
+        : buildBackendSubmitFunction();
+      const dispatchBackendNodeId = controlEntry?.backendNodeId ?? target.backendNodeId;
+      const dispatchFailure = controlEntry
         ? 'Failed to activate the submit control'
         : 'Form dispatch failed';
       try {
-        const dispatchResult = await page.evaluate<{ ok: boolean; reason?: string }>(dispatchScript);
-        if (!dispatchResult.ok) {
+        const dispatchResult = await page.callBackendNode?.<{ ok: boolean; reason?: string }>(dispatchBackendNodeId, dispatchFunction);
+        if (!dispatchResult?.ok) {
           return toolError(
             'browser_action_failed',
             'dispatch',
-            `${dispatchFailure}: ${dispatchResult.reason ?? 'unknown'}`,
+            `${dispatchFailure}: ${dispatchResult?.reason ?? 'unknown'}`,
             'Call getPageState to re-read the page and retry.',
           );
         }

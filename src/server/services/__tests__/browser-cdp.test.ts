@@ -49,6 +49,38 @@ describe('CdpConnection event envelopes', () => {
 });
 
 describe('BrowserCdpSession lifecycle', () => {
+  it('invalidates document identity when the debugger connection closes', async () => {
+    const server = new WebSocketServer({ port: 0 });
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const peerPromise = new Promise<import('ws').WebSocket>((resolve) => {
+      server.once('connection', (peer) => {
+        peer.on('message', (raw) => {
+          const command = JSON.parse(String(raw)) as { id: number; method: string };
+          const result = command.method === 'Target.attachToTarget'
+            ? { sessionId: 'page-session' }
+            : command.method === 'Page.getFrameTree'
+              ? { frameTree: { frame: { id: 'main-frame', loaderId: 'loader-1' } } }
+              : {};
+          peer.send(JSON.stringify({ id: command.id, result }));
+        });
+        resolve(peer);
+      });
+    });
+    const page = await connectShellPage({
+      port: address.port, browserWsUrl: `ws://127.0.0.1:${address.port}`,
+      targetId: 'page-target', fingerprint: false, connectReadyTimeoutMs: 0,
+    });
+    const peer = await peerPromise;
+    assert.ok(page.getDocumentIdentity?.());
+    const closed = new Promise<void>((resolve) => page.onClose(resolve));
+    peer.close();
+    await closed;
+    assert.equal(page.getDocumentIdentity?.(), null);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
   it('closes the page session when its flattened target detaches', async () => {
     const server = new WebSocketServer({ port: 0 });
     await new Promise<void>((resolve) => server.once('listening', resolve));
@@ -61,6 +93,8 @@ describe('BrowserCdpSession lifecycle', () => {
           const command = JSON.parse(String(raw)) as { id: number; method: string };
           const result = command.method === 'Target.attachToTarget'
             ? { sessionId: 'page-session' }
+            : command.method === 'Page.getFrameTree'
+              ? { frameTree: { frame: { id: 'main-frame', loaderId: 'loader-1' } } }
             : {};
           peer.send(JSON.stringify({ id: command.id, result }));
         });
@@ -95,6 +129,28 @@ describe('BrowserCdpSession lifecycle', () => {
     ]);
 
     try {
+      const initial = page.getDocumentIdentity?.();
+      assert.deepEqual(initial, {
+        targetId: 'page-target', sessionId: 'page-session', frameId: 'main-frame', loaderId: 'loader-1', generation: 0,
+      });
+      peer.send(JSON.stringify({
+        method: 'Page.frameNavigated', sessionId: 'page-session',
+        params: { frame: { id: 'main-frame', loaderId: 'loader-1', url: 'https://example.test/#hash' } },
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      assert.deepEqual(page.getDocumentIdentity?.(), initial, 'hash/history navigation with the same loader keeps refs');
+      peer.send(JSON.stringify({ method: 'Runtime.executionContextDestroyed', sessionId: 'page-session', params: { executionContextId: 1 } }));
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      assert.equal(page.getDocumentIdentity?.()?.generation, 1, 'execution-context destruction invalidates the document generation');
+      peer.send(JSON.stringify({ method: 'DOM.documentUpdated', sessionId: 'page-session', params: {} }));
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      assert.equal(page.getDocumentIdentity?.()?.generation, 2, 'document replacement invalidates the document generation');
+      peer.send(JSON.stringify({
+        method: 'Page.frameNavigated', sessionId: 'page-session',
+        params: { frame: { id: 'main-frame', loaderId: 'loader-2', url: 'https://example.test/next' } },
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      assert.equal(page.getDocumentIdentity?.()?.loaderId, 'loader-2');
       peer.send(JSON.stringify({
         method: 'Target.detachedFromTarget',
         params: { sessionId: 'page-session', targetId: 'page-target' },
@@ -102,6 +158,7 @@ describe('BrowserCdpSession lifecycle', () => {
       await closedOrTimedOut;
 
       assert.equal(page.closed, true);
+      assert.equal(page.getDocumentIdentity?.(), null);
       assert.equal(closeCalls, 1);
     } finally {
       if (closeTimeout) clearTimeout(closeTimeout);
@@ -109,6 +166,53 @@ describe('BrowserCdpSession lifecycle', () => {
       assert.equal(closeCalls, 1, 'target detach and connection close notify once');
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+});
+
+describe('BrowserCdpSession exact-object extraction', () => {
+  it('describes retained candidate handles and releases the object group without XPath search', async () => {
+    const server = new WebSocketServer({ port: 0 });
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const peerPromise = new Promise<import('ws').WebSocket>((resolve) => {
+      server.once('connection', (peer) => {
+        peer.on('message', (raw) => {
+          const command = JSON.parse(String(raw)) as { id: number; method: string; params: Record<string, unknown> };
+          commands.push(command);
+          let result: unknown = {};
+          if (command.method === 'Target.attachToTarget') result = { sessionId: 'page-session' };
+          else if (command.method === 'Page.getFrameTree') result = { frameTree: { frame: { id: 'main', loaderId: 'loader' } } };
+          else if (command.method === 'Runtime.evaluate') result = { result: { type: 'object', objectId: 'root' } };
+          else if (command.method === 'Runtime.getProperties' && command.params.objectId === 'root') {
+            result = { result: [{ name: 'identityObjects', value: { objectId: 'identities' } }] };
+          } else if (command.method === 'Runtime.getProperties') {
+            result = { result: [{ name: '0', value: { objectId: 'exact-node' } }, { name: 'length', value: { value: 1 } }] };
+          } else if (command.method === 'Runtime.callFunctionOn') {
+            result = { result: { value: {
+              url: 'https://example.test/', title: 'Example', docId: 'diagnostic', domEpoch: 0,
+              forms: [], standalone: [], contentText: '', contentTruncated: false, alerts: [],
+              stats: { linkCount: 0, buttonCount: 0, hasPasswordField: false },
+            } } };
+          } else if (command.method === 'DOM.describeNode') result = { node: { backendNodeId: 42 } };
+          peer.send(JSON.stringify({ id: command.id, result }));
+        });
+        resolve(peer);
+      });
+    });
+    const page = await connectShellPage({
+      port: address.port, browserWsUrl: `ws://127.0.0.1:${address.port}`,
+      targetId: 'page-target', fingerprint: false, connectReadyTimeoutMs: 0,
+    });
+    await peerPromise;
+    const bundle = await page.extractPageModel?.('(() => ({ identityObjects: [document.body] }))()');
+    assert.deepEqual(bundle?.backendNodeIds, [42]);
+    assert.ok(commands.some((command) => command.method === 'DOM.describeNode' && command.params.objectId === 'exact-node'));
+    assert.equal(commands.some((command) => command.method === 'DOM.performSearch'), false);
+    assert.ok(commands.some((command) => command.method === 'Runtime.releaseObjectGroup'));
+    page.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 });
 

@@ -11,11 +11,10 @@
  * values NEVER leave the page — the in-page extractor hashes them and drops
  * the raw value before the CDP response is even built.
  *
- * Ref discipline: refs (`e1..eN`) are minted per distillation batch and carry
- * semantics (role + name) in the model text. A batch is keyed by
- * {docId, domEpoch} — docId changes on navigation, domEpoch on any structural
- * DOM mutation — so after a DOM change the whole batch is invalid and act/
- * submit return a structured stale-ref error instead of acting on ghosts.
+ * Ref discipline: refs (`e1..eN`) are minted per latest-model batch and carry
+ * the CDP target/session/main-frame document identity, backend node, and a
+ * bounded semantic fingerprint. Same-document DOM churn is harmless; node or
+ * document replacement returns a structured stale-ref error.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -143,10 +142,15 @@ export interface PageModel {
 // Ref table — one per browser session; a whole batch invalidates together.
 // ---------------------------------------------------------------------------
 
-export interface RefBatchKey {
-  docId: string;
-  domEpoch: number;
+export interface BrowserDocumentIdentity {
+  targetId: string;
+  sessionId: string;
+  frameId: string;
+  loaderId: string;
+  generation: number;
 }
+
+export type RefBatchKey = BrowserDocumentIdentity;
 
 export type RefKind = 'form' | 'field' | 'action';
 
@@ -157,13 +161,22 @@ export interface RefEntry {
   role: string;
   name: string;
   batch: RefBatchKey;
-  /** action refs: resolve via DOM.resolveNode. */
-  backendNodeId?: number;
-  /** field/form refs: resolve via XPath in-page. */
+  /** Every mutable ref resolves through this document-scoped CDP identity. */
+  backendNodeId: number;
+  fingerprint: ElementFingerprint;
+  /** Diagnostic only; never used to authorize or dispatch a mutation. */
   xpath?: string;
   formIndex?: number;
   fieldIndex?: number;
   submitSemantics?: boolean;
+}
+
+export interface ElementFingerprint {
+  tag: string;
+  type: string;
+  role: string;
+  editable: boolean;
+  fileInput: boolean;
 }
 
 export interface InspectedElementChild {
@@ -219,7 +232,7 @@ export class RefTable {
     return this.batch;
   }
 
-  /** Start a fresh batch keyed by the current document + DOM epoch. */
+  /** Start the latest model batch, bound to the CDP-owned document identity. */
   beginBatch(batch: RefBatchKey): void {
     this.batch = batch;
     this.entries.clear();
@@ -248,13 +261,16 @@ export class RefTable {
   }
 
   /**
-   * Check whether a ref is safe for a mutation that requires an exact
-   * document + DOM-epoch match with the batch that minted it.
+   * Document identity is exact. Same-document DOM mutations do not change it.
    */
   isCurrent(ref: string, current: RefBatchKey): boolean {
     const entry = this.entries.get(ref);
     if (!entry) return false;
-    return entry.batch.docId === current.docId && entry.batch.domEpoch === current.domEpoch;
+    return entry.batch.targetId === current.targetId &&
+      entry.batch.sessionId === current.sessionId &&
+      entry.batch.frameId === current.frameId &&
+      entry.batch.loaderId === current.loaderId &&
+      entry.batch.generation === current.generation;
   }
 }
 
@@ -463,6 +479,7 @@ export interface RawExtractedForm {
   id?: string;
   action?: string;
   method: string;
+  xpath?: string;
   fields: RawExtractedField[];
 }
 
@@ -602,11 +619,13 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
   }
 
   var MAX_FORMS = 10, MAX_FIELDS = 30, MAX_STANDALONE = 10;
-  var forms = [], totalFieldCount = 0;
+  var forms = [], identityObjects = [], totalFieldCount = 0;
   var formEls = Array.prototype.slice.call(document.forms || []);
   var hasPasswordField = false;
   for (var fi = 0; fi < formEls.length; fi++) {
     var form = formEls[fi];
+    var keepForm = forms.length < MAX_FORMS;
+    if (keepForm) identityObjects.push(form);
     var fields = [];
     var els = Array.prototype.slice.call(form.elements || []);
     for (var ej = 0; ej < els.length; ej++) {
@@ -616,7 +635,10 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
       if (ftype === 'hidden' || ftype === 'fieldset' || ftype === 'object') continue;
       totalFieldCount += 1;
       if (ftype === 'password') hasPasswordField = true;
-      if (forms.length < MAX_FORMS && fields.length < MAX_FIELDS) fields.push(readField(el, ej, true));
+      if (keepForm && fields.length < MAX_FIELDS) {
+        fields.push(readField(el, ej, true));
+        identityObjects.push(el);
+      }
     }
     if (forms.length >= MAX_FORMS) continue;
     var actionAttr = form.getAttribute('action');
@@ -626,11 +648,12 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
       id: String(form.id || '').slice(0, 160) || undefined,
       action: actionAttr ? String(form.action || '').slice(0, 2048) : undefined,
       method: (form.getAttribute('method') || 'get').toLowerCase().slice(0, 16),
+      xpath: getXPath(form),
       fields: fields
     });
   }
 
-  var standalone = [];
+  var standalone = [], standaloneGroupAdded = false;
   var allControls = document.querySelectorAll('input, select, textarea');
   for (var si = 0; si < allControls.length; si++) {
     var ctrl = allControls[si];
@@ -639,7 +662,14 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
     var stag = ctrl.tagName.toLowerCase();
     if (fieldType(ctrl, stag) === 'hidden') continue;
     totalFieldCount += 1;
-    if (standalone.length < MAX_STANDALONE) standalone.push(readField(ctrl, -1, false));
+    if (standalone.length < MAX_STANDALONE) {
+      if (!standaloneGroupAdded) {
+        identityObjects.push(document.body || document.documentElement);
+        standaloneGroupAdded = true;
+      }
+      standalone.push(readField(ctrl, -1, false));
+      identityObjects.push(ctrl);
+    }
   }
 
   // Readability-lite: score block candidates by paragraph text density with a
@@ -701,7 +731,8 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
       linkCount: document.querySelectorAll('a[href]').length,
       buttonCount: document.querySelectorAll('button, input[type="submit"], [role="button"]').length,
       hasPasswordField: hasPasswordField
-    }
+    },
+    identityObjects: identityObjects
   };
 })()`;
 }
@@ -882,6 +913,14 @@ export function extractAlertsFromAxTree(nodes: RawAxNode[], maxAlerts = 5): stri
 export interface PageModelSource {
   evaluate<T>(expression: string): Promise<T>;
   getFullAXTree(): Promise<RawAxNode[]>;
+  getDocumentIdentity?(): BrowserDocumentIdentity | null;
+  extractPageModel?(expression: string): Promise<PageExtractionBundle>;
+  callBackendNode?<T>(backendNodeId: number, functionDeclaration: string): Promise<T | null>;
+}
+
+export interface PageExtractionBundle {
+  extraction: RawPageExtraction;
+  backendNodeIds: Array<number | null>;
 }
 
 const VALUE_CAP = 80;
@@ -910,13 +949,15 @@ function classifyPageType(extraction: RawPageExtraction, formCount: number): Pag
 function mapRawField(
   refTable: RefTable,
   rawField: RawExtractedField,
-  placement: { formIndex: number; fieldIndex: number; submitSemantics: boolean },
+  placement: { formIndex: number; fieldIndex: number; submitSemantics: boolean; backendNodeId: number },
 ): PageModelField {
   const role = normalizedFieldRole(rawField);
   const entry = refTable.mint({
     kind: 'field',
     role,
     name: capPageString(rawField.label || rawField.name || '', FORM_NAME_CAP),
+    backendNodeId: placement.backendNodeId,
+    fingerprint: fingerprintForField(rawField),
     xpath: rawField.xpath,
     formIndex: placement.formIndex,
     fieldIndex: placement.fieldIndex,
@@ -946,6 +987,42 @@ function mapRawField(
   return modelField;
 }
 
+function fingerprintForField(field: RawExtractedField): ElementFingerprint {
+  const tag = field.tag.toLowerCase().slice(0, 40);
+  const type = field.type.toLowerCase().slice(0, 40);
+  const role = normalizedFieldRole(field);
+  const editable = tag === 'textarea' || tag === 'select' || tag === 'input' ||
+    role === 'textbox' || role === 'searchbox' || role === 'combobox';
+  return { tag, type, role, editable, fileInput: tag === 'input' && type === 'file' };
+}
+
+export function sameElementFingerprint(a: ElementFingerprint, b: ElementFingerprint): boolean {
+  return (!a.tag || a.tag === b.tag) && (!a.type || a.type === b.type) && (!a.role || a.role === b.role) &&
+    a.editable === b.editable && a.fileInput === b.fileInput;
+}
+
+export function buildElementFingerprintFunction(): string {
+  return `function () {
+    if (!this || !this.tagName) return null;
+    var tag = this.tagName.toLowerCase();
+    var type = tag === 'input' ? (this.getAttribute('type') || 'text').toLowerCase() : (tag === 'button' ? (this.getAttribute('type') || 'submit').toLowerCase() : tag);
+    var role = (this.getAttribute('role') || '').toLowerCase();
+    if (!role) {
+      if (tag === 'form') role = 'form';
+      else if (tag === 'button' || (tag === 'input' && ['button','submit','reset','image'].indexOf(type) !== -1)) role = 'button';
+      else if (tag === 'select') role = (this.multiple || this.size > 1) ? 'listbox' : 'combobox';
+      else if (tag === 'textarea') role = 'textbox';
+      else if (tag === 'input' && (type === 'checkbox' || type === 'radio')) role = type;
+      else if (tag === 'input' && type === 'number') role = 'spinbutton';
+      else if (tag === 'input' && type === 'range') role = 'slider';
+      else if (tag === 'input' && type === 'search') role = 'searchbox';
+      else if (tag === 'input') role = 'textbox';
+    }
+    var editable = tag === 'textarea' || tag === 'select' || tag === 'input' || role === 'textbox' || role === 'searchbox' || role === 'combobox';
+    return { tag: tag.slice(0, 40), type: type.slice(0, 40), role: role.slice(0, 80), editable: editable, fileInput: tag === 'input' && type === 'file' };
+  }`;
+}
+
 function normalizedFieldRole(
   field: Pick<RawExtractedField, 'tag' | 'type' | 'role' | 'multiple' | 'size'>,
 ): string {
@@ -973,25 +1050,41 @@ export async function distillPageModel(
   refTable: RefTable,
   options: { maxContentChars?: number; maxActions?: number } = {},
 ): Promise<PageModel> {
-  const [extraction, axNodes] = await Promise.all([
-    source.evaluate<RawPageExtraction>(buildExtractorScript(options.maxContentChars)),
+  const identity = source.getDocumentIdentity?.();
+  if (!identity) throw new Error('CDP document identity unavailable during page distillation');
+  const [bundle, axNodes] = await Promise.all([
+    source.extractPageModel?.(buildExtractorScript(options.maxContentChars)) ?? Promise.resolve(null),
     source.getFullAXTree(),
   ]);
-
-  refTable.beginBatch({ docId: extraction.docId, domEpoch: extraction.domEpoch });
+  if (!bundle) throw new Error('CDP exact-object extraction unavailable during page distillation');
+  const { extraction, backendNodeIds: resolvedIds } = bundle;
+  if (!resolvedIds || resolvedIds.some((id) => typeof id !== 'number')) {
+    throw new Error('CDP backend-node identity unavailable for a mutable page element');
+  }
+  const afterResolution = source.getDocumentIdentity?.();
+  if (!afterResolution || JSON.stringify(afterResolution) !== JSON.stringify(identity)) {
+    throw new Error('CDP document identity changed during page distillation');
+  }
+  let resolvedIndex = 0;
+  refTable.beginBatch(identity);
 
   const forms: PageModelForm[] = extraction.forms.map((rawForm) => {
+    const formBackendNodeId = resolvedIds[resolvedIndex++]!;
     const fields: PageModelField[] = rawForm.fields.map((rawField) =>
       mapRawField(refTable, rawField, {
         formIndex: rawForm.formIndex,
         fieldIndex: rawField.fieldIndex,
         submitSemantics: rawField.submitSemantics,
+        backendNodeId: resolvedIds[resolvedIndex++]!,
       }),
     );
     const formEntry = refTable.mint({
       kind: 'form',
       role: 'form',
       name: capPageString(rawForm.name ?? rawForm.id ?? `form ${rawForm.formIndex}`, FORM_NAME_CAP),
+      backendNodeId: formBackendNodeId,
+      fingerprint: { tag: 'form', type: 'form', role: 'form', editable: false, fileInput: false },
+      xpath: rawForm.xpath,
       formIndex: rawForm.formIndex,
     });
     const modelForm: PageModelForm = {
@@ -1008,25 +1101,39 @@ export async function distillPageModel(
   // Standalone controls (outside any <form>) ride along as a synthetic form
   // entry so fill/select/check refs work for them too.
   if (extraction.standalone.length > 0) {
+    const groupBackendNodeId = resolvedIds[resolvedIndex++]!;
     const fields: PageModelField[] = extraction.standalone.map((rawField) =>
-      mapRawField(refTable, rawField, { formIndex: -1, fieldIndex: -1, submitSemantics: false }),
+      mapRawField(refTable, rawField, { formIndex: -1, fieldIndex: -1, submitSemantics: false, backendNodeId: resolvedIds[resolvedIndex++]! }),
     );
     const entry = refTable.mint({
       kind: 'form',
       role: 'form',
       name: '(page controls)',
+      backendNodeId: groupBackendNodeId,
+      fingerprint: { tag: 'body', type: 'body', role: '', editable: false, fileInput: false },
       formIndex: -1,
     });
     forms.push({ ref: entry.ref, formIndex: -1, method: 'get', fields });
   }
 
   const extractedActionInventory = extractActionInventory(axNodes, options.maxActions ?? MAX_ACTIONS);
-  const actions: PageModelAction[] = extractedActionInventory.actions.map((action) => {
+  const actionFingerprints = await Promise.all(extractedActionInventory.actions.map((action) =>
+    source.callBackendNode?.<ElementFingerprint>(action.backendNodeId, buildElementFingerprintFunction()) ?? Promise.resolve(null),
+  ));
+  if (actionFingerprints.some((fingerprint) => !fingerprint)) {
+    throw new Error('CDP semantic fingerprint unavailable for an actionable page element');
+  }
+  const afterFingerprints = source.getDocumentIdentity?.();
+  if (!afterFingerprints || JSON.stringify(afterFingerprints) !== JSON.stringify(identity)) {
+    throw new Error('CDP document identity changed while fingerprinting page actions');
+  }
+  const actions: PageModelAction[] = extractedActionInventory.actions.map((action, index) => {
     const entry = refTable.mint({
       kind: 'action',
       role: action.role,
       name: action.name,
       backendNodeId: action.backendNodeId,
+      fingerprint: actionFingerprints[index]!,
     });
     return {
       ref: entry.ref,
