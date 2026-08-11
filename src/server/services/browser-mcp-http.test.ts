@@ -129,7 +129,7 @@ describe('browser-mcp-http (U6)', { concurrency: false }, () => {
     const res = await post('s1', { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     assert.equal(res.status, 200);
     const names = res.json.result.tools.map((t: { name: string }) => t.name);
-    for (const expected of ['open', 'snapshot', 'act', 'submit', 'extract', 'authenticatedRequest', 'requestHandoff', 'close']) {
+    for (const expected of ['open', 'getPageState', 'snapshot', 'findElements', 'getElementDetails', 'act', 'submit', 'extract', 'authenticatedRequest', 'requestHandoff', 'close']) {
       assert.ok(names.includes(expected), `tool ${expected} listed`);
     }
   });

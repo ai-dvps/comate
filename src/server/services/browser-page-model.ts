@@ -20,6 +20,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { originOf } from './browser-origin.js';
+import { sha256Hex } from '../utils/sha256.js';
 
 // ---------------------------------------------------------------------------
 // Sensitivity ruleset (KTD-8). These constants are interpolated verbatim into
@@ -82,6 +83,10 @@ export interface PageModelField {
   /** Normalized accessibility-style role used by discovery and ref metadata. */
   role: string;
   required: boolean;
+  disabled: boolean;
+  readOnly: boolean;
+  visible?: boolean;
+  inViewport?: boolean;
   sensitive: boolean;
   autocomplete?: string;
   /** Present only for non-sensitive fields, capped in length. */
@@ -104,14 +109,31 @@ export interface PageModelAction {
   role: string;
   name: string;
   backendNodeId: number;
+  states?: Record<string, boolean | string>;
+}
+
+export interface PageModelOutlineNode {
+  role: string;
+  name: string;
+  depth: number;
+  ref?: string;
+  states?: Record<string, boolean | string>;
 }
 
 export interface PageModel {
   url: string;
   title: string;
+  pageRevision: string;
   pageType: PageType;
+  outline: PageModelOutlineNode[];
+  outlineInventory: { total: number; returned: number; truncated: boolean };
   forms: PageModelForm[];
   actions: PageModelAction[];
+  actionInventory: { total: number; returned: number; truncated: boolean };
+  sourceInventory: {
+    forms: { total: number; returned: number; truncated: boolean };
+    fields: { total: number; returned: number; truncated: boolean };
+  };
   content: { text: string; truncated: boolean };
   alerts: string[];
   tokenEstimate: number;
@@ -177,6 +199,9 @@ export interface InspectedElement {
   descendantsTruncated: boolean;
   form?: InspectedElementForm;
   actions: string[];
+  visible?: boolean;
+  inViewport?: boolean;
+  occluded?: boolean;
 }
 
 export class RefTable {
@@ -325,12 +350,26 @@ export function buildInspectElementFunction(): string {
     (tag === 'button' && rootType !== 'button' && rootType !== 'reset')
   );
   if (submitsForm) actions.push('submit');
+  var rect = root.getBoundingClientRect();
+  var style = window.getComputedStyle(root);
+  var isVisible = rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+  var inViewport = isVisible && rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth;
+  var occluded = false;
+  if (inViewport) {
+    var x = Math.max(0, Math.min(window.innerWidth - 1, rect.left + rect.width / 2));
+    var y = Math.max(0, Math.min(window.innerHeight - 1, rect.top + rect.height / 2));
+    var hit = document.elementFromPoint(x, y);
+    occluded = !!hit && hit !== root && !root.contains(hit);
+  }
   var result = {
     tag: tag,
     attributes: attributes,
     descendants: descendants,
     descendantsTruncated: all.length > descendants.length,
-    actions: actions
+    actions: actions,
+    visible: isVisible,
+    inViewport: inViewport,
+    occluded: occluded
   };
   var role = root.getAttribute('role');
   var name = labelFor(root) || root.getAttribute('name');
@@ -340,6 +379,35 @@ export function buildInspectElementFunction(): string {
   if (nearbyText) result.nearbyText = nearbyText;
   if (formSummary) result.form = formSummary;
   return result;
+}`;
+}
+
+/** Lightweight action-state probe used by the page overview. */
+export function buildInspectElementStateFunction(): string {
+  return `function __comateInspectElementState() {
+  var root = this;
+  if (!root || !root.tagName) return null;
+  var rect = root.getBoundingClientRect();
+  var style = window.getComputedStyle(root);
+  var visible = rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+  var inViewport = visible && rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth;
+  var occluded = false;
+  if (inViewport) {
+    var x = Math.max(0, Math.min(window.innerWidth - 1, rect.left + rect.width / 2));
+    var y = Math.max(0, Math.min(window.innerHeight - 1, rect.top + rect.height / 2));
+    var hit = document.elementFromPoint(x, y);
+    occluded = !!hit && hit !== root && !root.contains(hit);
+  }
+  return {
+    tag: root.tagName.toLowerCase(),
+    attributes: {},
+    descendants: [],
+    descendantsTruncated: false,
+    actions: [],
+    visible: visible,
+    inViewport: inViewport,
+    occluded: occluded
+  };
 }`;
 }
 
@@ -378,6 +446,8 @@ export interface RawExtractedField {
   autocomplete?: string;
   disabled: boolean;
   readOnly: boolean;
+  visible?: boolean;
+  inViewport?: boolean;
   sensitive: boolean;
   /** Raw value — only present for non-sensitive fields (capped in-page). */
   value?: string;
@@ -407,6 +477,7 @@ export interface RawPageExtraction {
   contentTruncated: boolean;
   alerts: string[];
   stats: { linkCount: number; buttonCount: number; hasPasswordField: boolean };
+  sourceInventory?: { formCount: number; fieldCount: number };
 }
 
 export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHARS): string {
@@ -432,9 +503,17 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
   }
   var probeOut = window.__comateProbe;
 
-  function visible(el) {
-    try { return el.getClientRects().length > 0; } catch (e) { return false; }
+  function elementState(el) {
+    try {
+      var isVisible = el.getClientRects().length > 0;
+      var rect = el.getBoundingClientRect();
+      return {
+        visible: isVisible,
+        inViewport: isVisible && rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth
+      };
+    } catch (e) { return { visible: false, inViewport: false }; }
   }
+  function visible(el) { return elementState(el).visible; }
   function textOf(el, cap) {
     var t = '';
     try { t = (el.innerText || el.textContent || '').trim(); } catch (e) { t = (el.textContent || '').trim(); }
@@ -497,6 +576,7 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
       filled = raw.length > 0 && raw !== 'false';
       if (!sensitive) value = raw.length > 80 ? raw.slice(0, 80) : raw;
     } catch (e) { /* value unreadable */ }
+    var state = elementState(el);
     return {
       fieldIndex: fieldIndex,
       name: el.getAttribute('name') || undefined,
@@ -511,6 +591,8 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
       autocomplete: el.getAttribute('autocomplete') || undefined,
       disabled: el.disabled === true,
       readOnly: el.readOnly === true,
+      visible: state.visible,
+      inViewport: state.inViewport,
       sensitive: sensitive,
       value: value,
       filled: filled,
@@ -520,42 +602,44 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
   }
 
   var MAX_FORMS = 10, MAX_FIELDS = 30, MAX_STANDALONE = 10;
-  var forms = [];
+  var forms = [], totalFieldCount = 0;
   var formEls = Array.prototype.slice.call(document.forms || []);
   var hasPasswordField = false;
-  for (var fi = 0; fi < formEls.length && forms.length < MAX_FORMS; fi++) {
+  for (var fi = 0; fi < formEls.length; fi++) {
     var form = formEls[fi];
     var fields = [];
     var els = Array.prototype.slice.call(form.elements || []);
-    for (var ej = 0; ej < els.length && fields.length < MAX_FIELDS; ej++) {
+    for (var ej = 0; ej < els.length; ej++) {
       var el = els[ej], tag = el.tagName ? el.tagName.toLowerCase() : '';
       if (['input', 'select', 'textarea', 'button'].indexOf(tag) === -1) continue;
       var ftype = fieldType(el, tag);
       if (ftype === 'hidden' || ftype === 'fieldset' || ftype === 'object') continue;
-      var f = readField(el, ej, true);
-      if (f.sensitive && f.type === 'password') hasPasswordField = true;
-      fields.push(f);
+      totalFieldCount += 1;
+      if (ftype === 'password') hasPasswordField = true;
+      if (forms.length < MAX_FORMS && fields.length < MAX_FIELDS) fields.push(readField(el, ej, true));
     }
+    if (forms.length >= MAX_FORMS) continue;
     var actionAttr = form.getAttribute('action');
     forms.push({
       formIndex: fi,
-      name: form.getAttribute('name') || undefined,
-      id: form.id || undefined,
-      action: actionAttr ? String(form.action || '') : undefined,
-      method: (form.getAttribute('method') || 'get').toLowerCase(),
+      name: (form.getAttribute('name') || '').slice(0, 160) || undefined,
+      id: String(form.id || '').slice(0, 160) || undefined,
+      action: actionAttr ? String(form.action || '').slice(0, 2048) : undefined,
+      method: (form.getAttribute('method') || 'get').toLowerCase().slice(0, 16),
       fields: fields
     });
   }
 
   var standalone = [];
   var allControls = document.querySelectorAll('input, select, textarea');
-  for (var si = 0; si < allControls.length && standalone.length < MAX_STANDALONE; si++) {
+  for (var si = 0; si < allControls.length; si++) {
     var ctrl = allControls[si];
     if (ctrl.form) continue;
     if (!visible(ctrl)) continue;
     var stag = ctrl.tagName.toLowerCase();
     if (fieldType(ctrl, stag) === 'hidden') continue;
-    standalone.push(readField(ctrl, -1, false));
+    totalFieldCount += 1;
+    if (standalone.length < MAX_STANDALONE) standalone.push(readField(ctrl, -1, false));
   }
 
   // Readability-lite: score block candidates by paragraph text density with a
@@ -603,8 +687,8 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
   }
 
   return {
-    url: String(location.href),
-    title: String(document.title || ''),
+    url: String(location.href).slice(0, 2048),
+    title: String(document.title || '').slice(0, 300),
     docId: probeOut.docId,
     domEpoch: probeOut.epoch,
     forms: forms,
@@ -612,6 +696,7 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
     contentText: contentText,
     contentTruncated: contentTruncated,
     alerts: alerts,
+    sourceInventory: { formCount: formEls.length, fieldCount: totalFieldCount },
     stats: {
       linkCount: document.querySelectorAll('a[href]').length,
       buttonCount: document.querySelectorAll('button, input[type="submit"], [role="button"]').length,
@@ -633,6 +718,7 @@ export interface RawAxNode {
   backendDOMNodeId?: number;
   parentId?: string;
   childIds?: string[];
+  properties?: Array<{ name?: string; value?: { value?: unknown } }>;
 }
 
 /** Widget roles that become top-level actions (form controls live in forms). */
@@ -654,31 +740,125 @@ export interface ExtractedAction {
   role: string;
   name: string;
   backendNodeId: number;
+  states?: Record<string, boolean | string>;
+}
+
+export interface ExtractedActionInventory {
+  actions: ExtractedAction[];
+  total: number;
+}
+
+const AX_STATE_NAMES = new Set([
+  'disabled', 'expanded', 'checked', 'pressed', 'selected', 'required', 'readonly',
+]);
+
+function extractAxStates(node: RawAxNode): Record<string, boolean | string> | undefined {
+  const states: Record<string, boolean | string> = {};
+  for (const property of node.properties ?? []) {
+    if (!property.name || !AX_STATE_NAMES.has(property.name)) continue;
+    const value = property.value?.value;
+    if (typeof value === 'boolean') states[property.name] = value;
+    else if (typeof value === 'string') states[property.name] = value.slice(0, 40);
+  }
+  return Object.keys(states).length > 0 ? states : undefined;
 }
 
 export function extractActionsFromAxTree(
   nodes: RawAxNode[],
   maxActions = MAX_ACTIONS,
 ): ExtractedAction[] {
+  return extractActionInventory(nodes, maxActions).actions;
+}
+
+export function extractActionInventory(
+  nodes: RawAxNode[],
+  maxActions = MAX_ACTIONS,
+): ExtractedActionInventory {
   const actionRoles = new Set(ACTION_ROLES);
   const seenBackendIds = new Set<number>();
   const actions: ExtractedAction[] = [];
+  let total = 0;
   for (const node of nodes) {
-    if (actions.length >= maxActions) break;
     if (node.ignored) continue;
     const role = typeof node.role?.value === 'string' ? node.role.value : '';
     if (!actionRoles.has(role)) continue;
     const backendNodeId = node.backendDOMNodeId;
     if (typeof backendNodeId !== 'number' || seenBackendIds.has(backendNodeId)) continue;
     seenBackendIds.add(backendNodeId);
+    total += 1;
+    if (actions.length >= maxActions) continue;
     const rawName = typeof node.name?.value === 'string' ? node.name.value.trim() : '';
+    const states = extractAxStates(node);
     actions.push({
       role,
       name: rawName.length > MAX_ACTION_NAME ? rawName.slice(0, MAX_ACTION_NAME) : rawName,
       backendNodeId,
+      ...(states ? { states } : {}),
     });
   }
-  return actions;
+  return { actions, total };
+}
+
+const OUTLINE_ROLES = new Set([
+  'banner', 'navigation', 'main', 'complementary', 'contentinfo', 'search',
+  'form', 'region', 'dialog', 'alert', 'heading', 'list', 'table', 'row',
+  'columnheader', 'rowheader', ...ACTION_ROLES,
+]);
+export const MAX_OUTLINE_NODES = 80;
+
+export interface SemanticOutlineInventory {
+  outline: PageModelOutlineNode[];
+  total: number;
+}
+
+export function extractSemanticOutline(
+  nodes: RawAxNode[],
+  actions: PageModelAction[],
+  maxNodes = MAX_OUTLINE_NODES,
+): PageModelOutlineNode[] {
+  return extractSemanticOutlineInventory(nodes, actions, maxNodes).outline;
+}
+
+export function extractSemanticOutlineInventory(
+  nodes: RawAxNode[],
+  actions: PageModelAction[],
+  maxNodes = MAX_OUTLINE_NODES,
+): SemanticOutlineInventory {
+  const byId = new Map(nodes.map((node) => [node.nodeId, node]));
+  const refByBackendId = new Map(actions.map((action) => [action.backendNodeId, action.ref]));
+  const outline: PageModelOutlineNode[] = [];
+  let total = 0;
+  for (const node of nodes) {
+    if (node.ignored) continue;
+    const role = typeof node.role?.value === 'string' ? node.role.value : '';
+    if (!OUTLINE_ROLES.has(role)) continue;
+    total += 1;
+    if (outline.length >= maxNodes) continue;
+    const rawName = typeof node.name?.value === 'string' ? node.name.value.trim() : '';
+    let depth = 0;
+    let parentId = node.parentId;
+    const visited = new Set<string>();
+    while (parentId && !visited.has(parentId)) {
+      visited.add(parentId);
+      const parent = byId.get(parentId);
+      if (!parent) break;
+      const parentRole = typeof parent.role?.value === 'string' ? parent.role.value : '';
+      if (!parent.ignored && OUTLINE_ROLES.has(parentRole)) depth += 1;
+      parentId = parent.parentId;
+    }
+    const ref = typeof node.backendDOMNodeId === 'number'
+      ? refByBackendId.get(node.backendDOMNodeId)
+      : undefined;
+    const states = extractAxStates(node);
+    outline.push({
+      role,
+      name: rawName.slice(0, MAX_ACTION_NAME),
+      depth: Math.min(depth, 12),
+      ...(ref ? { ref } : {}),
+      ...(states ? { states } : {}),
+    });
+  }
+  return { outline, total };
 }
 
 /** Alert-role AX nodes complement the in-page alert heuristics. */
@@ -705,6 +885,13 @@ export interface PageModelSource {
 }
 
 const VALUE_CAP = 80;
+const PAGE_URL_CAP = 2048;
+const PAGE_TITLE_CAP = 300;
+const FORM_NAME_CAP = 160;
+
+function capPageString(value: string, limit: number): string {
+  return value.slice(0, limit);
+}
 
 function classifyPageType(extraction: RawPageExtraction, formCount: number): PageType {
   if (extraction.stats.hasPasswordField) return 'login';
@@ -729,7 +916,7 @@ function mapRawField(
   const entry = refTable.mint({
     kind: 'field',
     role,
-    name: rawField.label || rawField.name || '',
+    name: capPageString(rawField.label || rawField.name || '', FORM_NAME_CAP),
     xpath: rawField.xpath,
     formIndex: placement.formIndex,
     fieldIndex: placement.fieldIndex,
@@ -737,16 +924,20 @@ function mapRawField(
   });
   const modelField: PageModelField = {
     ref: entry.ref,
-    label: rawField.label,
-    tag: rawField.tag,
-    type: rawField.type,
+    label: capPageString(rawField.label, 160),
+    tag: capPageString(rawField.tag, 40),
+    type: capPageString(rawField.type, 40),
     role,
     required: rawField.required,
+    disabled: rawField.disabled,
+    readOnly: rawField.readOnly,
+    ...(rawField.visible !== undefined ? { visible: rawField.visible } : {}),
+    ...(rawField.inViewport !== undefined ? { inViewport: rawField.inViewport } : {}),
     sensitive: rawField.sensitive,
     submitSemantics: placement.submitSemantics,
   };
-  if (rawField.name !== undefined) modelField.name = rawField.name;
-  if (rawField.autocomplete !== undefined) modelField.autocomplete = rawField.autocomplete;
+  if (rawField.name !== undefined) modelField.name = capPageString(rawField.name, 160);
+  if (rawField.autocomplete !== undefined) modelField.autocomplete = capPageString(rawField.autocomplete, 80);
   // Sensitive values never reach the model — the extractor already hashed
   // and dropped them, and we defensively re-check sidecar-side.
   if (rawField.value !== undefined && !rawField.sensitive && !isSensitiveField(rawField)) {
@@ -758,7 +949,7 @@ function mapRawField(
 function normalizedFieldRole(
   field: Pick<RawExtractedField, 'tag' | 'type' | 'role' | 'multiple' | 'size'>,
 ): string {
-  if (field.role) return field.role.toLowerCase();
+  if (field.role) return field.role.toLowerCase().slice(0, 80);
   const tag = field.tag.toLowerCase();
   const type = field.type.toLowerCase();
   if (tag === 'button' || (tag === 'input' && ['button', 'submit', 'reset', 'image'].includes(type))) return 'button';
@@ -780,7 +971,7 @@ function normalizedFieldRole(
 export async function distillPageModel(
   source: PageModelSource,
   refTable: RefTable,
-  options: { maxContentChars?: number } = {},
+  options: { maxContentChars?: number; maxActions?: number } = {},
 ): Promise<PageModel> {
   const [extraction, axNodes] = await Promise.all([
     source.evaluate<RawPageExtraction>(buildExtractorScript(options.maxContentChars)),
@@ -800,17 +991,17 @@ export async function distillPageModel(
     const formEntry = refTable.mint({
       kind: 'form',
       role: 'form',
-      name: rawForm.name ?? rawForm.id ?? `form ${rawForm.formIndex}`,
+      name: capPageString(rawForm.name ?? rawForm.id ?? `form ${rawForm.formIndex}`, FORM_NAME_CAP),
       formIndex: rawForm.formIndex,
     });
     const modelForm: PageModelForm = {
       ref: formEntry.ref,
       formIndex: rawForm.formIndex,
-      method: rawForm.method,
+      method: capPageString(rawForm.method, 16),
       fields,
     };
-    if (rawForm.name !== undefined) modelForm.name = rawForm.name;
-    if (rawForm.action !== undefined) modelForm.action = rawForm.action;
+    if (rawForm.name !== undefined) modelForm.name = capPageString(rawForm.name, FORM_NAME_CAP);
+    if (rawForm.action !== undefined) modelForm.action = capPageString(rawForm.action, PAGE_URL_CAP);
     return modelForm;
   });
 
@@ -829,30 +1020,69 @@ export async function distillPageModel(
     forms.push({ ref: entry.ref, formIndex: -1, method: 'get', fields });
   }
 
-  const actions: PageModelAction[] = extractActionsFromAxTree(axNodes).map((action) => {
+  const extractedActionInventory = extractActionInventory(axNodes, options.maxActions ?? MAX_ACTIONS);
+  const actions: PageModelAction[] = extractedActionInventory.actions.map((action) => {
     const entry = refTable.mint({
       kind: 'action',
       role: action.role,
       name: action.name,
       backendNodeId: action.backendNodeId,
     });
-    return { ref: entry.ref, role: action.role, name: action.name, backendNodeId: action.backendNodeId };
+    return {
+      ref: entry.ref,
+      role: action.role,
+      name: action.name,
+      backendNodeId: action.backendNodeId,
+      ...(action.states ? { states: action.states } : {}),
+    };
   });
 
   const axAlerts = extractAlertsFromAxTree(axNodes);
-  const alerts = [...extraction.alerts];
+  const alerts = extraction.alerts.slice(0, 5).map((alert) => capPageString(alert, 200));
   for (const alert of axAlerts) {
     if (alerts.length >= 5) break;
     if (!alerts.includes(alert)) alerts.push(alert);
   }
 
+  const outlineInventory = extractSemanticOutlineInventory(axNodes, actions);
+  const returnedFieldCount = forms.reduce((total, form) => total + form.fields.length, 0);
+  const sourceFormCount = extraction.sourceInventory?.formCount ?? extraction.forms.length;
+  const sourceFieldCount = extraction.sourceInventory?.fieldCount ?? returnedFieldCount;
+  const contentCap = Math.max(200, Math.floor(options.maxContentChars ?? EXTRACTOR_MAX_CONTENT_CHARS));
   const model: PageModel = {
-    url: extraction.url,
-    title: extraction.title,
+    url: capPageString(extraction.url, PAGE_URL_CAP),
+    title: capPageString(extraction.title, PAGE_TITLE_CAP),
+    pageRevision: sha256Hex(`${extraction.docId}:${extraction.domEpoch}`).slice(0, 12),
     pageType: classifyPageType(extraction, extraction.forms.length),
+    outline: outlineInventory.outline,
+    outlineInventory: {
+      total: outlineInventory.total,
+      returned: outlineInventory.outline.length,
+      truncated: outlineInventory.total > outlineInventory.outline.length,
+    },
     forms,
     actions,
-    content: { text: extraction.contentText, truncated: extraction.contentTruncated },
+    actionInventory: {
+      total: extractedActionInventory.total,
+      returned: actions.length,
+      truncated: extractedActionInventory.total > actions.length,
+    },
+    sourceInventory: {
+      forms: {
+        total: sourceFormCount,
+        returned: extraction.forms.length,
+        truncated: sourceFormCount > extraction.forms.length,
+      },
+      fields: {
+        total: sourceFieldCount,
+        returned: returnedFieldCount,
+        truncated: sourceFieldCount > returnedFieldCount,
+      },
+    },
+    content: {
+      text: capPageString(extraction.contentText, contentCap),
+      truncated: extraction.contentTruncated || extraction.contentText.length > contentCap,
+    },
     alerts,
     tokenEstimate: 0,
   };
@@ -881,6 +1111,8 @@ export function estimateTokens(model: PageModel): number {
     );
   return Math.ceil(chars / 4);
 }
+
+export { buildPageState, type PageState, type PageStateElement } from './browser-page-state.js';
 
 // ---------------------------------------------------------------------------
 // Page-model delta (act/submit results — "incremental model" per KTD-3).
