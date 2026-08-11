@@ -1,4 +1,4 @@
-import type { PageModel, RefKind } from './browser-page-model.js';
+import type { ElementProvenance, InteractionClass, PageModel, RefKind } from './browser-page-model.js';
 
 export interface PageStateElement {
   ref: string;
@@ -17,6 +17,12 @@ export interface PageStateElement {
   submitSemantics?: boolean;
   value?: string;
   states?: Record<string, boolean | string>;
+  provenance?: ElementProvenance;
+  interactionClass?: InteractionClass;
+  multiple?: boolean;
+  accept?: string;
+  filled?: boolean;
+  contentLength?: number;
 }
 
 export interface PageState {
@@ -54,7 +60,7 @@ export function buildPageState(
   };
   for (const form of model.forms) {
     const formName = form.name ?? (form.formIndex === -1 ? 'page controls' : `form ${form.formIndex}`);
-    addElement({ ref: form.ref, kind: 'form', role: 'form', name: formName });
+    addElement({ ref: form.ref, kind: 'form', role: 'form', name: formName, interactionClass: form.interactionClass });
     for (const field of form.fields) {
       addElement({
         ref: field.ref,
@@ -70,6 +76,11 @@ export function buildPageState(
         ...(field.inViewport !== undefined ? { inViewport: field.inViewport } : {}),
         sensitive: field.sensitive,
         submitSemantics: field.submitSemantics,
+        interactionClass: field.interactionClass,
+        ...(field.multiple !== undefined ? { multiple: field.multiple } : {}),
+        ...(field.accept !== undefined ? { accept: field.accept } : {}),
+        ...(field.filled !== undefined ? { filled: field.filled } : {}),
+        ...(field.contentLength !== undefined ? { contentLength: field.contentLength } : {}),
         ...(field.value !== undefined ? { value: field.value } : {}),
       });
     }
@@ -80,6 +91,9 @@ export function buildPageState(
       kind: 'action',
       role: action.role,
       name: action.name,
+      provenance: action.provenance,
+      interactionClass: action.interactionClass,
+      ...(action.context ? { context: action.context } : {}),
       ...(action.states ? { states: action.states } : {}),
     });
   }

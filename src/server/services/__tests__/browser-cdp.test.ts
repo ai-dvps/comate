@@ -208,6 +208,7 @@ describe('BrowserCdpSession exact-object extraction', () => {
     await peerPromise;
     const bundle = await page.extractPageModel?.('(() => ({ identityObjects: [document.body] }))()');
     assert.deepEqual(bundle?.backendNodeIds, [42]);
+    assert.ok(commands.some((command) => command.method === 'Runtime.evaluate' && command.params.includeCommandLineAPI === true));
     assert.ok(commands.some((command) => command.method === 'DOM.describeNode' && command.params.objectId === 'exact-node'));
     assert.equal(commands.some((command) => command.method === 'DOM.performSearch'), false);
     assert.ok(commands.some((command) => command.method === 'Runtime.releaseObjectGroup'));

@@ -137,6 +137,7 @@ class FakePage implements BrowserCdpSession {
         ...extraction.forms.flatMap((form) => [form, ...form.fields]),
         ...(extraction.standalone.length > 0 ? [{}] : []),
         ...extraction.standalone,
+        ...(extraction.domCandidates ?? []),
       ].map((_item, index) => 100 + index),
     };
   }
@@ -156,12 +157,13 @@ class FakePage implements BrowserCdpSession {
         return { tag: 'button', type: 'submit', role: String(action.role?.value ?? 'button').toLowerCase(), editable: false, fileInput: false } as T;
       }
       const field = this.options.extraction.forms.flatMap((form) => form.fields)[backendNodeId - 101]
-        ?? this.options.extraction.standalone[backendNodeId - 100];
+        ?? this.options.extraction.standalone[backendNodeId - 100]
+        ?? (this.options.extraction.forms.length === 0 ? this.options.extraction.standalone[backendNodeId - 101] : undefined);
       if (!field) return null;
       const tag = field.tag.toLowerCase();
       const type = field.type.toLowerCase();
       const role = field.role?.toLowerCase() ?? (tag === 'button' ? 'button' : type === 'search' ? 'searchbox' : 'textbox');
-      return { tag, type, role, editable: tag === 'input' || tag === 'textarea' || tag === 'select', fileInput: tag === 'input' && type === 'file' } as T;
+      return { tag, type, role, editable: tag === 'input' || tag === 'textarea' || tag === 'select' || role === 'textbox', fileInput: tag === 'input' && type === 'file' } as T;
     }
     const isBackendSubmit = functionDeclaration.includes('var form = this');
     const isBackendClick = functionDeclaration.includes('"click"');
@@ -794,6 +796,51 @@ describe('browser-mcp page observation', () => {
       matches: Array<{ name: string }>;
     };
     assert.deepStrictEqual(found.matches.map(({ name }) => name), ['Deep target']);
+  });
+
+  it('findElements discovers a generic DOM action and never echoes editable body text', async () => {
+    const sentinel = 'PRIVATE_ARTICLE_SENTINEL_中文_🚀';
+    harness = await makeHarness({
+      page: new FakePage({
+        extraction: makeExtraction({
+          forms: [],
+          standalone: [{
+            fieldIndex: -1, label: '正文', tag: 'div', type: 'div', role: 'textbox',
+            required: false, disabled: false, readOnly: false, visible: true, inViewport: true,
+            sensitive: false, filled: true, contentLength: sentinel.length, submitSemantics: false,
+            xpath: '/html/body/div[1]',
+          }],
+          domCandidates: [{
+            name: '写长文', context: '创作中心', tag: 'div', type: 'div', role: 'generic', xpath: '/html/body/div[2]',
+          }],
+          domCandidateInventory: { total: 1, returned: 1, truncated: false },
+          contentText: sentinel,
+          sourceInventory: { formCount: 0, fieldCount: 1 },
+          stats: { linkCount: 0, buttonCount: 1, hasPasswordField: false },
+        }),
+        inspectResult: {
+          tag: 'div', role: 'textbox', name: '正文', attributes: {}, nearbyText: '',
+          descendants: [], descendantsTruncated: false, actions: ['fill'], visible: true, inViewport: true, occluded: false,
+        },
+      }),
+    });
+    const found = resultPayload(await harness.call('findElements', { text: '写长文', exact: true })) as {
+      matches: Array<{ name: string; provenance: string; interactionClass: string }>;
+    };
+    const state = resultPayload(await harness.call('getPageState', {}));
+
+    assert.strictEqual(found.matches.length, 1);
+    assert.deepStrictEqual(
+      { name: found.matches[0].name, provenance: found.matches[0].provenance, interactionClass: found.matches[0].interactionClass },
+      { name: '写长文', provenance: 'dom', interactionClass: 'ambiguous-activation' },
+    );
+    assert.ok(!JSON.stringify(found).includes(sentinel));
+    assert.ok(!JSON.stringify(state).includes(sentinel));
+    const body = resultPayload(await harness.call('findElements', { text: '正文', exact: true })) as {
+      matches: Array<{ ref: string }>;
+    };
+    const details = resultPayload(await harness.call('getElementDetails', { ref: body.matches[0].ref })) as { ok: boolean };
+    assert.strictEqual(details.ok, true, 'contenteditable fingerprint must match the live backend node');
   });
 });
 

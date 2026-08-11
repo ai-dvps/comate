@@ -71,6 +71,15 @@ const IN_PAGE_SENSITIVE_FN = `function __comateSensitive(el) {
 // ---------------------------------------------------------------------------
 
 export type PageType = 'login' | 'form' | 'article' | 'listing' | 'unknown';
+export type ElementProvenance = 'ax' | 'dom';
+export type InteractionClass =
+  | 'edit'
+  | 'direct-navigation'
+  | 'ambiguous-activation'
+  | 'html-submit'
+  | 'file-egress'
+  | 'browser-owned-local'
+  | 'human-only';
 
 export interface PageModelField {
   ref: string;
@@ -87,7 +96,13 @@ export interface PageModelField {
   visible?: boolean;
   inViewport?: boolean;
   sensitive: boolean;
+  interactionClass: InteractionClass;
   autocomplete?: string;
+  multiple?: boolean;
+  accept?: string;
+  filled?: boolean;
+  /** Bounded metadata for editable roots; their text never enters the model. */
+  contentLength?: number;
   /** Present only for non-sensitive fields, capped in length. */
   value?: string;
   /** True for type=submit/image and in-form buttons (KTD-4 classification). */
@@ -101,6 +116,7 @@ export interface PageModelForm {
   action?: string;
   method: string;
   fields: PageModelField[];
+  interactionClass: 'html-submit';
 }
 
 export interface PageModelAction {
@@ -108,6 +124,9 @@ export interface PageModelAction {
   role: string;
   name: string;
   backendNodeId: number;
+  provenance: ElementProvenance;
+  interactionClass: InteractionClass;
+  context?: string;
   states?: Record<string, boolean | string>;
 }
 
@@ -169,6 +188,8 @@ export interface RefEntry {
   formIndex?: number;
   fieldIndex?: number;
   submitSemantics?: boolean;
+  provenance?: ElementProvenance;
+  interactionClass?: InteractionClass;
 }
 
 export interface ElementFingerprint {
@@ -292,7 +313,7 @@ export function buildInspectElementFunction(): string {
     var output = '', walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
     while (walker.nextNode() && output.length < limit) {
       var parent = walker.currentNode.parentElement;
-      if (!parent || parent.closest('script,style,noscript,input,textarea,select,[hidden],[aria-hidden="true"]')) continue;
+      if (!parent || parent.closest('script,style,noscript,input,textarea,select,[contenteditable],[role="textbox"],[hidden],[aria-hidden="true"]')) continue;
       output += ' ' + (walker.currentNode.textContent || '');
     }
     return cap(output, limit);
@@ -457,6 +478,7 @@ export interface RawExtractedField {
   type: string;
   role?: string;
   multiple?: boolean;
+  accept?: string;
   size?: number;
   required: boolean;
   autocomplete?: string;
@@ -469,8 +491,19 @@ export interface RawExtractedField {
   value?: string;
   /** True when the field currently holds any value (sensitive-safe bit). */
   filled: boolean;
+  contentLength?: number;
   submitSemantics: boolean;
   xpath: string;
+}
+
+export interface RawDomCandidate {
+  name: string;
+  context?: string;
+  tag: string;
+  type: string;
+  role: string;
+  xpath: string;
+  humanOnly?: boolean;
 }
 
 export interface RawExtractedForm {
@@ -490,6 +523,8 @@ export interface RawPageExtraction {
   domEpoch: number;
   forms: RawExtractedForm[];
   standalone: RawExtractedField[];
+  domCandidates?: RawDomCandidate[];
+  domCandidateInventory?: { total: number; returned: number; truncated: boolean };
   contentText: string;
   contentTruncated: boolean;
   alerts: string[];
@@ -535,6 +570,15 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
     var t = '';
     try { t = (el.innerText || el.textContent || '').trim(); } catch (e) { t = (el.textContent || '').trim(); }
     return t.length > cap ? t.slice(0, cap) : t;
+  }
+  function textWithoutEditable(el, cap) {
+    var out = '', walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode() && out.length < cap) {
+      var parent = walker.currentNode.parentElement;
+      if (!parent || parent.closest('script,style,noscript,input,textarea,select,[contenteditable],[role="textbox"],[hidden],[aria-hidden="true"]')) continue;
+      out += ' ' + (walker.currentNode.textContent || '');
+    }
+    return out.replace(/\\s+/g, ' ').trim().slice(0, cap);
   }
   function labelFor(el) {
     var i, t;
@@ -586,12 +630,16 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
     var type = fieldType(el, tag);
     var sensitive = false;
     try { sensitive = __comateSensitive(el); } catch (e) { sensitive = type === 'password'; }
-    var value, filled = false;
+    var value, filled = false, contentLength;
     var isCheckable = type === 'checkbox' || type === 'radio';
+    var contenteditable = (el.getAttribute('contenteditable') || '').toLowerCase();
+    var editableRoot = tag !== 'input' && tag !== 'textarea' && tag !== 'select' && tag !== 'button' &&
+      (el.isContentEditable || (el.hasAttribute('contenteditable') && contenteditable !== 'false') || (el.getAttribute('role') || '').toLowerCase() === 'textbox');
     try {
-      var raw = isCheckable ? String(!!el.checked) : String(el.value == null ? '' : el.value);
+      var raw = editableRoot ? String(el.textContent || '') : (isCheckable ? String(!!el.checked) : String(el.value == null ? '' : el.value));
       filled = raw.length > 0 && raw !== 'false';
-      if (!sensitive) value = raw.length > 80 ? raw.slice(0, 80) : raw;
+      if (editableRoot) contentLength = Math.min(raw.length, 1000000);
+      else if (!sensitive) value = raw.length > 80 ? raw.slice(0, 80) : raw;
     } catch (e) { /* value unreadable */ }
     var state = elementState(el);
     return {
@@ -603,6 +651,7 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
       type: type,
       role: el.getAttribute('role') || undefined,
       multiple: el.multiple === true,
+      accept: tag === 'input' && type === 'file' ? (el.getAttribute('accept') || '').slice(0, 300) || undefined : undefined,
       size: typeof el.size === 'number' ? el.size : undefined,
       required: el.required === true,
       autocomplete: el.getAttribute('autocomplete') || undefined,
@@ -613,9 +662,45 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
       sensitive: sensitive,
       value: value,
       filled: filled,
+      contentLength: contentLength,
       submitSemantics: isSubmitControl(el, tag, type, inForm),
       xpath: getXPath(el)
     };
+  }
+
+  function associatedFileContext(el) {
+    if (el.hasAttribute('webkitdirectory') || el.hasAttribute('directory')) return '';
+    var labels = [];
+    try { labels = Array.prototype.slice.call(el.labels || []); } catch (e) { labels = []; }
+    if (el.parentElement && el.parentElement.tagName && el.parentElement.tagName.toLowerCase() === 'label') labels.push(el.parentElement);
+    var labelledBy = (el.getAttribute('aria-labelledby') || '').split(/\\s+/);
+    for (var i = 0; i < labelledBy.length; i++) {
+      var labelled = labelledBy[i] ? document.getElementById(labelledBy[i]) : null;
+      if (labelled) labels.push(labelled);
+    }
+    for (var j = 0; j < labels.length; j++) {
+      if (!visible(labels[j])) continue;
+      var text = textWithoutEditable(labels[j], 80) || labels[j].getAttribute('aria-label') || '';
+      if (text.trim()) return text.trim().slice(0, 80);
+    }
+    return '';
+  }
+  function usableFileInput(el) {
+    if (!el || el.tagName.toLowerCase() !== 'input' || fieldType(el, 'input') !== 'file') return true;
+    return !el.hasAttribute('webkitdirectory') && !el.hasAttribute('directory') && (visible(el) || !!associatedFileContext(el));
+  }
+  function isEditableRoot(el) {
+    if (!el || !el.tagName) return false;
+    var tag = el.tagName.toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return false;
+    var ce = (el.getAttribute('contenteditable') || '').toLowerCase();
+    return (el.hasAttribute('contenteditable') && ce !== 'false' && (el.isContentEditable || ce === '' || ce === 'true' || ce === 'plaintext-only')) ||
+      (el.getAttribute('role') || '').toLowerCase() === 'textbox';
+  }
+  function hasEditableRootAncestor(el) {
+    var parent = el.parentElement;
+    while (parent) { if (isEditableRoot(parent)) return true; parent = parent.parentElement; }
+    return false;
   }
 
   var MAX_FORMS = 10, MAX_FIELDS = 30, MAX_STANDALONE = 10;
@@ -633,6 +718,7 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
       if (['input', 'select', 'textarea', 'button'].indexOf(tag) === -1) continue;
       var ftype = fieldType(el, tag);
       if (ftype === 'hidden' || ftype === 'fieldset' || ftype === 'object') continue;
+      if (ftype === 'file' && !usableFileInput(el)) continue;
       totalFieldCount += 1;
       if (ftype === 'password') hasPasswordField = true;
       if (keepForm && fields.length < MAX_FIELDS) {
@@ -658,9 +744,10 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
   for (var si = 0; si < allControls.length; si++) {
     var ctrl = allControls[si];
     if (ctrl.form) continue;
-    if (!visible(ctrl)) continue;
     var stag = ctrl.tagName.toLowerCase();
     if (fieldType(ctrl, stag) === 'hidden') continue;
+    if (fieldType(ctrl, stag) === 'file') { if (!usableFileInput(ctrl)) continue; }
+    else if (!visible(ctrl)) continue;
     totalFieldCount += 1;
     if (standalone.length < MAX_STANDALONE) {
       if (!standaloneGroupAdded) {
@@ -670,6 +757,110 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
       standalone.push(readField(ctrl, -1, false));
       identityObjects.push(ctrl);
     }
+  }
+
+  var editableRoots = document.querySelectorAll('[contenteditable],[role="textbox"]');
+  for (var eri = 0; eri < editableRoots.length; eri++) {
+    var editable = editableRoots[eri];
+    if (!isEditableRoot(editable) || hasEditableRootAncestor(editable) || !visible(editable)) continue;
+    totalFieldCount += 1;
+    if (standalone.length >= MAX_STANDALONE) continue;
+    if (!standaloneGroupAdded) {
+      identityObjects.push(document.body || document.documentElement);
+      standaloneGroupAdded = true;
+    }
+    standalone.push(readField(editable, -1, false));
+    identityObjects.push(editable);
+  }
+
+  // Bounded visible DOM fallback for controls omitted from the AX widget spine.
+  var MAX_CANDIDATE_SCAN = 2000, MAX_DOM_CANDIDATES = 200;
+  var domCandidates = [], domCandidateObjects = [], domCandidateIdentityIndexes = [], totalDomCandidates = 0;
+  var candidateSeeds = document.querySelectorAll('a,button,[role],[onclick],[tabindex],div,span');
+  function candidateEvidence(el) {
+    var tag = el.tagName.toLowerCase(), role = (el.getAttribute('role') || '').toLowerCase();
+    var nativeAction = (tag === 'a' && el.hasAttribute('href')) || tag === 'button' ||
+      (tag === 'input' && /^(button|submit|reset|image)$/.test(fieldType(el, tag)));
+    var handler = el.hasAttribute('onclick') || typeof el.onclick === 'function';
+    var keyboard = el.hasAttribute('tabindex') && Number(el.getAttribute('tabindex')) >= 0;
+    var semantic = /^(button|link|menuitem|menuitemcheckbox|menuitemradio|tab|treeitem|switch)$/.test(role);
+    var pointer = false;
+    try { pointer = window.getComputedStyle(el).cursor === 'pointer'; } catch (e) { /* ignore */ }
+    var listener = false;
+    try {
+      if (typeof getEventListeners === 'function') {
+        var listeners = getEventListeners(el) || {};
+        listener = ['click','mousedown','mouseup','pointerdown','pointerup','keydown','keypress'].some(function (name) {
+          return listeners[name] && listeners[name].length > 0;
+        });
+      }
+    } catch (e) { /* command-line API unavailable */ }
+    return nativeAction || handler || listener || keyboard || semantic || pointer;
+  }
+  function candidateUsable(el) {
+    var rect = el.getBoundingClientRect(), style = window.getComputedStyle(el);
+    var shown = rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+    if (!shown || el.hidden || el.closest('[hidden],[aria-hidden="true"],[inert]')) return false;
+    if (el.matches(':disabled,[aria-disabled="true"]')) return false;
+    var inViewport = rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth;
+    if (!inViewport) return true;
+    var x = Math.max(0, Math.min(window.innerWidth - 1, rect.left + rect.width / 2));
+    var y = Math.max(0, Math.min(window.innerHeight - 1, rect.top + rect.height / 2));
+    var hit = document.elementFromPoint(x, y);
+    return !hit || hit === el || el.contains(hit);
+  }
+  function candidateName(el) {
+    return (el.getAttribute('aria-label') || el.getAttribute('title') || textWithoutEditable(el, 100)).replace(/\\s+/g, ' ').trim().slice(0, 80);
+  }
+  function candidateContext(el) {
+    var parent = el.parentElement;
+    if (!parent) return '';
+    var siblings = Array.prototype.slice.call(parent.children || []), out = '';
+    for (var i = 0; i < siblings.length && out.length < 120; i++) {
+      if (siblings[i] === el || isEditableRoot(siblings[i]) || siblings[i].querySelector('[contenteditable],[role="textbox"]')) continue;
+      out += ' ' + textWithoutEditable(siblings[i], 80);
+    }
+    return out.replace(/\\s+/g, ' ').trim().slice(0, 120);
+  }
+  var candidateScanCount = Math.min(candidateSeeds.length, MAX_CANDIDATE_SCAN);
+  for (var csi = 0; csi < candidateScanCount; csi++) {
+    var seed = candidateSeeds[csi];
+    if (seed.closest('[contenteditable],[role="textbox"]')) continue;
+    if (!textWithoutEditable(seed, 100) && !seed.getAttribute('aria-label') && !seed.getAttribute('title')) continue;
+    var candidate = seed, hops = 0;
+    while (candidate && hops < 6 && !candidateEvidence(candidate)) { candidate = candidate.parentElement; hops += 1; }
+    if (!candidate || candidate === document.body || candidate === document.documentElement || !candidateEvidence(candidate)) continue;
+    if (!candidateUsable(candidate)) continue;
+    var cname = candidateName(candidate);
+    if (!cname) continue;
+    var duplicate = false, replaceIndex = -1;
+    for (var dci = 0; dci < domCandidateObjects.length; dci++) {
+      if (domCandidateObjects[dci] === candidate || candidate.contains(domCandidateObjects[dci])) { duplicate = true; break; }
+      if (domCandidateObjects[dci].contains(candidate)) { replaceIndex = dci; break; }
+    }
+    if (duplicate) continue;
+    var ctag = candidate.tagName.toLowerCase();
+    var candidateRecord = {
+      name: cname,
+      context: candidateContext(candidate) || undefined,
+      tag: ctag,
+      type: ctag === 'input' ? fieldType(candidate, ctag) : ctag,
+      role: (candidate.getAttribute('role') || '').toLowerCase().slice(0, 80) || (ctag === 'a' ? 'link' : ctag === 'button' ? 'button' : 'generic'),
+      xpath: getXPath(candidate),
+      humanOnly: /captcha|oauth|authori[sz](e|ation)|consent|one[- ]?time|otp|payment|card|cvv|cvc/i.test(cname)
+    };
+    if (replaceIndex >= 0) {
+      domCandidates[replaceIndex] = candidateRecord;
+      domCandidateObjects[replaceIndex] = candidate;
+      identityObjects[domCandidateIdentityIndexes[replaceIndex]] = candidate;
+      continue;
+    }
+    totalDomCandidates += 1;
+    if (domCandidates.length >= MAX_DOM_CANDIDATES) continue;
+    domCandidates.push(candidateRecord);
+    domCandidateObjects.push(candidate);
+    domCandidateIdentityIndexes.push(identityObjects.length);
+    identityObjects.push(candidate);
   }
 
   // Readability-lite: score block candidates by paragraph text density with a
@@ -683,15 +874,15 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
       var ps = el.querySelectorAll('p');
       if (ps.length === 0) continue;
       var text = '';
-      for (var j = 0; j < ps.length; j++) text += textOf(ps[j], 1000) + '\\n';
+      for (var j = 0; j < ps.length; j++) text += textWithoutEditable(ps[j], 1000) + '\\n';
       text = text.trim();
       if (text.length < 200) continue;
       var linkText = 0, links = el.querySelectorAll('a');
-      for (var k = 0; k < links.length; k++) linkText += textOf(links[k], 1000).length;
+      for (var k = 0; k < links.length; k++) linkText += textWithoutEditable(links[k], 1000).length;
       var score = text.length * (1 - Math.min(0.9, linkText / Math.max(1, text.length)));
       if (score > bestScore) { bestScore = score; best = text; }
     }
-    if (!best && document.body) best = textOf(document.body, MAX_CONTENT * 2);
+    if (!best && document.body) best = textWithoutEditable(document.body, MAX_CONTENT * 2);
     return best;
   }
 
@@ -703,7 +894,8 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
   var alertEls = document.querySelectorAll('[role="alert"], [aria-live="assertive"], .alert, .error');
   for (var ai = 0; ai < alertEls.length && alerts.length < 5; ai++) {
     if (!visible(alertEls[ai])) continue;
-    var at = textOf(alertEls[ai], 200);
+    if (alertEls[ai].closest('[contenteditable],[role="textbox"]')) continue;
+    var at = textWithoutEditable(alertEls[ai], 200);
     if (at) alerts.push(at);
   }
   var captchaProbe = '';
@@ -723,6 +915,8 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
     domEpoch: probeOut.epoch,
     forms: forms,
     standalone: standalone,
+    domCandidates: domCandidates,
+    domCandidateInventory: { total: totalDomCandidates, returned: domCandidates.length, truncated: totalDomCandidates > domCandidates.length || candidateSeeds.length > MAX_CANDIDATE_SCAN },
     contentText: contentText,
     contentTruncated: contentTruncated,
     alerts: alerts,
@@ -927,6 +1121,7 @@ const VALUE_CAP = 80;
 const PAGE_URL_CAP = 2048;
 const PAGE_TITLE_CAP = 300;
 const FORM_NAME_CAP = 160;
+const HUMAN_ONLY_PATTERN = /captcha|oauth|authori[sz](e|ation)|consent|one[- ]?time|otp|payment|card|cvv|cvc/i;
 
 function capPageString(value: string, limit: number): string {
   return value.slice(0, limit);
@@ -952,6 +1147,21 @@ function mapRawField(
   placement: { formIndex: number; fieldIndex: number; submitSemantics: boolean; backendNodeId: number },
 ): PageModelField {
   const role = normalizedFieldRole(rawField);
+  const tag = rawField.tag.toLowerCase();
+  const type = rawField.type.toLowerCase();
+  const fieldIsEditable = tag === 'textarea' || tag === 'select' ||
+    (tag === 'input' && !['button', 'submit', 'reset', 'image', 'file'].includes(type)) ||
+    rawField.contentLength !== undefined || role === 'textbox' || role === 'searchbox' || role === 'combobox';
+  const interactionClass: InteractionClass =
+    rawField.sensitive || isSensitiveField(rawField) || HUMAN_ONLY_PATTERN.test([rawField.name, rawField.id, rawField.label].filter(Boolean).join(' '))
+      ? 'human-only'
+      : rawField.tag.toLowerCase() === 'input' && rawField.type.toLowerCase() === 'file'
+        ? 'file-egress'
+        : placement.submitSemantics
+          ? 'html-submit'
+          : fieldIsEditable
+            ? 'edit'
+            : 'ambiguous-activation';
   const entry = refTable.mint({
     kind: 'field',
     role,
@@ -962,6 +1172,7 @@ function mapRawField(
     formIndex: placement.formIndex,
     fieldIndex: placement.fieldIndex,
     submitSemantics: placement.submitSemantics,
+    interactionClass,
   });
   const modelField: PageModelField = {
     ref: entry.ref,
@@ -975,10 +1186,15 @@ function mapRawField(
     ...(rawField.visible !== undefined ? { visible: rawField.visible } : {}),
     ...(rawField.inViewport !== undefined ? { inViewport: rawField.inViewport } : {}),
     sensitive: rawField.sensitive,
+    interactionClass,
     submitSemantics: placement.submitSemantics,
   };
   if (rawField.name !== undefined) modelField.name = capPageString(rawField.name, 160);
   if (rawField.autocomplete !== undefined) modelField.autocomplete = capPageString(rawField.autocomplete, 80);
+  if (rawField.multiple !== undefined) modelField.multiple = rawField.multiple;
+  if (rawField.accept !== undefined) modelField.accept = capPageString(rawField.accept, 300);
+  if (rawField.filled !== undefined) modelField.filled = rawField.filled;
+  if (rawField.contentLength !== undefined) modelField.contentLength = Math.min(Math.max(Math.floor(rawField.contentLength), 0), 1_000_000);
   // Sensitive values never reach the model — the extractor already hashed
   // and dropped them, and we defensively re-check sidecar-side.
   if (rawField.value !== undefined && !rawField.sensitive && !isSensitiveField(rawField)) {
@@ -991,7 +1207,7 @@ function fingerprintForField(field: RawExtractedField): ElementFingerprint {
   const tag = field.tag.toLowerCase().slice(0, 40);
   const type = field.type.toLowerCase().slice(0, 40);
   const role = normalizedFieldRole(field);
-  const editable = tag === 'textarea' || tag === 'select' || tag === 'input' ||
+  const editable = tag === 'textarea' || tag === 'select' || tag === 'input' || field.contentLength !== undefined ||
     role === 'textbox' || role === 'searchbox' || role === 'combobox';
   return { tag, type, role, editable, fileInput: tag === 'input' && type === 'file' };
 }
@@ -1012,13 +1228,14 @@ export function buildElementFingerprintFunction(): string {
       else if (tag === 'button' || (tag === 'input' && ['button','submit','reset','image'].indexOf(type) !== -1)) role = 'button';
       else if (tag === 'select') role = (this.multiple || this.size > 1) ? 'listbox' : 'combobox';
       else if (tag === 'textarea') role = 'textbox';
+      else if (tag === 'input' && type === 'file') role = 'file-input';
       else if (tag === 'input' && (type === 'checkbox' || type === 'radio')) role = type;
       else if (tag === 'input' && type === 'number') role = 'spinbutton';
       else if (tag === 'input' && type === 'range') role = 'slider';
       else if (tag === 'input' && type === 'search') role = 'searchbox';
       else if (tag === 'input') role = 'textbox';
     }
-    var editable = tag === 'textarea' || tag === 'select' || tag === 'input' || role === 'textbox' || role === 'searchbox' || role === 'combobox';
+    var editable = tag === 'textarea' || tag === 'select' || tag === 'input' || this.isContentEditable || role === 'textbox' || role === 'searchbox' || role === 'combobox';
     return { tag: tag.slice(0, 40), type: type.slice(0, 40), role: role.slice(0, 80), editable: editable, fileInput: tag === 'input' && type === 'file' };
   }`;
 }
@@ -1032,6 +1249,7 @@ function normalizedFieldRole(
   if (tag === 'button' || (tag === 'input' && ['button', 'submit', 'reset', 'image'].includes(type))) return 'button';
   if (tag === 'select') return field.multiple || (field.size ?? 0) > 1 ? 'listbox' : 'combobox';
   if (tag === 'textarea') return 'textbox';
+  if (tag === 'input' && type === 'file') return 'file-input';
   if (tag === 'input' && (type === 'checkbox' || type === 'radio')) return type;
   if (tag === 'input' && type === 'number') return 'spinbutton';
   if (tag === 'input' && type === 'range') return 'slider';
@@ -1046,6 +1264,22 @@ function normalizedFieldRole(
  * accessibility tree (authoritative role + name, backendNodeId refs).
  */
 export async function distillPageModel(
+  source: PageModelSource,
+  refTable: RefTable,
+  options: { maxContentChars?: number; maxActions?: number } = {},
+): Promise<PageModel> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await distillPageModelOnce(source, refTable, options);
+    } catch (error) {
+      const documentChanged = error instanceof Error && /document identity changed|backend-node identity unavailable/.test(error.message);
+      if (!documentChanged || attempt === 1) throw error;
+    }
+  }
+  throw new Error('CDP document identity changed during page distillation');
+}
+
+async function distillPageModelOnce(
   source: PageModelSource,
   refTable: RefTable,
   options: { maxContentChars?: number; maxActions?: number } = {},
@@ -1086,12 +1320,14 @@ export async function distillPageModel(
       fingerprint: { tag: 'form', type: 'form', role: 'form', editable: false, fileInput: false },
       xpath: rawForm.xpath,
       formIndex: rawForm.formIndex,
+      interactionClass: 'html-submit',
     });
     const modelForm: PageModelForm = {
       ref: formEntry.ref,
       formIndex: rawForm.formIndex,
       method: capPageString(rawForm.method, 16),
       fields,
+      interactionClass: 'html-submit',
     };
     if (rawForm.name !== undefined) modelForm.name = capPageString(rawForm.name, FORM_NAME_CAP);
     if (rawForm.action !== undefined) modelForm.action = capPageString(rawForm.action, PAGE_URL_CAP);
@@ -1112,11 +1348,36 @@ export async function distillPageModel(
       backendNodeId: groupBackendNodeId,
       fingerprint: { tag: 'body', type: 'body', role: '', editable: false, fileInput: false },
       formIndex: -1,
+      interactionClass: 'html-submit',
     });
-    forms.push({ ref: entry.ref, formIndex: -1, method: 'get', fields });
+    forms.push({ ref: entry.ref, formIndex: -1, method: 'get', fields, interactionClass: 'html-submit' });
   }
 
-  const extractedActionInventory = extractActionInventory(axNodes, options.maxActions ?? MAX_ACTIONS);
+  const domCandidates = extraction.domCandidates ?? [];
+  const domCandidateBackendIds = domCandidates.map(() => resolvedIds[resolvedIndex++]!);
+  const longFormBackendIds = new Set(
+    forms.flatMap((form) => form.fields)
+      .filter((field) => field.type === 'contenteditable' || field.contentLength !== undefined)
+      .map((field) => refTable.get(field.ref)?.backendNodeId)
+      .filter((id): id is number => typeof id === 'number'),
+  );
+  const longFormAxNodeIds = new Set(
+    axNodes.filter((node) => typeof node.backendDOMNodeId === 'number' && longFormBackendIds.has(node.backendDOMNodeId)).map((node) => node.nodeId),
+  );
+  const axById = new Map(axNodes.map((node) => [node.nodeId, node]));
+  const safeAxNodes = longFormAxNodeIds.size === 0 ? axNodes : axNodes.filter((node) => {
+    let current: RawAxNode | undefined = node;
+    const visited = new Set<string>();
+    while (current && !visited.has(current.nodeId)) {
+      if (longFormAxNodeIds.has(current.nodeId)) return false;
+      visited.add(current.nodeId);
+      current = current.parentId ? axById.get(current.parentId) : undefined;
+    }
+    return true;
+  });
+
+  const maxActions = options.maxActions ?? MAX_ACTIONS;
+  const extractedActionInventory = extractActionInventory(safeAxNodes, maxActions);
   const actionFingerprints = await Promise.all(extractedActionInventory.actions.map((action) =>
     source.callBackendNode?.<ElementFingerprint>(action.backendNodeId, buildElementFingerprintFunction()) ?? Promise.resolve(null),
   ));
@@ -1128,30 +1389,66 @@ export async function distillPageModel(
     throw new Error('CDP document identity changed while fingerprinting page actions');
   }
   const actions: PageModelAction[] = extractedActionInventory.actions.map((action, index) => {
+    const interactionClass: InteractionClass = HUMAN_ONLY_PATTERN.test(action.name) ? 'human-only' : 'ambiguous-activation';
     const entry = refTable.mint({
       kind: 'action',
       role: action.role,
       name: action.name,
       backendNodeId: action.backendNodeId,
       fingerprint: actionFingerprints[index]!,
+      provenance: 'ax',
+      interactionClass,
     });
     return {
       ref: entry.ref,
       role: action.role,
       name: action.name,
       backendNodeId: action.backendNodeId,
+      provenance: 'ax',
+      interactionClass,
       ...(action.states ? { states: action.states } : {}),
     };
   });
+  const axBackendIds = new Set(actions.map((action) => action.backendNodeId));
+  let domOverlapCount = 0;
+  for (let index = 0; index < domCandidates.length; index += 1) {
+    const candidate = domCandidates[index];
+    const backendNodeId = domCandidateBackendIds[index];
+    if (axBackendIds.has(backendNodeId)) {
+      domOverlapCount += 1;
+      continue;
+    }
+    if (actions.length >= maxActions) continue;
+    const role = capPageString(candidate.role || 'generic', 80);
+    const name = capPageString(candidate.name, MAX_ACTION_NAME);
+    const interactionClass: InteractionClass = candidate.humanOnly || HUMAN_ONLY_PATTERN.test(name)
+      ? 'human-only'
+      : 'ambiguous-activation';
+    const fingerprint: ElementFingerprint = {
+      tag: capPageString(candidate.tag.toLowerCase(), 40),
+      type: capPageString(candidate.type.toLowerCase(), 40),
+      role,
+      editable: false,
+      fileInput: false,
+    };
+    const entry = refTable.mint({
+      kind: 'action', role, name, backendNodeId, fingerprint, xpath: candidate.xpath,
+      provenance: 'dom', interactionClass,
+    });
+    actions.push({
+      ref: entry.ref, role, name, backendNodeId, provenance: 'dom', interactionClass,
+      ...(candidate.context ? { context: capPageString(candidate.context, 120) } : {}),
+    });
+  }
 
-  const axAlerts = extractAlertsFromAxTree(axNodes);
+  const axAlerts = extractAlertsFromAxTree(safeAxNodes);
   const alerts = extraction.alerts.slice(0, 5).map((alert) => capPageString(alert, 200));
   for (const alert of axAlerts) {
     if (alerts.length >= 5) break;
     if (!alerts.includes(alert)) alerts.push(alert);
   }
 
-  const outlineInventory = extractSemanticOutlineInventory(axNodes, actions);
+  const outlineInventory = extractSemanticOutlineInventory(safeAxNodes, actions);
   const returnedFieldCount = forms.reduce((total, form) => total + form.fields.length, 0);
   const sourceFormCount = extraction.sourceInventory?.formCount ?? extraction.forms.length;
   const sourceFieldCount = extraction.sourceInventory?.fieldCount ?? returnedFieldCount;
@@ -1170,9 +1467,9 @@ export async function distillPageModel(
     forms,
     actions,
     actionInventory: {
-      total: extractedActionInventory.total,
+      total: Math.max(actions.length, extractedActionInventory.total + (extraction.domCandidateInventory?.total ?? domCandidates.length) - domOverlapCount),
       returned: actions.length,
-      truncated: extractedActionInventory.total > actions.length,
+      truncated: extractedActionInventory.total + (extraction.domCandidateInventory?.total ?? domCandidates.length) - domOverlapCount > actions.length,
     },
     sourceInventory: {
       forms: {
@@ -1187,8 +1484,8 @@ export async function distillPageModel(
       },
     },
     content: {
-      text: capPageString(extraction.contentText, contentCap),
-      truncated: extraction.contentTruncated || extraction.contentText.length > contentCap,
+      text: longFormBackendIds.size > 0 ? '' : capPageString(extraction.contentText, contentCap),
+      truncated: longFormBackendIds.size > 0 || extraction.contentTruncated || extraction.contentText.length > contentCap,
     },
     alerts,
     tokenEstimate: 0,

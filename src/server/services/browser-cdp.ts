@@ -457,7 +457,7 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
     try {
       const evaluated = await this.connection.send<EvaluateResult>(
         'Runtime.evaluate',
-        { expression, returnByValue: false, awaitPromise: true, objectGroup },
+        { expression, returnByValue: false, awaitPromise: true, includeCommandLineAPI: true, objectGroup },
         this.sessionId,
       );
       if (evaluated.exceptionDetails) throw new CdpError('In-page extraction failed', 'Runtime.evaluate');
