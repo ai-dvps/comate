@@ -641,6 +641,74 @@ describe('SseEmitter + SessionRuntime task transcript integration', { concurrenc
 });
 
 describe('result error visibility (silent-error fix)', () => {
+  it('does not surface internal EDE diagnostics from an interrupted turn', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+
+    emitter.handle({
+      type: 'result',
+      subtype: 'error_during_execution',
+      is_error: true,
+      duration_ms: 0,
+      duration_api_ms: 0,
+      num_turns: 0,
+      total_cost_usd: 0,
+      session_id: 's1',
+      stop_reason: 'tool_use',
+      errors: ['[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use'],
+    } as never);
+
+    assert.equal(events.filter((e) => e.type === 'result').length, 1);
+    assert.equal(events.filter((e) => e.type === 'error_note').length, 0);
+  });
+
+  it('still surfaces real errors when an EDE diagnostic shares the result', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+
+    emitter.handle({
+      type: 'result',
+      subtype: 'error_during_execution',
+      is_error: true,
+      duration_ms: 0,
+      duration_api_ms: 0,
+      num_turns: 0,
+      total_cost_usd: 0,
+      session_id: 's1',
+      errors: [
+        '[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use',
+        'Provider connection failed',
+      ],
+    } as never);
+
+    const errorNotes = events.filter((e) => e.type === 'error_note') as Array<{ text: string }>;
+    assert.equal(errorNotes.length, 1);
+    assert.equal(errorNotes[0].text, 'Provider connection failed');
+  });
+
+  it('does not leave a blank error note when an EDE diagnostic shares whitespace', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+
+    emitter.handle({
+      type: 'result',
+      subtype: 'error_during_execution',
+      is_error: true,
+      duration_ms: 0,
+      duration_api_ms: 0,
+      num_turns: 0,
+      total_cost_usd: 0,
+      session_id: 's1',
+      errors: [
+        '[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use',
+        '   ',
+      ],
+    } as never);
+
+    assert.equal(events.filter((e) => e.type === 'result').length, 1);
+    assert.equal(events.filter((e) => e.type === 'error_note').length, 0);
+  });
+
   it('emits error_note with the error text when a result carries is_error and errors', () => {
     const events: SseEvent[] = [];
     const emitter = new SseEmitter(null, (_id, event) => events.push(event));

@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Interrupted turns no longer show internal EDE diagnostics** — Manually stopping a Claude turn now hides the SDK's internal `[ede_diagnostic]` marker from the message list while preserving genuine error messages.
 - **Interrupted sub-agent timers now stop in inactive sessions** — Reopening an inactive session no longer reconstructs interrupted Process Region agents as running; their terminal state and elapsed time remain fixed.
 - **Windows custom title bar now has a visible top frame when restored** — The subtle top edge follows the app theme and disappears while the window is maximized or fullscreen.
 - **Comate now exits duplicate desktop launches immediately** — The Electron single-instance lock is acquired before debug-port allocation or shell service startup, and launching Comate again restores the existing window instead of starting another app instance.
