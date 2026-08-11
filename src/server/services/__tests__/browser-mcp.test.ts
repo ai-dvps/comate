@@ -638,7 +638,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
 
-  it('annotates page observation tools read-only and marks submit destructive + requiresUserInteraction', async () => {
+  it('annotates observations read-only and every security-manifest mutation destructive + interactive', async () => {
     const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.strictEqual(harness.tools.get('takeScreenshot')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('getPageState')?.annotations?.readOnlyHint, true);
@@ -647,12 +647,11 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     assert.strictEqual(harness.tools.get('getElementDetails')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('startNetworkCapture')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('stopNetworkCapture')?.annotations?.readOnlyHint, true);
-    assert.strictEqual(harness.tools.get('submit')?.annotations?.destructiveHint, true);
-    // Auxiliary meta only — the security property lives in the handler gate.
-    assert.strictEqual(
-      harness.tools.get('submit')?._meta?.['anthropic/requiresUserInteraction'],
-      true,
-    );
+    for (const name of ['submit', 'activate', 'upload']) {
+      assert.strictEqual(harness.tools.get(name)?.annotations?.destructiveHint, true);
+      // Auxiliary meta only — the security property lives in the handler gate.
+      assert.strictEqual(harness.tools.get(name)?._meta?.['anthropic/requiresUserInteraction'], true);
+    }
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
 

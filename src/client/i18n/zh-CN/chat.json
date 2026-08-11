@@ -74,6 +74,21 @@
     "denialReason_safetyCheck": "此请求被安全检查标记。",
     "denialReason_asyncAgent": "此请求因来自异步代理而被拒绝。",
     "denialReason_default": "此请求被拒绝：{{reason}}",
+    "securityManifestRequest": "审批请求",
+    "browserActivation": {
+      "reconfirmation": "页面摘要在你上次批准后发生变化。请再次检查后再允许一次激活。",
+      "origin": "页面来源",
+      "untrustedPageContext": "页面提供的未受信任上下文",
+      "role": "角色",
+      "name": "名称",
+      "nearby": "附近内容",
+      "editorSummary": "编辑器：共 {{count}} 个，已填写 {{filled}} 个，合计 {{length}} 个字符"
+    },
+    "browserUpload": {
+      "origin": "共享给",
+      "total": "{{count}} 个文件 · 共 {{size}}",
+      "pageAccept": "页面提供的未受信任文件类型规则"
+    },
     "browserSubmit": {
       "destination": "目标地址",
       "page": "页面",

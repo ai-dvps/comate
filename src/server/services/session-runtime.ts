@@ -33,7 +33,7 @@ import {
   evaluateSessionNavigation,
   isBrowserSubmitClassified,
   isBrowserActivationClassified,
-  redactSubmitGateInput,
+  isBrowserUploadClassified,
 } from './browser-gate-state.js';
 import { browserAuditService } from './browser-audit.js';
 
@@ -502,43 +502,17 @@ export class SessionRuntime {
       }
 
       // ------------------------------------------------------------------
-      // Browser gates (U4, KTD-4 ②). These live in the BASE callback (the
-      // Kimi wrapper wraps around it) and BEFORE the auto branch so auto
-      // mode can never silently approve them.
-      //
-      // Submit classification: provable submits (submit tool; act clicking a
-      // submit-semantics control) always go through a per-call confirmation.
-      // This is the FIRST gate + UI entry — the real hard gate (sanitized
-      // manifest + TOCTOU re-read) lives in the submit tool's handler (U3)
-      // and fires even when a workspace `.claude/settings.json` allow rule
-      // short-circuits canUseTool entirely. The raw submit input is redacted
-      // here (KTD-8: field names may flow, values never).
-      if (isBrowserActivationClassified(toolName, input)) {
-        diagLog(`[Runtime ${this.sessionId}] browser-activation-gate requestId=${requestId}`);
-        return this.requestToolApproval(requestId, toolName, options.toolUseID, input, {
-          title: options.title ?? 'Review page activation',
-          description: options.description ?? 'The activation handler will show a sanitized, target-bound manifest before dispatch.',
-          signal: options.signal,
-          decisionReasonType: options.decisionReasonType,
-        });
-      }
-
-      if (isBrowserSubmitClassified(this.sessionId, toolName, input)) {
-        diagLog(`[Runtime ${this.sessionId}] browser-submit-gate requestId=${requestId} tool=${toolName}`);
-        return this.requestToolApproval(
-          requestId,
-          toolName,
-          options.toolUseID,
-          redactSubmitGateInput(toolName, input),
-          {
-            title: options.title ?? 'Confirm form submission',
-            description:
-              options.description ??
-              'This action submits a form. The browser tool will ask you to review the destination and fields before dispatching.',
-            signal: options.signal,
-            decisionReasonType: options.decisionReasonType,
-          },
-        );
+      // Browser handler-owned gates (U6). Classification happens before the
+      // generic auto/readonly branch, but the bound handler is the sole
+      // approval owner. This avoids a duplicate, weaker generic card.
+      if ((toolName === BROWSER_TOOL_NAMES.act && input.action === 'click') ||
+          isBrowserActivationClassified(toolName, input) || isBrowserUploadClassified(toolName, input) ||
+          isBrowserSubmitClassified(this.sessionId, toolName, input)) {
+        // Handler-owned security manifests are the single approval surface.
+        // canUseTool still classifies these calls ahead of generic auto/
+        // readonly policy, but must not create a second, weaker card.
+        diagLog(`[Runtime ${this.sessionId}] browser-handler-approval tool=${toolName} requestId=${requestId}`);
+        return { behavior: 'allow', updatedInput: input };
       }
 
       // Navigation surface: in auto mode the session's first cross-eTLD+1

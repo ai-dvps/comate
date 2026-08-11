@@ -122,4 +122,4 @@ export default function BrowserSubmitRenderer(input: unknown): ReactNode | null 
   return <BrowserSubmitManifest payload={payload} />
 }
 
-registerToolRenderer(BROWSER_TOOL_NAMES.submit, BrowserSubmitRenderer)
+registerToolRenderer(BROWSER_TOOL_NAMES.submit, BrowserSubmitRenderer, { securityManifest: true })

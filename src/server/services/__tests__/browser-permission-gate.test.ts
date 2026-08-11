@@ -19,8 +19,8 @@ import {
   getVisitedDomains,
   isBrowserSubmitClassified,
   isBrowserActivationClassified,
+  isBrowserUploadClassified,
   isSubmitSemanticsRef,
-  redactSubmitGateInput,
   registrableDomain,
   setSubmitSemanticsRefs,
 } from '../browser-gate-state.js';
@@ -158,6 +158,11 @@ describe('submit classification (canUseTool-layer rules)', () => {
     assert.ok(!isBrowserActivationClassified(BROWSER_TOOL_NAMES.act, { ref: 'e1-aa', action: 'click' }));
   });
 
+  it('dedicated workspace upload is upload-classified', () => {
+    assert.ok(isBrowserUploadClassified(BROWSER_TOOL_NAMES.upload, { ref: 'e2-aa', paths: ['media/a.png'] }));
+    assert.ok(!isBrowserUploadClassified(BROWSER_TOOL_NAMES.upload, { ref: 'e2-aa' }));
+  });
+
   it('act click is classified only for refs with submit semantics', () => {
     setSubmitSemanticsRefs(SESSION, ['e5-ab', 'e9-cd']);
     assert.ok(isBrowserSubmitClassified(SESSION, BROWSER_TOOL_NAMES.act, { ref: 'e5-ab', action: 'click' }));
@@ -197,20 +202,6 @@ describe('submit classification (canUseTool-layer rules)', () => {
     }
   });
 
-  it('redactSubmitGateInput strips field values but keeps field names', () => {
-    const redacted = redactSubmitGateInput(BROWSER_TOOL_NAMES.submit, {
-      ref: 'e3-aa',
-      fields: { username: 'alice', password: 's3cret' },
-    });
-    assert.deepStrictEqual(Object.keys(redacted.fields as Record<string, string>).sort(), ['password', 'username']);
-    for (const value of Object.values(redacted.fields as Record<string, string>)) {
-      assert.ok(!value.includes('s3cret') && !value.includes('alice'), 'values must be redacted');
-    }
-    assert.strictEqual(redacted.ref, 'e3-aa');
-    // Non-submit input passes through untouched.
-    const passthrough = { ref: 'e1', action: 'click' };
-    assert.strictEqual(redactSubmitGateInput(BROWSER_TOOL_NAMES.act, passthrough), passthrough);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -318,30 +309,22 @@ describe('session-runtime browser gates', { concurrency: false }, () => {
     );
   }
 
-  it('AE2 first gate: auto mode + submit tool → per-call confirmation, not auto-approval', async () => {
+  it('handler-owned submit manifest is the only approval card in auto mode', async () => {
     openRuntime();
     runtime!.setApprovalMode('auto');
-    const promise = callTool(BROWSER_TOOL_NAMES.submit, { ref: 'e3-aa', fields: { user: 'alice' } }, 'r-submit');
-    // The call must NOT resolve by itself — it waits on the user.
-    const pending = pendingApprovalEvents();
-    assert.strictEqual(pending.length, 1, 'submit must emit a pending approval in auto mode');
-    assert.strictEqual(pending[0].toolName, BROWSER_TOOL_NAMES.submit);
-    assert.strictEqual(events.some((e) => e.type === 'auto_approval'), false, 'no auto-approval for submits');
-    runtime!.resolveApproval('r-submit', { behavior: 'allow' });
-    const result = await promise;
+    const result = await callTool(BROWSER_TOOL_NAMES.submit, { ref: 'e3-aa' }, 'r-submit');
     assert.strictEqual(result?.behavior, 'allow');
+    assert.strictEqual(pendingApprovalEvents().length, 0, 'canUseTool must not emit a duplicate generic card');
+    assert.strictEqual(events.some((e) => e.type === 'auto_approval'), false, 'no auto-approval for submits');
   });
 
-  it('AE4 defense gate: auto mode still asks before dedicated page activation', async () => {
+  it('activation and upload are classified but defer the single card to their handlers', async () => {
     openRuntime();
     runtime!.setApprovalMode('auto');
-    const promise = callTool(BROWSER_TOOL_NAMES.activate, { operationId: 'op-1', ref: 'e7-aa' }, 'r-activate');
-    const pending = pendingApprovalEvents();
-    assert.strictEqual(pending.length, 1);
-    assert.strictEqual(pending[0].toolName, BROWSER_TOOL_NAMES.activate);
+    assert.strictEqual((await callTool(BROWSER_TOOL_NAMES.activate, { operationId: 'op-1', ref: 'e7-aa' }, 'r-activate'))?.behavior, 'allow');
+    assert.strictEqual((await callTool(BROWSER_TOOL_NAMES.upload, { operationId: 'op-2', ref: 'e8-aa', paths: ['media/a.png'] }, 'r-upload'))?.behavior, 'allow');
+    assert.strictEqual(pendingApprovalEvents().length, 0);
     assert.strictEqual(events.some((event) => event.type === 'auto_approval'), false);
-    runtime!.resolveApproval('r-activate', { behavior: 'allow' });
-    assert.strictEqual((await promise)?.behavior, 'allow');
   });
 
   it('lets authenticatedRequest use only its handler-owned approval gate', async () => {
@@ -356,33 +339,23 @@ describe('session-runtime browser gates', { concurrency: false }, () => {
     assert.strictEqual(pendingApprovalEvents().length, 0, 'generic gate must not emit a duplicate card');
   });
 
-  it('first gate redacts submit field values in the pending card input (KTD-8)', async () => {
+  it('canUseTool never emits raw submit field values because the handler owns the manifest', async () => {
     openRuntime();
     runtime!.setApprovalMode('auto');
-    const promise = callTool(
+    const result = await callTool(
       BROWSER_TOOL_NAMES.submit,
       { ref: 'e3-aa', fields: { username: 'alice', password: 's3cret-value' } },
       'r-redact',
     );
-    const pending = pendingApprovalEvents();
-    assert.strictEqual(pending.length, 1);
-    const cardInput = pending[0].input as { fields?: Record<string, string> };
-    assert.deepStrictEqual(Object.keys(cardInput.fields ?? {}).sort(), ['password', 'username']);
-    const serialized = JSON.stringify(cardInput);
-    assert.ok(!serialized.includes('s3cret-value'), 'password value must not enter the approval stream');
-    assert.ok(!serialized.includes('alice'), 'field values must not enter the approval stream');
-    runtime!.resolveApproval('r-redact', { behavior: 'deny', message: 'no' });
-    const result = await promise;
-    assert.strictEqual(result?.behavior, 'deny');
+    assert.strictEqual(result?.behavior, 'allow');
+    assert.strictEqual(pendingApprovalEvents().length, 0);
   });
 
-  it('submit is gated in manual and readonly modes too (not only auto)', async () => {
+  it('readonly mode also defers submit approval to the handler', async () => {
     openRuntime();
     runtime!.setApprovalMode('readonly');
-    const promise = callTool(BROWSER_TOOL_NAMES.submit, { ref: 'e3-aa' }, 'r-readonly-submit');
-    assert.strictEqual(pendingApprovalEvents().length, 1);
-    runtime!.resolveApproval('r-readonly-submit', { behavior: 'allow' });
-    assert.strictEqual((await promise)?.behavior, 'allow');
+    assert.strictEqual((await callTool(BROWSER_TOOL_NAMES.submit, { ref: 'e3-aa' }, 'r-readonly-submit'))?.behavior, 'allow');
+    assert.strictEqual(pendingApprovalEvents().length, 0);
   });
 
   it('classification: act click on a submit-semantics ref is gated; ordinary link click follows the mode', async () => {
@@ -390,14 +363,12 @@ describe('session-runtime browser gates', { concurrency: false }, () => {
     runtime!.setApprovalMode('auto');
     setSubmitSemanticsRefs(SESSION, ['e5-ab']);
 
-    const gatedPromise = callTool(BROWSER_TOOL_NAMES.act, { ref: 'e5-ab', action: 'click' }, 'r-act-submit');
-    assert.strictEqual(pendingApprovalEvents().length, 1, 'submit-semantics click must ask in auto mode');
-    runtime!.resolveApproval('r-act-submit', { behavior: 'allow' });
-    assert.strictEqual((await gatedPromise)?.behavior, 'allow');
+    assert.strictEqual((await callTool(BROWSER_TOOL_NAMES.act, { ref: 'e5-ab', action: 'click' }, 'r-act-submit'))?.behavior, 'allow');
+    assert.strictEqual(pendingApprovalEvents().length, 0, 'non-dispatching act(click) must not create a generic card');
 
     const linkResult = await callTool(BROWSER_TOOL_NAMES.act, { ref: 'e7-zz', action: 'click' }, 'r-act-link');
     assert.strictEqual(linkResult?.behavior, 'allow', 'ordinary click auto-approves');
-    assert.strictEqual(pendingApprovalEvents().length, 1, 'no extra card for ordinary clicks');
+    assert.strictEqual(pendingApprovalEvents().length, 0, 'no card for ordinary non-dispatching clicks');
 
     const fillResult = await callTool(BROWSER_TOOL_NAMES.act, { ref: 'e5-ab', action: 'fill', value: 'x' }, 'r-act-fill');
     assert.strictEqual(fillResult?.behavior, 'allow', 'fill follows the approval mode even on submit-semantics refs');
@@ -425,19 +396,15 @@ describe('session-runtime browser gates', { concurrency: false }, () => {
     const readonlyEvents = events.filter((e) => e.type === 'auto_approval');
     assert.strictEqual(readonlyEvents.length, 7);
 
-    const actPromise = callTool(BROWSER_TOOL_NAMES.act, { ref: 'e1-aa', action: 'click' }, 'r-act-ro');
-    assert.strictEqual(pendingApprovalEvents().length, 1, 'act must ask in readonly mode');
-    runtime!.resolveApproval('r-act-ro', { behavior: 'deny', message: 'no' });
-    assert.strictEqual((await actPromise)?.behavior, 'deny');
+    assert.strictEqual((await callTool(BROWSER_TOOL_NAMES.act, { ref: 'e1-aa', action: 'click' }, 'r-act-ro'))?.behavior, 'allow');
+    assert.strictEqual(pendingApprovalEvents().length, 0, 'non-dispatching act(click) must not ask in readonly mode');
   });
 
   it('hard gate lives in the base callback (Kimi wrapper cannot skip it)', async () => {
     openRuntime(KIMI_PROVIDER);
     runtime!.setApprovalMode('auto');
-    const promise = callTool(BROWSER_TOOL_NAMES.submit, { ref: 'e3-aa' }, 'r-kimi-submit');
-    assert.strictEqual(pendingApprovalEvents().length, 1, 'submit must still be gated under the Kimi wrapper');
-    runtime!.resolveApproval('r-kimi-submit', { behavior: 'allow' });
-    assert.strictEqual((await promise)?.behavior, 'allow');
+    assert.strictEqual((await callTool(BROWSER_TOOL_NAMES.submit, { ref: 'e3-aa' }, 'r-kimi-submit'))?.behavior, 'allow');
+    assert.strictEqual(pendingApprovalEvents().length, 0, 'Kimi wrapper must leave the handler as the single approval owner');
   });
 
   it('auto mode navigation: first visit passes, first crossing asks once, later crossings pass with an audit marker', async () => {
