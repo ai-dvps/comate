@@ -25,8 +25,8 @@ interface BlockState {
 
 const EDE_DIAGNOSTIC_PREFIX = '[ede_diagnostic]';
 
-function isEdeDiagnostic(value: unknown): boolean {
-  return typeof value === 'string' && value.trimStart().startsWith(EDE_DIAGNOSTIC_PREFIX);
+export function containsEdeDiagnostic(value: unknown): boolean {
+  return typeof value === 'string' && value.includes(EDE_DIAGNOSTIC_PREFIX);
 }
 
 /**
@@ -304,7 +304,7 @@ export class SseEmitter {
           const errors = 'errors' in msg ? (msg as { errors?: unknown }).errors : undefined;
           if (Array.isArray(errors) && errors.length > 0) {
             const visibleErrors = errors.filter(
-              (error) => !isEdeDiagnostic(error)
+              (error) => !containsEdeDiagnostic(error)
                 && (typeof error !== 'string' || error.trim().length > 0),
             );
             if (visibleErrors.length > 0) {
