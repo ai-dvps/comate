@@ -1,9 +1,11 @@
-export { getToolRenderer, hasToolRenderer, registerToolRenderer } from './registry'
+export { getToolRenderer, hasToolRenderer, isSecurityManifestRenderer, registerToolRenderer } from './registry'
 export { StructuredFallback } from './StructuredFallback'
 
 // Auto-register all renderers
 import './renderers/BashRenderer'
 import './renderers/BrowserSubmitRenderer'
+import './renderers/BrowserActivationRenderer'
+import './renderers/BrowserUploadRenderer'
 import './renderers/EditRenderer'
 import './renderers/GrepRenderer'
 import './renderers/ReadRenderer'

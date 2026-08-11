@@ -81,13 +81,8 @@ export function clearSubmitSemanticsRefs(sessionId: string): void {
  *    submit-classified — implicit submission via Enter activates the same
  *    default control, and the v1 act surface has no key-press action, so the
  *    form-Enter rule is subsumed by this click rule;
- *  - everything else (ordinary link clicks, fills, selects, checks) follows
- *    the session approval mode, per RISK-1's accepted-residual line.
- *
- * This is only the FIRST gate + UI entry. The real hard gate (sanitized
- * manifest + TOCTOU re-read) lives in the submit tool's handler (U3) and
- * fires regardless of what this layer decides — a `.claude/settings.json`
- * `permissions.allow` rule can short-circuit canUseTool entirely.
+ *  - everything else is not submit-classified. `act(click)` is
+ *    non-dispatching and routes callers to the specialized handler.
  */
 export function isBrowserSubmitClassified(
   sessionId: string,
@@ -113,25 +108,8 @@ export function isBrowserActivationClassified(
   return toolName === BROWSER_TOOL_NAMES.activate && typeof input.ref === 'string';
 }
 
-/**
- * Redact a submit-classified call's raw input for the canUseTool-layer
- * approval card. The submit tool's `fields` values may include credentials
- * the agent is about to fill; the KTD-8 ruleset allows field NAMES into the
- * pending_approval stream but never values. The handler-level gate renders
- * the full sanitized manifest — this card only needs names.
- */
-export function redactSubmitGateInput(
-  toolName: string,
-  input: Record<string, unknown>,
-): Record<string, unknown> {
-  if (toolName !== BROWSER_TOOL_NAMES.submit) return input;
-  const fields = input.fields;
-  if (!fields || typeof fields !== 'object' || Array.isArray(fields)) return input;
-  const redacted: Record<string, string> = {};
-  for (const key of Object.keys(fields as Record<string, unknown>)) {
-    redacted[key] = '(redacted — shown in the submit confirmation)';
-  }
-  return { ...input, fields: redacted };
+export function isBrowserUploadClassified(toolName: string, input: Record<string, unknown>): boolean {
+  return toolName === BROWSER_TOOL_NAMES.upload && typeof input.ref === 'string' && Array.isArray(input.paths);
 }
 
 // ---------------------------------------------------------------------------

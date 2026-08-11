@@ -235,6 +235,51 @@ describe('ApprovalSurface browser submit manifest (U4)', () => {
   })
 })
 
+describe('ApprovalSurface browser activation and upload manifests', () => {
+  function pending(toolName: string, input: unknown) {
+    return { requestId: `req-${toolName}`, toolName, toolUseId: `tu-${toolName}`, input, inputSummary: '', title: 'Security review' }
+  }
+
+  it('renders initial and reconfirmation activation security fields upfront', () => {
+    render(<ApprovalSurface {...baseProps} pendingItem={pending('mcp__comate-browser__activate', {
+      kind: 'browser_activation',
+      warning: 'Remote page action',
+      origin: 'https://example.com',
+      target: {
+        role: { source: 'untrusted_page', text: 'button' },
+        name: { source: 'untrusted_page', text: 'Publish article' },
+        nearbyContext: { source: 'untrusted_page', text: 'Draft editor' },
+      },
+      editorSummary: { editorCount: 2, filledEditorCount: 2, totalEditorLength: 2048 },
+      reconfirmation: true,
+      differences: ['target_geometry_changed'],
+    })} />)
+    expect(screen.getByText('https://example.com')).toBeInTheDocument()
+    expect(screen.getByText('Publish article')).toBeInTheDocument()
+    expect(screen.getByText('Draft editor')).toBeInTheDocument()
+    expect(screen.getByText('target_geometry_changed')).toBeInTheDocument()
+    expect(screen.queryByText('approval.showMore')).not.toBeInTheDocument()
+  })
+
+  it('renders multiple relative workspace files and totals without paths or content', () => {
+    const { container } = render(<ApprovalSurface {...baseProps} pendingItem={pending('mcp__comate-browser__upload', {
+      kind: 'browser_upload', warning: 'Share local media', origin: 'https://example.com',
+      files: [
+        { source: 'workspace_file', name: 'cover.png', mediaType: 'image/png', size: 2048 },
+        { source: 'workspace_file', name: 'clip.mp4', mediaType: 'video/mp4', size: 1048576 },
+      ],
+      totalBytes: 1050624,
+      target: { accept: { source: 'untrusted_page', text: 'image/*,video/*' }, multiple: true },
+    })} />)
+    expect(screen.getByText('cover.png')).toBeInTheDocument()
+    expect(screen.getByText('clip.mp4')).toBeInTheDocument()
+    expect(screen.getByText('image/png')).toBeInTheDocument()
+    expect(container.textContent).not.toContain('/Users/')
+    expect(container.textContent).not.toContain('PRIVATE_FILE_BYTES')
+    expect(screen.queryByText('approval.showMore')).not.toBeInTheDocument()
+  })
+})
+
 describe('ApprovalSurface collapsible panel', () => {
   it('renders expanded by default', () => {
     render(<ApprovalSurface {...baseProps} />)

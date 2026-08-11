@@ -26,9 +26,7 @@ import { cn } from './ui/utils'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
 import PreviewPane from './PreviewPane'
-import { getToolRenderer, StructuredFallback } from './tool-renderers'
-import { BrowserSubmitManifest } from './tool-renderers/renderers/BrowserSubmitRenderer'
-import { parseBrowserSubmitInput } from './tool-renderers/renderers/browser-submit-payload'
+import { getToolRenderer, isSecurityManifestRenderer, StructuredFallback } from './tool-renderers'
 
 export const CHAT_ABOUT_THIS_MESSAGE =
   'chatAboutThisMessage'
@@ -345,12 +343,7 @@ function ApprovalView({
 
   const renderer = getToolRenderer(item.toolName)
   const hasCustomRenderer = !!renderer
-
-  // Browser submit confirmation (U4, KTD-4 ②): the sanitized manifest
-  // (destination + field list; sensitive values absent by construction) is
-  // rendered upfront — it IS the approval decision surface, not a detail to
-  // hide behind "show more".
-  const browserSubmit = parseBrowserSubmitInput(item.input)
+  const isSecurityManifest = isSecurityManifestRenderer(item.toolName)
 
   // Reset Show more across pendingItem swaps
   useEffect(() => {
@@ -383,9 +376,12 @@ function ApprovalView({
         </div>
       )}
       <div className="mb-3 max-h-[60vh] overflow-y-auto">
-        {browserSubmit ? (
+        {isSecurityManifest && renderer ? (
           <div className="bg-bg rounded px-2 py-1.5">
-            <BrowserSubmitManifest payload={browserSubmit} />
+            {renderer(item.input) ?? <StructuredFallback data={item.input} />}
+            <div className="mt-2 text-[10px] text-text-tertiary font-mono break-all">
+              {t('approval.securityManifestRequest')}: {item.requestId}
+            </div>
           </div>
         ) : hasCustomRenderer && showMore ? (
           <div className="bg-bg rounded px-2 py-1.5">
@@ -396,7 +392,7 @@ function ApprovalView({
             <StructuredFallback data={item.input} maxDepth={showMore ? undefined : 2} />
           </div>
         )}
-        {!browserSubmit && (isTruncated || hasCustomRenderer) && (
+        {!isSecurityManifest && (isTruncated || hasCustomRenderer) && (
           <button
             onClick={() => setShowMore(!showMore)}
             className="text-xs text-accent hover:underline mt-1"

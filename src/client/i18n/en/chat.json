@@ -74,6 +74,21 @@
     "denialReason_safetyCheck": "This request was flagged by a safety check.",
     "denialReason_asyncAgent": "This request was denied because it originated from an async agent.",
     "denialReason_default": "This request was denied: {{reason}}",
+    "securityManifestRequest": "Approval request",
+    "browserActivation": {
+      "reconfirmation": "The page summary changed after your previous approval. Review it again before allowing one activation.",
+      "origin": "Page origin",
+      "untrustedPageContext": "Untrusted page-provided context",
+      "role": "Role",
+      "name": "Name",
+      "nearby": "Nearby",
+      "editorSummary": "Editors: {{count}} total, {{filled}} filled, {{length}} characters"
+    },
+    "browserUpload": {
+      "origin": "Share with",
+      "total": "{{count}} files · {{size}} total",
+      "pageAccept": "Untrusted page accept rule"
+    },
     "browserSubmit": {
       "destination": "Destination",
       "page": "Page",

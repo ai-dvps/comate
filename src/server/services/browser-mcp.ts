@@ -143,7 +143,7 @@ export const BROWSER_MCP_INSTRUCTIONS = `Use a fresh page model already returned
 
 /**
  * browser-mcp — the first-class tool surface for the embedded controlled
- * browser (KTD-3). Fourteen tools on the `comate-browser` SDK MCP server
+ * browser (KTD-3). Fifteen tools on the `comate-browser` SDK MCP server
  * (tool names `mcp__comate-browser__*`), injected into GUI chat sessions
  * only (KTD-4 ③: bot sessions never get this server).
  *
