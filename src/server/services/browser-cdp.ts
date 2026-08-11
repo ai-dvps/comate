@@ -282,7 +282,7 @@ export interface BrowserCdpSession {
   evaluate<T>(expression: string): Promise<T>;
   navigate(url: string): Promise<void>;
   getFullAXTree(): Promise<RawAxNode[]>;
-  clickBackendNode(backendNodeId: number): Promise<BrowserOperationReceipt | void>;
+  clickBackendNode(backendNodeId: number): Promise<BrowserOperationReceipt>;
   fillBackendNode?(backendNodeId: number, text: string): Promise<BrowserOperationReceipt>;
   getDocumentIdentity?(): BrowserDocumentIdentity | null;
   extractPageModel?(expression: string): Promise<PageExtractionBundle>;
@@ -496,9 +496,11 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
       flatten: true,
     });
     const session = new BrowserCdpSessionImpl(connection, sessionId, targetId);
-    await connection.send('Page.enable', {}, sessionId).catch(() => undefined);
-    await connection.send('DOM.enable', {}, sessionId).catch(() => undefined);
-    await connection.send('Runtime.enable', {}, sessionId).catch(() => undefined);
+    await Promise.all([
+      connection.send('Page.enable', {}, sessionId).catch(() => undefined),
+      connection.send('DOM.enable', {}, sessionId).catch(() => undefined),
+      connection.send('Runtime.enable', {}, sessionId).catch(() => undefined),
+    ]);
     const frameTree: { frameTree?: { frame?: { id?: string; loaderId?: string } } } = await connection.send<{ frameTree?: { frame?: { id?: string; loaderId?: string } } }>(
       'Page.getFrameTree', {}, sessionId,
     ).catch(() => ({} as { frameTree?: { frame?: { id?: string; loaderId?: string } } }));
@@ -605,12 +607,17 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
       const handles = (identityProperties.result ?? [])
         .filter((property) => /^\d+$/.test(property.name ?? '') && property.value?.objectId)
         .sort((a, b) => Number(a.name) - Number(b.name));
-      const backendNodeIds: Array<number | null> = [];
-      for (const handle of handles) {
-        const described = await this.connection.send<{ node?: { backendNodeId?: number } }>(
-          'DOM.describeNode', { objectId: handle.value!.objectId }, this.sessionId,
-        );
-        backendNodeIds.push(described.node?.backendNodeId ?? null);
+      const backendNodeIds = new Array<number | null>(handles.length);
+      const describeConcurrency = 12;
+      for (let start = 0; start < handles.length; start += describeConcurrency) {
+        const described = await Promise.all(handles.slice(start, start + describeConcurrency).map((handle) =>
+          this.connection.send<{ node?: { backendNodeId?: number } }>(
+            'DOM.describeNode', { objectId: handle.value!.objectId }, this.sessionId,
+          ),
+        ));
+        for (let offset = 0; offset < described.length; offset += 1) {
+          backendNodeIds[start + offset] = described[offset].node?.backendNodeId ?? null;
+        }
       }
       return { extraction, backendNodeIds };
     } finally {

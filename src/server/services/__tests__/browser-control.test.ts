@@ -13,7 +13,7 @@ import {
   type ApprovalCardResolver,
   type ApprovalCardTimeout,
 } from '../browser-control.js';
-import type { BrowserCdpSession } from '../browser-cdp.js';
+import type { BrowserCdpSession, BrowserOperationReceipt } from '../browser-cdp.js';
 import {
   startFakeBrowserShell,
   type FakeBrowserShell,
@@ -70,7 +70,29 @@ class FakePage implements BrowserCdpSession {
   async getFullAXTree(): Promise<RawAxNode[]> {
     return [];
   }
-  async clickBackendNode(): Promise<void> {}
+  getDocumentIdentity() {
+    return {
+      targetId: 'target-1', sessionId: 'session-1', frameId: 'frame-1',
+      loaderId: this.extraction.docId, generation: 0,
+    };
+  }
+  async extractPageModel() {
+    return {
+      extraction: this.extraction,
+      backendNodeIds: [
+        ...this.extraction.forms.flatMap((form) => [form, ...form.fields]),
+        ...(this.extraction.standalone.length > 0 ? [{}] : []),
+        ...this.extraction.standalone,
+        ...(this.extraction.domCandidates ?? []),
+      ].map((_item, index) => 100 + index),
+    };
+  }
+  async clickBackendNode(): Promise<BrowserOperationReceipt> {
+    return {
+      outcome: 'dispatched_verified', dispatchState: 'dispatched', verified: true,
+      retrySafe: false, delta: { kind: 'activation', changed: false },
+    };
+  }
   async captureScreenshot(): Promise<string> {
     this.screenshots += 1;
     return 'aGVsbG8';

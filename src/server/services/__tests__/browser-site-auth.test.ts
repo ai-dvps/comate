@@ -287,17 +287,20 @@ class FakePage implements BrowserCdpSession {
   dispatchCount = 0;
   clicks: number[] = [];
   private extractionIndex = 0;
+  private currentExtraction: RawPageExtraction;
   private readonly submitSnapshots: Array<SubmitSnapshot | null>;
   private readonly closeListeners = new Set<() => void>();
 
   constructor(private readonly options: FakePageOptions) {
     this.submitSnapshots = [...(options.submitSnapshots ?? [])];
+    this.currentExtraction = options.extractions[0];
   }
 
   private nextExtraction(): RawPageExtraction {
     const extraction =
       this.options.extractions[Math.min(this.extractionIndex, this.options.extractions.length - 1)];
     this.extractionIndex += 1;
+    this.currentExtraction = extraction;
     return extraction;
   }
 
@@ -329,8 +332,82 @@ class FakePage implements BrowserCdpSession {
   async getFullAXTree(): Promise<RawAxNode[]> {
     return this.options.axNodes ?? [];
   }
-  async clickBackendNode(backendNodeId: number): Promise<void> {
+  getDocumentIdentity() {
+    return {
+      targetId: 'target-1', sessionId: 'session-1', frameId: 'frame-1',
+      loaderId: this.currentExtraction.docId, generation: 0,
+    };
+  }
+  async extractPageModel() {
+    const extraction = this.nextExtraction();
+    return {
+      extraction,
+      backendNodeIds: [
+        ...extraction.forms.flatMap((form) => [form, ...form.fields]),
+        ...(extraction.standalone.length > 0 ? [{}] : []),
+        ...extraction.standalone,
+        ...(extraction.domCandidates ?? []),
+      ].map((_item, index) => 100 + index),
+    };
+  }
+  async callBackendNode<T>(backendNodeId: number, functionDeclaration: string): Promise<T | null> {
+    if (functionDeclaration.includes('var form = this')) {
+      this.dispatchCount += 1;
+      return { ok: true } as T;
+    }
+    if (functionDeclaration.includes('fileInput')) {
+      if (backendNodeId === 100) {
+        return { tag: 'form', type: 'form', role: 'form', editable: false, fileInput: false } as T;
+      }
+      const axNode = this.options.axNodes?.find((node) => node.backendDOMNodeId === backendNodeId);
+      if (axNode) {
+        const role = String(axNode.role?.value ?? '').toLowerCase();
+        return {
+          tag: role === 'link' ? 'a' : 'button',
+          type: role === 'link' ? 'a' : 'button',
+          role,
+          editable: false,
+          fileInput: false,
+        } as T;
+      }
+      const field = this.currentExtraction.forms.flatMap((form) => form.fields)[backendNodeId - 101];
+      if (!field) return null;
+      return {
+        tag: field.tag.toLowerCase(),
+        type: field.type.toLowerCase(),
+        role: field.type === 'search' ? 'searchbox' : 'textbox',
+        editable: true,
+        fileInput: field.tag.toLowerCase() === 'input' && field.type.toLowerCase() === 'file',
+      } as T;
+    }
+    return null;
+  }
+  async inspectBackendNode(backendNodeId: number): Promise<import('../browser-page-model.js').InspectedElement | null> {
+    const axNode = this.options.axNodes?.find((node) => node.backendDOMNodeId === backendNodeId);
+    if (!axNode) return null;
+    return {
+      tag: String(axNode.role?.value).toLowerCase() === 'link' ? 'a' : 'button',
+      role: String(axNode.role?.value ?? ''),
+      name: String(axNode.name?.value ?? ''),
+      attributes: {},
+      descendants: [],
+      descendantsTruncated: false,
+      actions: ['click'],
+    };
+  }
+  async fillBackendNode(backendNodeId: number, text: string): Promise<import('../browser-cdp.js').BrowserOperationReceipt> {
+    return {
+      outcome: 'dispatched_verified', dispatchState: 'dispatched', verified: true,
+      retrySafe: false, matchesRequested: true, normalizedLength: text.length,
+      delta: { kind: 'field', changed: true },
+    };
+  }
+  async clickBackendNode(backendNodeId: number): Promise<import('../browser-cdp.js').BrowserOperationReceipt> {
     this.clicks.push(backendNodeId);
+    return {
+      outcome: 'dispatched_verified', dispatchState: 'dispatched', verified: true,
+      retrySafe: false, delta: { kind: 'activation', changed: false },
+    };
   }
   async captureScreenshot(): Promise<string> {
     return 'aGVsbG8';
@@ -888,9 +965,9 @@ describe('browser_audit table + service contract', () => {
       const actResult = await ctx.handleAct({ ref: usernameRef, action: 'fill', value: 'ada' });
       assert.strictEqual(actResult.isError, undefined);
 
-      // submit: full handler gate flow (approval allow). Refs from the act
-      // result's FRESH model — every distill begins a new ref batch.
-      const formRef = resultModel(actResult).model.forms[0].ref;
+      // submit: full handler gate flow (approval allow). Mutation receipts do
+      // not re-distill or replace the ref batch.
+      const formRef = model.model.forms[0].ref;
       const submitResult = await ctx.handleSubmit({ ref: formRef, fields: { username: 'ada' } });
       assert.strictEqual(submitResult.isError, undefined);
 
