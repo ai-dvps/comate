@@ -33,12 +33,18 @@ export interface BrowserMcpHttpDeps {
 interface AuthorizedBrowserMcpHttpDeps extends BrowserMcpHttpDeps {
   runtimeGeneration: string;
   apiBrokerAuthorized: boolean;
+  capabilityId: string;
+  principalId: string;
+  isInvocationCurrent: () => boolean;
 }
 
 interface BrowserMcpAuthorization {
   workspaceId: string;
   runtimeGeneration: string;
   apiBrokerAuthorized: boolean;
+  capabilityId: string;
+  principalId: string;
+  isInvocationCurrent: () => boolean;
 }
 
 function isLoopbackHost(rawHost: string | undefined): boolean {
@@ -94,6 +100,17 @@ export function createBrowserMcpHttpRouter(
               runtimeGeneration: resolved.runtimeGeneration,
             },
           )),
+          capabilityId: resolved.capabilityId,
+          principalId: `${resolved.workspaceId}:${resolved.sessionId}:${resolved.botId ?? 'task'}`,
+          isInvocationCurrent: () => capabilities.isAudienceCapabilityCurrent(
+            resolved.capabilityId,
+            'browser-mcp',
+            {
+              sessionId,
+              workspaceId: resolved.workspaceId,
+              runtimeGeneration: resolved.runtimeGeneration,
+            },
+          ),
         },
       };
     },
@@ -105,6 +122,9 @@ export function createBrowserMcpHttpRouter(
             ...deps,
             runtimeGeneration: auth.runtimeGeneration,
             apiBrokerAuthorized: auth.apiBrokerAuthorized,
+            capabilityId: auth.capabilityId,
+            principalId: auth.principalId,
+            isInvocationCurrent: auth.isInvocationCurrent,
           }
         : null;
     },
@@ -114,6 +134,9 @@ export function createBrowserMcpHttpRouter(
         workspaceId: deps.workspaceId,
         runtimeGeneration: deps.runtimeGeneration,
         apiBrokerAuthorized: deps.apiBrokerAuthorized,
+        capabilityId: deps.capabilityId,
+        principalId: deps.principalId,
+        isInvocationCurrent: deps.isInvocationCurrent,
         approvalRequester: deps.approvalRequester,
       })) {
         server.registerTool(def.name, {

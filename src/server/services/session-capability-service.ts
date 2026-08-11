@@ -85,6 +85,8 @@ export interface ResolvedAudienceToken extends ResolvedSessionToken {
   kind: SessionCapabilityKind;
   audience: SessionCapabilityAudience;
   runtimeGeneration: string;
+  /** SHA-256 token identity; safe for internal binding, never a bearer value. */
+  capabilityId: string;
 }
 
 export class SessionCapabilityService {
@@ -187,7 +189,20 @@ export class SessionCapabilityService {
     if (expected?.sessionId !== undefined && resolved.sessionId !== expected.sessionId) return null;
     if (expected?.workspaceId !== undefined && resolved.workspaceId !== expected.workspaceId) return null;
     if (expected?.runtimeGeneration !== undefined && metadata.runtimeGeneration !== expected.runtimeGeneration) return null;
-    return { ...resolved, kind: metadata.kind, audience, runtimeGeneration: metadata.runtimeGeneration };
+    return { ...resolved, kind: metadata.kind, audience, runtimeGeneration: metadata.runtimeGeneration, capabilityId: tokenHash };
+  }
+
+  isAudienceCapabilityCurrent(
+    capabilityId: string,
+    audience: SessionCapabilityAudience,
+    expected: { sessionId: string; workspaceId: string; runtimeGeneration: string },
+    now = new Date(),
+  ): boolean {
+    const metadata = this.metadata.get(capabilityId);
+    if (!metadata?.audiences.has(audience) || metadata.runtimeGeneration !== expected.runtimeGeneration) return false;
+    const row = this.store.getCapabilityToken(capabilityId);
+    if (!row || row.revokedAt !== null || row.sessionId !== expected.sessionId || row.workspaceId !== expected.workspaceId) return false;
+    return Date.parse(row.expiresAt) > now.getTime();
   }
 
   revokeKind(sessionId: string, kind: SessionCapabilityKind): number {

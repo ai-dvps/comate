@@ -1061,8 +1061,8 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
   it('fresh database initializes to the latest schema version with new tables', () => {
     const freshStore = new SqliteStore(':memory:');
     // v6: browser_audit (U8); v7: global todos (U1); v8: todos.content;
-    // v9: Todo execution; v10: bot_escalation_ledger (U8 phase-2).
-    assert.strictEqual(freshStore.getMigrationVersion(), 10);
+    // v9: Todo execution; v10: bot_escalation_ledger; v11: browser operations.
+    assert.strictEqual(freshStore.getMigrationVersion(), 11);
 
     // Old tables should not exist
     const tables = (freshStore as unknown as { db: { prepare: (sql: string) => { all: () => Array<{ name: string }> } } }).db
@@ -1085,6 +1085,7 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
     assert.ok(tableNames.includes('user_sessions'));
     assert.ok(tableNames.includes('browser_audit'));
     assert.ok(tableNames.includes('bot_escalation_ledger'));
+    assert.ok(tableNames.includes('browser_operation_ledger'));
   });
 
   it('re-running migration on already-migrated database does nothing', () => {
@@ -1092,11 +1093,11 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
     firstStore.createBot({ name: 'Pre-migration Bot' });
 
     const version = firstStore.getMigrationVersion();
-    assert.strictEqual(version, 10);
+    assert.strictEqual(version, 11);
 
     // Re-opening should not throw and version should stay 10
     const secondStore = new SqliteStore(migrationDbPath);
-    assert.strictEqual(secondStore.getMigrationVersion(), 10);
+    assert.strictEqual(secondStore.getMigrationVersion(), 11);
     assert.strictEqual(secondStore.listBots().length, 1);
   });
 });
@@ -1246,6 +1247,38 @@ describe('SqliteStore bot_escalation_ledger (U8, KTD-16)', { concurrency: false 
     assert.strictEqual(deleted, 1, 'settled row pruned');
     assert.strictEqual(store.getBotEscalation('req-settled'), null);
     assert.ok(store.getBotEscalation('req-pending'), 'pending rows are never pruned');
+  });
+});
+
+describe('SqliteStore browser operation ledger positive-shape parsing', { concurrency: false }, () => {
+  it('fails closed when persisted state or receipt JSON is corrupt', () => {
+    const store = new SqliteStore(':memory:');
+    const propose = (operationId: string) => store.proposeBrowserOperation({
+      operationId, principalId: 'principal', workspaceId: 'workspace', sessionId: 'session',
+      runtimeGeneration: 'runtime', capabilityId: 'capability', action: 'fill', parameterDigest: 'v1:digest',
+    });
+    const successful = JSON.stringify({
+      outcome: 'dispatched_verified', dispatchState: 'dispatched', verified: true,
+      retrySafe: false, normalizedLength: 12, delta: { kind: 'field', changed: true },
+    });
+    propose('bad-state');
+    propose('bad-receipt');
+    propose('bad-json');
+    const raw = store as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } };
+    raw.db.prepare('UPDATE browser_operation_ledger SET state = ?, receipt_json = ? WHERE operation_id = ?')
+      .run('forged_success', successful, 'bad-state');
+    raw.db.prepare('UPDATE browser_operation_ledger SET state = ?, receipt_json = ? WHERE operation_id = ?')
+      .run('terminal', JSON.stringify({ outcome: 'dispatched_verified', verified: 'yes' }), 'bad-receipt');
+    raw.db.prepare('UPDATE browser_operation_ledger SET state = ?, receipt_json = ? WHERE operation_id = ?')
+      .run('terminal', '{', 'bad-json');
+
+    for (const operationId of ['bad-state', 'bad-receipt', 'bad-json']) {
+      const parsed = store.getBrowserOperation(operationId)!;
+      assert.strictEqual(parsed.state, 'terminal');
+      assert.strictEqual(parsed.receipt?.outcome, 'outcome_unknown');
+      assert.strictEqual(parsed.receipt?.dispatchState, 'dispatched');
+      assert.strictEqual(parsed.receipt?.retrySafe, false);
+    }
   });
 });
 

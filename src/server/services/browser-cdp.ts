@@ -81,7 +81,12 @@ export type BrowserMutationReason =
   | 'unsupported_target'
   | 'unsupported_input_command'
   | 'dispatch_failed'
-  | 'verification_mismatch';
+  | 'verification_mismatch'
+  | 'runtime_replaced'
+  | 'control_taken_over'
+  | 'cancelled'
+  | 'user_denied'
+  | 'target_changed';
 
 /**
  * Text-free mutation result. It deliberately reports transport/DOM evidence,

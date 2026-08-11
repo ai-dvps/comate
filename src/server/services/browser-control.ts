@@ -6,6 +6,7 @@ import {
   type BrowserControlState,
 } from './browser-service.js';
 import { browserAuditService, type BrowserAuditService } from './browser-audit.js';
+import { browserMutationCoordinator } from './browser-mutation-coordinator.js';
 
 /**
  * browser-control — the mutual-exclusion control state machine and the
@@ -210,6 +211,8 @@ export interface BrowserControlDeps {
   timer?: BrowserControlTimer;
   /** Audit sink for control-plane events (U8); defaults to the singleton. */
   audit?: Pick<BrowserAuditService, 'logControl'>;
+  /** Synchronous out-of-band cancellation; must never wait on mutation mutex. */
+  cancelMutations?: (sessionId: string, reason: string) => void;
 }
 
 interface HandoffRecord {
@@ -241,6 +244,7 @@ export class BrowserControlService {
       handoffTimeoutMs: deps.handoffTimeoutMs ?? DEFAULT_HANDOFF_TIMEOUT_MS,
       timer: deps.timer ?? defaultTimer,
       audit: deps.audit ?? browserAuditService,
+      cancelMutations: deps.cancelMutations ?? ((sessionId, reason) => browserMutationCoordinator.cancelSession(sessionId, reason)),
     };
     // Crash path (KTD-5): a crashed/destroyed browser view releases this
     // session's pending browser card through the U1 registry hook. Tolerates
@@ -300,11 +304,13 @@ export class BrowserControlService {
     const cell = BROWSER_CONTROL_TRANSITIONS[state].takeover_click;
     switch (cell.effect) {
       case 'proactive_takeover':
+        this.deps.cancelMutations?.(sessionId, 'control_taken_over');
         this.deps.browserService.setControlState(sessionId, 'user_in_control', 'user_takeover');
         diagLog(`[browser-control] proactive takeover session=${sessionId}`);
         this.logControl(sessionId, 'takeover', 'ok', 'proactive');
         return { ok: true };
       case 'grant_handoff': {
+        this.deps.cancelMutations?.(sessionId, 'control_taken_over');
         // Resolving card #1 allow is the takeover grant; the handoff handler's
         // continuation performs the state flip (single flip path).
         const record = this.records.get(sessionId);
@@ -498,6 +504,7 @@ export class BrowserControlService {
     if (!record) return;
     record.phase = 'in_takeover';
     record.cardRequestId = null;
+    this.deps.cancelMutations?.(sessionId, 'control_taken_over');
     this.deps.browserService.setControlState(sessionId, 'user_in_control', 'handoff_granted');
     diagLog(`[browser-control] takeover approved session=${sessionId}`);
   }

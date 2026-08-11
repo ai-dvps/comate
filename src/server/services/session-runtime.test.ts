@@ -860,6 +860,18 @@ describe('session-runtime U8 audience + resolution provenance', { concurrency: f
     await promise;
   });
 
+  it('rejects duplicate pending approval requestIds without overwriting the first waiter', async () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    const first = runtime.requestToolApproval('req-duplicate', 'Bash', 'tool-1', { command: 'first' });
+    assert.throws(
+      () => runtime!.requestToolApproval('req-duplicate', 'Bash', 'tool-2', { command: 'second' }),
+      /Duplicate pending approval requestId/,
+    );
+    assert.strictEqual(runtime.getPendingCardState('req-duplicate')?.type, 'approval');
+    runtime.resolveApproval('req-duplicate', { behavior: 'allow' });
+    assert.strictEqual((await first).behavior, 'allow');
+  });
+
   it('resolveApproval provenance is consumed exactly once', async () => {
     runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
     const promise = runtime.requestToolApproval('req-prov', 'Bash', 'req-prov', { command: 'curl x' }, {

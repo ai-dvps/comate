@@ -1,4 +1,5 @@
 import type { CallToolResult as CallToolResultType } from '@modelcontextprotocol/sdk/types.js';
+import { randomUUID } from 'node:crypto';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { z, type ZodRawShape, type ZodType } from 'zod';
 import {
@@ -104,6 +105,12 @@ import { browserAuditService, type BrowserAuditService } from './browser-audit.j
 import { buildStorageInitScript } from './browser-site-auth.js';
 import { originOf } from './browser-origin.js';
 import { browserApiBrokerService, type BrowserApiBrokerExecutor } from './browser-api-broker-service.js';
+import {
+  browserMutationCoordinator,
+  type BrowserInvocationScope,
+  type BrowserMutationCoordinator,
+  type BrowserMutationRequest,
+} from './browser-mutation-coordinator.js';
 
 // Re-export so existing consumers of './browser-mcp.js' (chat-service, U3
 // tests) keep working; the canonical home is browser-tool-names.ts (U4) so
@@ -193,6 +200,12 @@ export interface BrowserMcpDeps {
   workspaceId: string;
   /** Generation of the task capability authorizing this MCP invocation. */
   runtimeGeneration?: string;
+  /** Request-fresh capability identity; never cached in BrowserToolContext. */
+  capabilityId?: string;
+  /** Stable authenticated caller identity used for operation-ID binding. */
+  principalId?: string;
+  /** Re-checks the exact capability/runtime immediately before dispatch. */
+  isInvocationCurrent?: () => boolean | Promise<boolean>;
   /** Whether this invocation's task capability also has the API-broker audience. */
   apiBrokerAuthorized?: boolean;
   browserService?: BrowserService;
@@ -222,6 +235,7 @@ export interface BrowserMcpDeps {
   captureOptions?: BrowserNetworkCaptureOptions;
   /** Post-action settle delay before re-distilling (0 in tests). */
   settleMs?: number;
+  mutationCoordinator?: BrowserMutationCoordinator;
 }
 
 // ---------------------------------------------------------------------------
@@ -379,6 +393,64 @@ function toolJson(payload: Record<string, unknown>): CallToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(payload) }] };
 }
 
+function mutationAuthorizationError(): CallToolResult {
+  return toolError(
+    'browser_mutation_cancelled',
+    'dispatch',
+    'The request authority changed before the browser mutation could be dispatched.',
+    'Observe the current browser state and start a new operation with a new operationId.',
+  );
+}
+
+function parseToolPayload(result: CallToolResult): Record<string, unknown> {
+  const text = result.content.find((item) => item.type === 'text');
+  if (!text || text.type !== 'text') return {};
+  try { return JSON.parse(text.text) as Record<string, unknown>; } catch { return {}; }
+}
+
+function mutationDeltaKind(
+  action: BrowserMutationRequest['action'],
+): BrowserOperationReceipt['delta']['kind'] {
+  if (action === 'fill' || action === 'select' || action === 'check' || action === 'upload') return 'field';
+  if (action === 'submit' || action === 'activation') return 'activation';
+  return 'none';
+}
+
+function mutationReceiptForResult(
+  action: BrowserMutationRequest['action'],
+  result: CallToolResult,
+  dispatchAuthorized: boolean,
+): BrowserOperationReceipt {
+  const payload = parseToolPayload(result);
+  if (payload.receipt && typeof payload.receipt === 'object') {
+    return payload.receipt as BrowserOperationReceipt;
+  }
+  if (!dispatchAuthorized) {
+    const denied = payload.submitted === false || payload.closed === false || payload.handoffCompleted === false;
+    return {
+      outcome: 'not_dispatched', dispatchState: 'not_dispatched', verified: denied,
+      retrySafe: true, reason: denied ? 'user_denied' : 'target_unavailable',
+      delta: { kind: 'none', changed: false },
+    };
+  }
+  if (result.isError) {
+    return unknownMutationReceipt(mutationDeltaKind(action));
+  }
+  const clearlySucceeded = action === 'open'
+    ? payload.ok === true && typeof payload.model === 'object'
+    : action === 'submit' ? payload.submitted === true
+      : action === 'close' ? payload.closed === true
+        : action === 'control' ? payload.handoffCompleted === true
+          : payload.ok === true;
+  if (!clearlySucceeded) {
+    return unknownMutationReceipt(mutationDeltaKind(action));
+  }
+  return {
+    outcome: 'dispatched_verified', dispatchState: 'dispatched', verified: true,
+    retrySafe: false, delta: { kind: mutationDeltaKind(action), changed: true },
+  };
+}
+
 /**
  * Type guards for the `RefEntry | CallToolResult` / decision unions.
  * `CallToolResult` carries an index signature (`[x: string]: unknown`), so
@@ -510,7 +582,7 @@ interface FoundElement {
 }
 
 function unknownMutationReceipt(
-  kind: 'activation' | 'field',
+  kind: 'none' | 'activation' | 'field',
   changed = false,
 ): BrowserOperationReceipt {
   return {
@@ -1175,7 +1247,11 @@ export class BrowserToolContext {
       );
     }
     try {
-      return await requester(this.deps.sessionId, { ...request, signal });
+      return await requester(this.deps.sessionId, {
+        ...request,
+        requestId: request.requestId ?? randomUUID(),
+        signal,
+      });
     } catch (err) {
       diagWarn('[browser-mcp] approval round-trip failed:', err);
       return toolError(
@@ -1189,7 +1265,7 @@ export class BrowserToolContext {
 
   // -- open -----------------------------------------------------------------
 
-  async handleOpen(args: { url: string }): Promise<CallToolResult> {
+  async handleOpen(args: { url: string }, authorizeDispatch?: () => Promise<boolean>): Promise<CallToolResult> {
     const parsedResult = parseHttpUrlDetailed(args.url);
     if (!parsedResult.ok) {
       if (parsedResult.reason === 'invalid') {
@@ -1210,6 +1286,7 @@ export class BrowserToolContext {
     const parsed = parsedResult.url;
     try {
       const page = await this.ensurePage();
+      if (authorizeDispatch && !await authorizeDispatch()) return mutationAuthorizationError();
       // Remembered-site injection (U8, KTD-8): exactly once per browser
       // view, on the first open() whose site key has a stored context —
       // BEFORE the first navigation so the initial request already carries
@@ -1294,7 +1371,10 @@ export class BrowserToolContext {
 
   // -- act --------------------------------------------------------------------
 
-  async handleAct(args: { ref: string; action: 'click' | 'fill' | 'select' | 'check'; value?: string }): Promise<CallToolResult> {
+  async handleAct(
+    args: { ref: string; action: 'click' | 'fill' | 'select' | 'check'; value?: string },
+    authorizeDispatch?: () => Promise<boolean>,
+  ): Promise<CallToolResult> {
     const gate = this.controlGate('control');
     if (gate) return gate;
     try {
@@ -1370,6 +1450,8 @@ export class BrowserToolContext {
           'Pick a field ref from the form in the page model, or call submit with this form ref.',
         );
       }
+
+      if (authorizeDispatch && !await authorizeDispatch()) return mutationAuthorizationError();
 
       let receipt: BrowserOperationReceipt;
       if (args.action === 'click') {
@@ -1483,6 +1565,8 @@ export class BrowserToolContext {
   async handleSubmit(
     args: { ref: string; fields?: Record<string, string> },
     extra?: unknown,
+    authorizeDispatch?: () => Promise<boolean>,
+    recordApproved?: () => Promise<boolean>,
   ): Promise<CallToolResult> {
     const gate = this.controlGate('control');
     if (gate) return gate;
@@ -1613,6 +1697,7 @@ export class BrowserToolContext {
             detail: decision.message ?? 'The user denied the form submission.',
           });
         }
+        if (recordApproved && !await recordApproved()) return mutationAuthorizationError();
 
         // TOCTOU: re-read and diff against the approved snapshot BEFORE
         // dispatching. Any drift (page JS rewrote action/values post-
@@ -1650,6 +1735,7 @@ export class BrowserToolContext {
 
       // Dispatch: click the approved submit control when given, else
       // requestSubmit() so validation + submit events fire.
+      if (authorizeDispatch && !await authorizeDispatch()) return mutationAuthorizationError();
       const dispatchBackendNodeId = controlEntry?.backendNodeId ?? target.backendNodeId;
       const dispatchFailure = controlEntry
         ? 'Failed to activate the submit control'
@@ -1830,7 +1916,12 @@ export class BrowserToolContext {
    * requested while the user is already driving (F3 race) skips card #1 —
    * its card #2 is the session's single active card.
    */
-  async handleRequestHandoff(args: { reason: string }, extra?: unknown): Promise<CallToolResult> {
+  async handleRequestHandoff(
+    args: { reason: string },
+    extra?: unknown,
+    authorizeDispatch?: () => Promise<boolean>,
+    recordApproved?: () => Promise<boolean>,
+  ): Promise<CallToolResult> {
     const sessionId = this.deps.sessionId;
     const ctl = this.handoffCtl;
     const signal = (extra as { signal?: AbortSignal } | undefined)?.signal;
@@ -1889,6 +1980,8 @@ export class BrowserToolContext {
           if (decision.behavior !== 'allow') {
             completion = { reason: ctl.classifyDeny(sessionId), phase, detail: decision.message };
           } else {
+            if (recordApproved && !await recordApproved()) return mutationAuthorizationError();
+            if (authorizeDispatch && !await authorizeDispatch()) return mutationAuthorizationError();
             ctl.noteTakeoverApproved(sessionId);
             phase = 'in_takeover';
           }
@@ -1945,7 +2038,12 @@ export class BrowserToolContext {
    * channel-failure) mirrors requestHandoff. A no-live-browser close is an
    * ok-noop rather than an error.
    */
-  async handleClose(args: { reason?: string }, extra?: unknown): Promise<CallToolResult> {
+  async handleClose(
+    args: { reason?: string },
+    extra?: unknown,
+    authorizeDispatch?: () => Promise<boolean>,
+    recordApproved?: () => Promise<boolean>,
+  ): Promise<CallToolResult> {
     const sessionId = this.deps.sessionId;
     const signal = (extra as { signal?: AbortSignal } | undefined)?.signal;
 
@@ -1982,6 +2080,9 @@ export class BrowserToolContext {
     if (decision.behavior !== 'allow') {
       return toolJson({ ok: true, closed: false, note: 'User declined to close the browser.' });
     }
+
+    if (recordApproved && !await recordApproved()) return mutationAuthorizationError();
+    if (authorizeDispatch && !await authorizeDispatch()) return mutationAuthorizationError();
 
     const result = await this.svc.closeSession(sessionId, 'agent');
     if (result.closed) {
@@ -2122,15 +2223,60 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     });
     contextRegistry.set(deps.sessionId, ctx);
   }
+  const mutations = deps.mutationCoordinator ?? browserMutationCoordinator;
+  const executeMutation = async (
+    operationId: string,
+    action: BrowserMutationRequest['action'],
+    privateParameters: unknown,
+    extra: unknown,
+    handler: (
+      signal: AbortSignal,
+      authorizeDispatch: () => Promise<boolean>,
+      recordApproved: () => Promise<boolean>,
+    ) => Promise<CallToolResult>,
+  ): Promise<CallToolResult> => {
+    const invocation: BrowserInvocationScope = Object.freeze({
+      workspaceId: deps.workspaceId,
+      sessionId: deps.sessionId,
+      runtimeGeneration: deps.runtimeGeneration ?? 'unscoped',
+      capabilityId: deps.capabilityId ?? 'unscoped',
+      principalId: deps.principalId ?? `${deps.workspaceId}:${deps.sessionId}`,
+      operationId,
+      signal: (extra as { signal?: AbortSignal } | undefined)?.signal ?? new AbortController().signal,
+      isCurrent: deps.isInvocationCurrent ?? (() => true),
+    });
+    const approvalRequired = action === 'submit' || action === 'close' || action === 'control';
+    const receipt = await mutations.execute(invocation, {
+      action,
+      privateParameters,
+      deferredDispatchIntent: true,
+      approvalRequired,
+      dispatch: async (signal, authorizeDispatch, recordApproved) => {
+        let dispatchAuthorized = false;
+        const trackedAuthorize = async (): Promise<boolean> => {
+          const authorized = await authorizeDispatch();
+          if (authorized) dispatchAuthorized = true;
+          return authorized;
+        };
+        const handlerResult = await handler(signal, trackedAuthorize, recordApproved);
+        return mutationReceiptForResult(action, handlerResult, dispatchAuthorized);
+      },
+    });
+    return toolJson({ receipt });
+  };
+  const operationIdSchema = z.string().min(1).max(128)
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/)
+    .describe('Caller-stable idempotency key for this mutation');
 
   const openDef = tool(
     'open',
-    'Navigate the embedded browser to an http(s) URL and return the distilled page model ' +
-      '(forms, actions with element refs, main content). Starts the browser session on first use. ' +
-      'Use the returned model directly; call getPageState later only after an external page change, ' +
-      'a stale-ref error, or when a bounded inventory needs another segment.',
-    { url: z.string().describe('Full http(s) URL to navigate to') },
-    async (args) => ctx.handleOpen(args),
+    'Navigate the embedded browser to an http(s) URL and return a bounded mutation receipt. ' +
+      'Starts the browser session on first use. Call getPageState explicitly after navigation ' +
+      'to observe page content and receive fresh refs.',
+    { operationId: operationIdSchema, url: z.string().describe('Full http(s) URL to navigate to') },
+    async (args: { operationId?: string; url: string }, extra) => args.operationId
+      ? executeMutation(args.operationId, 'open', { url: args.url }, extra, (_signal, authorize) => ctx.handleOpen({ url: args.url }, authorize))
+      : toolError('browser_operation_id_required', 'dispatch', 'Mutation tools require an operationId.', 'Retry once with a new caller-stable operationId.'),
   );
 
   const getPageStateDef = tool(
@@ -2219,9 +2365,10 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     'act',
     'After choosing a ref with getPageState, findElements, and optionally getElementDetails, ' +
       'perform a single interaction (click/fill/select/check) on that element. The result includes ' +
-      'the resulting page delta and fresh model. Submitting a form is NOT ' +
+      'a text-free bounded receipt; call getPageState explicitly to observe the page. Submitting a form is NOT ' +
       'possible through act — submit-semantics controls require the submit tool (user confirmation).',
     {
+      operationId: operationIdSchema,
       ref: z.string().describe('Element ref from the latest page model (e.g. "e7")'),
       action: z.enum(['click', 'fill', 'select', 'check']),
       value: z
@@ -2229,7 +2376,15 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
         .optional()
         .describe('fill: text to enter; select: option value or label; check: "true"/"false" (omit to toggle)'),
     },
-    async (args) => ctx.handleAct(args),
+    async (args: { operationId?: string; ref: string; action: 'click' | 'fill' | 'select' | 'check'; value?: string }, extra) => args.operationId
+      ? executeMutation(
+          args.operationId,
+          args.action === 'click' ? 'activation' : args.action,
+          { ref: args.ref, action: args.action, value: args.value },
+          extra,
+          (_signal, authorize) => ctx.handleAct({ ref: args.ref, action: args.action, value: args.value }, authorize),
+        )
+      : toolError('browser_operation_id_required', 'dispatch', 'Mutation tools require an operationId.', 'Retry once with a new caller-stable operationId.'),
   );
 
   const takeScreenshotDef = tool(
@@ -2247,15 +2402,29 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     'submit',
     'Submit a form. ALWAYS requires explicit user confirmation: the form action, method and ' +
       'fields (sensitive values redacted) are shown to the user, and the form state is re-verified ' +
-      'before dispatch. Pass a form ref or a submit-button ref; optionally fill fields first.',
+      'before dispatch. Pass a form ref or a submit-button ref. Fill fields first with act, using ' +
+      'one operationId per field mutation.',
     {
+      operationId: operationIdSchema,
       ref: z.string().describe('Form ref or submit-button ref from the latest page model'),
       fields: z
         .record(z.string(), z.string())
         .optional()
         .describe('Field values to fill before submitting, keyed by field ref or field name'),
     },
-    async (args, extra) => ctx.handleSubmit(args, extra),
+    async (args: { operationId?: string; ref: string; fields?: Record<string, string> }, extra) => !args.operationId
+      ? toolError('browser_operation_id_required', 'dispatch', 'Mutation tools require an operationId.', 'Retry once with a new caller-stable operationId.')
+      : args.fields && Object.keys(args.fields).length > 0
+        ? toolError('browser_submit_fields_separate', 'dispatch', 'Coordinated submit does not fill fields inside the submit operation.', 'Fill each field with act and its own operationId, then submit without fields.')
+        : executeMutation(
+          args.operationId, 'submit', { ref: args.ref, fields: args.fields }, extra,
+          (signal, authorize, recordApproved) => ctx.handleSubmit(
+            { ref: args.ref },
+            { ...(extra as object), signal },
+            authorize,
+            recordApproved,
+          ),
+        ),
     { annotations: { destructiveHint: true, openWorldHint: true } },
   );
   // Auxiliary hint only — the security property is guaranteed by the
@@ -2298,9 +2467,15 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
       'The call blocks until the user hands control back (with a sanitized summary of what ' +
       'changed), declines, or the request times out recoverably.',
     {
+      operationId: operationIdSchema,
       reason: z.string().describe('Why the user needs to take over (shown in the handoff card)'),
     },
-    async (args, extra) => ctx.handleRequestHandoff(args, extra),
+    async (args: { operationId?: string; reason: string }, extra) => args.operationId
+      ? executeMutation(
+          args.operationId, 'control', { reason: args.reason }, extra,
+          (signal, authorize, recordApproved) => ctx.handleRequestHandoff({ reason: args.reason }, { ...(extra as object), signal }, authorize, recordApproved),
+        )
+      : toolError('browser_operation_id_required', 'dispatch', 'Mutation tools require an operationId.', 'Retry once with a new caller-stable operationId.'),
   );
 
   const closeDef = tool(
@@ -2311,12 +2486,18 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
       'and re-applied on the next open. The call blocks until the user confirms, declines, or ' +
       'the request times out recoverably.',
     {
+      operationId: operationIdSchema,
       reason: z
         .string()
         .optional()
         .describe('Why the browser is being closed (shown in the confirmation card)'),
     },
-    async (args, extra) => ctx.handleClose(args, extra),
+    async (args: { operationId?: string; reason?: string }, extra) => args.operationId
+      ? executeMutation(
+          args.operationId, 'close', { reason: args.reason }, extra,
+          (signal, authorize, recordApproved) => ctx.handleClose({ reason: args.reason }, { ...(extra as object), signal }, authorize, recordApproved),
+        )
+      : toolError('browser_operation_id_required', 'dispatch', 'Mutation tools require an operationId.', 'Retry once with a new caller-stable operationId.'),
   );
 
   // The cast reconciles handler-parameter variance: each tool definition is
