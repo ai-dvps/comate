@@ -24,6 +24,9 @@ import BrowserPane from './browser/BrowserPane'
 const LIST_SIDEBAR_WIDTH = 280
 const MIN_LIST_SIDEBAR_WIDTH = 180
 const MAX_LIST_SIDEBAR_WIDTH = 480
+// Native WebContentsViews sit above renderer content, so their bounds must
+// leave the panel's w-1 drag handle exposed to mouse input.
+const PANEL_RESIZE_GUTTER = 4
 
 interface RightPanelProps {
   width: number
@@ -301,8 +304,9 @@ export default function RightPanel({
           {openWorkspaceIds.map((wsId) => (
             <div
               key={wsId}
+              style={{ left: PANEL_RESIZE_GUTTER }}
               className={cn(
-                'absolute inset-0 flex flex-col',
+                'absolute inset-y-0 right-0 flex flex-col',
                 wsId === workspaceId && showBrowser
                   ? 'visible'
                   : 'invisible pointer-events-none',
