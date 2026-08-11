@@ -1587,6 +1587,7 @@ async function distillPageModelOnce(
     }
     if (actions.length >= maxActions) continue;
     const role = capPageString(candidate.role || 'generic', 80);
+    const fingerprintRole = capPageString(candidate.role.toLowerCase() === 'generic' ? '' : candidate.role.toLowerCase(), 80);
     const name = capPageString(candidate.name, MAX_ACTION_NAME);
     const interactionClass: InteractionClass = candidate.humanOnly || HUMAN_ONLY_PATTERN.test(name)
       ? 'human-only'
@@ -1594,7 +1595,7 @@ async function distillPageModelOnce(
     const fingerprint: ElementFingerprint = {
       tag: capPageString(candidate.tag.toLowerCase(), 40),
       type: capPageString(candidate.type.toLowerCase(), 40),
-      role,
+      role: fingerprintRole,
       editable: false,
       fileInput: false,
     };

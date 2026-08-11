@@ -77,6 +77,8 @@ try {
 }
 
 const dataDir = mkdtempSync(path.join(tmpdir(), 'comate-electron-gate-'));
+const electronUploadPath = path.join(dataDir, 'fixture-upload.png');
+writeFileSync(electronUploadPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]));
 // U8: pre-seed an orphan partition dir (a "previous boot" leftover) so the
 // reconciliation check can watch it being swept.
 const orphanPartitionDir = path.join(dataDir, 'shell', 'Partitions', 'comate-browser-orphan-e2e');
@@ -121,6 +123,7 @@ async function controlFetch(pathname: string, init?: RequestInit): Promise<Respo
 const { connectShellPage, listCdpTargets } = await import(
   '../src/server/services/browser-cdp.js'
 );
+const { distillPageModel, RefTable } = await import('../src/server/services/browser-page-model.js');
 
 let viewTargetId: string | undefined;
 
@@ -201,6 +204,47 @@ try {
           (await page.evaluate<string>('typeof require')) === 'undefined',
         'Node globals leaked into the browser view',
       );
+    } finally {
+      page.close();
+    }
+  });
+
+  await check('E4b trusted activation and hidden associated file input work in packaged Electron', async () => {
+    assert(viewTargetId, 'no view target');
+    const bounds = await controlFetch('/views/gate-1/bounds', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ x: 16, y: 16, width: 480, height: 320 }),
+    });
+    assert(bounds.ok, `gate-1 bounds report returned ${bounds.status}`);
+    const page = await connectShellPage({ port: debugPort, targetId: viewTargetId });
+    try {
+      const html = `<!doctype html><label for="media">Add image</label><input id="media" type="file" hidden accept="image/png"><button>Publish</button><script>window.events={input:0,change:0,click:0,trusted:false};media.oninput=()=>events.input++;media.onchange=()=>events.change++;document.querySelector('button').onclick=e=>{events.click++;events.trusted=e.isTrusted}</script>`;
+      await page.navigate(`data:text/html,${encodeURIComponent(html)}`);
+      const refs = new RefTable();
+      const model = await distillPageModel(page, refs);
+      const file = model.forms.flatMap((form) => form.fields).find((field) => field.type === 'file');
+      const publish = model.actions.find((action) => action.name === 'Publish');
+      assert(file && publish, `Electron fixture controls missing: ${JSON.stringify(model)}`);
+      const fileBackend = refs.get(file!.ref)?.backendNodeId;
+      const publishBackend = refs.get(publish!.ref)?.backendNodeId;
+      assert(typeof fileBackend === 'number' && typeof publishBackend === 'number', 'backend identities missing');
+      const assignment = await page.setFileInputFiles?.(fileBackend!, [electronUploadPath]);
+      assert(assignment?.outcome === 'dispatched_verified', `file receipt ${JSON.stringify(assignment)}`);
+      // File assignment may refresh the document identity. Re-observe before
+      // activating, matching the public tool contract for every mutation.
+      const postUploadRefs = new RefTable();
+      const postUpload = await distillPageModel(page, postUploadRefs);
+      const freshPublish = postUpload.actions.find((action) => action.name === 'Publish');
+      const freshPublishBackend = freshPublish ? postUploadRefs.get(freshPublish.ref)?.backendNodeId : undefined;
+      assert(typeof freshPublishBackend === 'number', 'fresh publish backend identity missing');
+      const activation = await page.clickBackendNode(freshPublishBackend!);
+      assert(activation.outcome === 'dispatched_verified', `activation receipt ${JSON.stringify(activation)}`);
+      const state = await page.evaluate<{ input: number; change: number; click: number; trusted: boolean; files: number }>(
+        `({ ...window.events, files: document.getElementById('media').files.length })`,
+      );
+      assert(state.files === 1 && state.input + state.change >= 1, `Electron file events missing: ${JSON.stringify(state)}`);
+      assert(state.click === 1 && state.trusted === true, `Electron activation not trusted: ${JSON.stringify(state)}`);
     } finally {
       page.close();
     }

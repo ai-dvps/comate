@@ -25,7 +25,7 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -34,6 +34,7 @@ import { chromium as playwrightChromium } from 'playwright';
 
 import { createGateHarness } from './lib/gate-harness.js';
 import { waitForChildProcessClose } from './lib/process-cleanup.js';
+import { dynamicSpaBrowserFixtureHtml } from './fixtures/dynamic-spa-browser-fixture.js';
 
 const { unavailable, check, assert, results } = createGateHarness({
   gateName: 'shell CDP contract suite',
@@ -78,6 +79,8 @@ if (!chromiumPath) {
 
 const tempDir = mkdtempSync(path.join(tmpdir(), 'comate-shell-cdp-'));
 process.env.COMATE_DATA_DIR = tempDir;
+const fixtureUploadPath = path.join(tempDir, 'fixture-upload.png');
+writeFileSync(fixtureUploadPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]));
 
 // ---------------------------------------------------------------------------
 // Fixture origin
@@ -149,6 +152,11 @@ const fixture = createServer((req, res) => {
         });
       </script>
     </body>`);
+    return;
+  }
+  if (url.pathname === '/dynamic-spa') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(dynamicSpaBrowserFixtureHtml());
     return;
   }
   if (url.pathname === '/form') {
@@ -258,6 +266,7 @@ const {
 const { BrowserNetworkCaptureManager } = await import(
   '../src/server/services/browser-network-capture.js'
 );
+const { distillPageModel, RefTable } = await import('../src/server/services/browser-page-model.js');
 
 // Version assertions derive from the resolved binary itself (the contract is
 // version-agnostic): "Chrome/141.0.…" → "141.0.…".
@@ -338,6 +347,68 @@ try {
       assert(textState.textarea === textareaText, 'textarea replacement mismatch');
       assert(textState.rich === richText, 'contenteditable replacement mismatch');
       assert(textState.beforeinput >= 2 && textState.input >= 2, `input events ${JSON.stringify(textState)}`);
+    } finally {
+      page.close();
+    }
+  });
+
+  await check('A2b dynamic SPA discovery, long-form editing, file assignment, and trusted activation', async () => {
+    const page = await connectShellPage({ port: debugPort, targetId: targetA.targetId });
+    try {
+      await page.navigate(`${fixtureOrigin}/dynamic-spa`);
+      const initialRefs = new RefTable();
+      const initial = await distillPageModel(page, initialRefs);
+      const entry = initial.actions.find((action) => action.name === '写长文');
+      assert(entry, `DOM-only entry missing: ${JSON.stringify(initial.actions)}`);
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const entryBackend = initialRefs.get(entry!.ref)?.backendNodeId;
+      assert(typeof entryBackend === 'number', 'entry backend identity missing');
+      assert((await page.clickBackendNode(entryBackend!)).outcome === 'dispatched_verified', 'entry activation failed');
+
+      const refs = new RefTable();
+      const model = await distillPageModel(page, refs);
+      const fields = model.forms.flatMap((form) => form.fields);
+      const title = fields.find((field) => field.name === 'title');
+      const body = fields.find((field) => field.label === '正文');
+      const media = fields.find((field) => field.type === 'file');
+      const publish = model.actions.find((action) => action.name === '发布长文');
+      assert(title && body && media && publish, `authoring controls missing: ${JSON.stringify({ fields, actions: model.actions })}`);
+      const titleBackend = refs.get(title!.ref)?.backendNodeId;
+      const bodyBackend = refs.get(body!.ref)?.backendNodeId;
+      const mediaBackend = refs.get(media!.ref)?.backendNodeId;
+      assert([titleBackend, bodyBackend, mediaBackend, refs.get(publish!.ref)?.backendNodeId].every((value) => typeof value === 'number'), 'backend refs missing');
+      const titleText = '真实 Chromium 长文标题';
+      const bodyText = `第一段正文\n第二段含 emoji 🚀\n${'长文内容'.repeat(1_000)}`;
+      assert((await page.fillBackendNode?.(titleBackend!, titleText))?.outcome === 'dispatched_verified', 'title fill failed');
+      assert((await page.fillBackendNode?.(bodyBackend!, bodyText))?.outcome === 'dispatched_verified', 'body fill failed');
+      assert((await page.setFileInputFiles?.(mediaBackend!, [fixtureUploadPath]))?.outcome === 'dispatched_verified', 'file assignment failed');
+      // File assignment may refresh the document identity. Observe again,
+      // exactly as the agent contract requires before the later activation.
+      const postUploadRefs = new RefTable();
+      const postUpload = await distillPageModel(page, postUploadRefs);
+      const freshPublish = postUpload.actions.find((action) => action.name === '发布长文');
+      const publishBackend = freshPublish ? postUploadRefs.get(freshPublish.ref)?.backendNodeId : undefined;
+      assert(typeof publishBackend === 'number', 'fresh publish backend ref missing after upload');
+      const publishIdentity = await page.callBackendNode?.<{ tag: string; text: string; connected: boolean }>(
+        publishBackend!,
+        `function () { return { tag: (this.tagName || '').toLowerCase(), text: (this.textContent || '').trim(), connected: this.isConnected }; }`,
+      );
+      const publishReceipt = await page.clickBackendNode(publishBackend!);
+      assert(publishReceipt.outcome === 'dispatched_verified', `publish activation failed: ${JSON.stringify({ publishReceipt, publishIdentity })}`);
+      const state = await page.evaluate<{
+        title: string; body: string; files: number; entryClicks: number; publishClicks: number;
+        entryTrusted: boolean; publishTrusted: boolean; fileChanges: number; fileInputs: number;
+      }>(`({
+        title: document.querySelector('[name="title"]').value,
+        body: document.getElementById('body').innerText,
+        files: document.getElementById('media').files.length,
+        ...window.fixtureState
+      })`);
+      assert(state.title === titleText && state.body === bodyText, 'dynamic editor content mismatch');
+      assert(state.files === 1 && state.fileChanges + state.fileInputs >= 1, `file events missing: ${JSON.stringify(state)}`);
+      assert(state.entryClicks === 1 && state.entryTrusted === true, 'entry click was not one trusted event');
+      assert(state.publishClicks === 1 && state.publishTrusted === true, 'publish click was not one trusted event');
+      await page.navigate(`${fixtureOrigin}/interaction`);
     } finally {
       page.close();
     }
@@ -564,13 +635,14 @@ try {
 
   const toolService = new BrowserService({ storageDir: tempDir });
   const toolResults: string[] = [];
+  let handlerApprovalCount = 0;
   const makeCtx = (sessionId: string) =>
     new BrowserToolContext({
       sessionId,
       workspaceId: 'ws-e2e',
       browserService: toolService,
       handoffControl: new BrowserControlService({ browserService: toolService }),
-      approvalRequester: async () => ({ behavior: 'allow' }),
+      approvalRequester: async () => { handlerApprovalCount += 1; return { behavior: 'allow' }; },
     });
   interface ToolResult {
     isError?: boolean;
@@ -681,6 +753,36 @@ try {
     assert(!res.isError, 'takeScreenshot errored');
     const image = res.content?.find((c) => c.type === 'image');
     assert(image?.data && image.mimeType === 'image/jpeg', 'no jpeg image block');
+  });
+
+  await check('B8b handler-approved dynamic SPA entry and publish activation stay single-dispatch', async () => {
+    const approvalsBefore = handlerApprovalCount;
+    const opened = resultJson(await ctxA.handleOpen({ url: `${fixtureHttp}/dynamic-spa` }));
+    const entry = (opened['model'] as PageModelShape).actions.find((action) => action.name === '写长文');
+    assert(entry, 'dynamic SPA entry was not discovered through the tool model');
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const entryResult = resultJson(await ctxA.handleActivate({ ref: entry!.ref }));
+    assert(entryResult['ok'] === true, `entry activation failed: ${JSON.stringify(entryResult)}`);
+    const observed = resultJson(await ctxA.handleGetPageState({}));
+    const elements = (observed['state'] as { elements: Array<{ ref: string; kind: string; name: string }> }).elements;
+    const title = elements.find((element) => element.kind === 'field' && element.name === '标题');
+    const body = elements.find((element) => element.kind === 'field' && element.name === '正文');
+    const publish = elements.find((element) => element.kind === 'action' && element.name === '发布长文');
+    assert(title && body && publish, `tool model missed authoring controls: ${JSON.stringify(elements)}`);
+    resultJson(await ctxA.handleAct({ ref: title!.ref, action: 'fill', value: 'MCP 动态长文标题' }));
+    resultJson(await ctxA.handleAct({ ref: body!.ref, action: 'fill', value: 'MCP 第一段\nMCP 第二段 😀' }));
+    const publishResult = resultJson(await ctxA.handleActivate({ ref: publish!.ref }));
+    assert(publishResult['ok'] === true, `publish activation failed: ${JSON.stringify(publishResult)}`);
+    assert(handlerApprovalCount - approvalsBefore === 2, `expected two bound handler approvals, got ${handlerApprovalCount - approvalsBefore}`);
+    const session = toolService.getSession('cdp-tool-a');
+    assert(session, 'tool session disappeared');
+    const live = await connectBrowserPage(session!.baseUrl);
+    try {
+      const state = await live.evaluate<{ entryClicks: number; publishClicks: number; publishTrusted: boolean }>('window.fixtureState');
+      assert(state.entryClicks === 1 && state.publishClicks === 1 && state.publishTrusted === true, `unexpected activation state: ${JSON.stringify(state)}`);
+    } finally {
+      live.close();
+    }
   });
 
   const ctxC = makeCtx('cdp-tool-c');
