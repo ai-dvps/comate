@@ -290,10 +290,21 @@ const CLICK_FN = `function () {
 }`;
 
 class BrowserCdpSessionImpl implements BrowserCdpSession {
+  private closedFlag = false;
+  private readonly closeListeners = new Set<() => void>();
+  private offConnectionClose?: () => void;
+  private offTargetDetached?: () => void;
+
   private constructor(
     private readonly connection: CdpConnection,
     private readonly sessionId: string,
-  ) {}
+  ) {
+    this.offConnectionClose = connection.onClose(() => this.markClosed());
+    this.offTargetDetached = connection.on('Target.detachedFromTarget', (event) => {
+      const detachedSessionId = (event.params as { sessionId?: string }).sessionId;
+      if (detachedSessionId === this.sessionId) this.markClosed();
+    });
+  }
 
   static async attach(connection: CdpConnection): Promise<BrowserCdpSessionImpl> {
     const { targetInfos } = await connection.send<{ targetInfos: TargetInfo[] }>('Target.getTargets');
@@ -322,15 +333,37 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
   }
 
   get closed(): boolean {
-    return this.connection.closed;
+    return this.closedFlag || this.connection.closed;
   }
 
   onClose(listener: () => void): void {
-    this.connection.onClose(listener);
+    if (this.closed) {
+      listener();
+      return;
+    }
+    this.closeListeners.add(listener);
   }
 
   close(): void {
+    this.markClosed();
     this.connection.close();
+  }
+
+  private markClosed(): void {
+    if (this.closedFlag) return;
+    this.closedFlag = true;
+    this.offConnectionClose?.();
+    this.offTargetDetached?.();
+    this.offConnectionClose = undefined;
+    this.offTargetDetached = undefined;
+    for (const listener of [...this.closeListeners]) {
+      try {
+        listener();
+      } catch {
+        // Page lifecycle listeners must not break CDP event dispatch.
+      }
+    }
+    this.closeListeners.clear();
   }
 
   async evaluate<T>(expression: string): Promise<T> {
