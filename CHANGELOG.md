@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Prompt send controls stay inside the composer at narrow widths** — Optional toolbar controls now yield space before the send or stop buttons can overflow the input card.
 - **Electron development sidecar now loads its staged SQLite binding** — Development launches resolve `better_sqlite3.node` from the resource directory supplied by the Electron shell instead of looking for an unpackaged native module inside the sidecar snapshot.
 - **Interrupted turns no longer show internal EDE diagnostics** — Manually stopping a Claude turn now hides the SDK's internal `[ede_diagnostic]` marker from the message list while preserving genuine error messages.
 - **Interrupted sub-agent timers now stop in inactive sessions** — Reopening an inactive session no longer reconstructs interrupted Process Region agents as running; their terminal state and elapsed time remain fixed.
