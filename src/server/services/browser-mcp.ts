@@ -52,7 +52,9 @@ import { CdpError, connectBrowserPage, type BrowserCdpSession } from './browser-
 import {
   READ_PROBE_SCRIPT,
   RefTable,
+  buildPageState,
   buildInspectElementFunction,
+  buildInspectElementStateFunction,
   buildInspectElementScript,
   buildSubmitSnapshotScript,
   diffPageModels,
@@ -101,7 +103,7 @@ export { BROWSER_MCP_SERVER_KEY, BROWSER_TOOL_PREFIX };
 
 /**
  * browser-mcp — the first-class tool surface for the embedded controlled
- * browser (KTD-3). Twelve tools on the `comate-browser` SDK MCP server
+ * browser (KTD-3). Thirteen tools on the `comate-browser` SDK MCP server
  * (tool names `mcp__comate-browser__*`), injected into GUI chat sessions
  * only (KTD-4 ③: bot sessions never get this server).
  *
@@ -499,6 +501,22 @@ interface FoundElement {
   submitSemantics?: boolean;
 }
 
+async function forEachWithConcurrency<T>(
+  items: readonly T[],
+  concurrency: number,
+  task: (item: T) => Promise<void>,
+): Promise<void> {
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const item = items[nextIndex];
+      nextIndex += 1;
+      await task(item);
+    }
+  });
+  await Promise.all(workers);
+}
+
 function parseFindRegex(source: string): RegExp {
   const literal = /^\/(.*)\/([dgimsuvy]*)$/.exec(source);
   const pattern = literal ? literal[1] : source;
@@ -722,6 +740,7 @@ function contextRegistryFor(service: BrowserService): Map<string, BrowserToolCon
 export class BrowserToolContext {
   private readonly refTable = new RefTable();
   private lastModel: PageModel | null = null;
+  private pageStateCache: PageModel | null = null;
   private readonly svc: BrowserService;
   private readonly handoffCtl: BrowserControlService;
   private readonly connectPage: (baseUrl: string) => Promise<BrowserCdpSession>;
@@ -752,6 +771,7 @@ export class BrowserToolContext {
     this.capturePrimarySessionId = undefined;
     this.refTable.clear();
     this.lastModel = null;
+    this.pageStateCache = null;
     clearSubmitSemanticsRefs(this.deps.sessionId);
   }
 
@@ -788,6 +808,7 @@ export class BrowserToolContext {
         // (session-level, KTD-4 ②).
         this.refTable.clear();
         this.lastModel = null;
+        this.pageStateCache = null;
         clearSubmitSemanticsRefs(key);
         this.networkCapture?.abort('connection_closed');
         this.networkCapture = undefined;
@@ -825,8 +846,12 @@ export class BrowserToolContext {
     }
   }
 
-  private async distill(page: BrowserCdpSession): Promise<PageModel> {
-    const model = await distillPageModel(page, this.refTable);
+  private async distill(
+    page: BrowserCdpSession,
+    options: { maxContentChars?: number; maxActions?: number } = {},
+  ): Promise<PageModel> {
+    this.pageStateCache = null;
+    const model = await distillPageModel(page, this.refTable, options);
     this.lastModel = model;
     // Publish the session's submit-semantics refs for the canUseTool-layer
     // classification gate (U4, KTD-4 ② — the runtime has no ref table of its
@@ -850,8 +875,8 @@ export class BrowserToolContext {
       return toolError(
         'browser_ref_unknown',
         'ref_resolve',
-        `Unknown element ref "${ref}". Refs come from the most recent open/snapshot/act page model.`,
-        'Call the snapshot tool to get a fresh page model with current refs.',
+        `Unknown element ref "${ref}". Refs come from the most recent open/getPageState/snapshot/act page model.`,
+        'Call getPageState for fresh text-only refs, or snapshot when a screenshot is also needed.',
       );
     }
     if (!probe) {
@@ -859,7 +884,7 @@ export class BrowserToolContext {
         'browser_probe_unavailable',
         'ref_resolve',
         'The browser could not verify the current document identity for this element ref.',
-        'Call snapshot to rebuild the page model; if this persists, reopen the browser session.',
+        'Call getPageState or snapshot to rebuild the page model; if this persists, reopen the browser session.',
       );
     }
     const documentChanged = entry.batch.docId !== probe.docId;
@@ -869,13 +894,56 @@ export class BrowserToolContext {
         'browser_ref_stale',
         'ref_resolve',
         `Element ref "${ref}" (${entry.role} "${entry.name}") was invalidated by a page change.`,
-        'Call the snapshot tool to re-read the page, then retry with the fresh ref.',
+        'Call getPageState (or snapshot when visual context is needed), then retry with the fresh ref.',
       );
     }
     return entry;
   }
 
   // -- element discovery + selected element details ------------------------
+
+  async handleGetPageState(args: {
+    offset?: number;
+    limit?: number;
+    includeContent?: boolean;
+  }): Promise<CallToolResult> {
+    try {
+      const page = await this.ensurePage();
+      const probe = args.offset && args.offset > 0 ? await this.readProbe(page) : null;
+      const cachedBatch = this.refTable.batchKey;
+      const canReuseCache =
+        this.pageStateCache !== null &&
+        probe !== null &&
+        cachedBatch !== null &&
+        cachedBatch.docId === probe.docId &&
+        cachedBatch.domEpoch === probe.domEpoch;
+      const model = canReuseCache
+        ? this.pageStateCache!
+        : await this.distill(page, {
+            maxContentChars: args.includeContent === false ? 200 : 1200,
+            maxActions: 1000,
+          });
+      this.pageStateCache = model;
+      const state = buildPageState(model, args);
+      if (page.inspectBackendNode) {
+        await forEachWithConcurrency(state.elements, 8, async (element) => {
+          if (element.kind !== 'action') return;
+          const entry = this.refTable.get(element.ref);
+          if (typeof entry?.backendNodeId !== 'number') return;
+          const details = await page
+            .inspectBackendNode!(entry.backendNodeId, buildInspectElementStateFunction())
+            .catch(() => null);
+          if (!details) return;
+          if (details.visible !== undefined) element.visible = details.visible;
+          if (details.inViewport !== undefined) element.inViewport = details.inViewport;
+          if (details.occluded !== undefined) element.occluded = details.occluded;
+        });
+      }
+      return toolJson({ ok: true, state });
+    } catch (err) {
+      return this.toErrorResult(err, 'distill');
+    }
+  }
 
   async handleFindElements(args: FindElementsArgs): Promise<CallToolResult> {
     try {
@@ -901,7 +969,10 @@ export class BrowserToolContext {
           'Provide a valid JavaScript regular expression, optionally in /pattern/flags form.',
         );
       }
-      const model = await this.distill(await this.ensurePage());
+      const model = await this.distill(await this.ensurePage(), {
+        maxContentChars: 200,
+        maxActions: 5000,
+      });
       const matches = findElementsInModel(model, { ...args, text, regex, role }, compiledRegex);
       const limit = Math.min(Math.max(Math.floor(args.limit ?? 20), 1), 100);
       return toolJson({
@@ -1972,6 +2043,22 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     { annotations: { readOnlyHint: true, openWorldHint: true } },
   );
 
+  const getPageStateDef = tool(
+    'getPageState',
+    'Return a fresh, text-only semantic view of the current page without raw HTML or a screenshot. ' +
+      'The result combines a pruned accessibility outline with DOM-derived forms and fields, ' +
+      'fresh element refs, control states, a page revision, and bounded content. Use this first ' +
+      'to understand an unfamiliar page; use findElements for targeted discovery when the ' +
+      'inventory is truncated.',
+    {
+      offset: z.number().int().min(0).optional().describe('Element offset for reading the next bounded inventory segment (default 0)'),
+      limit: z.number().int().min(1).max(100).optional().describe('Maximum elements to return (default 60, max 100)'),
+      includeContent: z.boolean().optional().describe('Include up to 1,200 characters of main page text (default true)'),
+    },
+    async (args) => ctx.handleGetPageState(args),
+    { annotations: { readOnlyHint: true, openWorldHint: true } },
+  );
+
   const findElementsDef = tool(
     'findElements',
     'Refresh the current accessibility-based page model and find elements by text or regular ' +
@@ -1990,11 +2077,11 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
 
   const getElementDetailsDef = tool(
     'getElementDetails',
-    'Return bounded details for one element ref already returned by open, snapshot, findElements, ' +
+    'Return bounded details for one element ref already returned by open, getPageState, snapshot, findElements, ' +
       'or act: tag, role/name, safe attributes, nearby text, limited descendants, owning-form ' +
       'structure, and possible actions. This tool does not search for elements; selectors and raw ' +
       'HTML are never accepted.',
-    { ref: z.string().describe('Element ref from the latest open/snapshot/findElements/act model') },
+    { ref: z.string().describe('Element ref from the latest open/getPageState/snapshot/findElements/act model') },
     async (args) => ctx.handleGetElementDetails(args),
     { annotations: { readOnlyHint: true, openWorldHint: true } },
   );
@@ -2132,6 +2219,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
   // generic over its own zod shape, while BrowserToolDefinition erases it.
   return [
     openDef,
+    getPageStateDef,
     snapshotDef,
     findElementsDef,
     getElementDetailsDef,

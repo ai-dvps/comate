@@ -390,6 +390,8 @@ describe('session-runtime browser gates', { concurrency: false }, () => {
 
     const snapshot = await callTool(BROWSER_TOOL_NAMES.snapshot, {}, 'r-snap');
     assert.strictEqual(snapshot?.behavior, 'allow');
+    const pageState = await callTool(BROWSER_TOOL_NAMES.getPageState, {}, 'r-page-state');
+    assert.strictEqual(pageState?.behavior, 'allow');
     const extract = await callTool(BROWSER_TOOL_NAMES.extract, { schema: { t: { source: 'text' } } }, 'r-extract');
     assert.strictEqual(extract?.behavior, 'allow');
     for (const toolName of [
@@ -402,7 +404,7 @@ describe('session-runtime browser gates', { concurrency: false }, () => {
       assert.strictEqual(result?.behavior, 'allow');
     }
     const readonlyEvents = events.filter((e) => e.type === 'auto_approval');
-    assert.strictEqual(readonlyEvents.length, 6);
+    assert.strictEqual(readonlyEvents.length, 7);
 
     const actPromise = callTool(BROWSER_TOOL_NAMES.act, { ref: 'e1-aa', action: 'click' }, 'r-act-ro');
     assert.strictEqual(pendingApprovalEvents().length, 1, 'act must ask in readonly mode');

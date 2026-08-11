@@ -3,13 +3,16 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import {
   RefTable,
+  buildPageState,
   buildExtractorScript,
+  buildInspectElementStateFunction,
   buildInspectElementScript,
   buildSubmitSnapshotScript,
   diffPageModels,
   diffSubmitSnapshots,
   distillPageModel,
   estimateTokens,
+  extractActionInventory,
   extractActionsFromAxTree,
   extractAlertsFromAxTree,
   isSensitiveField,
@@ -157,6 +160,13 @@ describe('browser-page-model sensitivity ruleset (KTD-8)', () => {
     assert.doesNotMatch(script, /\.value\b/);
   });
 
+  it('builds a lightweight page-state probe without descendant or form scans', () => {
+    const script = buildInspectElementStateFunction();
+    assert.match(script, /getBoundingClientRect/);
+    assert.match(script, /elementFromPoint/);
+    assert.doesNotMatch(script, /querySelectorAll|closest\(['"]form|outerHTML|innerHTML/);
+  });
+
   it('marks type=password sensitive', () => {
     assert.strictEqual(isSensitiveField({ type: 'password', name: 'x' }), true);
     assert.strictEqual(isSensitiveField({ type: 'Password' }), true);
@@ -201,6 +211,24 @@ describe('browser-page-model accessibility tree processing', () => {
       backendDOMNodeId: index + 1,
     }));
     assert.strictEqual(extractActionsFromAxTree(nodes, 40).length, 40);
+    assert.deepStrictEqual(
+      { retained: extractActionInventory(nodes, 40).actions.length, total: extractActionInventory(nodes, 40).total },
+      { retained: 40, total: 100 },
+    );
+  });
+
+  it('preserves accessibility control states', () => {
+    const [action] = extractActionsFromAxTree([{
+      nodeId: 'button',
+      role: { value: 'button' },
+      name: { value: 'More' },
+      backendDOMNodeId: 1,
+      properties: [
+        { name: 'disabled', value: { value: true } },
+        { name: 'expanded', value: { value: 'false' } },
+      ],
+    }]);
+    assert.deepStrictEqual(action.states, { disabled: true, expanded: 'false' });
   });
 
   it('extracts alert text from AX alert roles', () => {
@@ -209,6 +237,38 @@ describe('browser-page-model accessibility tree processing', () => {
 });
 
 describe('browser-page-model distillation (KTD-3)', () => {
+  it('builds a revisioned semantic outline and a bounded element inventory', async () => {
+    const axNodes: RawAxNode[] = [
+      { nodeId: 'root', role: { value: 'RootWebArea' }, name: { value: 'Checkout' }, childIds: ['main'] },
+      { nodeId: 'main', role: { value: 'main' }, name: { value: 'Checkout' }, parentId: 'root', childIds: ['heading', 'button'] },
+      { nodeId: 'heading', role: { value: 'heading' }, name: { value: 'Order summary' }, parentId: 'main' },
+      { nodeId: 'button', role: { value: 'button' }, name: { value: 'Apply coupon' }, backendDOMNodeId: 22, parentId: 'main' },
+    ];
+    const model = await distillPageModel(fakeSource(makeExtraction(), axNodes), new RefTable());
+
+    assert.match(model.pageRevision, /^[a-f0-9]{12}$/);
+    assert.deepStrictEqual(
+      model.outline.map(({ role, name, depth }) => ({ role, name, depth })),
+      [
+        { role: 'main', name: 'Checkout', depth: 0 },
+        { role: 'heading', name: 'Order summary', depth: 1 },
+        { role: 'button', name: 'Apply coupon', depth: 1 },
+      ],
+    );
+    assert.strictEqual(model.outline[2].ref, model.actions[0].ref);
+    assert.deepStrictEqual(model.actionInventory, { total: 1, returned: 1, truncated: false });
+    assert.deepStrictEqual(model.outlineInventory, { total: 3, returned: 3, truncated: false });
+
+    const state = buildPageState(model, { limit: 3, includeContent: false });
+    assert.strictEqual(state.totalElements, 6);
+    assert.strictEqual(state.elements.length, 3);
+    assert.strictEqual(state.truncated, true);
+    assert.strictEqual(state.nextOffset, 3);
+    assert.strictEqual('content' in state, false);
+    assert.ok(state.elements.some((element) => element.kind === 'form'));
+    assert.ok(state.elements.some((element) => element.kind === 'field'));
+  });
+
   it('distills forms/actions/content with sensitive values absent', async () => {
     const refTable = new RefTable();
     const model = await distillPageModel(fakeSource(makeExtraction(), makeAxNodes()), refTable);
@@ -261,6 +321,41 @@ describe('browser-page-model distillation (KTD-3)', () => {
     );
     assert.strictEqual(model.content.truncated, true);
     assert.strictEqual(model.content.text.length, 4000);
+  });
+
+  it('reports when the page has more actions than the bounded model returns', async () => {
+    const nodes: RawAxNode[] = Array.from({ length: 45 }, (_, index) => ({
+      nodeId: String(index),
+      role: { value: 'button' },
+      name: { value: `Action ${index}` },
+      backendDOMNodeId: index + 1,
+    }));
+    const model = await distillPageModel(fakeSource(makeExtraction(), nodes), new RefTable());
+    assert.deepStrictEqual(model.actionInventory, { total: 45, returned: 40, truncated: true });
+    assert.strictEqual(buildPageState(model).truncated, true);
+  });
+
+  it('reports semantic-outline and source extraction truncation', async () => {
+    const nodes: RawAxNode[] = Array.from({ length: 90 }, (_, index) => ({
+      nodeId: String(index),
+      role: { value: 'heading' },
+      name: { value: `Heading ${index}` },
+    }));
+    const extraction = makeExtraction({ sourceInventory: { formCount: 12, fieldCount: 400 } });
+    const model = await distillPageModel(fakeSource(extraction, nodes), new RefTable());
+    assert.deepStrictEqual(model.outlineInventory, { total: 90, returned: 80, truncated: true });
+    assert.deepStrictEqual(model.sourceInventory.forms, { total: 12, returned: 1, truncated: true });
+    assert.deepStrictEqual(model.sourceInventory.fields, { total: 400, returned: 4, truncated: true });
+    assert.strictEqual(buildPageState(model).truncated, true);
+  });
+
+  it('caps page-controlled strings in the text-only state', async () => {
+    const extraction = makeExtraction({ url: `https://example.test/${'u'.repeat(3000)}`, title: 't'.repeat(500) });
+    extraction.forms[0].name = 'f'.repeat(500);
+    const state = buildPageState(await distillPageModel(fakeSource(extraction, []), new RefTable()));
+    assert.strictEqual(state.url.length, 2048);
+    assert.strictEqual(state.title.length, 300);
+    assert.strictEqual(state.elements[0].name.length, 160);
   });
 
   it('mints refs with form/field/action semantics and invalidates the batch on DOM change', async () => {
@@ -394,9 +489,17 @@ describe('browser-page-model deltas', () => {
     return {
       url: 'https://a.example/',
       title: 'A',
+      pageRevision: 'revision',
       pageType: 'unknown',
+      outline: [],
+      outlineInventory: { total: 0, returned: 0, truncated: false },
       forms: [],
       actions: [],
+      actionInventory: { total: 0, returned: 0, truncated: false },
+      sourceInventory: {
+        forms: { total: 0, returned: 0, truncated: false },
+        fields: { total: 0, returned: 0, truncated: false },
+      },
       content: { text: 'hello', truncated: false },
       alerts: [],
       tokenEstimate: 10,

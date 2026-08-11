@@ -53,6 +53,7 @@ interface FakePageOptions {
   submitDispatchError?: Error;
   extractResults?: Record<string, unknown>;
   inspectResult?: Record<string, unknown>;
+  inspectError?: Error;
   networkTransport?: BrowserNetworkCaptureTransport;
 }
 
@@ -155,6 +156,7 @@ class FakePage implements BrowserCdpSession {
     this.clickedBackendNodes.push(backendNodeId);
   }
   async inspectBackendNode(): Promise<import('../browser-page-model.js').InspectedElement | null> {
+    if (this.options.inspectError) throw this.options.inspectError;
     return (this.options.inspectResult ?? null) as import('../browser-page-model.js').InspectedElement | null;
   }
   async captureScreenshot(): Promise<string> {
@@ -378,7 +380,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.deepStrictEqual(
       [...harness.tools.keys()].sort(),
-      ['act', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getElementDetails', 'open', 'requestHandoff', 'snapshot', 'startNetworkCapture', 'stopNetworkCapture', 'submit'],
+      ['act', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getElementDetails', 'getPageState', 'open', 'requestHandoff', 'snapshot', 'startNetworkCapture', 'stopNetworkCapture', 'submit'],
     );
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
@@ -386,6 +388,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
   it('annotates snapshot/extract read-only and marks submit destructive + requiresUserInteraction', async () => {
     const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.strictEqual(harness.tools.get('snapshot')?.annotations?.readOnlyHint, true);
+    assert.strictEqual(harness.tools.get('getPageState')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('extract')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('findElements')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('getElementDetails')?.annotations?.readOnlyHint, true);
@@ -404,7 +407,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const defs = buildBrowserToolDefinitions({ sessionId: 's', workspaceId: 'w' });
     assert.deepEqual(
       defs.map((d) => d.name),
-      ['open', 'snapshot', 'findElements', 'getElementDetails', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'act', 'submit', 'extract', 'requestHandoff', 'close'],
+      ['open', 'getPageState', 'snapshot', 'findElements', 'getElementDetails', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'act', 'submit', 'extract', 'requestHandoff', 'close'],
     );
     assert.strictEqual(BROWSER_TOOL_PREFIX, 'mcp__comate-browser__');
     const authenticated = defs.find((definition) => definition.name === 'authenticatedRequest');
@@ -479,6 +482,115 @@ describe('browser-mcp open/snapshot', () => {
     assert.strictEqual(harness.ctx.page.screenshots, 1);
   });
 
+  it('getPageState returns a bounded text-only semantic inventory with fresh refs', async () => {
+    harness = await makeHarness({
+      page: new FakePage({
+        extraction: makeExtraction(),
+        axNodes: [
+          { nodeId: '1', role: { value: 'button' }, name: { value: 'Apply coupon' }, backendDOMNodeId: 77 },
+          { nodeId: '2', role: { value: 'link' }, name: { value: 'Help' }, backendDOMNodeId: 78 },
+        ],
+      }),
+    });
+    const result = await harness.call('getPageState', { limit: 2, includeContent: false });
+    assert.strictEqual(result.isError, undefined);
+    assert.strictEqual(result.content.some((block) => block.type === 'image'), false);
+    const state = resultPayload(result).state as {
+      pageRevision: string;
+      elements: Array<{ ref: string; kind: string }>;
+      totalElements: number;
+      truncated: boolean;
+      nextOffset?: number;
+      content?: unknown;
+    };
+    assert.match(state.pageRevision, /^[a-f0-9]{12}$/);
+    assert.strictEqual(state.elements.length, 2);
+    assert.ok(state.totalElements > state.elements.length);
+    assert.strictEqual(state.truncated, true);
+    assert.strictEqual(state.nextOffset, 2);
+    assert.strictEqual(state.content, undefined);
+    assert.match(state.elements[0].ref, /^e\d+-[a-f0-9]{16}$/);
+  });
+
+  it('getPageState annotates returned actions with viewport and occlusion state', async () => {
+    harness = await makeHarness({
+      page: new FakePage({
+        extraction: makeExtraction(),
+        axNodes: [
+          { nodeId: '1', role: { value: 'button' }, name: { value: 'Apply coupon' }, backendDOMNodeId: 77 },
+        ],
+        inspectResult: {
+          tag: 'button',
+          attributes: {},
+          descendants: [],
+          descendantsTruncated: false,
+          actions: ['click'],
+          visible: true,
+          inViewport: true,
+          occluded: false,
+        },
+      }),
+    });
+    const state = resultPayload(await harness.call('getPageState', { offset: 4, limit: 1 })).state as {
+      elements: Array<{ kind: string; visible?: boolean; inViewport?: boolean; occluded?: boolean }>;
+    };
+    assert.strictEqual(state.elements.length, 1);
+    assert.strictEqual(state.elements[0].kind, 'action');
+    assert.strictEqual(state.elements[0].visible, true);
+    assert.strictEqual(state.elements[0].inViewport, true);
+    assert.strictEqual(state.elements[0].occluded, false);
+  });
+
+  it('keeps page-state pagination refs usable', async () => {
+    const page = new FakePage({
+      extraction: makeExtraction(),
+      axNodes: Array.from({ length: 3 }, (_, index) => ({
+        nodeId: String(index),
+        role: { value: 'button' },
+        name: { value: `Action ${index}` },
+        backendDOMNodeId: index + 1,
+      })),
+      inspectResult: {
+        tag: 'button',
+        attributes: {},
+        descendants: [],
+        descendantsTruncated: false,
+        actions: ['click'],
+      },
+    });
+    harness = await makeHarness({ page });
+    const first = resultPayload(await harness.call('getPageState', { limit: 6 })).state as {
+      elements: Array<{ ref: string; kind: string; visible?: boolean }>;
+    };
+    const firstAction = first.elements.find((element) => element.kind === 'action');
+    assert.ok(firstAction);
+    await harness.call('getPageState', { offset: 6, limit: 2 });
+    const acted = resultPayload(await harness.call('act', { ref: firstAction.ref, action: 'click' }));
+    assert.strictEqual(acted.ok, true);
+    assert.deepStrictEqual(page.clickedBackendNodes, [1]);
+  });
+
+  it('tolerates page-state geometry probe failures', async () => {
+    harness = await makeHarness({
+      page: new FakePage({
+        extraction: makeExtraction(),
+        axNodes: [{
+          nodeId: 'action',
+          role: { value: 'button' },
+          name: { value: 'Action' },
+          backendDOMNodeId: 1,
+        }],
+        inspectError: new Error('geometry unavailable'),
+      }),
+    });
+    const result = resultPayload(await harness.call('getPageState', { offset: 4, limit: 1 })) as {
+      ok: boolean;
+      state: { elements: Array<{ visible?: boolean }> };
+    };
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.state.elements[0].visible, undefined);
+  });
+
   it('findElements refreshes the model and filters refs by text and role', async () => {
     harness = await makeHarness({
       page: new FakePage({
@@ -534,6 +646,28 @@ describe('browser-mcp open/snapshot', () => {
       assert.strictEqual(result.isError, true);
       assert.strictEqual((resultPayload(result).error as { code: string }).code, 'browser_find_invalid_query');
     }
+  });
+
+  it('findElements searches beyond the page-state response budget', async () => {
+    const axNodes: RawAxNode[] = Array.from({ length: 1_220 }, (_, index) => ({
+      nodeId: String(index),
+      role: { value: 'button' },
+      name: { value: index === 1_200 ? 'Deep target' : `Action ${index}` },
+      backendDOMNodeId: index + 1,
+    }));
+    harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction(), axNodes }) });
+
+    const state = resultPayload(await harness.call('getPageState', { limit: 100 })).state as {
+      elements: unknown[];
+      truncated: boolean;
+    };
+    assert.strictEqual(state.elements.length, 100);
+    assert.strictEqual(state.truncated, true);
+
+    const found = resultPayload(await harness.call('findElements', { text: 'Deep target', exact: true })) as {
+      matches: Array<{ name: string }>;
+    };
+    assert.deepStrictEqual(found.matches.map(({ name }) => name), ['Deep target']);
   });
 });
 
