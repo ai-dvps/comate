@@ -23,6 +23,12 @@ interface BlockState {
   inputBuffer?: string;
 }
 
+const EDE_DIAGNOSTIC_PREFIX = '[ede_diagnostic]';
+
+function isEdeDiagnostic(value: unknown): boolean {
+  return typeof value === 'string' && value.trimStart().startsWith(EDE_DIAGNOSTIC_PREFIX);
+}
+
 /**
  * Per-stream stateful SSE emitter for the chat route.
  *
@@ -296,12 +302,19 @@ export class SseEmitter {
         // surfacing runMessageLoop's catch path provides for fatal streams.
         if (msg.is_error === true) {
           const errors = 'errors' in msg ? (msg as { errors?: unknown }).errors : undefined;
-          const text = Array.isArray(errors) && errors.length > 0
-            ? errors.map((e) => String(e)).join('\n')
-            : typeof msg.subtype === 'string'
-              ? msg.subtype
-              : 'Unknown error';
-          this.emitErrorNote(text);
+          if (Array.isArray(errors) && errors.length > 0) {
+            const visibleErrors = errors.filter(
+              (error) => !isEdeDiagnostic(error)
+                && (typeof error !== 'string' || error.trim().length > 0),
+            );
+            if (visibleErrors.length > 0) {
+              this.emitErrorNote(visibleErrors.map((error) => String(error)).join('\n'));
+            }
+          } else {
+            this.emitErrorNote(
+              typeof msg.subtype === 'string' ? msg.subtype : 'Unknown error',
+            );
+          }
         }
         return;
 
