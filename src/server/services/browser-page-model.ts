@@ -72,6 +72,23 @@ const IN_PAGE_SENSITIVE_FN = `function __comateSensitive(el) {
 
 export type PageType = 'login' | 'form' | 'article' | 'listing' | 'unknown';
 export type ElementProvenance = 'ax' | 'dom';
+export type SemanticRelationshipKind =
+  | 'label'
+  | 'description'
+  | 'section'
+  | 'field-group'
+  | 'dialog'
+  | 'tab-group'
+  | 'nearby-status';
+
+/** Positive-shape semantic context. Never contains HTML, selectors, or field values. */
+export interface SemanticRelationship {
+  kind: SemanticRelationshipKind;
+  source: ElementProvenance;
+  role?: string;
+  name: string;
+  states?: Record<string, boolean | string>;
+}
 export type InteractionClass =
   | 'edit'
   | 'direct-navigation'
@@ -107,6 +124,7 @@ export interface PageModelField {
   value?: string;
   /** True for type=submit/image and in-form buttons (KTD-4 classification). */
   submitSemantics: boolean;
+  relationships?: SemanticRelationship[];
 }
 
 export interface PageModelForm {
@@ -128,6 +146,7 @@ export interface PageModelAction {
   interactionClass: InteractionClass;
   context?: string;
   states?: Record<string, boolean | string>;
+  relationships?: SemanticRelationship[];
 }
 
 export interface PageModelOutlineNode {
@@ -714,6 +733,7 @@ export interface RawExtractedField {
   contentLength?: number;
   submitSemantics: boolean;
   xpath: string;
+  relationships?: SemanticRelationship[];
 }
 
 export interface RawDomCandidate {
@@ -724,6 +744,7 @@ export interface RawDomCandidate {
   role: string;
   xpath: string;
   humanOnly?: boolean;
+  relationships?: SemanticRelationship[];
 }
 
 export interface RawExtractedForm {
@@ -823,6 +844,75 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
     t = el.getAttribute('name'); if (t) return t.slice(0, 80);
     return el.id ? el.id.slice(0, 80) : '';
   }
+  function relationshipName(el) {
+    if (!el) return '';
+    var direct = el.getAttribute('aria-label') || '';
+    if (!direct) {
+      var labelledBy = (el.getAttribute('aria-labelledby') || '').split(/\\s+/), labelled = [];
+      for (var li = 0; li < labelledBy.length; li++) {
+        var labelledNode = labelledBy[li] ? document.getElementById(labelledBy[li]) : null;
+        if (labelledNode) labelled.push(textWithoutEditable(labelledNode, 80));
+      }
+      direct = labelled.join(' ').trim();
+    }
+    if (!direct) {
+      var heading = null;
+      try { heading = el.querySelector(':scope > legend, :scope > h1, :scope > h2, :scope > h3, :scope > [role="heading"]'); } catch (e) { /* ignore */ }
+      direct = heading ? textWithoutEditable(heading, 80) : '';
+    }
+    return String(direct || '').replace(/\\s+/g, ' ').trim().slice(0, 80);
+  }
+  function relationshipsFor(el) {
+    var out = [], seen = {};
+    function add(kind, sourceEl, role, explicitName, states) {
+      if (!sourceEl || out.length >= 12) return;
+      var name = String(explicitName || relationshipName(sourceEl) || '').replace(/\\s+/g, ' ').trim().slice(0, 80);
+      if (!name) return;
+      var key = kind + ':' + String(role || '') + ':' + name;
+      if (seen[key]) return;
+      seen[key] = true;
+      var item = { kind: kind, source: 'dom', name: name };
+      if (role) item.role = String(role).toLowerCase().slice(0, 40);
+      if (states && Object.keys(states).length) item.states = states;
+      out.push(item);
+    }
+    var labels = [];
+    try { labels = Array.prototype.slice.call(el.labels || []); } catch (e) { labels = []; }
+    var labelledBy = (el.getAttribute('aria-labelledby') || '').split(/\\s+/);
+    for (var lbi = 0; lbi < labelledBy.length; lbi++) {
+      var labelled = labelledBy[lbi] ? document.getElementById(labelledBy[lbi]) : null;
+      if (labelled) labels.push(labelled);
+    }
+    for (var lai = 0; lai < labels.length; lai++) add('label', labels[lai], 'label', textWithoutEditable(labels[lai], 80));
+    var describedBy = (el.getAttribute('aria-describedby') || '').split(/\\s+/);
+    for (var dbi = 0; dbi < describedBy.length; dbi++) {
+      var described = describedBy[dbi] ? document.getElementById(describedBy[dbi]) : null;
+      if (described) add('description', described, described.getAttribute('role') || 'note', textWithoutEditable(described, 80));
+    }
+    var ancestors = [
+      ['field-group', 'fieldset,[role="group"]', 'group'],
+      ['section', 'section,[role="region"]', 'region'],
+      ['dialog', '[role="dialog"]', 'dialog'],
+      ['tab-group', '[role="tablist"]', 'tablist']
+    ];
+    for (var ai = 0; ai < ancestors.length; ai++) {
+      var ancestor = el.closest(ancestors[ai][1]);
+      var relationshipStates = {};
+      if (ancestors[ai][0] === 'tab-group') {
+        var selected = (el.getAttribute('aria-selected') || '').toLowerCase();
+        if (selected === 'true' || selected === 'false') relationshipStates.selected = selected === 'true';
+      }
+      add(ancestors[ai][0], ancestor, ancestors[ai][2], '', relationshipStates);
+    }
+    var statusContainer = el.closest('[role="dialog"],section,fieldset,form,[role="group"],body');
+    if (statusContainer) {
+      var statuses = statusContainer.querySelectorAll('[role="status"],[aria-live="polite"],[aria-live="assertive"]');
+      for (var si2 = 0; si2 < statuses.length && si2 < 3; si2++) {
+        if (statuses[si2] !== el && visible(statuses[si2])) add('nearby-status', statuses[si2], 'status', textWithoutEditable(statuses[si2], 80));
+      }
+    }
+    return out;
+  }
   function getXPath(el) {
     if (el.id) return '//*[@id=' + JSON.stringify(el.id) + ']';
     var parts = [];
@@ -886,7 +976,8 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
       filled: filled,
       contentLength: contentLength,
       submitSemantics: isSubmitControl(el, tag, type, inForm),
-      xpath: getXPath(el)
+      xpath: getXPath(el),
+      relationships: relationshipsFor(el)
     };
   }
 
@@ -1086,7 +1177,8 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
       type: ctag === 'input' ? fieldType(candidate, ctag) : ctag,
       role: (candidate.getAttribute('role') || '').toLowerCase().slice(0, 80) || (ctag === 'a' ? 'link' : ctag === 'button' ? 'button' : 'generic'),
       xpath: getXPath(candidate),
-      humanOnly: new RegExp(${JSON.stringify(HUMAN_ONLY_PATTERN.source)}, 'i').test(cname)
+      humanOnly: new RegExp(${JSON.stringify(HUMAN_ONLY_PATTERN.source)}, 'i').test(cname),
+      relationships: relationshipsFor(candidate)
     };
     if (replaceIndex >= 0) {
       domCandidates[replaceIndex] = candidateRecord;
@@ -1227,6 +1319,38 @@ function extractAxStates(node: RawAxNode): Record<string, boolean | string> | un
   return Object.keys(states).length > 0 ? states : undefined;
 }
 
+function relationshipsFromAxNode(
+  node: RawAxNode | undefined,
+  byId: ReadonlyMap<string, RawAxNode>,
+): SemanticRelationship[] | undefined {
+  if (!node) return undefined;
+  const kindByRole: Partial<Record<string, SemanticRelationshipKind>> = {
+    group: 'field-group', form: 'field-group', region: 'section', section: 'section',
+    dialog: 'dialog', tablist: 'tab-group', status: 'nearby-status', alert: 'nearby-status',
+  };
+  const relationships: SemanticRelationship[] = [];
+  let parentId = node.parentId;
+  const visited = new Set<string>();
+  while (parentId && !visited.has(parentId) && relationships.length < MAX_RELATIONSHIPS) {
+    visited.add(parentId);
+    const parent = byId.get(parentId);
+    if (!parent) break;
+    if (!parent.ignored) {
+      const role = typeof parent.role?.value === 'string' ? parent.role.value.toLowerCase().slice(0, 40) : '';
+      const kind = kindByRole[role];
+      const name = typeof parent.name?.value === 'string'
+        ? parent.name.value.replace(/\s+/g, ' ').trim().slice(0, MAX_RELATIONSHIP_NAME)
+        : '';
+      if (kind && name) {
+        const states = kind === 'tab-group' ? extractAxStates(node) : extractAxStates(parent);
+        relationships.push({ kind, source: 'ax', role, name, ...(states ? { states } : {}) });
+      }
+    }
+    parentId = parent.parentId;
+  }
+  return sanitizeRelationships(relationships);
+}
+
 export function extractActionsFromAxTree(
   nodes: RawAxNode[],
   maxActions = MAX_ACTIONS,
@@ -1359,8 +1483,48 @@ const VALUE_CAP = 80;
 const PAGE_URL_CAP = 2048;
 const PAGE_TITLE_CAP = 300;
 const FORM_NAME_CAP = 160;
+const MAX_RELATIONSHIPS = 12;
+const MAX_RELATIONSHIP_NAME = 80;
 function capPageString(value: string, limit: number): string {
   return value.slice(0, limit);
+}
+
+function sanitizeRelationships(
+  relationships: readonly SemanticRelationship[] | undefined,
+): SemanticRelationship[] | undefined {
+  if (!relationships?.length) return undefined;
+  const allowedKinds = new Set<SemanticRelationshipKind>([
+    'label', 'description', 'section', 'field-group', 'dialog', 'tab-group', 'nearby-status',
+  ]);
+  const allowedStates = new Set(['disabled', 'expanded', 'checked', 'selected', 'required', 'readonly']);
+  const seen = new Set<string>();
+  const result: SemanticRelationship[] = [];
+  for (const relationship of relationships) {
+    if (result.length >= MAX_RELATIONSHIPS || !allowedKinds.has(relationship.kind) ||
+        (relationship.source !== 'ax' && relationship.source !== 'dom')) continue;
+    const name = String(relationship.name ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_RELATIONSHIP_NAME);
+    if (!name) continue;
+    const role = relationship.role
+      ? String(relationship.role).toLowerCase().slice(0, 40)
+      : undefined;
+    const states: Record<string, boolean | string> = {};
+    for (const [key, value] of Object.entries(relationship.states ?? {})) {
+      if (!allowedStates.has(key)) continue;
+      if (typeof value === 'boolean') states[key] = value;
+      else if (typeof value === 'string') states[key] = value.slice(0, 40);
+    }
+    const key = `${relationship.kind}:${relationship.source}:${role ?? ''}:${name}:${JSON.stringify(states)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({
+      kind: relationship.kind,
+      source: relationship.source,
+      ...(role ? { role } : {}),
+      name,
+      ...(Object.keys(states).length ? { states } : {}),
+    });
+  }
+  return result.length ? result : undefined;
 }
 
 function classifyPageType(extraction: RawPageExtraction, formCount: number): PageType {
@@ -1395,8 +1559,9 @@ function mapRawField(
   refTable: RefTable,
   rawField: RawExtractedField,
   placement: { formIndex: number; fieldIndex: number; submitSemantics: boolean; backendNodeId: number },
+  axSemantic?: { role?: string; name?: string; relationships?: SemanticRelationship[] },
 ): PageModelField {
-  const role = normalizedFieldRole(rawField);
+  const role = axSemantic?.role || normalizedFieldRole(rawField);
   const tag = rawField.tag.toLowerCase();
   const type = rawField.type.toLowerCase();
   const fieldIsEditable = tag === 'textarea' || tag === 'select' ||
@@ -1412,7 +1577,7 @@ function mapRawField(
   const entry = refTable.mint({
     kind: 'field',
     role,
-    name: capPageString(rawField.label || rawField.name || '', FORM_NAME_CAP),
+    name: capPageString(axSemantic?.name || rawField.label || rawField.name || '', FORM_NAME_CAP),
     backendNodeId: placement.backendNodeId,
     fingerprint: fingerprintForField(rawField),
     xpath: rawField.xpath,
@@ -1423,7 +1588,7 @@ function mapRawField(
   });
   const modelField: PageModelField = {
     ref: entry.ref,
-    label: capPageString(rawField.label, 160),
+    label: capPageString(axSemantic?.name || rawField.label, 160),
     tag: capPageString(rawField.tag, 40),
     type: capPageString(rawField.type, 40),
     role,
@@ -1436,6 +1601,11 @@ function mapRawField(
     interactionClass,
     submitSemantics: placement.submitSemantics,
   };
+  const relationships = sanitizeRelationships([
+    ...(rawField.relationships ?? []),
+    ...(axSemantic?.relationships ?? []),
+  ]);
+  if (relationships) modelField.relationships = relationships;
   if (rawField.name !== undefined) modelField.name = capPageString(rawField.name, 160);
   if (rawField.autocomplete !== undefined) modelField.autocomplete = capPageString(rawField.autocomplete, 80);
   if (rawField.multiple !== undefined) modelField.multiple = rawField.multiple;
@@ -1549,17 +1719,31 @@ async function distillPageModelOnce(
   }
   let resolvedIndex = 0;
   refTable.beginBatch(identity);
+  const axById = new Map(axNodes.map((node) => [node.nodeId, node]));
+  const axByBackendId = new Map(
+    axNodes
+      .filter((node): node is RawAxNode & { backendDOMNodeId: number } => typeof node.backendDOMNodeId === 'number' && !node.ignored)
+      .map((node) => [node.backendDOMNodeId, node]),
+  );
+  const axSemanticFor = (backendNodeId: number) => {
+    const node = axByBackendId.get(backendNodeId);
+    if (!node) return undefined;
+    const role = typeof node.role?.value === 'string' ? node.role.value.toLowerCase().slice(0, 80) : undefined;
+    const name = typeof node.name?.value === 'string' ? node.name.value.trim().slice(0, MAX_ACTION_NAME) : undefined;
+    return { role, name, relationships: relationshipsFromAxNode(node, axById) };
+  };
 
   const forms: PageModelForm[] = extraction.forms.map((rawForm) => {
     const formBackendNodeId = resolvedIds[resolvedIndex++]!;
-    const fields: PageModelField[] = rawForm.fields.map((rawField) =>
-      mapRawField(refTable, rawField, {
+    const fields: PageModelField[] = rawForm.fields.map((rawField) => {
+      const backendNodeId = resolvedIds[resolvedIndex++]!;
+      return mapRawField(refTable, rawField, {
         formIndex: rawForm.formIndex,
         fieldIndex: rawField.fieldIndex,
         submitSemantics: rawField.submitSemantics,
-        backendNodeId: resolvedIds[resolvedIndex++]!,
-      }),
-    );
+        backendNodeId,
+      }, axSemanticFor(backendNodeId));
+    });
     const formEntry = refTable.mint({
       kind: 'form',
       role: 'form',
@@ -1586,9 +1770,15 @@ async function distillPageModelOnce(
   // entry so fill/select/check refs work for them too.
   if (extraction.standalone.length > 0) {
     const groupBackendNodeId = resolvedIds[resolvedIndex++]!;
-    const fields: PageModelField[] = extraction.standalone.map((rawField) =>
-      mapRawField(refTable, rawField, { formIndex: -1, fieldIndex: -1, submitSemantics: false, backendNodeId: resolvedIds[resolvedIndex++]! }),
-    );
+    const fields: PageModelField[] = extraction.standalone.map((rawField) => {
+      const backendNodeId = resolvedIds[resolvedIndex++]!;
+      return mapRawField(
+        refTable,
+        rawField,
+        { formIndex: -1, fieldIndex: -1, submitSemantics: false, backendNodeId },
+        axSemanticFor(backendNodeId),
+      );
+    });
     const entry = refTable.mint({
       kind: 'form',
       role: 'form',
@@ -1612,7 +1802,6 @@ async function distillPageModelOnce(
   const longFormAxNodeIds = new Set(
     axNodes.filter((node) => typeof node.backendDOMNodeId === 'number' && longFormBackendIds.has(node.backendDOMNodeId)).map((node) => node.nodeId),
   );
-  const axById = new Map(axNodes.map((node) => [node.nodeId, node]));
   const safeAxNodes = longFormAxNodeIds.size === 0 ? axNodes : axNodes.filter((node) => {
     let current: RawAxNode | undefined = node;
     const visited = new Set<string>();
@@ -1652,6 +1841,7 @@ async function distillPageModelOnce(
       provenance: 'ax',
       interactionClass,
     });
+    const relationships = relationshipsFromAxNode(axByBackendId.get(action.backendNodeId), axById);
     return {
       ref: entry.ref,
       role: action.role,
@@ -1660,14 +1850,22 @@ async function distillPageModelOnce(
       provenance: 'ax',
       interactionClass,
       ...(action.states ? { states: action.states } : {}),
+      ...(relationships ? { relationships } : {}),
     };
   });
-  const axBackendIds = new Set(actions.map((action) => action.backendNodeId));
+  const actionByBackendId = new Map(actions.map((action) => [action.backendNodeId, action]));
+  const axBackendIds = new Set(actionByBackendId.keys());
   let domOverlapCount = 0;
   for (let index = 0; index < domCandidates.length; index += 1) {
     const candidate = domCandidates[index];
     const backendNodeId = domCandidateBackendIds[index];
     if (axBackendIds.has(backendNodeId)) {
+      const action = actionByBackendId.get(backendNodeId)!;
+      const relationships = sanitizeRelationships([
+        ...(action.relationships ?? []),
+        ...(candidate.relationships ?? []),
+      ]);
+      if (relationships) action.relationships = relationships;
       domOverlapCount += 1;
       continue;
     }
@@ -1689,9 +1887,11 @@ async function distillPageModelOnce(
       kind: 'action', role, name, backendNodeId, fingerprint, xpath: candidate.xpath,
       provenance: 'dom', interactionClass,
     });
+    const relationships = sanitizeRelationships(candidate.relationships);
     actions.push({
       ref: entry.ref, role, name, backendNodeId, provenance: 'dom', interactionClass,
       ...(candidate.context ? { context: capPageString(candidate.context, 120) } : {}),
+      ...(relationships ? { relationships } : {}),
     });
   }
 

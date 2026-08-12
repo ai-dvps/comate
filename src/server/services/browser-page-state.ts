@@ -1,4 +1,4 @@
-import type { ElementProvenance, InteractionClass, PageModel, RefKind } from './browser-page-model.js';
+import type { ElementProvenance, InteractionClass, PageModel, RefKind, SemanticRelationship } from './browser-page-model.js';
 
 export interface PageStateElement {
   ref: string;
@@ -23,6 +23,7 @@ export interface PageStateElement {
   accept?: string;
   filled?: boolean;
   contentLength?: number;
+  relationships?: SemanticRelationship[];
 }
 
 export interface PageState {
@@ -82,6 +83,7 @@ export function buildPageState(
         ...(field.filled !== undefined ? { filled: field.filled } : {}),
         ...(field.contentLength !== undefined ? { contentLength: field.contentLength } : {}),
         ...(field.value !== undefined ? { value: field.value } : {}),
+        ...(field.relationships ? { relationships: field.relationships } : {}),
       });
     }
   }
@@ -95,6 +97,7 @@ export function buildPageState(
       interactionClass: action.interactionClass,
       ...(action.context ? { context: action.context } : {}),
       ...(action.states ? { states: action.states } : {}),
+      ...(action.relationships ? { relationships: action.relationships } : {}),
     });
   }
 

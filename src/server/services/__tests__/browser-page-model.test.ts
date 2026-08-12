@@ -196,6 +196,64 @@ function runExtractor(html: string): RawPageExtraction {
 }
 
 describe('browser-page-model sensitivity ruleset (KTD-8)', () => {
+  it('extracts bounded relationship evidence for nested tabs, duplicate editors, and overlay status without values or selectors', () => {
+    const sentinel = 'PRIVATE_EDITOR_VALUE_MUST_NOT_LEAK';
+    const extraction = runExtractor(`<!doctype html><html><body>
+      <div role="tablist" aria-label="内容类型">
+        <div role="tab" aria-selected="true" data-index="1">写长文</div>
+        <div role="tab" aria-selected="false" data-index="2"><span>上传图文</span></div>
+      </div>
+      <section aria-label="长文正文"><label id="body-label">正文</label><p id="body-help">填写文章主体</p>
+        <div contenteditable="true" role="textbox" aria-labelledby="body-label" aria-describedby="body-help" data-index="3">${sentinel}</div>
+      </section>
+      <section aria-label="发布描述"><label for="description">正文</label><textarea id="description" data-index="4"></textarea></section>
+      <div role="dialog" aria-label="选择话题"><div role="status">已选择 1 个话题</div><button data-index="5">科技</button></div>
+    </body></html>`);
+
+    const body = extraction.standalone.find((field) => field.contentLength === sentinel.length);
+    const description = extraction.standalone.find((field) => field.tag === 'textarea');
+    const longFormTab = extraction.domCandidates?.find((candidate) => candidate.name === '写长文');
+    const topic = extraction.domCandidates?.find((candidate) => candidate.name === '科技');
+
+    assert.ok(body?.relationships?.some((relationship) => relationship.kind === 'label' && relationship.name === '正文'));
+    assert.ok(body?.relationships?.some((relationship) => relationship.kind === 'description' && relationship.name === '填写文章主体'));
+    assert.ok(body?.relationships?.some((relationship) => relationship.kind === 'section' && relationship.name === '长文正文'));
+    assert.ok(description?.relationships?.some((relationship) => relationship.kind === 'section' && relationship.name === '发布描述'));
+    assert.ok(longFormTab?.relationships?.some((relationship) => relationship.kind === 'tab-group' && relationship.name === '内容类型'));
+    assert.ok(topic?.relationships?.some((relationship) => relationship.kind === 'dialog' && relationship.name === '选择话题'));
+    assert.ok(topic?.relationships?.some((relationship) => relationship.kind === 'nearby-status' && relationship.name === '已选择 1 个话题'));
+    const fieldsSerialized = JSON.stringify(extraction.forms.flatMap((form) => form.fields).concat(extraction.standalone));
+    const relationshipsSerialized = JSON.stringify([
+      ...(body?.relationships ?? []), ...(description?.relationships ?? []),
+      ...(longFormTab?.relationships ?? []), ...(topic?.relationships ?? []),
+    ]);
+    assert.equal(fieldsSerialized.includes(sentinel), false);
+    assert.equal(relationshipsSerialized.includes('selector'), false);
+    assert.equal(relationshipsSerialized.includes('html'), false);
+  });
+
+  it('merges AX and DOM relationship evidence by backend node while keeping AX role and name authoritative', async () => {
+    const extraction = makeExtraction({
+      forms: [], standalone: [],
+      domCandidates: [{
+        name: 'DOM tab name', tag: 'div', type: 'div', role: 'generic', xpath: '/html/body/div[1]',
+        relationships: [{ kind: 'tab-group', source: 'dom', role: 'tablist', name: '内容类型', states: { selected: true } }],
+      }],
+      contentText: '', stats: { linkCount: 0, buttonCount: 0, hasPasswordField: false },
+    });
+    const model = await distillPageModel(fakeSource(extraction, [
+      { nodeId: 'group', role: { value: 'tablist' }, name: { value: '发布类型' } },
+      { nodeId: 'tab', parentId: 'group', role: { value: 'tab' }, name: { value: '写长文' }, backendDOMNodeId: 100,
+        properties: [{ name: 'selected', value: { value: true } }] },
+    ]), new RefTable());
+
+    assert.equal(model.actions.length, 1);
+    assert.equal(model.actions[0].role, 'tab');
+    assert.equal(model.actions[0].name, '写长文');
+    assert.deepEqual(new Set(model.actions[0].relationships?.map((relationship) => relationship.source)), new Set(['ax', 'dom']));
+    assert.ok(model.actions[0].relationships?.every((relationship) => relationship.name.length <= 80));
+  });
+
   it('fails a bounded semantic fingerprint closed on tag/type/role/editable/file drift', () => {
     const expected = { tag: 'input', type: 'email', role: 'textbox', editable: true, fileInput: false };
     assert.equal(sameElementFingerprint(expected, expected), true);
