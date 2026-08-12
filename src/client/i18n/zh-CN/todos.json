@@ -94,6 +94,7 @@
   "executionAt": "执行时间",
   "executionCron": "Cron 规则",
   "executionIdleHint": "仅在已配置的夜间窗口内，且应用空闲时执行。",
+  "executionWorkspaceRequired": "请先选择工作区，再选择自动执行方式。",
   "executionNextRun": "下次执行：{{time}}",
   "executionActive": "已启用",
   "executionPaused": "已暂停",

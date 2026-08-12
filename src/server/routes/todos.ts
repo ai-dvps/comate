@@ -46,12 +46,32 @@ function validateExecutionInput(input: Partial<CreateTodoInput | UpdateTodoInput
   return null;
 }
 
+function validateAutomationWorkspace(
+  executionType: Todo['executionType'],
+  executionStatus: Todo['executionStatus'],
+  workspaceId: string | null,
+): string | null {
+  const isAutomatic = executionType !== 'manual';
+  if (isAutomatic && executionStatus === 'active' && !workspaceId) {
+    return 'Select a workspace before enabling automatic execution';
+  }
+  return null;
+}
+
 /** Include list-only run information without changing the persisted Todo model. */
 function withLatestRuns(todos: Todo[]): Array<Todo & { latestRun: { status: string; fireAt: string } | null }> {
   const latestRuns = new Map(
     store.latestRunsPerTodo().map((run) => [run.todoId, { status: run.status, fireAt: run.fireAt }]),
   );
   return todos.map((todo) => ({ ...todo, latestRun: latestRuns.get(todo.id) ?? null }));
+}
+
+function withLatestRun(todo: Todo): Todo & { latestRun: { status: string; fireAt: string } | null } {
+  const latestRun = store.getLatestTodoRun(todo.id);
+  return {
+    ...todo,
+    latestRun: latestRun ? { status: latestRun.status, fireAt: latestRun.fireAt } : null,
+  };
 }
 
 /** Redact any GitHub-derived error before it reaches a logger or response (R13). */
@@ -97,6 +117,15 @@ router.post('/', async (req, res) => {
       return;
     }
     const workspaceId = workspaceIdFromReq(req);
+    const automationWorkspaceErr = validateAutomationWorkspace(
+      input.executionType ?? 'manual',
+      input.executionStatus ?? 'active',
+      workspaceId,
+    );
+    if (automationWorkspaceErr) {
+      res.status(400).json({ error: automationWorkspaceErr });
+      return;
+    }
     const created = store.createTodo(workspaceId, {
       text: input.text,
       content: input.content,
@@ -147,6 +176,26 @@ router.put('/:todoId', async (req, res) => {
       return;
     }
 
+    const changesAutomation = input.executionType !== undefined
+      || input.executionStatus !== undefined
+      || input.workspaceId !== undefined;
+    if (changesAutomation) {
+      const existing = store.getTodoById(todoId);
+      if (!existing) {
+        res.status(404).json({ error: 'Todo not found' });
+        return;
+      }
+      const automationWorkspaceErr = validateAutomationWorkspace(
+        input.executionType ?? existing.executionType,
+        input.executionStatus ?? existing.executionStatus,
+        input.workspaceId !== undefined ? input.workspaceId : existing.workspaceId,
+      );
+      if (automationWorkspaceErr) {
+        res.status(400).json({ error: automationWorkspaceErr });
+        return;
+      }
+    }
+
     let todo = store.updateTodo(todoId, input);
     if (!todo) {
       res.status(404).json({ error: 'Todo not found' });
@@ -156,7 +205,7 @@ router.put('/:todoId', async (req, res) => {
       const scheduleChanged = input.executionType !== undefined || input.scheduleTime !== undefined || input.cronExpr !== undefined || input.executionStatus === 'active';
       if (scheduleChanged) todo = store.updateTodo(todoId, { nextFireAt: todoSchedulerService.recomputeNextFire(todo) })!;
     }
-    res.json({ todo });
+    res.json({ todo: withLatestRun(todo) });
   } catch (error) {
     diagLog('[todos] Failed to update todo: ' + (error instanceof Error ? error.message : String(error)));
     res.status(500).json({ error: 'Failed to update todo' });
