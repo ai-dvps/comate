@@ -144,6 +144,28 @@ describe('global todo routes (U2)', () => {
     assert.strictEqual((res.jsonBody as { todo: { workspaceId: string } }).todo.workspaceId, workspaceId);
   });
 
+  it('POST / rejects automated execution without a workspace', async () => {
+    const res = await call('post', '/', {
+      params: {},
+      body: { text: 'night work', executionType: 'idle' },
+    });
+    assert.strictEqual(res.statusCode, 400);
+    assert.deepStrictEqual(res.jsonBody, {
+      error: 'Select a workspace before enabling automatic execution',
+    });
+  });
+
+  it('POST / accepts automated execution under a workspace mount', async () => {
+    const res = await call('post', '/', {
+      params: { id: workspaceId },
+      body: { text: 'night work', executionType: 'idle' },
+    });
+    assert.strictEqual(res.statusCode, 201);
+    const todo = (res.jsonBody as { todo: { workspaceId: string; executionType: string } }).todo;
+    assert.strictEqual(todo.workspaceId, workspaceId);
+    assert.strictEqual(todo.executionType, 'idle');
+  });
+
   it('POST / rejects empty text', async () => {
     const res = await call('post', '/', { params: {}, body: { text: '   ' } });
     assert.strictEqual(res.statusCode, 400);
@@ -156,6 +178,78 @@ describe('global todo routes (U2)', () => {
     const todo = (res.jsonBody as { todo: { status: string; dueDate: string } }).todo;
     assert.strictEqual(todo.status, 'done');
     assert.strictEqual(todo.dueDate, '2026-08-01');
+  });
+
+  it('PUT /:todoId rejects enabling automated execution without a workspace', async () => {
+    const created = store.createTodo(null, { text: 'global todo', executionType: 'manual' });
+    const res = await call('put', '/:todoId', {
+      params: { todoId: created.id },
+      body: { executionType: 'idle', executionStatus: 'active' },
+    });
+    assert.strictEqual(res.statusCode, 400);
+    assert.deepStrictEqual(res.jsonBody, {
+      error: 'Select a workspace before enabling automatic execution',
+    });
+    assert.strictEqual(store.getTodoById(created.id)?.executionType, 'manual');
+  });
+
+  it('PUT /:todoId accepts repairing a workspace-less disabled idle todo', async () => {
+    const created = store.createTodo(null, {
+      text: 'legacy idle todo',
+      executionType: 'idle',
+      executionStatus: 'disabled',
+    });
+    const res = await call('put', '/:todoId', {
+      params: { todoId: created.id },
+      body: { workspaceId, executionStatus: 'active' },
+    });
+    assert.strictEqual(res.statusCode, 200);
+    const todo = (res.jsonBody as { todo: { workspaceId: string; executionStatus: string } }).todo;
+    assert.strictEqual(todo.workspaceId, workspaceId);
+    assert.strictEqual(todo.executionStatus, 'active');
+  });
+
+  it('PUT /:todoId rejects clearing the workspace from active automation', async () => {
+    const created = store.createTodo(workspaceId, {
+      text: 'active idle todo',
+      executionType: 'idle',
+      executionStatus: 'active',
+    });
+    const res = await call('put', '/:todoId', {
+      params: { todoId: created.id },
+      body: { workspaceId: null },
+    });
+
+    assert.strictEqual(res.statusCode, 400);
+    assert.deepStrictEqual(res.jsonBody, {
+      error: 'Select a workspace before enabling automatic execution',
+    });
+    assert.strictEqual(store.getTodoById(created.id)?.workspaceId, workspaceId);
+  });
+
+  it('PUT /:todoId preserves the latest run summary in its response', async () => {
+    const created = store.createTodo(workspaceId, {
+      text: 'completed idle todo',
+      executionType: 'idle',
+      executionStatus: 'disabled',
+    });
+    store.createTodoRun({
+      todoId: created.id,
+      status: 'succeeded',
+      fireAt: '2026-08-12T00:00:00.000Z',
+      instructionSnapshot: 'completed work',
+    });
+
+    const res = await call('put', '/:todoId', {
+      params: { todoId: created.id },
+      body: { text: 'renamed todo' },
+    });
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.deepStrictEqual((res.jsonBody as { todo: { latestRun: unknown } }).todo.latestRun, {
+      status: 'succeeded',
+      fireAt: '2026-08-12T00:00:00.000Z',
+    });
   });
 
   it('PUT /:todoId 404s for an unknown todo', async () => {
