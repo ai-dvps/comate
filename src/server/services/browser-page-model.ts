@@ -217,6 +217,26 @@ export interface RefEntry {
   interactionClass?: InteractionClass;
 }
 
+/**
+ * Trusted-side visual evidence attached only after a decision observation is
+ * accepted. It is deliberately not execution input: U2 may use it to prove a
+ * candidate came from the same observation before resolving the backend node.
+ */
+export interface RefObservationBinding {
+  observationId: string;
+  documentIdentity: BrowserDocumentIdentity;
+  pageRevision: string;
+  controlEpoch: string;
+  capabilityEpoch: string;
+  structuralChecksum: string;
+  geometry: { x: number; y: number; width: number; height: number };
+  visible: boolean;
+  inViewport: boolean;
+  occluded: boolean;
+  enabled: boolean;
+  editable: boolean;
+}
+
 export interface ElementFingerprint {
   tag: string;
   type: string;
@@ -415,6 +435,7 @@ export function sanitizeUntrustedPageText(value: unknown, limit = 160): { source
 
 export class RefTable {
   private entries = new Map<string, RefEntry>();
+  private observationBindings = new Map<string, RefObservationBinding>();
   private batch: RefBatchKey | null = null;
   private counter = 0;
   /**
@@ -432,12 +453,14 @@ export class RefTable {
   beginBatch(batch: RefBatchKey): void {
     this.batch = batch;
     this.entries.clear();
+    this.observationBindings.clear();
     this.counter = 0;
     this.nonce = randomBytes(8).toString('hex');
   }
 
   clear(): void {
     this.entries.clear();
+    this.observationBindings.clear();
     this.batch = null;
     this.counter = 0;
   }
@@ -454,6 +477,27 @@ export class RefTable {
 
   get(ref: string): RefEntry | undefined {
     return this.entries.get(ref);
+  }
+
+  /** Snapshot the current trusted entries without exposing the mutable map. */
+  currentEntries(): RefEntry[] {
+    return [...this.entries.values()];
+  }
+
+  bindObservation(ref: string, binding: RefObservationBinding): void {
+    const entry = this.entries.get(ref);
+    if (!entry || !sameBrowserDocumentIdentity(entry.batch, binding.documentIdentity)) {
+      throw new Error(`Cannot bind stale ref "${ref}" to decision observation`);
+    }
+    this.observationBindings.set(ref, Object.freeze({
+      ...binding,
+      documentIdentity: Object.freeze({ ...binding.documentIdentity }),
+      geometry: Object.freeze({ ...binding.geometry }),
+    }));
+  }
+
+  getObservationBinding(ref: string): RefObservationBinding | undefined {
+    return this.observationBindings.get(ref);
   }
 
   /**
@@ -1469,14 +1513,15 @@ function normalizedFieldRole(
 export async function distillPageModel(
   source: PageModelSource,
   refTable: RefTable,
-  options: { maxContentChars?: number; maxActions?: number } = {},
+  options: { maxContentChars?: number; maxActions?: number; coherenceRetries?: number } = {},
 ): Promise<PageModel> {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  const attempts = Math.max(1, Math.min(2, Math.floor(options.coherenceRetries ?? 1) + 1));
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       return await distillPageModelOnce(source, refTable, options);
     } catch (error) {
       const documentChanged = error instanceof Error && /document identity changed|backend-node identity unavailable/.test(error.message);
-      if (!documentChanged || attempt === 1) throw error;
+      if (!documentChanged || attempt === attempts - 1) throw error;
     }
   }
   throw new Error('CDP document identity changed during page distillation');

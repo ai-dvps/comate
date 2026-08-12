@@ -103,6 +103,7 @@ const READONLY_TOOLS: readonly string[] = [
   'WebFetch',
   // Browser read-only probes (U4, KTD-4 ③: annotated readOnlyHint in U3).
   BROWSER_TOOL_NAMES.getPageState,
+  BROWSER_TOOL_NAMES.getDecisionObservation,
   BROWSER_TOOL_NAMES.takeScreenshot,
   BROWSER_TOOL_NAMES.extract,
   BROWSER_TOOL_NAMES.findElements,

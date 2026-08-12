@@ -298,8 +298,8 @@ export interface BrowserCdpSession {
   callBackendNode?<T>(backendNodeId: number, functionDeclaration: string): Promise<T | null>;
   /** Resolve an AX-backed ref without accepting an arbitrary selector. */
   inspectBackendNode?(backendNodeId: number, functionDeclaration: string): Promise<InspectedElement | null>;
-  /** JPEG base64 (bare, no data-URL prefix) for MCP image blocks. */
-  captureScreenshot(): Promise<string>;
+  /** Bare base64 screenshot. Existing callers default to bounded JPEG. */
+  captureScreenshot(options?: { format?: 'jpeg' | 'png'; quality?: number }): Promise<string>;
   /**
    * Browser-profile cookie write (Network.setCookies) — the remembered-site
    * injection path; MUST run before the first navigation so the initial
@@ -937,10 +937,13 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
     }
   }
 
-  async captureScreenshot(): Promise<string> {
+  async captureScreenshot(options: { format?: 'jpeg' | 'png'; quality?: number } = {}): Promise<string> {
+    const format = options.format ?? 'jpeg';
+    const params: Record<string, unknown> = { format };
+    if (format === 'jpeg') params.quality = options.quality ?? 70;
     const result = await this.connection.send<{ data: string }>(
       'Page.captureScreenshot',
-      { format: 'jpeg', quality: 70 },
+      params,
       this.sessionId,
     );
     return result.data;
