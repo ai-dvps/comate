@@ -75,6 +75,19 @@
     "denialReason_asyncAgent": "This request was denied because it originated from an async agent.",
     "denialReason_default": "This request was denied: {{reason}}",
     "securityManifestRequest": "Approval request",
+    "securityManifestInvalid": "This approval cannot be confirmed because its security manifest is missing or invalid.",
+    "browserDeclaration": {
+      "warning": "Only you can confirm this factual, rights, consent, or eligibility declaration.",
+      "exactAction": "Set this declaration to: {{state}}.",
+      "checked": "checked",
+      "unchecked": "unchecked",
+      "userIntent": "Application-bound intent and task summary",
+      "summary": "Task version {{taskVersion}} · {{populatedSlots}} populated · {{verifiedSlots}} verified · {{mediaSlots}} media slots",
+      "untrustedPageText": "Untrusted page-provided declaration",
+      "labelUnavailable": "The page did not expose a readable declaration label.",
+      "confirmAction": "Confirm declaration",
+      "decideLater": "Decide later"
+    },
     "browserActivation": {
       "reconfirmation": "The page summary changed after your previous approval. Review it again before allowing one activation.",
       "origin": "Page origin",

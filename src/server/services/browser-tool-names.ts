@@ -31,6 +31,7 @@ export const BROWSER_TOOL_NAMES = {
   stopNetworkCapture: `${BROWSER_TOOL_PREFIX}stopNetworkCapture`,
   authenticatedRequest: `${BROWSER_TOOL_PREFIX}authenticatedRequest`,
   act: `${BROWSER_TOOL_PREFIX}act`,
+  setDeclaration: `${BROWSER_TOOL_PREFIX}setDeclaration`,
   activate: `${BROWSER_TOOL_PREFIX}activate`,
   upload: `${BROWSER_TOOL_PREFIX}upload`,
   submit: `${BROWSER_TOOL_PREFIX}submit`,

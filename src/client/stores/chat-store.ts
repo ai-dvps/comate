@@ -434,7 +434,7 @@ export interface ChatState {
     workspaceId: string,
     sessionId: string,
     requestId: string,
-    result: { behavior: 'allow' | 'deny'; updatedPermissions?: PermissionSuggestion[]; answers?: Record<string, string>; questions?: QuestionPayload[]; message?: string },
+    result: { behavior: 'allow' | 'deny' | 'later'; updatedPermissions?: PermissionSuggestion[]; answers?: Record<string, string>; questions?: QuestionPayload[]; message?: string },
   ) => Promise<void>
   interruptSession: (workspaceId: string, sessionId: string) => Promise<void>
   stopBackgroundTask: (workspaceId: string, sessionId: string, taskId: string) => Promise<void>
@@ -3337,7 +3337,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     sessionId: string,
     requestId: string,
     result: {
-      behavior: 'allow' | 'deny'
+      behavior: 'allow' | 'deny' | 'later'
       updatedPermissions?: PermissionSuggestion[]
       answers?: Record<string, string>
       questions?: QuestionPayload[]

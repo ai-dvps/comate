@@ -1,5 +1,6 @@
 import type { CallToolResult as CallToolResultType } from '@modelcontextprotocol/sdk/types.js';
 import { createHash, randomUUID } from 'node:crypto';
+import { createBrowserBinding } from '../utils/credential-crypto.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { z, type ZodRawShape, type ZodType } from 'zod';
 import {
@@ -213,11 +214,15 @@ export interface BrowserApprovalRequest {
   payload: Record<string, unknown>;
   /** Turn-abort propagation from the MCP handler extra. */
   signal?: AbortSignal;
+  /** Handler-owned fixed TTL; never accepted from MCP input. */
+  timeoutMs?: number;
 }
 
 export type BrowserApprovalDecision =
   | { behavior: 'allow' }
-  | { behavior: 'deny'; message?: string };
+  | { behavior: 'deny'; message?: string }
+  | { behavior: 'later'; message?: string }
+  | { behavior: 'timeout' | 'revoked'; message?: string };
 
 /**
  * Implemented by chat-service: lazily resolves the session's live runtime and
@@ -521,7 +526,7 @@ function parseToolPayload(result: CallToolResult): Record<string, unknown> {
 function mutationDeltaKind(
   action: BrowserMutationRequest['action'],
 ): BrowserOperationReceipt['delta']['kind'] {
-  if (action === 'fill' || action === 'select' || action === 'check' || action === 'upload') return 'field';
+  if (action === 'fill' || action === 'select' || action === 'check' || action === 'declaration' || action === 'upload') return 'field';
   if (action === 'submit' || action === 'activation') return 'activation';
   return 'none';
 }
@@ -2183,6 +2188,200 @@ export class BrowserToolContext {
     }
   }
 
+  // -- declaration (application-owned factual/rights authority) ------------
+
+  async handleSetDeclaration(
+    args: { operationId: string; ref: string; intendedState: boolean; taskBinding: TaskMutationBinding },
+    extra?: unknown,
+    authorizeDispatch?: () => Promise<boolean>,
+    recordApproved?: () => Promise<boolean>,
+  ): Promise<CallToolResult> {
+    const gate = this.controlGate('control');
+    if (gate) return gate;
+    const tasks = this.deps.taskState;
+    if (!tasks) return this.taskUnavailable();
+    const signal = (extra as { signal?: AbortSignal } | undefined)?.signal;
+    const initialTask = tasks.getActive(this.taskScope());
+    const slot = initialTask?.slots.find((candidate) => candidate.slotKey === args.taskBinding.slotKey);
+    if (!initialTask || initialTask.taskId !== args.taskBinding.taskId ||
+        initialTask.version !== args.taskBinding.taskVersion || !slot ||
+        !slot.slotKey.startsWith('declaration_')) {
+      return toolError('browser_declaration_binding_stale', 'control', 'Declaration authority requires the current declaration task slot.', 'Read task state and propose fresh declaration evidence.');
+    }
+    const page = await this.ensurePage();
+    const resolved = await this.resolveCurrentRef(page, args.ref);
+    if (!isRefEntry(resolved)) return resolved;
+    const target = resolved;
+    if (target.kind !== 'field' || !['checkbox', 'radio'].includes(target.fingerprint.type) || !page.callBackendNode) {
+      return toolError('browser_declaration_target_invalid', 'ref_resolve', 'The declaration target is not a trusted checkbox or radio field.', 'Use a declaration field ref from the current coherent observation.');
+    }
+    const observationBinding = this.refTable.getObservationBinding(args.ref);
+    const initialObservation = this.latestDecisionObservation;
+    if (!observationBinding || !initialObservation || initialObservation.observationId !== args.taskBinding.observationId) {
+      return toolError('browser_declaration_binding_stale', 'control', 'The declaration ref has no current observation binding.', 'Capture a fresh decision observation.');
+    }
+    const trustedProbe = await page.inspectBackendNodeState?.(target.backendNodeId).catch(() => undefined);
+    if (trustedProbe?.status !== 'ready') {
+      return toolError('browser_declaration_target_unsafe', 'toctou', `The declaration target is not safely actionable: ${trustedProbe?.status ?? 'unavailable'}.`, 'Observe a visible, enabled, unobscured declaration control.');
+    }
+    const before = await page.callBackendNode<{ ok: boolean; checked?: boolean }>(target.backendNodeId, buildBackendCheckStateFunction());
+    if (!before?.ok || typeof before.checked !== 'boolean') {
+      return toolError('browser_declaration_target_invalid', 'ref_resolve', 'The declaration target is no longer checkable.', 'Capture fresh declaration evidence.');
+    }
+    const initialDetails = await page.inspectBackendNode?.(target.backendNodeId, buildInspectElementFunction());
+    if (!initialDetails) return toolError('browser_declaration_target_invalid', 'ref_resolve', 'The declaration context is unavailable.', 'Capture fresh declaration evidence.');
+    const trustedDeclarationRaw = [initialDetails.role, initialDetails.name, initialDetails.nearbyText]
+      .filter((value): value is string => typeof value === 'string' && value.length > 0).join('\0').slice(0, 1800);
+    const declarationDigest = createHash('sha256').update(trustedDeclarationRaw.normalize('NFC')).digest('hex');
+    const declaration = sanitizeUntrustedPageText(trustedDeclarationRaw.replace(/\0/g, ' · '), 600);
+    const targetBinding = {
+      document: target.batch, backendNodeId: target.backendNodeId, fingerprint: target.fingerprint,
+      observationId: observationBinding.observationId, controlEpoch: observationBinding.controlEpoch,
+      capabilityEpoch: observationBinding.capabilityEpoch,
+    };
+    const requestId = `browser-declaration-${randomUUID()}`;
+    const requestBindingValue = {
+      requestId, taskId: initialTask.taskId, taskVersion: initialTask.version,
+      slotKey: slot.slotKey, declarationDigest, intendedState: args.intendedState,
+      target: targetBinding, capabilityId: this.taskScope().capabilityId,
+      runtimeGeneration: this.taskScope().runtimeGeneration, operationId: args.operationId,
+      documentIdentity: initialObservation.documentIdentityDigest,
+      structuralChecksum: initialObservation.structuralChecksum,
+      controlEpoch: initialObservation.controlEpoch,
+    };
+    const requestBinding = createBrowserBinding('declaration-request', requestBindingValue);
+    let awaiting;
+    try {
+      awaiting = tasks.beginDeclarationRequest(this.taskScope(), initialTask.taskId, initialTask.version, slot.slotKey, requestBinding);
+    } catch {
+      return toolError('browser_declaration_binding_stale', 'control', 'The declaration request raced with another task transition.', 'Read current task state before asking again.');
+    }
+    const revoke = (decision: 'approved' | 'denied' | 'later' | 'revoked') => {
+      const current = tasks.getActive(this.taskScope());
+      if (!current || current.taskId !== awaiting.taskId) return null;
+      try {
+        return tasks.consumeDeclarationRequest(this.taskScope(), current.taskId, current.version, slot.slotKey, requestBinding, decision);
+      } catch { return null; }
+    };
+    const decision = await this.requestApproval({
+      requestId,
+      toolName: BROWSER_TOOL_NAMES.setDeclaration,
+      title: 'Confirm declaration authority',
+      description: 'Review the exact declaration. This single-use confirmation cannot be inferred from page state or chat text.',
+      timeoutMs: 10 * 60_000,
+      payload: {
+        kind: 'browser_declaration', origin: originOf(this.lastModel?.url ?? ''), intendedState: args.intendedState,
+        declaration,
+        taskSummary: {
+          source: 'derived_metadata', taskVersion: initialTask.version,
+          populatedSlots: initialTask.slots.filter((item) => item.population === 'populated').length,
+          verifiedSlots: initialTask.slots.filter((item) => item.validation === 'verified').length,
+          mediaSlots: initialTask.slots.filter((item) => item.slotKey.startsWith('media_')).length,
+        },
+      },
+    }, signal);
+    if (!isApprovalDecision(decision)) { revoke('revoked'); return decision; }
+    const terminal = decision.behavior === 'allow' ? 'approved'
+      : decision.behavior === 'later' ? 'later'
+        : decision.behavior === 'deny' ? 'denied' : 'revoked';
+    const consumed = revoke(terminal);
+    if (!consumed) return toolError('browser_declaration_request_consumed', 'approval', 'This declaration request is no longer pending.', 'Read task state and create a fresh declaration request if needed.');
+    if (decision.behavior !== 'allow') {
+      this.audit.logToolAction({ workspaceId: this.deps.workspaceId, sessionId: this.deps.sessionId,
+        toolName: BROWSER_TOOL_NAMES.setDeclaration, url: this.lastModel?.url, outcome: 'denied',
+        detail: `declaration=${terminal}` });
+      return toolJson({ ok: false, declarationSet: false, reason: terminal });
+    }
+    if (!await (this.deps.isInvocationCurrent ?? (() => true))() || this.controlGate('control')) return mutationAuthorizationError();
+    const freshObservation = await this.handleGetDecisionObservation({ signal });
+    if (freshObservation.isError || !this.latestDecisionObservation ||
+        this.latestDecisionObservation.documentIdentityDigest !== initialObservation.documentIdentityDigest ||
+        this.latestDecisionObservation.structuralChecksum !== initialObservation.structuralChecksum ||
+        this.latestDecisionObservation.controlEpoch !== initialObservation.controlEpoch) {
+      return toolError('browser_declaration_content_changed', 'toctou', 'Task-relevant page content changed while declaration approval was pending.', 'The approval was consumed; review current content and request again.');
+    }
+    const currentResolved = this.refTable.currentEntries().find((entry) =>
+      entry.backendNodeId === targetBinding.backendNodeId && sameElementFingerprint(entry.fingerprint, targetBinding.fingerprint));
+    const currentTask = tasks.getActive(this.taskScope());
+    if (!currentResolved || !currentTask || currentTask.taskId !== consumed.taskId || currentTask.version !== consumed.version ||
+        !sameBrowserDocumentIdentity(currentResolved.batch, targetBinding.document) ||
+        currentResolved.backendNodeId !== targetBinding.backendNodeId ||
+        !sameElementFingerprint(currentResolved.fingerprint, targetBinding.fingerprint)) {
+      return toolError('browser_declaration_target_changed', 'toctou', 'The approved declaration target or task changed.', 'The approval was consumed; observe and request again.');
+    }
+    const currentProbe = await page.inspectBackendNodeState?.(target.backendNodeId).catch(() => undefined);
+    const currentState = await page.callBackendNode<{ ok: boolean; checked?: boolean }>(target.backendNodeId, buildBackendCheckStateFunction()).catch(() => null);
+    const currentDetails = await page.inspectBackendNode?.(target.backendNodeId, buildInspectElementFunction());
+    const currentDeclarationRaw = currentDetails ? [currentDetails.role, currentDetails.name, currentDetails.nearbyText]
+      .filter((value): value is string => typeof value === 'string' && value.length > 0).join('\0').slice(0, 1800) : '';
+    const currentDeclarationDigest = createHash('sha256').update(currentDeclarationRaw.normalize('NFC')).digest('hex');
+    if (currentProbe?.status !== 'ready' || !currentState?.ok || typeof currentState.checked !== 'boolean' ||
+        currentDeclarationDigest !== declarationDigest) {
+      return toolError('browser_declaration_target_changed', 'toctou', 'The approved declaration is no longer safely actionable.', 'The approval was consumed; observe and request again.');
+    }
+    if (recordApproved && !await recordApproved()) return mutationAuthorizationError();
+    let validationObservation = this.latestDecisionObservation;
+    let receipt: BrowserOperationReceipt;
+    if (currentState.checked === args.intendedState) {
+      receipt = { outcome: 'not_dispatched', dispatchState: 'not_dispatched', verified: true,
+        retrySafe: true, matchesRequested: true, delta: { kind: 'none', changed: false } };
+    } else {
+      receipt = await page.clickBackendNode(target.backendNodeId, authorizeDispatch);
+      if (receipt.outcome !== 'dispatched_verified') return toolJson({ ok: false, declarationSet: false, receipt });
+      const postObservationResult = await this.handleGetDecisionObservation({ signal });
+      validationObservation = this.latestDecisionObservation;
+      if (postObservationResult.isError || !validationObservation ||
+          validationObservation.documentIdentityDigest !== initialObservation.documentIdentityDigest ||
+          validationObservation.controlEpoch !== initialObservation.controlEpoch) {
+        return toolError('browser_declaration_post_observation_changed', 'toctou', 'The page changed before the declaration click could be coherently verified.', 'The click may have occurred, but no declaration authority was recorded; review the current page.');
+      }
+      const postTarget = this.refTable.currentEntries().find((entry) =>
+        entry.backendNodeId === targetBinding.backendNodeId &&
+        sameElementFingerprint(entry.fingerprint, targetBinding.fingerprint) &&
+        sameBrowserDocumentIdentity(entry.batch, targetBinding.document));
+      const [postProbe, after, postDetails] = await Promise.all([
+        page.inspectBackendNodeState?.(target.backendNodeId).catch(() => undefined),
+        page.callBackendNode<{ ok: boolean; checked?: boolean }>(target.backendNodeId, buildBackendCheckStateFunction()).catch(() => null),
+        page.inspectBackendNode?.(target.backendNodeId, buildInspectElementFunction()).catch(() => null),
+      ]);
+      const postDeclarationRaw = postDetails ? [postDetails.role, postDetails.name, postDetails.nearbyText]
+        .filter((value): value is string => typeof value === 'string' && value.length > 0).join('\0').slice(0, 1800) : '';
+      const postDeclarationDigest = createHash('sha256').update(postDeclarationRaw.normalize('NFC')).digest('hex');
+      if (!postTarget || postProbe?.status !== 'ready' || !after?.ok || after.checked !== args.intendedState ||
+          postDeclarationDigest !== declarationDigest) {
+        return toolError('browser_declaration_post_observation_changed', 'toctou', 'The declaration target or checked state changed before coherent verification completed.', 'The click may have occurred, but no declaration authority was recorded; review the current page.');
+      }
+      receipt = { ...receipt, matchesRequested: true, delta: { kind: 'field', changed: true } };
+    }
+    if (!validationObservation) {
+      return toolError('browser_declaration_observation_unavailable', 'toctou', 'No coherent observation is available to validate the declaration.', 'Review the current page and request declaration authority again.');
+    }
+    const authorityBinding = createBrowserBinding('declaration-authority', {
+      taskId: requestBindingValue.taskId, taskVersion: consumed.version, slotKey: requestBindingValue.slotKey,
+      declarationDigest: requestBindingValue.declarationDigest, intendedState: requestBindingValue.intendedState,
+      target: requestBindingValue.target, capabilityId: requestBindingValue.capabilityId,
+      runtimeGeneration: requestBindingValue.runtimeGeneration, operationId: requestBindingValue.operationId,
+      documentIdentity: validationObservation.documentIdentityDigest,
+      structuralChecksum: validationObservation.structuralChecksum,
+      observationId: validationObservation.observationId,
+      observationEpoch: validationObservation.observationEpoch,
+      controlEpoch: validationObservation.controlEpoch,
+    });
+    let confirmed;
+    try {
+      confirmed = tasks.confirmDeclarationAuthority(
+        this.taskScope(), consumed.taskId, consumed.version, slot.slotKey, authorityBinding,
+        { observationId: validationObservation.observationId, observationEpoch: validationObservation.observationEpoch },
+      );
+    } catch {
+      return toolError('browser_declaration_authority_persist_failed', 'toctou', 'The declaration state was checked but authority could not be persisted.', 'Do not proceed to final review; observe task state and ask again.');
+    }
+    this.audit.logToolAction({ workspaceId: this.deps.workspaceId, sessionId: this.deps.sessionId,
+      toolName: BROWSER_TOOL_NAMES.setDeclaration, url: this.lastModel?.url, outcome: 'ok',
+      detail: `declaration=confirmed;dispatch=${receipt.dispatchState}` });
+    return toolJson({ ok: true, declarationSet: true, authority: 'confirmed', taskVersion: confirmed.version, receipt });
+  }
+
   // -- upload (workspace-contained, handler-approved file egress) ----------
 
   async handleUpload(
@@ -3175,17 +3374,17 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
       signal: (extra as { signal?: AbortSignal } | undefined)?.signal ?? new AbortController().signal,
       isCurrent: deps.isInvocationCurrent ?? (() => true),
     });
-    const approvalRequired = action === 'activation' || action === 'upload' || action === 'submit' || action === 'close' || action === 'control';
+    const approvalRequired = action === 'declaration' || action === 'activation' || action === 'upload' || action === 'submit' || action === 'close' || action === 'control';
     const receipt = await mutations.execute(invocation, {
       action,
       privateParameters,
       deferredDispatchIntent: true,
       approvalRequired,
-      prepareDispatch: () => {
+      prepareDispatch: action === 'declaration' ? undefined : () => {
         taskPending = ctx.prepareTaskMutation(operationId, privateRecord.taskBinding, privateRecord.ref);
         return true;
       },
-      rollbackPreparedDispatch: () => ctx.cancelTaskMutation(taskPending, operationId),
+      rollbackPreparedDispatch: action === 'declaration' ? undefined : () => ctx.cancelTaskMutation(taskPending, operationId),
       dispatch: async (signal, authorizeDispatch, recordApproved) => {
         let dispatchAuthorized = false;
         const trackedAuthorize = async (): Promise<boolean> => {
@@ -3202,7 +3401,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
         taskId: privateRecord.taskBinding.taskId, taskVersion: privateRecord.taskBinding.taskVersion,
         operationId, outcome: receipt.outcome }); } catch { /* diagnostic only */ }
     }
-    await ctx.settleTaskMutation(taskPending, operationId, receipt);
+    if (action !== 'declaration') await ctx.settleTaskMutation(taskPending, operationId, receipt);
     return toolJson({ receipt });
   };
   const operationIdSchema = z.string().min(1).max(128)
@@ -3437,6 +3636,31 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     },
   );
 
+  const setDeclarationBase = tool(
+    'setDeclaration',
+    'Request application-owned user authority for one current declaration checkbox or radio. The declaration text is derived by the server from the trusted current ref; callers cannot provide page text, selectors, coordinates, or authority. A page-default checked state still requires confirmation.',
+    z.object({
+      operationId: operationIdSchema,
+      ref: z.string().min(1).max(128),
+      intendedState: z.boolean(),
+      taskBinding: taskMutationBindingSchema,
+    }).strict(),
+    async (args: { operationId?: string; ref: string; intendedState: boolean; taskBinding: TaskMutationBinding }, extra) => {
+      const taskError = ctx.validateTaskMutationBinding(args.taskBinding, args.ref);
+      if (taskError) return taskError;
+      return args.operationId ? executeMutation(
+        args.operationId, 'declaration',
+        { ref: args.ref, intendedState: args.intendedState, taskBinding: args.taskBinding }, extra,
+        (signal, authorize, recordApproved) => ctx.handleSetDeclaration(
+          { operationId: args.operationId!, ref: args.ref, intendedState: args.intendedState, taskBinding: args.taskBinding },
+          { ...(extra as object), signal }, authorize, recordApproved,
+        ),
+      ) : toolError('browser_operation_id_required', 'dispatch', 'Mutation tools require an operationId.', 'Retry once with a new caller-stable operationId.');
+    },
+    { annotations: { destructiveHint: true, openWorldHint: true } },
+  );
+  const setDeclarationDef = { ...setDeclarationBase, _meta: { 'anthropic/requiresUserInteraction': true } };
+
   const activateBase = tool(
     'activate',
     'Activate one page-supplied control with a trusted physical click. ALWAYS requires handler-level ' +
@@ -3634,6 +3858,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     findElementsDef,
     getElementDetailsDef,
     actDef,
+    setDeclarationDef,
     uploadDef,
     activateDef,
     takeScreenshotDef,

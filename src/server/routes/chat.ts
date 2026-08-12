@@ -4,6 +4,7 @@ import { chatService, ChatError } from '../services/chat-service.js';
 import { store } from '../storage/sqlite-store.js';
 import { botService } from '../services/bot-service.js';
 import { browserService } from '../services/browser-service.js';
+import { BROWSER_TOOL_NAMES } from '../services/browser-tool-names.js';
 import { clearBrowserGateSession } from '../services/browser-gate-state.js';
 import { diagLog } from '../utils/diag-logger.js';
 import { getLoopbackAuth } from '../services/security/loopback-auth.js';
@@ -232,8 +233,8 @@ router.post('/sessions/:sessionId/approvals/:requestId', async (req, res) => {
   const requestId = req.params.requestId;
   const { behavior, updatedPermissions, answers } = req.body;
 
-  if (!behavior || (behavior !== 'allow' && behavior !== 'deny')) {
-    res.status(400).json({ error: "behavior must be 'allow' or 'deny'" });
+  if (!behavior || (behavior !== 'allow' && behavior !== 'deny' && behavior !== 'later')) {
+    res.status(400).json({ error: "behavior must be 'allow', 'deny', or 'later'" });
     return;
   }
 
@@ -247,6 +248,15 @@ router.post('/sessions/:sessionId/approvals/:requestId', async (req, res) => {
     const runtime = chatService.getRuntimeIfExists(sessionId);
     if (!runtime) {
       res.status(404).json({ error: 'No active approval for this session', code: 'APPROVAL_NOT_FOUND' });
+      return;
+    }
+    const pending = runtime.getPendingCardState(requestId);
+    if (!pending || pending.type !== 'approval') {
+      res.status(409).json({ error: 'Approval is no longer pending', code: 'APPROVAL_NOT_FOUND' });
+      return;
+    }
+    if (behavior === 'later' && pending.toolName !== BROWSER_TOOL_NAMES.setDeclaration) {
+      res.status(400).json({ error: 'Decide later is only available for declaration approvals' });
       return;
     }
 
@@ -264,12 +274,19 @@ router.post('/sessions/:sessionId/approvals/:requestId', async (req, res) => {
     } else {
       result = {
         behavior: 'deny',
-        message: req.body.message || 'User denied this tool call.',
+        message: req.body.message || (behavior === 'later' ? 'User decided later.' : 'User denied this tool call.'),
       };
     }
 
     diagLog(`[Route] resolveApproval ${requestId} behavior=${behavior} source=desktop`);
-    runtime.resolveApproval(requestId, result, { source: 'desktop', approver: { type: 'user' } });
+    const resolved = runtime.resolveApproval(requestId, result, {
+      source: 'desktop', ...(behavior === 'later' ? { decision: 'later' as const } : behavior === 'deny' ? { decision: 'deny' as const } : {}),
+      approver: { type: 'user' },
+    });
+    if (!resolved) {
+      res.status(409).json({ error: 'Approval is no longer pending', code: 'APPROVAL_NOT_FOUND' });
+      return;
+    }
     res.json({ ok: true });
   } catch (error) {
     console.error('Failed to resolve approval:', error);

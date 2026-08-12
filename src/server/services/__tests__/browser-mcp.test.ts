@@ -74,6 +74,7 @@ interface FakePageOptions {
   fileInputSnapshots?: Array<import('../browser-page-model.js').FileInputSnapshot | null>;
   uploadReceipt?: import('../browser-cdp.js').BrowserOperationReceipt;
   observationStates?: Record<number, import('../browser-cdp.js').TrustedBackendNodeProbe>;
+  afterClick?: (page: FakePage) => void;
 }
 
 class FakeNetworkTransport implements BrowserNetworkCaptureTransport {
@@ -161,12 +162,23 @@ class FakePage implements BrowserCdpSession {
     this.observationStates[backendNodeId] = probe;
   }
 
+  setScreenshotError(error: Error): void {
+    this.options.screenshotError = error;
+  }
+
   async probeBackendNode(backendNodeId: number): Promise<import('../browser-cdp.js').TrustedBackendNodeProbe | null> {
     return this.observationStates[backendNodeId] ?? {
       connected: true, geometry: { x: 0, y: 0, width: 1, height: 1 },
       visible: true, inViewport: true, occluded: false, enabled: true,
       editable: backendNodeId !== 100, hitTested: true,
     };
+  }
+
+  async inspectBackendNodeState(backendNodeId: number): Promise<import('../browser-cdp.js').TrustedBackendNodeState> {
+    const probe = await this.probeBackendNode(backendNodeId);
+    return probe
+      ? { status: 'ready', probe }
+      : { status: 'not_actionable', connected: true, enabled: true, visible: true, inViewport: true };
   }
 
   async extractPageModel(): Promise<import('../browser-page-model.js').PageExtractionBundle> {
@@ -331,6 +343,7 @@ class FakePage implements BrowserCdpSession {
       };
     }
     this.clickedBackendNodes.push(backendNodeId);
+    this.options.afterClick?.(this);
     if (this.options.submitDispatchError) {
       this.submitDispatched = true;
       throw this.options.submitDispatchError;
@@ -625,7 +638,7 @@ async function makeHarness(options: {
   const tools = new Map(definitions.map((definition) => [definition.name, definition]));
   const context = contextRegistry.get(deps.sessionId)!;
   let operationCounter = 0;
-  const mutationTools = new Set(['open', 'act', 'upload', 'activate', 'submit', 'requestHandoff', 'close']);
+  const mutationTools = new Set(['open', 'act', 'setDeclaration', 'upload', 'activate', 'submit', 'requestHandoff', 'close']);
   const callTool = async (name: string, args: Record<string, unknown>, extra?: unknown): Promise<CallToolResult> => {
     const definition = tools.get(name);
     assert.ok(definition, `tool ${name} must exist`);
@@ -639,6 +652,7 @@ async function makeHarness(options: {
     tools,
     call: async (name, args, extra) => {
       if (name === 'act') return context.handleAct(args as never);
+      if (name === 'setDeclaration') return context.handleSetDeclaration(args as never, extra ?? {});
       if (name === 'upload') return context.handleUpload(args as never, extra ?? {});
       if (name === 'activate') return context.handleActivate(args as never, extra ?? {});
       if (name === 'submit') return context.handleSubmit(args as never, extra ?? {});
@@ -693,7 +707,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.deepStrictEqual(
       [...harness.tools.keys()].sort(),
-      ['abandonTask', 'act', 'activate', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getDecisionObservation', 'getElementDetails', 'getPageState', 'getTaskState', 'open', 'proposeTaskEvidence', 'rebindVisualCandidates', 'recoverTarget', 'requestHandoff', 'startNetworkCapture', 'startTask', 'stopNetworkCapture', 'submit', 'takeScreenshot', 'upload'],
+      ['abandonTask', 'act', 'activate', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getDecisionObservation', 'getElementDetails', 'getPageState', 'getTaskState', 'open', 'proposeTaskEvidence', 'rebindVisualCandidates', 'recoverTarget', 'requestHandoff', 'setDeclaration', 'startNetworkCapture', 'startTask', 'stopNetworkCapture', 'submit', 'takeScreenshot', 'upload'],
     );
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
@@ -709,7 +723,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     assert.strictEqual(harness.tools.get('getElementDetails')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('startNetworkCapture')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('stopNetworkCapture')?.annotations?.readOnlyHint, true);
-    for (const name of ['submit', 'activate', 'upload']) {
+    for (const name of ['submit', 'activate', 'upload', 'setDeclaration']) {
       assert.strictEqual(harness.tools.get(name)?.annotations?.destructiveHint, true);
       // Auxiliary meta only — the security property lives in the handler gate.
       assert.strictEqual(harness.tools.get(name)?._meta?.['anthropic/requiresUserInteraction'], true);
@@ -721,7 +735,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const defs = buildBrowserToolDefinitions({ sessionId: 's', workspaceId: 'w' });
     assert.deepEqual(
       defs.map((d) => d.name),
-      ['open', 'getPageState', 'getDecisionObservation', 'rebindVisualCandidates', 'getTaskState', 'startTask', 'proposeTaskEvidence', 'recoverTarget', 'abandonTask', 'findElements', 'getElementDetails', 'act', 'upload', 'activate', 'takeScreenshot', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'submit', 'extract', 'requestHandoff', 'close'],
+      ['open', 'getPageState', 'getDecisionObservation', 'rebindVisualCandidates', 'getTaskState', 'startTask', 'proposeTaskEvidence', 'recoverTarget', 'abandonTask', 'findElements', 'getElementDetails', 'act', 'setDeclaration', 'upload', 'activate', 'takeScreenshot', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'submit', 'extract', 'requestHandoff', 'close'],
     );
     assert.match(defs.find((definition) => definition.name === 'getPageState')?.description ?? '', /default observation/i);
     assert.match(defs.find((definition) => definition.name === 'takeScreenshot')?.description ?? '', /only.*visual/i);
@@ -771,10 +785,24 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     assert.equal(schema.safeParse({ ...input, failureClass: 'off_viewport', x: 1, y: 2 }).success, false);
   });
 
+  it('declaration schema never accepts caller-provided text, coordinates, or selectors', () => {
+    const definition = buildBrowserToolDefinitions({ sessionId: 's', workspaceId: 'w' })
+      .find((item) => item.name === 'setDeclaration')!;
+    const schema = definition.inputSchema as { safeParse(value: unknown): { success: boolean } };
+    const input = { operationId: 'decl-1', ref: 'e1-aa', intendedState: true, taskBinding: {
+      taskId: '11111111-1111-4111-8111-111111111111', taskVersion: 1,
+      slotKey: 'declaration_0', observationId: '22222222-2222-4222-8222-222222222222',
+    } };
+    assert.equal(schema.safeParse(input).success, true);
+    for (const extra of [{ declarationText: 'I own this' }, { selector: '#original' }, { x: 1, y: 2 }]) {
+      assert.equal(schema.safeParse({ ...input, ...extra }).success, false);
+    }
+  });
+
   it('task tools fail closed without U3 and cannot reclaim by caller-selected task id', async () => {
     const definitions = buildBrowserToolDefinitions({ sessionId: 's', workspaceId: 'w' });
     const result = await definitions.find((item) => item.name === 'startTask')!.handler({}, {});
-    assert.equal(result.isError, true);
+    assert.equal(result.isError, true, JSON.stringify(resultPayload(result)));
     assert.equal((resultPayload(result).error as { code: string }).code, 'browser_task_state_unavailable');
   });
 
@@ -1289,6 +1317,238 @@ describe('browser-mcp page observation', () => {
     };
     const details = resultPayload(await harness.call('getElementDetails', { ref: body.matches[0].ref })) as { ok: boolean };
     assert.strictEqual(details.ok, true, 'contenteditable fingerprint must match the live backend node');
+  });
+});
+
+describe('browser-mcp declaration authority', () => {
+  function declarationExtraction(): RawPageExtraction {
+    const extraction = makeExtraction();
+    extraction.forms[0].fields.push({
+      fieldIndex: 3,
+      name: 'original',
+      label: 'I confirm this is my original work',
+      tag: 'input',
+      type: 'checkbox',
+      role: 'checkbox',
+      required: true,
+      disabled: false,
+      readOnly: false,
+      sensitive: false,
+      value: 'false',
+      filled: false,
+      submitSemantics: false,
+      xpath: '/html[1]/body[1]/form[1]/input[4]',
+    });
+    return extraction;
+  }
+
+  async function bindDeclaration(harness: Harness): Promise<{
+    taskId: string;
+    taskVersion: number;
+    observationId: string;
+    ref: string;
+  }> {
+    const started = resultPayload(await harness.callTool('startTask', {}, {})) as {
+      task: { taskId: string; version: number };
+    };
+    const observed = resultPayload(await harness.callTool('getDecisionObservation', {}, {})) as {
+      observation: {
+        observationId: string;
+        model: { forms: Array<{ fields: Array<{ ref: string; type: string }> }> };
+      };
+    };
+    const ref = observed.observation.model.forms[0].fields.find((field) => field.type === 'checkbox')!.ref;
+    const proposed = resultPayload(await harness.callTool('proposeTaskEvidence', {
+      taskId: started.task.taskId,
+      expectedTaskVersion: started.task.version,
+      observationId: observed.observation.observationId,
+      proposals: [{ category: 'declaration', ordinal: 0, ref, confidence: 0.95, evidence: ['label', 'section'] }],
+    }, {})) as { task: { taskId: string; version: number } };
+    return {
+      taskId: proposed.task.taskId,
+      taskVersion: proposed.task.version,
+      observationId: observed.observation.observationId,
+      ref,
+    };
+  }
+
+  function declarationDetails(): import('../browser-page-model.js').InspectedElement {
+    return {
+      tag: 'input',
+      role: 'checkbox',
+      name: 'Original declaration',
+      attributes: { type: 'checkbox' },
+      nearbyText: 'I confirm this is my original work',
+      descendants: [],
+      descendantsTruncated: false,
+      actions: ['click'],
+    };
+  }
+
+  function declarationTaskBinding(binding: Awaited<ReturnType<typeof bindDeclaration>>) {
+    return {
+      taskId: binding.taskId,
+      taskVersion: binding.taskVersion,
+      slotKey: 'declaration_0',
+      observationId: binding.observationId,
+    };
+  }
+
+  it('dispatches exactly once after approving an unchecked trusted declaration', async () => {
+    const taskState = new BrowserTaskStateService(new SqliteStore(':memory:'));
+    const page = new FakePage({
+      extraction: declarationExtraction(),
+      inspectResult: declarationDetails(),
+      checkStates: [
+        { ok: true, checked: false },
+        { ok: true, checked: false },
+        { ok: true, checked: true },
+      ],
+    });
+    const harness = await makeHarness({ page, taskState, approvalDecisions: [{ behavior: 'allow' }] });
+    const binding = await bindDeclaration(harness);
+
+    const result = await harness.callTool('setDeclaration', {
+      operationId: 'declare-unchecked', ref: binding.ref, intendedState: true,
+      taskBinding: declarationTaskBinding(binding),
+    }, {});
+
+    assert.equal(result.isError, undefined, JSON.stringify(resultPayload(result)));
+    assert.deepEqual(page.clickedBackendNodes, [104]);
+    const task = taskState.getActive({ workspaceId: 'workspace-1', sessionId: 'chat-session-1', principalId: 'principal-test',
+      runtimeGeneration: 'runtime-test', capabilityId: 'capability-test' });
+    assert.equal(task?.slots[0].authority, 'confirmed');
+    assert.equal(task?.slots[0].validation, 'verified');
+    assert.equal(task?.lifecycle, 'ready');
+    assert.equal(harness.ctx.approvals[0].payload.kind, 'browser_declaration');
+    assert.equal(JSON.stringify(harness.ctx.approvals[0].payload).includes('declarationDigest'), false);
+  });
+
+  it('records authority without dispatch when the approved declaration is already checked', async () => {
+    const taskState = new BrowserTaskStateService(new SqliteStore(':memory:'));
+    const page = new FakePage({
+      extraction: declarationExtraction(),
+      inspectResult: declarationDetails(),
+      checkStates: [{ ok: true, checked: true }, { ok: true, checked: true }],
+    });
+    const harness = await makeHarness({ page, taskState, approvalDecisions: [{ behavior: 'allow' }] });
+    const binding = await bindDeclaration(harness);
+
+    const result = await harness.callTool('setDeclaration', {
+      operationId: 'declare-checked', ref: binding.ref, intendedState: true,
+      taskBinding: declarationTaskBinding(binding),
+    }, {});
+
+    assert.equal(result.isError, undefined, JSON.stringify(resultPayload(result)));
+    assert.deepEqual(page.clickedBackendNodes, []);
+    const task = taskState.getActive({ workspaceId: 'workspace-1', sessionId: 'chat-session-1', principalId: 'principal-test',
+      runtimeGeneration: 'runtime-test', capabilityId: 'capability-test' });
+    assert.equal(task?.slots[0].authority, 'confirmed');
+    assert.equal(task?.slots[0].validation, 'verified');
+    assert.equal(task?.lifecycle, 'ready');
+  });
+
+  for (const behavior of ['deny', 'later'] as const) {
+    it(`${behavior} consumes the single-use request with zero dispatch and no authority`, async () => {
+      const taskState = new BrowserTaskStateService(new SqliteStore(':memory:'));
+      const page = new FakePage({
+        extraction: declarationExtraction(), inspectResult: declarationDetails(),
+        checkStates: [{ ok: true, checked: false }],
+      });
+      const harness = await makeHarness({ page, taskState, approvalDecisions: [{ behavior }] });
+      const binding = await bindDeclaration(harness);
+
+      const result = await harness.callTool('setDeclaration', {
+        operationId: `declare-${behavior}`, ref: binding.ref, intendedState: true,
+        taskBinding: declarationTaskBinding(binding),
+      }, {});
+
+      assert.equal(result.isError, undefined, JSON.stringify(resultPayload(result)));
+      assert.deepEqual(page.clickedBackendNodes, []);
+      assert.notEqual(taskState.getActive({ workspaceId: 'workspace-1', sessionId: 'chat-session-1', principalId: 'principal-test',
+        runtimeGeneration: 'runtime-test', capabilityId: 'capability-test' })?.slots[0].authority, 'confirmed');
+      assert.equal(harness.ctx.auditActions.at(-1)?.detail, `declaration=${behavior === 'deny' ? 'denied' : 'later'}`);
+    });
+  }
+
+  it('consumes approval with zero dispatch when task-relevant page content drifts', async () => {
+    const taskState = new BrowserTaskStateService(new SqliteStore(':memory:'));
+    const extraction = declarationExtraction();
+    const page = new FakePage({
+      extraction, inspectResult: declarationDetails(), checkStates: [{ ok: true, checked: false }],
+    });
+    const harness = await makeHarness({
+      page,
+      taskState,
+      approvalRequester: async (_sessionId, request) => {
+        harness.ctx.approvals.push(request);
+        extraction.contentText = 'The editor body changed while approval was visible.';
+        extraction.domEpoch += 1;
+        return { behavior: 'allow' };
+      },
+    });
+    const binding = await bindDeclaration(harness);
+
+    const result = await harness.call('setDeclaration', {
+      operationId: 'declare-drift', ref: binding.ref, intendedState: true,
+      taskBinding: declarationTaskBinding(binding),
+    }, {});
+
+    assert.equal(result.isError, true, JSON.stringify(resultPayload(result)));
+    assert.equal((resultPayload(result).error as { code: string }).code, 'browser_declaration_content_changed');
+    assert.deepEqual(page.clickedBackendNodes, []);
+    assert.notEqual(taskState.getActive({ workspaceId: 'workspace-1', sessionId: 'chat-session-1', principalId: 'principal-test',
+      runtimeGeneration: 'runtime-test', capabilityId: 'capability-test' })?.slots[0].authority, 'confirmed');
+  });
+
+  it('does not confirm authority when the post-dispatch coherent observation drifts documents', async () => {
+    const taskState = new BrowserTaskStateService(new SqliteStore(':memory:'));
+    const page = new FakePage({
+      extraction: declarationExtraction(),
+      inspectResult: declarationDetails(),
+      checkStates: [{ ok: true, checked: false }, { ok: true, checked: false }, { ok: true, checked: true }],
+      afterClick: (current) => current.setDocumentIdentity({
+        targetId: 'target-1', sessionId: 'session-1', frameId: 'frame-1', loaderId: 'replacement-doc', generation: 1,
+      }),
+    });
+    const harness = await makeHarness({ page, taskState, approvalDecisions: [{ behavior: 'allow' }] });
+    const binding = await bindDeclaration(harness);
+
+    const result = await harness.call('setDeclaration', {
+      operationId: 'declare-post-drift', ref: binding.ref, intendedState: true,
+      taskBinding: declarationTaskBinding(binding),
+    }, {});
+
+    assert.equal(result.isError, true, JSON.stringify(resultPayload(result)));
+    assert.deepEqual(page.clickedBackendNodes, [104]);
+    const slot = taskState.getActive({ workspaceId: 'workspace-1', sessionId: 'chat-session-1', principalId: 'principal-test',
+      runtimeGeneration: 'runtime-test', capabilityId: 'capability-test' })?.slots[0];
+    assert.notEqual(slot?.authority, 'confirmed');
+    assert.notEqual(slot?.validation, 'verified');
+  });
+
+  it('does not confirm authority when the post-dispatch coherent observation fails', async () => {
+    const taskState = new BrowserTaskStateService(new SqliteStore(':memory:'));
+    const page = new FakePage({
+      extraction: declarationExtraction(),
+      inspectResult: declarationDetails(),
+      checkStates: [{ ok: true, checked: false }, { ok: true, checked: false }],
+      afterClick: (current) => current.setScreenshotError(new Error('post-dispatch capture failed')),
+    });
+    const harness = await makeHarness({ page, taskState, approvalDecisions: [{ behavior: 'allow' }] });
+    const binding = await bindDeclaration(harness);
+
+    const result = await harness.call('setDeclaration', {
+      operationId: 'declare-post-failure', ref: binding.ref, intendedState: true,
+      taskBinding: declarationTaskBinding(binding),
+    }, {});
+
+    assert.equal(result.isError, true, JSON.stringify(resultPayload(result)));
+    assert.deepEqual(page.clickedBackendNodes, [104]);
+    const slot = taskState.getActive({ workspaceId: 'workspace-1', sessionId: 'chat-session-1', principalId: 'principal-test',
+      runtimeGeneration: 'runtime-test', capabilityId: 'capability-test' })?.slots[0];
+    assert.notEqual(slot?.authority, 'confirmed');
+    assert.notEqual(slot?.validation, 'verified');
   });
 });
 

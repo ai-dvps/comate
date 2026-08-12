@@ -4006,6 +4006,13 @@ export class SqliteStore {
     return this.db.transaction(() => {
       const current = this.getBrowserTask(taskId);
       if (!current || current.version !== expectedVersion) throw new Error('browser_task_stale');
+      if (patch.consumeBinding) {
+        const consumed = this.db.prepare(`
+          DELETE FROM browser_task_bindings
+          WHERE task_id = ? AND purpose = ? AND key_version = ? AND binding_digest = ?
+        `).run(taskId, patch.consumeBinding.purpose, patch.consumeBinding.keyVersion, patch.consumeBinding.digest);
+        if (consumed.changes !== 1) throw new Error('browser_task_binding_stale');
+      }
       const result = this.db.prepare(`
         UPDATE browser_tasks SET runtime_generation = ?, capability_id = ?, lifecycle = ?,
           version = version + 1, updated_at = ? WHERE task_id = ? AND version = ?
@@ -4015,8 +4022,23 @@ export class SqliteStore {
       if (result.changes !== 1) throw new Error('browser_task_stale');
       this.replaceBrowserTaskSlots(taskId, slots);
       if (patch.revokeBindings) this.db.prepare('DELETE FROM browser_task_bindings WHERE task_id = ?').run(taskId);
+      if (patch.putBinding) {
+        this.db.prepare(`
+          INSERT INTO browser_task_bindings (task_id, purpose, key_version, binding_digest)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(task_id, purpose) DO UPDATE SET
+            key_version = excluded.key_version, binding_digest = excluded.binding_digest
+        `).run(taskId, patch.putBinding.purpose, patch.putBinding.keyVersion, patch.putBinding.digest);
+      }
       return this.getBrowserTask(taskId)!;
     })();
+  }
+
+  getBrowserTaskBinding(taskId: string, purpose: string): { keyVersion: number; digest: string } | null {
+    const row = this.db.prepare(`
+      SELECT key_version, binding_digest FROM browser_task_bindings WHERE task_id = ? AND purpose = ?
+    `).get(taskId, purpose) as { key_version: number; binding_digest: string } | undefined;
+    return row ? { keyVersion: row.key_version, digest: row.binding_digest } : null;
   }
 
   consumeBrowserTaskObservation(workspaceId: string, sessionId: string, taskId: string, max: number): boolean {
@@ -4735,6 +4757,8 @@ export interface BrowserTaskCasPatch {
   capabilityId?: string;
   lifecycle: string;
   revokeBindings?: boolean;
+  putBinding?: { purpose: string; keyVersion: number; digest: string };
+  consumeBinding?: { purpose: string; keyVersion: number; digest: string };
 }
 
 export interface BrowserTaskStored extends BrowserTaskCreateInput {

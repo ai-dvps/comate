@@ -48,6 +48,7 @@ const baseProps = {
   onAllow: noop,
   onAllowAlways: noop,
   onDeny: noop,
+  onDecideLater: noop,
   onAnswerQuestion: noop,
   onChatAbout: noop,
   onStop: noop,
@@ -277,6 +278,45 @@ describe('ApprovalSurface browser activation and upload manifests', () => {
     expect(container.textContent).not.toContain('/Users/')
     expect(container.textContent).not.toContain('PRIVATE_FILE_BYTES')
     expect(screen.queryByText('approval.showMore')).not.toBeInTheDocument()
+  })
+})
+
+describe('ApprovalSurface browser declaration manifest', () => {
+  const pending = {
+    requestId: 'req-declaration', toolName: 'mcp__comate-browser__setDeclaration',
+    toolUseId: 'tu-declaration', inputSummary: '', title: 'Confirm declaration',
+    input: {
+      kind: 'browser_declaration', origin: 'https://example.com', intendedState: true,
+      declaration: { source: 'untrusted_page', text: 'This work is original' },
+      taskSummary: { source: 'derived_metadata', taskVersion: 7, populatedSlots: 3, verifiedSlots: 2, mediaSlots: 1 },
+    },
+  }
+
+  it('shows the trusted hierarchy and distinct single-use actions', () => {
+    const onAllowAlways = vi.fn()
+    const onDecideLater = vi.fn()
+    render(<ApprovalSurface {...baseProps} pendingItem={pending} onAllowAlways={onAllowAlways} onDecideLater={onDecideLater} />)
+    expect(screen.getByText('This work is original')).toBeInTheDocument()
+    expect(screen.getByText('approval.browserDeclaration.warning')).toBeInTheDocument()
+    expect(screen.queryByText('approval.allowAlways')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'approval.browserDeclaration.decideLater' }))
+    expect(onDecideLater).toHaveBeenCalledOnce()
+  })
+
+  it('does not let Cmd/Ctrl+Enter confirm a declaration', () => {
+    const onAllow = vi.fn()
+    render(<ApprovalSurface {...baseProps} pendingItem={pending} onAllow={onAllow} />)
+    fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true })
+    expect(onAllow).not.toHaveBeenCalled()
+  })
+
+  it('fails closed without exposing raw fallback data when the declaration manifest is malformed', () => {
+    render(<ApprovalSurface {...baseProps} pendingItem={{ ...pending, input: {
+      kind: 'browser_declaration', secret: 'RAW_PRIVATE_DIGEST', declaration: 'bad',
+    } }} />)
+    expect(screen.getByRole('alert')).toHaveTextContent('approval.securityManifestInvalid')
+    expect(screen.queryByText('RAW_PRIVATE_DIGEST')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'approval.browserDeclaration.confirmAction' })).toBeDisabled()
   })
 })
 

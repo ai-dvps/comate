@@ -880,10 +880,11 @@ describe('session-runtime U8 audience + resolution provenance', { concurrency: f
     });
     await new Promise((r) => setTimeout(r, 20));
 
-    runtime.resolveApproval('req-prov', { behavior: 'allow' }, {
+    assert.equal(runtime.resolveApproval('req-prov', { behavior: 'allow' }, {
       source: 'desktop',
       approver: { type: 'user' },
-    });
+    }), true);
+    assert.equal(runtime.resolveApproval('req-prov', { behavior: 'deny', message: 'late' }), false);
     await promise;
 
     assert.deepStrictEqual(runtime.consumeResolutionProvenance('req-prov'), {
@@ -891,6 +892,18 @@ describe('session-runtime U8 audience + resolution provenance', { concurrency: f
       approver: { type: 'user' },
     });
     assert.strictEqual(runtime.consumeResolutionProvenance('req-prov'), undefined);
+  });
+
+  it('preserves the typed decide-later provenance for handler-owned approvals', async () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    const promise = runtime.requestToolApproval('req-later', 'mcp__comate-browser__setDeclaration', 'req-later', {});
+    assert.equal(runtime.resolveApproval('req-later', { behavior: 'deny', message: 'Deferred by user.' }, {
+      source: 'desktop', decision: 'later', approver: { type: 'user' },
+    }), true);
+    assert.equal((await promise).behavior, 'deny');
+    assert.deepStrictEqual(runtime.consumeResolutionProvenance('req-later'), {
+      source: 'desktop', decision: 'later', approver: { type: 'user' },
+    });
   });
 
   it('timeoutDeny records provenance source=timeout', async () => {

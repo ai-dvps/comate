@@ -4,10 +4,11 @@ import { getToolRenderer, isSecurityManifestRenderer } from './registry'
 import './renderers/BrowserSubmitRenderer'
 import './renderers/BrowserActivationRenderer'
 import './renderers/BrowserUploadRenderer'
+import './renderers/BrowserDeclarationRenderer'
 
 describe('security manifest renderer registry', () => {
   it('keeps submit, activation, and upload manifests non-collapsible without browser branching', () => {
-    for (const toolName of [BROWSER_TOOL_NAMES.submit, BROWSER_TOOL_NAMES.activate, BROWSER_TOOL_NAMES.upload]) {
+    for (const toolName of [BROWSER_TOOL_NAMES.submit, BROWSER_TOOL_NAMES.activate, BROWSER_TOOL_NAMES.upload, BROWSER_TOOL_NAMES.setDeclaration]) {
       expect(getToolRenderer(toolName)).toBeTypeOf('function')
       expect(isSecurityManifestRenderer(toolName)).toBe(true)
     }

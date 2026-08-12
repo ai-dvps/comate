@@ -24,7 +24,7 @@ export interface BrowserInvocationScope {
 }
 
 export interface BrowserMutationRequest {
-  action: 'open' | 'fill' | 'select' | 'check' | 'submit' | 'activation' | 'upload' | 'close' | 'control';
+  action: 'open' | 'fill' | 'select' | 'check' | 'declaration' | 'submit' | 'activation' | 'upload' | 'close' | 'control';
   /** Used only to compute the private replay-binding digest; never persisted. */
   privateParameters: unknown;
   requestApproval?: (requestId: string, signal: AbortSignal) => Promise<boolean>;

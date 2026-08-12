@@ -75,6 +75,19 @@
     "denialReason_asyncAgent": "此请求因来自异步代理而被拒绝。",
     "denialReason_default": "此请求被拒绝：{{reason}}",
     "securityManifestRequest": "审批请求",
+    "securityManifestInvalid": "安全清单缺失或无效，无法确认此审批。",
+    "browserDeclaration": {
+      "warning": "只有你可以确认这项事实、权利、同意或资格声明。",
+      "exactAction": "将此声明设置为：{{state}}。",
+      "checked": "已勾选",
+      "unchecked": "未勾选",
+      "userIntent": "应用绑定的意图与任务摘要",
+      "summary": "任务版本 {{taskVersion}} · {{populatedSlots}} 项已填写 · {{verifiedSlots}} 项已验证 · {{mediaSlots}} 个媒体项",
+      "untrustedPageText": "页面提供的未受信任声明",
+      "labelUnavailable": "页面未提供可读的声明标签。",
+      "confirmAction": "确认声明",
+      "decideLater": "稍后决定"
+    },
     "browserActivation": {
       "reconfirmation": "页面摘要在你上次批准后发生变化。请再次检查后再允许一次激活。",
       "origin": "页面来源",

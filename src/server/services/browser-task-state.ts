@@ -6,6 +6,7 @@ import {
   type SqliteStore,
 } from '../storage/sqlite-store.js';
 import type { DecisionObservationBudget } from './browser-decision-observation.js';
+import type { BrowserBinding } from '../utils/credential-crypto.js';
 
 export type BrowserTaskLifecycle =
   | 'active' | 'awaiting-user' | 'validating' | 'ready' | 'blocked'
@@ -13,7 +14,7 @@ export type BrowserTaskLifecycle =
 export type SlotDiscovery = 'unavailable' | 'available' | 'blocked';
 export type SlotPopulation = 'empty' | 'populated';
 export type SlotValidation = 'unverified' | 'pending' | 'verified' | 'stale';
-export type SlotAuthority = 'not_required' | 'awaiting_user' | 'confirmed' | 'stale';
+export type SlotAuthority = 'not_required' | 'awaiting_user' | 'confirmed' | 'declined' | 'stale';
 export type PopulationBucket = 'empty' | 'short' | 'medium' | 'long' | 'present';
 export type BrowserTaskEvidenceClass = 'target_local' | 'business_completion';
 export type BrowserTaskRecoveryClass = 'off_viewport' | 'task_overlay';
@@ -101,12 +102,12 @@ function normalizeSlots(slots: BrowserTaskSlot[]): BrowserTaskSlot[] {
 
 export function deriveBrowserTaskLifecycle(slots: BrowserTaskSlot[]): BrowserTaskLifecycle {
   if (slots.some((slot) => slot.discovery === 'blocked')) return 'blocked';
-  if (slots.some((slot) => slot.authority === 'awaiting_user' || slot.authority === 'stale')) return 'awaiting-user';
+  if (slots.some((slot) => slot.authority === 'awaiting_user' || slot.authority === 'declined' || slot.authority === 'stale')) return 'awaiting-user';
   if (slots.some((slot) => slot.validation === 'pending')) return 'validating';
   const required = slots.filter((slot) => slot.required);
   if (required.length > 0 && required.every((slot) =>
     slot.discovery === 'available' && slot.population === 'populated' &&
-    slot.validation === 'verified' && slot.authority !== 'awaiting_user')) return 'ready';
+    slot.validation === 'verified' && (slot.authority === 'not_required' || slot.authority === 'confirmed'))) return 'ready';
   return 'active';
 }
 
@@ -195,9 +196,55 @@ export class BrowserTaskStateService {
       pendingCapabilityId: scope.capabilityId,
       pendingControlEpoch: input.controlEpoch,
       pendingEvidenceClass: input.evidenceClass,
-    } : slot);
+    } : slot.slotKey.startsWith('declaration_') && slot.authority === 'confirmed'
+      ? { ...slot, authority: 'stale' as const }
+      : slot);
     if (!slots.some((slot) => slot.slotKey === input.slotKey)) throw new Error('browser_task_slot_missing');
-    return this.cas(task, expectedVersion, slots);
+    return this.cas(task, expectedVersion, slots, { revokeBindings: true });
+  }
+
+  beginDeclarationRequest(scope: BrowserTaskScope, taskId: string, expectedVersion: number,
+    slotKey: string, binding: BrowserBinding): BrowserTaskState {
+    const task = this.requireCurrent(scope, taskId);
+    if (!slotKey.startsWith('declaration_') || !task.slots.some((slot) => slot.slotKey === slotKey)) {
+      throw new Error('browser_task_declaration_slot_missing');
+    }
+    return this.cas(task, expectedVersion, task.slots.map((slot) => slot.slotKey === slotKey
+      ? { ...slot, authority: 'awaiting_user' as const }
+      : slot), { putBinding: { purpose: declarationPurpose('request', slotKey), keyVersion: binding.version, digest: binding.digest } });
+  }
+
+  consumeDeclarationRequest(scope: BrowserTaskScope, taskId: string, expectedVersion: number,
+    slotKey: string, binding: BrowserBinding, decision: 'approved' | 'denied' | 'later' | 'revoked'): BrowserTaskState {
+    const task = this.requireCurrent(scope, taskId);
+    const authority: SlotAuthority = decision === 'denied' ? 'declined' : decision === 'revoked' ? 'stale' : 'awaiting_user';
+    return this.cas(task, expectedVersion, task.slots.map((slot) => slot.slotKey === slotKey
+      ? { ...slot, authority }
+      : slot), { consumeBinding: { purpose: declarationPurpose('request', slotKey), keyVersion: binding.version, digest: binding.digest } });
+  }
+
+  confirmDeclarationAuthority(scope: BrowserTaskScope, taskId: string, expectedVersion: number,
+    slotKey: string, binding: BrowserBinding,
+    evidence: { observationId: string; observationEpoch: number }): BrowserTaskState {
+    if (!ID.test(evidence.observationId) || !Number.isSafeInteger(evidence.observationEpoch) || evidence.observationEpoch < 0) {
+      throw new Error('invalid_browser_task_declaration_evidence');
+    }
+    const task = this.requireCurrent(scope, taskId);
+    return this.cas(task, expectedVersion, task.slots.map((slot) => slot.slotKey === slotKey
+      ? {
+          ...slot,
+          authority: 'confirmed' as const,
+          population: 'populated' as const,
+          validation: 'verified' as const,
+          evidenceId: evidence.observationId,
+          observationEpoch: evidence.observationEpoch,
+        }
+      : slot), { putBinding: { purpose: declarationPurpose('authority', slotKey), keyVersion: binding.version, digest: binding.digest } });
+  }
+
+  verifyDeclarationAuthority(taskId: string, slotKey: string, binding: BrowserBinding): boolean {
+    const stored = this.store.getBrowserTaskBinding(taskId, declarationPurpose('authority', slotKey));
+    return stored?.keyVersion === binding.version && stored.digest === binding.digest;
   }
 
   validateFromObservation(scope: BrowserTaskScope, taskId: string, expectedVersion: number, input: {
@@ -355,7 +402,7 @@ export class BrowserTaskStateService {
       required: task.slots.filter((slot) => slot.required).length,
       populatedPendingValidation: task.slots.filter((slot) => slot.population === 'populated' && slot.validation !== 'verified').length,
       verified: task.slots.filter((slot) => slot.validation === 'verified').length,
-      awaitingAuthority: task.slots.filter((slot) => slot.authority === 'awaiting_user' || slot.authority === 'stale').length,
+      awaitingAuthority: task.slots.filter((slot) => slot.authority === 'awaiting_user' || slot.authority === 'declined' || slot.authority === 'stale').length,
       recoveryExhausted: task.lifecycle === 'blocked' && this.store.hasBrowserTaskRecovery(task.taskId),
     };
   }
@@ -391,10 +438,14 @@ export class BrowserTaskStateService {
     return task ? fromStored(task) : null;
   }
 
-  private cas(task: BrowserTaskState, expectedVersion: number, slots: BrowserTaskSlot[]): BrowserTaskState {
+  private cas(task: BrowserTaskState, expectedVersion: number, slots: BrowserTaskSlot[], patch: {
+    revokeBindings?: boolean;
+    putBinding?: { purpose: string; keyVersion: number; digest: string };
+    consumeBinding?: { purpose: string; keyVersion: number; digest: string };
+  } = {}): BrowserTaskState {
     const normalized = normalizeSlots(slots);
     const updated = fromStored(this.store.casBrowserTask(task.taskId, expectedVersion, {
-      lifecycle: deriveBrowserTaskLifecycle(normalized),
+      lifecycle: deriveBrowserTaskLifecycle(normalized), ...patch,
     }, toStored(normalized)));
     this.emit(updated);
     return updated;
@@ -404,6 +455,11 @@ export class BrowserTaskStateService {
   private notify(workspaceId: string, sessionId: string, projection: BrowserTaskProjection | null): void {
     for (const listener of this.listeners) listener(workspaceId, sessionId, projection);
   }
+}
+
+function declarationPurpose(kind: 'request' | 'authority', slotKey: string): string {
+  const suffix = slotKey.replace(/_/g, '-').slice(-40);
+  return `declaration-${kind}-${suffix}`;
 }
 
 function taskRuntime(store: SqliteStore, taskId: string): string {
