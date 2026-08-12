@@ -41,8 +41,8 @@ test('the Electron development command rebuilds the server sidecar and CLIs befo
 
   assert.match(
     devCommand,
-    /^npm run build:sidecar\s*&&\s*concurrently\b/,
-    'dev:electron must rebuild the sidecar before starting the client and Electron watchers',
+    /^npm run patch:electron-dev-name\s*&&\s*npm run build:sidecar\s*&&\s*concurrently\b/,
+    'dev:electron must rebrand the macOS dev bundle and rebuild the sidecar before starting Electron',
   );
   assert.match(
     devCommand,
