@@ -36,7 +36,10 @@
     "outcome-unknown": "外部结果未知——请勿重复操作",
     "complete": "任务已完成",
     "abandoned": "任务已放弃",
-    "recoveryExhausted": "安全恢复次数已用尽 — 请接管或放弃任务"
+    "recoveryExhausted": "安全恢复次数已用尽 — 请接管或放弃任务",
+    "outcomePossibleDispatch": "发布操作可能已经发出，请勿重试。",
+    "outcomeEvidence": "证据：{{status}} · 上次检查 {{checked}}",
+    "neverChecked": "尚未检查"
   },
   "action": {
     "takeover": "接管",
@@ -52,7 +55,10 @@
     "closeNow": "立即关闭",
     "notNow": "暂不",
     "closeBrowser": "关闭浏览器",
-    "closeBrowserHint": "关闭浏览器并释放资源。登录态会保留，下次打开时自动恢复。"
+    "closeBrowserHint": "关闭浏览器并释放资源。登录态会保留，下次打开时自动恢复。",
+    "recheckOutcome": "重新检查",
+    "abandonTracking": "放弃跟踪",
+    "acknowledgeDuplicateRisk": "确认重复发布风险"
   },
   "popout": {
     "title": "浏览器 — 浮窗"

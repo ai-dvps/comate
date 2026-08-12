@@ -61,12 +61,22 @@ export interface SessionBrowserState {
 
 export type BrowserTaskLifecycle = 'active' | 'awaiting-user' | 'validating' | 'ready' | 'blocked' | 'outcome-unknown' | 'complete' | 'abandoned'
 export interface BrowserTaskProjection {
+  taskId?: string
+  version?: number
   lifecycle: BrowserTaskLifecycle
   required: number
   populatedPendingValidation: number
   verified: number
   awaitingAuthority: number
   recoveryExhausted?: boolean
+  outcome?: {
+    possibleDispatch: boolean
+    evidenceStatus: 'none' | 'insufficient' | 'conflicting' | 'durable'
+    lastCheckedAt: string | null
+    canRecheck: boolean
+    canAbandon: boolean
+    canAcknowledgeDuplicateRisk: boolean
+  }
 }
 
 export interface BrowserPaneState {
@@ -114,6 +124,7 @@ export interface BrowserPaneState {
   confirmIdleClose: (sessionId: string) => Promise<void>
   /** Idle banner "not now" (U3). */
   snoozeIdle: (sessionId: string) => Promise<void>
+  resolveTaskOutcome: (sessionId: string, action: 'recheck' | 'abandon' | 'acknowledge_duplicate_risk') => Promise<void>
 
   // Internal setters (driven by the WS listener; exported for tests).
   _applyBrowserState: (
@@ -396,6 +407,17 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
       } catch {
         /* noop */
       }
+    },
+
+    resolveTaskOutcome: async (sessionId, action) => {
+      const state = get()
+      const task = getSessionState(state, sessionId).task
+      if (!task?.outcome || !task.taskId || task.version === undefined || !state.activeWorkspaceId) return
+      const response = await fetch(`/api/browser/${encodeURIComponent(sessionId)}/task-outcome/${action}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workspaceId: state.activeWorkspaceId, taskId: task.taskId, expectedTaskVersion: task.version }),
+      })
+      if (!response.ok) throw new Error(`browser outcome reconciliation failed (${response.status})`)
     },
 
     setRememberSite: (sessionId: string, remember: boolean) => {

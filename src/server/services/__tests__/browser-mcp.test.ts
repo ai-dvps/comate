@@ -33,6 +33,7 @@ import { ChatService } from '../chat-service.js';
 import { SessionRuntime } from '../session-runtime.js';
 import { SdkClient } from '../sdk-client.js';
 import { SqliteStore, store as workspaceStore } from '../../storage/sqlite-store.js';
+import { createBrowserBinding } from '../../utils/credential-crypto.js';
 import { BrowserMutationCoordinator } from '../browser-mutation-coordinator.js';
 import { SESSION_TOKEN_ENV } from '../session-capability-service.js';
 import type { BrowserAuditToolInput } from '../browser-audit.js';
@@ -537,6 +538,7 @@ interface Harness {
     approvalDecisions: BrowserApprovalDecision[];
     auditActions: BrowserAuditToolInput[];
     operationStore: SqliteStore;
+    context: import('../browser-mcp.js').BrowserToolContext;
   };
   tools: Map<string, BrowserToolDefinition>;
   call: (name: string, args: Record<string, unknown>, extra?: unknown) => Promise<CallToolResult>;
@@ -567,6 +569,7 @@ async function makeHarness(options: {
   operationStore?: SqliteStore;
   taskState?: BrowserMcpDeps['taskState'];
   taskTrace?: BrowserMcpDeps['taskTrace'];
+  businessOutcomeObserver?: BrowserMcpDeps['businessOutcomeObserver'];
 }): Promise<Harness> {
   const storageDir = mkdtempSync(path.join(tmpdir(), 'comate-browser-mcp-'));
   const shell = await startFakeBrowserShell();
@@ -622,6 +625,7 @@ async function makeHarness(options: {
     audit: { logToolAction: (input) => { auditActions.push(input); return null; } },
     taskState: options.taskState,
     taskTrace: options.taskTrace,
+    businessOutcomeObserver: options.businessOutcomeObserver,
   };
   if (options.approvalRequester) {
     deps.approvalRequester = options.approvalRequester;
@@ -648,7 +652,7 @@ async function makeHarness(options: {
     return definition.handler(input, extra ?? {});
   };
   return {
-    ctx: { browserService, page: options.page, approvals, approvalDecisions: decisions, auditActions, operationStore },
+    ctx: { browserService, page: options.page, approvals, approvalDecisions: decisions, auditActions, operationStore, context },
     tools,
     call: async (name, args, extra) => {
       if (name === 'act') return context.handleAct(args as never);
@@ -707,7 +711,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.deepStrictEqual(
       [...harness.tools.keys()].sort(),
-      ['abandonTask', 'act', 'activate', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getDecisionObservation', 'getElementDetails', 'getPageState', 'getTaskState', 'open', 'proposeTaskEvidence', 'rebindVisualCandidates', 'recoverTarget', 'requestHandoff', 'setDeclaration', 'startNetworkCapture', 'startTask', 'stopNetworkCapture', 'submit', 'takeScreenshot', 'upload'],
+      ['abandonOutcomeTracking', 'abandonTask', 'acknowledgeDuplicateRisk', 'act', 'activate', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getDecisionObservation', 'getElementDetails', 'getPageState', 'getTaskState', 'open', 'proposeTaskEvidence', 'rebindVisualCandidates', 'recheckTaskOutcome', 'recoverTarget', 'requestHandoff', 'setDeclaration', 'startNetworkCapture', 'startTask', 'stopNetworkCapture', 'submit', 'takeScreenshot', 'upload'],
     );
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
@@ -735,7 +739,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const defs = buildBrowserToolDefinitions({ sessionId: 's', workspaceId: 'w' });
     assert.deepEqual(
       defs.map((d) => d.name),
-      ['open', 'getPageState', 'getDecisionObservation', 'rebindVisualCandidates', 'getTaskState', 'startTask', 'proposeTaskEvidence', 'recoverTarget', 'abandonTask', 'findElements', 'getElementDetails', 'act', 'setDeclaration', 'upload', 'activate', 'takeScreenshot', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'submit', 'extract', 'requestHandoff', 'close'],
+      ['open', 'getPageState', 'getDecisionObservation', 'rebindVisualCandidates', 'getTaskState', 'startTask', 'proposeTaskEvidence', 'recoverTarget', 'abandonTask', 'recheckTaskOutcome', 'abandonOutcomeTracking', 'acknowledgeDuplicateRisk', 'findElements', 'getElementDetails', 'act', 'setDeclaration', 'upload', 'activate', 'takeScreenshot', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'submit', 'extract', 'requestHandoff', 'close'],
     );
     assert.match(defs.find((definition) => definition.name === 'getPageState')?.description ?? '', /default observation/i);
     assert.match(defs.find((definition) => definition.name === 'takeScreenshot')?.description ?? '', /only.*visual/i);
@@ -2084,6 +2088,95 @@ describe('browser-mcp act', () => {
     assert.strictEqual(result.isError, true);
     const error = resultPayload(result).error as { code: string };
     assert.strictEqual(error.code, 'browser_user_in_control');
+  });
+});
+
+describe('browser-mcp final publication gate', () => {
+  const taskScope = { workspaceId: 'workspace-1', sessionId: 'chat-session-1', principalId: 'principal-test',
+    runtimeGeneration: 'runtime-test', capabilityId: 'capability-test' };
+
+  async function readyAction(options: { operationStore?: SqliteStore } = {}) {
+    const taskState = new BrowserTaskStateService(new SqliteStore(':memory:'));
+    const page = new FakePage({
+      extraction: makeExtraction(),
+      axNodes: [{ nodeId: 'publish', role: { value: 'button' }, name: { value: 'Publish now' }, backendDOMNodeId: 77 }],
+      inspectResult: { tag: 'button', role: 'button', name: 'Publish now', attributes: {}, nearbyText: 'Publication',
+        descendants: [], descendantsTruncated: false, actions: ['click'], visible: true, inViewport: true, occluded: false },
+    });
+    const harness = await makeHarness({ page, taskState, operationStore: options.operationStore });
+    const observed = resultPayload(await harness.callTool('getDecisionObservation', {}, {})) as {
+      observation: { observationId: string; model: { actions: Array<{ ref: string }> } };
+    };
+    const ref = observed.observation.model.actions[0].ref;
+    const task = taskState.createOrReplace(taskScope, [
+      { slotKey: 'primary_content_0', discovery: 'available', required: true, population: 'populated',
+        validation: 'verified', authority: 'not_required', populationBucket: 'long', evidenceId: 'content-evidence', observationEpoch: 1 },
+      { slotKey: 'final_activation_0', discovery: 'available', required: false, population: 'empty',
+        validation: 'unverified', authority: 'not_required', populationBucket: 'empty', evidenceId: null, observationEpoch: null },
+      { slotKey: 'generic_choice_0', discovery: 'available', required: false, population: 'populated',
+        validation: 'verified', authority: 'not_required', populationBucket: 'present', evidenceId: 'choice-evidence', observationEpoch: 1 },
+    ]);
+    const evidenceRefs = (harness.ctx.context as unknown as { taskEvidenceRefs: Map<string, string> }).taskEvidenceRefs;
+    for (const slotKey of ['final_activation_0', 'generic_choice_0']) {
+      evidenceRefs.set(`${task.taskId}:${task.version}:${slotKey}:${observed.observation.observationId}`, ref);
+    }
+    return { harness, taskState, page, task, ref, observationId: observed.observation.observationId };
+  }
+
+  it('fails closed when a ready task cites a generic slot for a publish-like activation', async () => {
+    const { harness, page, task, ref, observationId } = await readyAction();
+    const result = await harness.callTool('activate', { operationId: 'publish-generic-bypass', ref,
+      taskBinding: { taskId: task.taskId, taskVersion: task.version, slotKey: 'generic_choice_0', observationId } }, {});
+    assert.equal((resultPayload(result).receipt as { outcome: string }).outcome, 'not_dispatched');
+    assert.deepEqual(page.clickedBackendNodes, []);
+    assert.equal(harness.ctx.approvals.length, 0);
+  });
+
+  it('keeps a verified physical final click outcome unknown until trusted durable evidence', async () => {
+    const { harness, taskState, page, task, ref, observationId } = await readyAction();
+    const result = await harness.callTool('activate', { operationId: 'publish-final-once', ref,
+      taskBinding: { taskId: task.taskId, taskVersion: task.version, slotKey: 'final_activation_0', observationId } }, {});
+    assert.equal((resultPayload(result).receipt as { outcome: string }).outcome, 'dispatched_verified');
+    assert.deepEqual(page.clickedBackendNodes, [77]);
+    assert.equal(taskState.getActive(taskScope)?.lifecycle, 'outcome-unknown');
+    assert.equal(harness.ctx.approvals[0].payload.kind, 'browser_activation');
+    assert.ok(harness.ctx.approvals[0].payload.finalReview);
+  });
+
+  it('does not create a final-action row when approval-ledger persistence fails', async () => {
+    const operationStore = new SqliteStore(':memory:');
+    operationStore.markBrowserOperationApproved = () => false;
+    const { harness, taskState, page, task, ref, observationId } = await readyAction({ operationStore });
+    const result = await harness.callTool('activate', { operationId: 'publish-approval-persist-fails', ref,
+      taskBinding: { taskId: task.taskId, taskVersion: task.version, slotKey: 'final_activation_0', observationId } }, {});
+    assert.equal((resultPayload(result).receipt as { outcome: string }).outcome, 'not_dispatched');
+    assert.equal(taskState.getActive(taskScope)?.version, task.version);
+    assert.equal(taskState.getFinalAction(task.taskId), null);
+    assert.deepEqual(page.clickedBackendNodes, []);
+  });
+
+  it('keeps insufficient evidence unknown and completes only from the injected correlated durable observer', async () => {
+    let checks = 0;
+    const taskState = new BrowserTaskStateService(new SqliteStore(':memory:'));
+    const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }), taskState,
+      businessOutcomeObserver: { recheck: async (input) => ++checks === 1
+        ? { status: 'insufficient' }
+        : { status: 'durable', evidenceId: 'trusted-publication-record', correlatedOperationId: input.operationId } } });
+    let task = taskState.createOrReplace(taskScope, [{
+      slotKey: 'final_activation_0', discovery: 'available', required: true, population: 'populated',
+      validation: 'verified', authority: 'not_required', populationBucket: 'present', evidenceId: 'obs-final', observationEpoch: 1,
+    }]);
+    task = taskState.prepareFinalAction(taskScope, task.taskId, task.version, {
+      operationId: 'publish-observer', slotKey: 'final_activation_0', targetBindingDigest: 'target-observer',
+      controlEpoch: 'control-observer', reviewBinding: createBrowserBinding('browser-final-review', { taskId: task.taskId }),
+      outcomePredicate: createBrowserBinding('browser-final-outcome', { taskId: task.taskId }),
+    });
+    task = taskState.recordFinalDispatch(taskScope, task.taskId, task.version, 'publish-observer');
+    await harness.callTool('recheckTaskOutcome', { taskId: task.taskId, expectedTaskVersion: task.version }, {});
+    task = taskState.getActive(taskScope)!;
+    assert.equal(task.lifecycle, 'outcome-unknown');
+    await harness.callTool('recheckTaskOutcome', { taskId: task.taskId, expectedTaskVersion: task.version }, {});
+    assert.equal(taskState.getActive(taskScope)?.lifecycle, 'complete');
   });
 });
 

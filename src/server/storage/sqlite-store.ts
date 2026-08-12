@@ -329,7 +329,16 @@ export class SqliteStore {
         claimed_at TEXT NOT NULL,
         PRIMARY KEY (task_id, task_version, target_binding_digest, failure_class)
       );
+      CREATE TABLE IF NOT EXISTS browser_final_actions (
+        operation_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, task_version INTEGER NOT NULL,
+        slot_key TEXT NOT NULL, target_binding_digest TEXT NOT NULL, control_epoch TEXT NOT NULL,
+        review_key_version INTEGER NOT NULL, review_binding_digest TEXT NOT NULL,
+        predicate_key_version INTEGER NOT NULL, predicate_binding_digest TEXT NOT NULL,
+        state TEXT NOT NULL, evidence_status TEXT NOT NULL DEFAULT 'none',
+        durable_evidence_id TEXT, last_checked_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS idx_browser_tasks_session ON browser_tasks (workspace_id, session_id);
+      CREATE INDEX IF NOT EXISTS idx_browser_final_actions_task ON browser_final_actions (task_id, updated_at);
     `);
     this.ensureBrowserTaskCausalColumns();
     // bot_escalation_ledger (U8 phase-2, KTD-16): persistent approval ledger
@@ -3902,6 +3911,11 @@ export class SqliteStore {
   recoverBrowserOperations(): { notDispatched: number; unknown: number } {
     return this.db.transaction(() => {
       const now = new Date().toISOString();
+      const orphanedFinalActions = this.db.prepare(`
+        SELECT f.task_id, f.operation_id FROM browser_final_actions f
+        JOIN browser_operation_ledger o ON o.operation_id = f.operation_id
+        WHERE f.state = 'reviewed' AND o.state = 'dispatch_intent'
+      `).all() as Array<{ task_id: string; operation_id: string }>;
       const notDispatched: BrowserOperationStoredReceipt = {
         outcome: 'not_dispatched', dispatchState: 'not_dispatched', verified: false,
         retrySafe: true, reason: 'runtime_replaced', delta: { kind: 'none', changed: false },
@@ -3918,6 +3932,15 @@ export class SqliteStore {
         UPDATE browser_operation_ledger SET state = 'terminal', receipt_json = ?, updated_at = ?
         WHERE state = 'dispatch_intent'
       `).run(JSON.stringify(unknown), now).changes;
+      for (const orphan of orphanedFinalActions) {
+        this.db.prepare(`UPDATE browser_final_actions SET state = 'outcome_unknown', evidence_status = 'none', updated_at = ?
+          WHERE task_id = ? AND operation_id = ? AND state = 'reviewed'`)
+          .run(now, orphan.task_id, orphan.operation_id);
+        this.db.prepare(`UPDATE browser_tasks SET lifecycle = 'outcome-unknown', version = version + 1, updated_at = ?
+          WHERE task_id = ? AND lifecycle != 'complete' AND lifecycle != 'abandoned'`)
+          .run(now, orphan.task_id);
+        this.db.prepare('DELETE FROM browser_task_bindings WHERE task_id = ?').run(orphan.task_id);
+      }
       return { notDispatched: before, unknown: after };
     })();
   }
@@ -3956,6 +3979,62 @@ export class SqliteStore {
 
   hasBrowserTaskRecovery(taskId: string): boolean {
     return this.db.prepare('SELECT 1 FROM browser_task_recoveries WHERE task_id = ? LIMIT 1').get(taskId) !== undefined;
+  }
+
+  createBrowserFinalAction(input: BrowserFinalActionCreateInput): BrowserTaskStored {
+    return this.db.transaction(() => {
+      const task = this.getBrowserTask(input.taskId);
+      if (!task || task.version !== input.expectedVersion || task.lifecycle !== 'ready') throw new Error('browser_task_stale');
+      if (!task.slots.some((slot) => slot.slotKey === input.slotKey && slot.slotKey.startsWith('final_activation_'))) {
+        throw new Error('browser_task_final_slot_missing');
+      }
+      const now = new Date().toISOString();
+      this.db.prepare(`
+        INSERT INTO browser_final_actions
+          (operation_id, task_id, task_version, slot_key, target_binding_digest, control_epoch,
+           review_key_version, review_binding_digest, predicate_key_version, predicate_binding_digest,
+           state, evidence_status, durable_evidence_id, last_checked_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'reviewed', 'none', NULL, NULL, ?, ?)
+      `).run(input.operationId, input.taskId, input.expectedVersion, input.slotKey, input.targetBindingDigest,
+        input.controlEpoch, input.reviewKeyVersion, input.reviewBindingDigest,
+        input.predicateKeyVersion, input.predicateBindingDigest, now, now);
+      this.db.prepare('UPDATE browser_tasks SET version = version + 1, updated_at = ? WHERE task_id = ? AND version = ?')
+        .run(now, input.taskId, input.expectedVersion);
+      return this.getBrowserTask(input.taskId)!;
+    })();
+  }
+
+  getBrowserFinalAction(taskId: string): BrowserFinalActionEntry | null {
+    const row = this.db.prepare('SELECT * FROM browser_final_actions WHERE task_id = ? ORDER BY created_at DESC LIMIT 1')
+      .get(taskId) as RawBrowserFinalActionRow | undefined;
+    return row ? parseBrowserFinalActionRow(row) : null;
+  }
+
+  transitionBrowserFinalAction(input: BrowserFinalActionTransitionInput): BrowserTaskStored {
+    return this.db.transaction(() => {
+      const task = this.getBrowserTask(input.taskId);
+      const action = this.getBrowserFinalAction(input.taskId);
+      if (!task || task.version !== input.expectedVersion || !action || action.operationId !== input.operationId) {
+        throw new Error('browser_task_final_action_stale');
+      }
+      const now = new Date().toISOString();
+      const changed = this.db.prepare(`
+        UPDATE browser_final_actions SET state = ?, evidence_status = ?, durable_evidence_id = ?,
+          last_checked_at = ?, updated_at = ? WHERE task_id = ? AND operation_id = ? AND state IN (${input.fromStates.map(() => '?').join(',')})
+      `).run(input.state, input.evidenceStatus ?? action.evidenceStatus,
+        input.durableEvidenceId ?? action.durableEvidenceId,
+        input.checked ? now : action.lastCheckedAt, now, input.taskId, input.operationId, ...input.fromStates).changes;
+      if (changed !== 1) throw new Error('browser_task_final_action_stale');
+      const slots = input.slots ?? task.slots;
+      const updated = this.db.prepare(`
+        UPDATE browser_tasks SET lifecycle = ?, version = version + 1, updated_at = ?
+        WHERE task_id = ? AND version = ?
+      `).run(input.lifecycle, now, input.taskId, input.expectedVersion).changes;
+      if (updated !== 1) throw new Error('browser_task_stale');
+      if (input.slots) this.replaceBrowserTaskSlots(input.taskId, slots);
+      if (input.revokeBindings) this.db.prepare('DELETE FROM browser_task_bindings WHERE task_id = ?').run(input.taskId);
+      return this.getBrowserTask(input.taskId)!;
+    })();
   }
 
   createBrowserTask(input: BrowserTaskCreateInput, slots: BrowserTaskStoredSlot[], replaceTaskId?: string): BrowserTaskStored {
@@ -4068,6 +4147,7 @@ export class SqliteStore {
       const ids = this.db.prepare('SELECT task_id FROM browser_tasks WHERE workspace_id = ? AND session_id = ?')
         .all(workspaceId, sessionId) as Array<{ task_id: string }>;
       for (const { task_id } of ids) {
+        this.db.prepare('DELETE FROM browser_final_actions WHERE task_id = ?').run(task_id);
         this.db.prepare('DELETE FROM browser_task_recoveries WHERE task_id = ?').run(task_id);
         this.db.prepare('DELETE FROM browser_task_bindings WHERE task_id = ?').run(task_id);
         this.db.prepare('DELETE FROM browser_task_slots WHERE task_id = ?').run(task_id);
@@ -4084,7 +4164,7 @@ export class SqliteStore {
   }
 
   listBrowserTaskColumns(): Record<string, string[]> {
-    const names = ['browser_task_heads', 'browser_tasks', 'browser_task_slots', 'browser_task_bindings', 'browser_task_recoveries'];
+    const names = ['browser_task_heads', 'browser_tasks', 'browser_task_slots', 'browser_task_bindings', 'browser_task_recoveries', 'browser_final_actions'];
     return Object.fromEntries(names.map((name) => [name,
       (this.db.prepare(`PRAGMA table_info(${name})`).all() as Array<{ name: string }>).map((column) => column.name),
     ]));
@@ -4769,11 +4849,80 @@ export interface BrowserTaskStored extends BrowserTaskCreateInput {
   updatedAt: string;
 }
 
+export interface BrowserFinalActionCreateInput {
+  operationId: string;
+  taskId: string;
+  expectedVersion: number;
+  slotKey: string;
+  targetBindingDigest: string;
+  controlEpoch: string;
+  reviewKeyVersion: number;
+  reviewBindingDigest: string;
+  predicateKeyVersion: number;
+  predicateBindingDigest: string;
+}
+
+export type BrowserFinalActionState = 'reviewed' | 'cancelled' | 'outcome_unknown' | 'complete' | 'abandoned' | 'duplicate_risk_acknowledged';
+export type BrowserFinalEvidenceStatus = 'none' | 'insufficient' | 'conflicting' | 'durable';
+export interface BrowserFinalActionEntry {
+  operationId: string;
+  taskId: string;
+  taskVersion: number;
+  slotKey: string;
+  targetBindingDigest: string;
+  controlEpoch: string;
+  reviewKeyVersion: number;
+  reviewBindingDigest: string;
+  predicateKeyVersion: number;
+  predicateBindingDigest: string;
+  state: BrowserFinalActionState;
+  evidenceStatus: BrowserFinalEvidenceStatus;
+  durableEvidenceId: string | null;
+  lastCheckedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BrowserFinalActionTransitionInput {
+  taskId: string;
+  expectedVersion: number;
+  operationId: string;
+  fromStates: BrowserFinalActionState[];
+  state: BrowserFinalActionState;
+  lifecycle: string;
+  evidenceStatus?: BrowserFinalEvidenceStatus;
+  durableEvidenceId?: string | null;
+  checked?: boolean;
+  slots?: BrowserTaskStoredSlot[];
+  revokeBindings?: boolean;
+}
+
 interface RawBrowserTaskRow {
   task_id: string; workspace_id: string; session_id: string; principal_id: string;
   goal_epoch: string; runtime_generation: string; capability_id: string;
   version: number; lifecycle: string; observation_count: number;
   created_at: string; updated_at: string;
+}
+
+interface RawBrowserFinalActionRow {
+  operation_id: string; task_id: string; task_version: number; slot_key: string;
+  target_binding_digest: string; control_epoch: string;
+  review_key_version: number; review_binding_digest: string;
+  predicate_key_version: number; predicate_binding_digest: string;
+  state: string; evidence_status: string; durable_evidence_id: string | null;
+  last_checked_at: string | null; created_at: string; updated_at: string;
+}
+
+function parseBrowserFinalActionRow(row: RawBrowserFinalActionRow): BrowserFinalActionEntry {
+  return {
+    operationId: row.operation_id, taskId: row.task_id, taskVersion: row.task_version,
+    slotKey: row.slot_key, targetBindingDigest: row.target_binding_digest, controlEpoch: row.control_epoch,
+    reviewKeyVersion: row.review_key_version, reviewBindingDigest: row.review_binding_digest,
+    predicateKeyVersion: row.predicate_key_version, predicateBindingDigest: row.predicate_binding_digest,
+    state: row.state as BrowserFinalActionState, evidenceStatus: row.evidence_status as BrowserFinalEvidenceStatus,
+    durableEvidenceId: row.durable_evidence_id, lastCheckedAt: row.last_checked_at,
+    createdAt: row.created_at, updatedAt: row.updated_at,
+  };
 }
 
 interface RawBrowserTaskSlotRow {
