@@ -52,6 +52,9 @@ function makeTodo(overrides: Partial<Todo> & { text: string }): Todo {
     text: overrides.text,
     content: overrides.content ?? null,
     status: overrides.status ?? 'pending',
+    executionType: overrides.executionType ?? 'manual',
+    executionStatus: overrides.executionStatus ?? 'disabled',
+    latestRun: overrides.latestRun ?? null,
     sessionId: overrides.sessionId ?? null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -188,6 +191,124 @@ describe('TodoDetail', () => {
     await user.click(screen.getByRole('combobox', { name: 'Workspace' }));
     await user.click(screen.getByRole('option', { name: 'Beta Workspace' }));
     await waitFor(() => expect(onUpdateTodo).toHaveBeenCalledWith('todo-Task', { workspaceId: 'ws-2' }));
+  });
+
+  it('explains that automatic execution requires a workspace', async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <TodoDetail
+        todo={makeTodo({ text: 'Task' })}
+        width={384}
+        onWidthChange={onWidthChange}
+        onResolved={onResolved}
+        onClose={onClose}
+        onUpdateTodo={onUpdateTodo}
+        onChangeStatus={onChangeStatus}
+      />,
+    );
+
+    expect(screen.getByText('Select a workspace before choosing an automatic run type.')).toBeVisible();
+    await user.click(screen.getByRole('combobox', { name: 'Run type' }));
+    expect(screen.getByRole('option', { name: 'Night-idle' })).toHaveAttribute('data-disabled');
+  });
+
+  it('reactivates a silently disabled legacy night-idle todo when a workspace is selected', async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <TodoDetail
+        todo={makeTodo({
+          text: 'Task',
+          executionType: 'idle',
+          executionStatus: 'disabled',
+          latestRun: null,
+        })}
+        width={384}
+        onWidthChange={onWidthChange}
+        onResolved={onResolved}
+        onClose={onClose}
+        onUpdateTodo={onUpdateTodo}
+        onChangeStatus={onChangeStatus}
+      />,
+    );
+
+    await user.click(screen.getByRole('combobox', { name: 'Workspace' }));
+    await user.click(screen.getByRole('option', { name: 'Beta Workspace' }));
+    await waitFor(() => expect(onUpdateTodo).toHaveBeenCalledWith('todo-Task', {
+      workspaceId: 'ws-2',
+      executionStatus: 'active',
+    }));
+  });
+
+  it('does not reactivate a disabled night-idle todo when moving between workspaces', async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <TodoDetail
+        todo={makeTodo({
+          text: 'Task',
+          workspaceId: 'ws-1',
+          executionType: 'idle',
+          executionStatus: 'disabled',
+          latestRun: null,
+        })}
+        width={384}
+        onWidthChange={onWidthChange}
+        onResolved={onResolved}
+        onClose={onClose}
+        onUpdateTodo={onUpdateTodo}
+        onChangeStatus={onChangeStatus}
+      />,
+    );
+
+    await user.click(screen.getByRole('combobox', { name: 'Workspace' }));
+    await user.click(screen.getByRole('option', { name: 'Beta Workspace' }));
+    await waitFor(() => expect(onUpdateTodo).toHaveBeenCalledWith('todo-Task', { workspaceId: 'ws-2' }));
+  });
+
+  it('does not reactivate a workspace-less night-idle todo that has run before', async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <TodoDetail
+        todo={makeTodo({
+          text: 'Task',
+          executionType: 'idle',
+          executionStatus: 'disabled',
+          latestRun: { status: 'succeeded', fireAt: '2026-08-12T00:00:00.000Z' },
+        })}
+        width={384}
+        onWidthChange={onWidthChange}
+        onResolved={onResolved}
+        onClose={onClose}
+        onUpdateTodo={onUpdateTodo}
+        onChangeStatus={onChangeStatus}
+      />,
+    );
+
+    await user.click(screen.getByRole('combobox', { name: 'Workspace' }));
+    await user.click(screen.getByRole('option', { name: 'Beta Workspace' }));
+    await waitFor(() => expect(onUpdateTodo).toHaveBeenCalledWith('todo-Task', { workspaceId: 'ws-2' }));
+  });
+
+  it('prevents clearing the workspace from active automation', async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <TodoDetail
+        todo={makeTodo({
+          text: 'Task',
+          workspaceId: 'ws-1',
+          executionType: 'idle',
+          executionStatus: 'active',
+        })}
+        width={384}
+        onWidthChange={onWidthChange}
+        onResolved={onResolved}
+        onClose={onClose}
+        onUpdateTodo={onUpdateTodo}
+        onChangeStatus={onChangeStatus}
+      />,
+    );
+
+    await user.click(screen.getByRole('combobox', { name: 'Workspace' }));
+    expect(screen.getByRole('option', { name: 'No workspace' })).toHaveAttribute('data-disabled');
   });
 
   it('calls onChangeStatus when the status is changed', async () => {
