@@ -134,22 +134,29 @@ import {
   type DecisionObservationLimits,
   type DecisionObservationTransform,
 } from './browser-decision-observation.js';
+import type {
+  BrowserTaskScope,
+  BrowserTaskSlot,
+  BrowserTaskStateService,
+  PopulationBucket,
+} from './browser-task-state.js';
 
 // Re-export so existing consumers of './browser-mcp.js' (chat-service, U3
 // tests) keep working; the canonical home is browser-tool-names.ts (U4) so
 // policy modules can match names without loading the BrowserService chain.
 export { BROWSER_MCP_SERVER_KEY, BROWSER_TOOL_PREFIX };
 
-export const BROWSER_MCP_INSTRUCTIONS = `Mutation tools return only bounded receipts, never a page model. After every mutation, call getPageState before using element refs. Use the embedded browser tools in this order:
+export const BROWSER_MCP_INSTRUCTIONS = `Follow an observe-plan-act-validate loop. Mutation tools return only bounded receipts, never a page model; receipts prove local dispatch mechanics, never task or business completion. Task tools accept evidence proposals, while the server alone derives requiredness, validation, authority, readiness, and completion. After every mutation, call getPageState before using element refs. Use the embedded browser tools in this order:
 1. getPageState — default page observation after an external or user-driven page change, a stale-ref error, or when reading another bounded inventory segment. It provides a page-level, text-only, token-bounded semantic view and element refs without requiring vision.
 2. getDecisionObservation — only when structure is insufficient, obtain one coherent structured-and-visual bundle. Its rectangles are evidence and never executable coordinates.
 3. rebindVisualCandidates — validate model-cited refs from one decision observation through trusted current geometry and hit-testing; it never accepts action coordinates.
-4. findElements — search the complete internal element index when the page-state inventory is truncated or the target is not obvious.
-5. getElementDetails — inspect one known ref when more attributes or local context are needed.
-6. act — fill/select/check editable controls. act(click) never dispatches; use activate for page-supplied controls or submit for HTML form submission.
-7. upload — assign approved workspace media to a file-input ref through the shell-owned browser only.
-8. activate — request a single handler-approved physical click for a page-supplied control. Its receipt is not proof of business success; observe afterward.
-9. takeScreenshot — optional and only for genuinely visual questions such as layout, overlap, charts, canvas, or image content. Do not use it for routine page understanding or element discovery, and do not use it as a substitute for getPageState.`;
+4. getTaskState/startTask/proposeTaskEvidence — maintain the current goal-scoped checklist using current observation refs. Never infer declaration authority or task completion.
+5. findElements — search the complete internal element index when the page-state inventory is truncated or the target is not obvious.
+6. getElementDetails — inspect one known ref when more attributes or local context are needed.
+7. act — fill/select/check editable controls. act(click) never dispatches; use activate for page-supplied controls or submit for HTML form submission.
+8. upload — assign approved workspace media to a file-input ref through the shell-owned browser only.
+9. activate — request a single handler-approved physical click for a page-supplied control. Its receipt is not proof of business success; observe afterward.
+10. takeScreenshot — optional and only for genuinely visual questions such as layout, overlap, charts, canvas, or image content. Do not use it for routine page understanding or element discovery, and do not use it as a substitute for getPageState.`;
 
 /**
  * browser-mcp — the first-class tool surface for the embedded controlled
@@ -271,6 +278,8 @@ export interface BrowserMcpDeps {
   /** U3 supplies the task-aware implementation; absence does not invent task state. */
   decisionObservationBudget?: DecisionObservationBudget;
   applicationSensitiveRegions?: ApplicationSensitiveRegionProvider;
+  /** U3 goal-scoped task authority. Task tools fail closed when it is absent. */
+  taskState?: BrowserTaskStateService;
 }
 
 // ---------------------------------------------------------------------------
@@ -467,6 +476,28 @@ function visualEvidenceCssRect(
 function rectsIntersect(left: Geometry, right: Geometry): boolean {
   return left.x <= right.x + right.width && right.x <= left.x + left.width &&
     left.y <= right.y + right.height && right.y <= left.y + left.height;
+}
+
+const TASK_SLOT_CATEGORIES = [
+  'content_type', 'title', 'primary_content', 'description', 'topic', 'media',
+  'visibility', 'declaration', 'final_activation', 'generic_text',
+  'generic_choice', 'generic_file', 'generic_boolean',
+] as const;
+type TaskSlotCategory = typeof TASK_SLOT_CATEGORIES[number];
+type TaskMutationBinding = {
+  taskId: string;
+  taskVersion: number;
+  slotKey: string;
+  observationId: string;
+};
+
+function populationBucket(field: PageModel['forms'][number]['fields'][number] | undefined): PopulationBucket {
+  if (!field?.filled) return 'empty';
+  const length = field.contentLength ?? field.value?.length;
+  if (length === undefined) return 'present';
+  if (length <= 80) return 'short';
+  if (length <= 800) return 'medium';
+  return 'long';
 }
 
 function mutationAuthorizationError(): CallToolResult {
@@ -1028,7 +1059,8 @@ export class BrowserToolContext {
   private capturePrimarySessionId?: string;
   private captureAction = 'One explicitly bracketed browser action';
   private readonly decisionObservations: DecisionObservationCoordinator;
-  private latestDecisionObservation?: { observationId: string; transform: DecisionObservationTransform };
+  private latestDecisionObservation?: { observationId: string; observationEpoch: number; transform: DecisionObservationTransform };
+  private readonly taskEvidenceRefs = new Map<string, string>();
 
   constructor(private readonly deps: BrowserMcpDeps) {
     this.svc = deps.browserService ?? browserService;
@@ -1123,6 +1155,185 @@ export class BrowserToolContext {
       );
     }
     return null;
+  }
+
+  private taskScope(): BrowserTaskScope {
+    return {
+      workspaceId: this.deps.workspaceId,
+      sessionId: this.deps.sessionId,
+      principalId: this.deps.principalId ?? `${this.deps.workspaceId}:${this.deps.sessionId}`,
+      runtimeGeneration: this.deps.runtimeGeneration ?? 'unscoped',
+      capabilityId: this.deps.capabilityId ?? 'unscoped',
+    };
+  }
+
+  private taskUnavailable(): CallToolResult {
+    return toolError(
+      'browser_task_state_unavailable', 'control',
+      'Goal-scoped browser task state is unavailable for this runtime.',
+      'Reload the task runtime before creating or updating browser task state.',
+    );
+  }
+
+  private taskResult(task: ReturnType<BrowserTaskStateService['getActive']>): CallToolResult {
+    if (!task) return toolJson({ ok: true, task: null });
+    const projection = this.deps.taskState!.projection(task.workspaceId, task.sessionId);
+    return toolJson({
+      ok: true,
+      task: {
+        taskId: task.taskId,
+        version: task.version,
+        lifecycle: task.lifecycle,
+        projection,
+        slots: task.slots.map((slot) => ({
+          slotKey: slot.slotKey,
+          discovery: slot.discovery,
+          required: slot.required,
+          population: slot.population,
+          validation: slot.validation,
+          authority: slot.authority,
+          populationBucket: slot.populationBucket,
+          evidenceId: slot.evidenceId,
+        })),
+      },
+    });
+  }
+
+  async handleGetTaskState(): Promise<CallToolResult> {
+    if (!this.deps.taskState) return this.taskUnavailable();
+    try {
+      return this.taskResult(this.deps.taskState.getActive(this.taskScope()));
+    } catch (error) {
+      return toolError('browser_task_state_failed', 'control', error instanceof Error ? error.message : String(error), 'Reload the task runtime.');
+    }
+  }
+
+  validateTaskMutationBinding(binding: TaskMutationBinding | undefined, targetRef: string): CallToolResult | null {
+    const tasks = this.deps.taskState;
+    if (!binding) {
+      return tasks?.getActive(this.taskScope())
+        ? toolError('browser_task_mutation_binding_required', 'control', 'An active task mutation must cite its current task, slot, observation, and ref binding.', 'Propose fresh task evidence before acting.')
+        : null;
+    }
+    if (!tasks) return this.taskUnavailable();
+    const task = tasks.getActive(this.taskScope());
+    if (!task || task.taskId !== binding.taskId || task.version !== binding.taskVersion ||
+        !task.slots.some((slot) => slot.slotKey === binding.slotKey)) {
+      return toolError('browser_task_mutation_binding_stale', 'control', 'The mutation is not bound to the current task, version, and slot.', 'Read getTaskState and propose current evidence before acting.');
+    }
+    if (!this.latestDecisionObservation || this.latestDecisionObservation.observationId !== binding.observationId) {
+      return toolError('browser_task_observation_stale', 'control', 'The mutation is not bound to the current coherent observation.', 'Capture a new decision observation before acting.');
+    }
+    const evidenceKey = `${binding.taskId}:${binding.taskVersion}:${binding.slotKey}:${binding.observationId}`;
+    if (this.taskEvidenceRefs.get(evidenceKey) !== targetRef ||
+        this.refTable.getObservationBinding(targetRef)?.observationId !== binding.observationId) {
+      return toolError('browser_task_target_binding_stale', 'control', 'The target ref is not the trusted ref proposed for this task slot and observation.', 'Propose fresh task evidence for this exact target before acting.');
+    }
+    return null;
+  }
+
+  async handleStartTask(args: { replaceTaskId?: string; expectedTaskVersion?: number }, extra?: { signal?: AbortSignal }): Promise<CallToolResult> {
+    const tasks = this.deps.taskState;
+    if (!tasks) return this.taskUnavailable();
+    if (!await (this.deps.isInvocationCurrent ?? (() => true))()) return mutationAuthorizationError();
+    const scope = this.taskScope();
+    const active = tasks.getActive(scope);
+    if (active && (!args.replaceTaskId || args.replaceTaskId !== active.taskId || args.expectedTaskVersion !== active.version)) {
+      return toolError('browser_task_replace_binding_required', 'control', 'An active task already exists.', 'Pass its exact taskId and version to request replacement, or continue that task.');
+    }
+    if (active) {
+      if (!this.deps.approvalRequester) return toolError('browser_approval_unavailable', 'approval', 'Task replacement requires a live application approval channel.', 'Retry from a live GUI task.');
+      const decision = await this.deps.approvalRequester(this.deps.sessionId, {
+        toolName: BROWSER_TOOL_NAMES.startTask,
+        title: 'Replace the active browser task?',
+        description: 'Replacing the task abandons its current evidence and authority.',
+        payload: { kind: 'browser_task_replace', taskId: active.taskId, taskVersion: active.version },
+        signal: extra?.signal,
+      });
+      if (decision.behavior !== 'allow') return toolJson({ ok: false, replaced: false, reason: 'user_denied' });
+      if (!await (this.deps.isInvocationCurrent ?? (() => true))()) return mutationAuthorizationError();
+    } else if (args.replaceTaskId !== undefined || args.expectedTaskVersion !== undefined) {
+      return toolError('browser_task_replace_stale', 'control', 'The task selected for replacement is no longer active.', 'Read getTaskState before proposing a replacement.');
+    }
+    try {
+      const task = tasks.createOrReplace(scope, [], active ? { replaceTaskId: active.taskId } : {});
+      return this.taskResult(task);
+    } catch (error) {
+      return toolError('browser_task_transition_rejected', 'control', error instanceof Error ? error.message : String(error), 'Read getTaskState and retry only against the current version.');
+    }
+  }
+
+  async handleProposeTaskEvidence(args: {
+    taskId: string;
+    expectedTaskVersion: number;
+    observationId: string;
+    proposals: Array<{ category: TaskSlotCategory; ordinal: number; ref: string; confidence: number; evidence: string[] }>;
+  }): Promise<CallToolResult> {
+    const tasks = this.deps.taskState;
+    if (!tasks) return this.taskUnavailable();
+    if (!await (this.deps.isInvocationCurrent ?? (() => true))()) return mutationAuthorizationError();
+    const observation = this.latestDecisionObservation;
+    if (!observation || observation.observationId !== args.observationId || !this.lastModel) {
+      return toolError('browser_task_observation_stale', 'control', 'The evidence proposal is not bound to the current coherent observation.', 'Capture a new decision observation and cite its refs.');
+    }
+    const fields = this.lastModel.forms.flatMap((form) => form.fields);
+    const discovered: BrowserTaskSlot[] = [];
+    for (const proposal of args.proposals) {
+      const binding = this.refTable.getObservationBinding(proposal.ref);
+      const entry = this.refTable.get(proposal.ref);
+      if (!entry || !binding || binding.observationId !== args.observationId) {
+        return toolError('browser_task_evidence_stale', 'control', 'A proposed ref is not part of the cited coherent observation.', 'Capture a new decision observation and cite only its refs.');
+      }
+      const field = fields.find((candidate) => candidate.ref === proposal.ref);
+      const bucket = populationBucket(field);
+      discovered.push({
+        slotKey: `${proposal.category}_${proposal.ordinal}`,
+        discovery: 'available',
+        required: field?.required === true,
+        population: bucket === 'empty' ? 'empty' : 'populated',
+        validation: 'unverified',
+        authority: 'not_required',
+        populationBucket: bucket,
+        evidenceId: observation.observationId,
+        observationEpoch: observation.observationEpoch,
+      });
+    }
+    try {
+      const task = tasks.recordTrustedDiscovery(this.taskScope(), args.taskId, args.expectedTaskVersion, discovered);
+      this.taskEvidenceRefs.clear();
+      for (const proposal of args.proposals) {
+        this.taskEvidenceRefs.set(
+          `${task.taskId}:${task.version}:${proposal.category}_${proposal.ordinal}:${args.observationId}`,
+          proposal.ref,
+        );
+      }
+      return this.taskResult(task);
+    } catch (error) {
+      return toolError('browser_task_transition_rejected', 'control', error instanceof Error ? error.message : String(error), 'Read getTaskState and use a fresh coherent observation.');
+    }
+  }
+
+  async handleAbandonTask(args: { taskId: string; expectedTaskVersion: number }, extra?: { signal?: AbortSignal }): Promise<CallToolResult> {
+    const tasks = this.deps.taskState;
+    if (!tasks) return this.taskUnavailable();
+    const active = tasks.getActive(this.taskScope());
+    if (!active || active.taskId !== args.taskId || active.version !== args.expectedTaskVersion) {
+      return toolError('browser_task_transition_rejected', 'control', 'The task identity or version is stale.', 'Read getTaskState before abandoning the task.');
+    }
+    if (!this.deps.approvalRequester) return toolError('browser_approval_unavailable', 'approval', 'Task abandonment requires a live application approval channel.', 'Retry from a live GUI task.');
+    const decision = await this.deps.approvalRequester(this.deps.sessionId, {
+      toolName: BROWSER_TOOL_NAMES.abandonTask,
+      title: 'Abandon the active browser task?',
+      payload: { kind: 'browser_task_abandon', taskId: active.taskId, taskVersion: active.version },
+      signal: extra?.signal,
+    });
+    if (decision.behavior !== 'allow') return toolJson({ ok: false, abandoned: false, reason: 'user_denied' });
+    if (!await (this.deps.isInvocationCurrent ?? (() => true))()) return mutationAuthorizationError();
+    try {
+      return toolJson({ ok: tasks.abandon(this.taskScope(), args.taskId, args.expectedTaskVersion), abandoned: true });
+    } catch (error) {
+      return toolError('browser_task_transition_rejected', 'control', error instanceof Error ? error.message : String(error), 'Read getTaskState before abandoning the task.');
+    }
   }
 
   private readDocumentIdentity(page: BrowserCdpSession): RefBatchKey | null {
@@ -1273,7 +1484,11 @@ export class BrowserToolContext {
       });
       this.lastModel = observation.model;
       this.pageStateCache = observation.model;
-      this.latestDecisionObservation = { observationId: observation.observationId, transform: observation.transform };
+      this.latestDecisionObservation = {
+        observationId: observation.observationId,
+        observationEpoch: observation.revision.domEpoch,
+        transform: observation.transform,
+      };
       const { image, ...metadata } = observation;
       return {
         content: [
@@ -1678,6 +1893,13 @@ export class BrowserToolContext {
         'ref_resolve',
         `Ref "${args.ref}" is page-supplied and cannot be clicked through act.`,
         'Call activate with a new caller-stable operationId and this ref; activate always asks for handler-level approval.',
+      );
+    }
+    if (args.action === 'check' && this.deps.taskState?.getActive(this.taskScope())) {
+      return toolError(
+        'browser_task_boolean_authority_required', 'approval',
+        'Boolean controls are ambiguous while a goal-scoped task is active.',
+        'Use the application-owned declaration flow or wait until trusted task evidence proves a non-authority control.',
       );
     }
     try {
@@ -2828,6 +3050,12 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
   const operationIdSchema = z.string().min(1).max(128)
     .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/)
     .describe('Caller-stable idempotency key for this mutation');
+  const taskMutationBindingSchema = z.object({
+    taskId: z.string().uuid(),
+    taskVersion: z.number().int().min(0),
+    slotKey: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+    observationId: z.string().uuid(),
+  }).strict().describe('Optional binding to one current task slot and coherent observation; it grants no authority');
 
   const openDef = tool(
     'open',
@@ -2897,6 +3125,56 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     async (args) => ctx.handleRebindVisualCandidates(args),
     { annotations: { readOnlyHint: true, openWorldHint: true } },
   );
+
+  const taskIdSchema = z.string().uuid().describe('Server-minted active browser task identity');
+  const taskVersionSchema = z.number().int().min(0).describe('Exact active task version for compare-and-set');
+  const getTaskStateDef = tool(
+    'getTaskState',
+    'Return the positive-shape projection of the active goal-scoped browser task. It contains state categories and evidence identities, never authored values or page prose.',
+    z.object({}).strict(),
+    async () => ctx.handleGetTaskState(),
+    { annotations: { readOnlyHint: true, openWorldHint: true } },
+  );
+  const startTaskBase = tool(
+    'startTask',
+    'Mint a goal-scoped browser task for this session. If a task already exists, pass its exact id and version; replacement requires application-owned user approval and revokes prior evidence and authority.',
+    z.object({
+      replaceTaskId: taskIdSchema.optional(),
+      expectedTaskVersion: taskVersionSchema.optional(),
+    }).strict().refine((value) => (value.replaceTaskId === undefined) === (value.expectedTaskVersion === undefined), {
+      message: 'replaceTaskId and expectedTaskVersion must be supplied together',
+    }),
+    async (args, extra) => ctx.handleStartTask(args, extra as { signal?: AbortSignal }),
+    { annotations: { destructiveHint: true, openWorldHint: true } },
+  );
+  const startTaskDef = { ...startTaskBase, _meta: { 'anthropic/requiresUserInteraction': true } };
+  const proposalSchema = z.object({
+    category: z.enum(TASK_SLOT_CATEGORIES),
+    ordinal: z.number().int().min(0).max(31),
+    ref: z.string().min(1).max(128),
+    confidence: z.number().finite().min(0).max(1),
+    evidence: z.array(z.enum(['structure', 'relationship', 'geometry', 'state', 'visual'])).min(1).max(8),
+  }).strict();
+  const proposeTaskEvidenceDef = tool(
+    'proposeTaskEvidence',
+    'Propose generic semantic slot categories using refs from one current coherent observation. The server derives requiredness and population and never accepts verified, complete, authority, success, labels, or values from the caller.',
+    z.object({
+      taskId: taskIdSchema,
+      expectedTaskVersion: taskVersionSchema,
+      observationId: z.string().uuid(),
+      proposals: z.array(proposalSchema).min(1).max(64),
+    }).strict(),
+    async (args) => ctx.handleProposeTaskEvidence(args),
+    { annotations: { readOnlyHint: false, openWorldHint: true } },
+  );
+  const abandonTaskBase = tool(
+    'abandonTask',
+    'Abandon the exact active browser task version. This is an application-owned terminal transition requiring user approval.',
+    z.object({ taskId: taskIdSchema, expectedTaskVersion: taskVersionSchema }).strict(),
+    async (args, extra) => ctx.handleAbandonTask(args, extra as { signal?: AbortSignal }),
+    { annotations: { destructiveHint: true, openWorldHint: true } },
+  );
+  const abandonTaskDef = { ...abandonTaskBase, _meta: { 'anthropic/requiresUserInteraction': true } };
 
   const findElementsDef = tool(
     'findElements',
@@ -2976,16 +3254,19 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
         .string()
         .optional()
         .describe('fill: text to enter; select: option value or label; check: "true"/"false" (omit to toggle)'),
+      taskBinding: taskMutationBindingSchema.optional(),
     },
-    async (args: { operationId?: string; ref: string; action: 'click' | 'fill' | 'select' | 'check'; value?: string }, extra) => args.operationId
-      ? executeMutation(
+    async (args: { operationId?: string; ref: string; action: 'click' | 'fill' | 'select' | 'check'; value?: string; taskBinding?: TaskMutationBinding }, extra) => {
+      const taskError = ctx.validateTaskMutationBinding(args.taskBinding, args.ref);
+      if (taskError) return taskError;
+      return args.operationId ? executeMutation(
           args.operationId,
           args.action === 'click' ? 'activation' : args.action,
-          { ref: args.ref, action: args.action, value: args.value },
+          { ref: args.ref, action: args.action, value: args.value, taskBinding: args.taskBinding },
           extra,
           (_signal, authorize) => ctx.handleAct({ ref: args.ref, action: args.action, value: args.value }, authorize),
-        )
-      : toolError('browser_operation_id_required', 'dispatch', 'Mutation tools require an operationId.', 'Retry once with a new caller-stable operationId.'),
+        ) : toolError('browser_operation_id_required', 'dispatch', 'Mutation tools require an operationId.', 'Retry once with a new caller-stable operationId.');
+    },
   );
 
   const activateBase = tool(
@@ -2997,12 +3278,15 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     {
       operationId: operationIdSchema,
       ref: z.string().describe('Page action ref from the latest page model'),
+      taskBinding: taskMutationBindingSchema.optional(),
     },
-    async (args: { operationId?: string; ref: string }, extra) => args.operationId
-      ? executeMutation(
+    async (args: { operationId?: string; ref: string; taskBinding?: TaskMutationBinding }, extra) => {
+      const taskError = ctx.validateTaskMutationBinding(args.taskBinding, args.ref);
+      if (taskError) return taskError;
+      return args.operationId ? executeMutation(
           args.operationId,
           'activation',
-          { ref: args.ref },
+          { ref: args.ref, taskBinding: args.taskBinding },
           extra,
           (signal, authorize, recordApproved) => ctx.handleActivate(
             { ref: args.ref },
@@ -3010,8 +3294,8 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
             authorize,
             recordApproved,
           ),
-        )
-      : toolError('browser_operation_id_required', 'dispatch', 'Mutation tools require an operationId.', 'Retry once with a new caller-stable operationId.'),
+        ) : toolError('browser_operation_id_required', 'dispatch', 'Mutation tools require an operationId.', 'Retry once with a new caller-stable operationId.');
+    },
     { annotations: { destructiveHint: true, openWorldHint: true } },
   );
   const activateDef = {
@@ -3028,12 +3312,15 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
       operationId: operationIdSchema,
       ref: z.string().describe('File-input field ref from the latest page model'),
       paths: z.array(z.string().min(1).max(500)).min(1).max(18).describe('Workspace-relative approved media paths'),
+      taskBinding: taskMutationBindingSchema.optional(),
     },
-    async (args: { operationId?: string; ref: string; paths: string[] }, extra) => args.operationId
-      ? executeMutation(
+    async (args: { operationId?: string; ref: string; paths: string[]; taskBinding?: TaskMutationBinding }, extra) => {
+      const taskError = ctx.validateTaskMutationBinding(args.taskBinding, args.ref);
+      if (taskError) return taskError;
+      return args.operationId ? executeMutation(
           args.operationId,
           'upload',
-          { ref: args.ref, paths: args.paths },
+          { ref: args.ref, paths: args.paths, taskBinding: args.taskBinding },
           extra,
           (signal, authorize, recordApproved) => ctx.handleUpload(
             { operationId: args.operationId!, ref: args.ref, paths: args.paths },
@@ -3041,8 +3328,8 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
             authorize,
             recordApproved,
           ),
-        )
-      : toolError('browser_operation_id_required', 'dispatch', 'Mutation tools require an operationId.', 'Retry once with a new caller-stable operationId.'),
+        ) : toolError('browser_operation_id_required', 'dispatch', 'Mutation tools require an operationId.', 'Retry once with a new caller-stable operationId.');
+    },
     { annotations: { destructiveHint: true, openWorldHint: true } },
   );
   const uploadDef = { ...uploadBase, _meta: { 'anthropic/requiresUserInteraction': true } };
@@ -3071,20 +3358,24 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
         .record(z.string(), z.string())
         .optional()
         .describe('Field values to fill before submitting, keyed by field ref or field name'),
+      taskBinding: taskMutationBindingSchema.optional(),
     },
-    async (args: { operationId?: string; ref: string; fields?: Record<string, string> }, extra) => !args.operationId
-      ? toolError('browser_operation_id_required', 'dispatch', 'Mutation tools require an operationId.', 'Retry once with a new caller-stable operationId.')
+    async (args: { operationId?: string; ref: string; fields?: Record<string, string>; taskBinding?: TaskMutationBinding }, extra) => {
+      const taskError = ctx.validateTaskMutationBinding(args.taskBinding, args.ref);
+      if (taskError) return taskError;
+      return !args.operationId ? toolError('browser_operation_id_required', 'dispatch', 'Mutation tools require an operationId.', 'Retry once with a new caller-stable operationId.')
       : args.fields && Object.keys(args.fields).length > 0
         ? toolError('browser_submit_fields_separate', 'dispatch', 'Coordinated submit does not fill fields inside the submit operation.', 'Fill each field with act and its own operationId, then submit without fields.')
         : executeMutation(
-          args.operationId, 'submit', { ref: args.ref, fields: args.fields }, extra,
+          args.operationId, 'submit', { ref: args.ref, fields: args.fields, taskBinding: args.taskBinding }, extra,
           (signal, authorize, recordApproved) => ctx.handleSubmit(
             { ref: args.ref },
             { ...(extra as object), signal },
             authorize,
             recordApproved,
           ),
-        ),
+        );
+    },
     { annotations: { destructiveHint: true, openWorldHint: true } },
   );
   // Auxiliary hint only — the security property is guaranteed by the
@@ -3167,6 +3458,10 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     getPageStateDef,
     getDecisionObservationDef,
     rebindVisualCandidatesDef,
+    getTaskStateDef,
+    startTaskDef,
+    proposeTaskEvidenceDef,
+    abandonTaskDef,
     findElementsDef,
     getElementDetailsDef,
     actDef,

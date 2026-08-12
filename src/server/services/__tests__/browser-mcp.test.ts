@@ -37,6 +37,7 @@ import { BrowserMutationCoordinator } from '../browser-mutation-coordinator.js';
 import { SESSION_TOKEN_ENV } from '../session-capability-service.js';
 import type { BrowserAuditToolInput } from '../browser-audit.js';
 import { BrowserUploadStagingService } from '../browser-upload-staging.js';
+import { BrowserTaskStateService } from '../browser-task-state.js';
 import { PNG } from 'pngjs';
 import { z } from 'zod';
 
@@ -551,6 +552,7 @@ async function makeHarness(options: {
   isInvocationCurrent?: () => boolean;
   approvalRequester?: BrowserMcpDeps['approvalRequester'];
   operationStore?: SqliteStore;
+  taskState?: BrowserMcpDeps['taskState'];
 }): Promise<Harness> {
   const storageDir = mkdtempSync(path.join(tmpdir(), 'comate-browser-mcp-'));
   const shell = await startFakeBrowserShell();
@@ -604,6 +606,7 @@ async function makeHarness(options: {
     principalId: 'principal-test',
     isInvocationCurrent: options.isInvocationCurrent ?? (() => true),
     audit: { logToolAction: (input) => { auditActions.push(input); return null; } },
+    taskState: options.taskState,
   };
   if (options.approvalRequester) {
     deps.approvalRequester = options.approvalRequester;
@@ -688,7 +691,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.deepStrictEqual(
       [...harness.tools.keys()].sort(),
-      ['act', 'activate', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getDecisionObservation', 'getElementDetails', 'getPageState', 'open', 'rebindVisualCandidates', 'requestHandoff', 'startNetworkCapture', 'stopNetworkCapture', 'submit', 'takeScreenshot', 'upload'],
+      ['abandonTask', 'act', 'activate', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getDecisionObservation', 'getElementDetails', 'getPageState', 'getTaskState', 'open', 'proposeTaskEvidence', 'rebindVisualCandidates', 'requestHandoff', 'startNetworkCapture', 'startTask', 'stopNetworkCapture', 'submit', 'takeScreenshot', 'upload'],
     );
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
@@ -716,7 +719,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const defs = buildBrowserToolDefinitions({ sessionId: 's', workspaceId: 'w' });
     assert.deepEqual(
       defs.map((d) => d.name),
-      ['open', 'getPageState', 'getDecisionObservation', 'rebindVisualCandidates', 'findElements', 'getElementDetails', 'act', 'upload', 'activate', 'takeScreenshot', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'submit', 'extract', 'requestHandoff', 'close'],
+      ['open', 'getPageState', 'getDecisionObservation', 'rebindVisualCandidates', 'getTaskState', 'startTask', 'proposeTaskEvidence', 'abandonTask', 'findElements', 'getElementDetails', 'act', 'upload', 'activate', 'takeScreenshot', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'submit', 'extract', 'requestHandoff', 'close'],
     );
     assert.match(defs.find((definition) => definition.name === 'getPageState')?.description ?? '', /default observation/i);
     assert.match(defs.find((definition) => definition.name === 'takeScreenshot')?.description ?? '', /only.*visual/i);
@@ -737,6 +740,46 @@ describe('browser-mcp tool surface (KTD-3)', () => {
       .handler({ url: 'https://example.test' }, {});
     assert.strictEqual(result.isError, true);
     assert.strictEqual((resultPayload(result).error as { code: string }).code, 'browser_operation_id_required');
+  });
+
+  it('task evidence schema rejects caller-owned authority and complete state', () => {
+    const definitions = buildBrowserToolDefinitions({ sessionId: 's', workspaceId: 'w' });
+    const definition = definitions.find((item) => item.name === 'proposeTaskEvidence')!;
+    assert.ok('safeParse' in definition.inputSchema);
+    const schema = definition.inputSchema as { safeParse(value: unknown): { success: boolean } };
+    const base = {
+      taskId: '11111111-1111-4111-8111-111111111111', expectedTaskVersion: 0,
+      observationId: '22222222-2222-4222-8222-222222222222',
+      proposals: [{ category: 'title', ordinal: 0, ref: 'e1-aa', confidence: 0.9, evidence: ['structure'] }],
+    };
+    assert.equal(schema.safeParse(base).success, true);
+    assert.equal(schema.safeParse({ ...base, verified: true }).success, false);
+    assert.equal(schema.safeParse({ ...base, proposals: [{ ...base.proposals[0], required: false, authority: 'confirmed' }] }).success, false);
+  });
+
+  it('task tools fail closed without U3 and cannot reclaim by caller-selected task id', async () => {
+    const definitions = buildBrowserToolDefinitions({ sessionId: 's', workspaceId: 'w' });
+    const result = await definitions.find((item) => item.name === 'startTask')!.handler({}, {});
+    assert.equal(result.isError, true);
+    assert.equal((resultPayload(result).error as { code: string }).code, 'browser_task_state_unavailable');
+  });
+
+  it('requires a trusted slot-to-ref binding for every active-task mutation', async () => {
+    const taskState = new BrowserTaskStateService(new SqliteStore(':memory:'));
+    taskState.createOrReplace({
+      workspaceId: 'w', sessionId: 's', principalId: 'p',
+      runtimeGeneration: 'g', capabilityId: 'c',
+    }, []);
+    const definitions = buildBrowserToolDefinitions({
+      sessionId: 's', workspaceId: 'w', principalId: 'p',
+      runtimeGeneration: 'g', capabilityId: 'c', taskState,
+      contextRegistry: new Map(),
+    });
+    const result = await definitions.find((item) => item.name === 'act')!.handler({
+      operationId: 'op-1', ref: 'e1-aa', action: 'fill', value: 'redacted',
+    }, {});
+    assert.equal(result.isError, true);
+    assert.equal((resultPayload(result).error as { code: string }).code, 'browser_task_mutation_binding_required');
   });
 });
 
@@ -2546,7 +2589,11 @@ describe('chat-service browser MCP injection (KTD-3, KTD-4 ③)', { concurrency:
     rmSync(folderPath, { recursive: true, force: true });
   });
 
-  async function captureOptions(isBotSession: boolean, backend?: 'claude' | 'opencode'): Promise<Options> {
+  async function captureOptions(
+    isBotSession: boolean,
+    backend?: 'claude' | 'opencode',
+    source?: 'gui' | 'scheduled',
+  ): Promise<Options> {
     const workspace = await workspaceStore.create({
       name: 'Browser Workspace',
       folderPath,
@@ -2564,7 +2611,7 @@ describe('chat-service browser MCP injection (KTD-3, KTD-4 ③)', { concurrency:
       'Browser Session',
       undefined,
       provider.id,
-      isBotSession ? 'wecom' : 'gui',
+      isBotSession ? 'wecom' : (source ?? 'gui'),
     );
     if (backend) workspaceStore.updateSessionBackend(session.id, backend);
     let captured: Options | undefined;
@@ -2627,6 +2674,14 @@ describe('chat-service browser MCP injection (KTD-3, KTD-4 ③)', { concurrency:
       undefined,
     );
     assert.strictEqual((options.env as Record<string, string | undefined>).COMATE_CLI_PATH, undefined);
+  });
+
+  it('scheduled sessions never mint or inject the browser surface', async () => {
+    const options = await captureOptions(false, undefined, 'scheduled');
+    const servers = options.mcpServers as Record<string, { type?: string }> | undefined;
+    assert.equal(servers?.[BROWSER_MCP_SERVER_KEY], undefined);
+    assert.equal((options.env as Record<string, string | undefined>)[SESSION_TOKEN_ENV], undefined);
+    assert.equal((options.env as Record<string, string | undefined>).COMATE_CLI_PATH, undefined);
   });
 
   it('OpenCode GUI sessions receive the same Comate CLI environment', async () => {
