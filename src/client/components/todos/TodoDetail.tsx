@@ -155,7 +155,15 @@ export default function TodoDetail({
 
   const handleWorkspaceChange = (workspaceId: string) => {
     if (!todo) return
-    void onUpdateTodo(todo.id, { workspaceId: workspaceId || null })
+    const shouldReactivateWorkspaceBlockedAutomation = workspaceId
+      && !todo.workspaceId
+      && todo.executionType === 'idle'
+      && todo.executionStatus === 'disabled'
+      && !todo.latestRun
+    void onUpdateTodo(todo.id, {
+      workspaceId: workspaceId || null,
+      ...(shouldReactivateWorkspaceBlockedAutomation ? { executionStatus: 'active' as const } : {}),
+    })
   }
 
   const handleStatusChange = (status: string) => {
@@ -337,12 +345,18 @@ export default function TodoDetail({
                   <SelectTrigger className="w-full h-8 text-xs px-2.5" aria-label={t('executionType')}><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="manual">{t('executionManual')}</SelectItem>
-                    <SelectItem value="once">{t('executionOnce')}</SelectItem>
-                    <SelectItem value="recurring">{t('executionRecurring')}</SelectItem>
-                    <SelectItem value="idle">{t('executionIdle')}</SelectItem>
+                    <SelectItem value="once" disabled={!todo.workspaceId}>{t('executionOnce')}</SelectItem>
+                    <SelectItem value="recurring" disabled={!todo.workspaceId}>{t('executionRecurring')}</SelectItem>
+                    <SelectItem value="idle" disabled={!todo.workspaceId}>{t('executionIdle')}</SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
+              {!todo.workspaceId && (
+                <div role="alert" className="col-span-2 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-[11px] text-warning">
+                  <CircleAlert className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+                  {t('executionWorkspaceRequired')}
+                </div>
+              )}
               {executionType === 'once' && (
                 <Field label={t('executionAt')} className="col-span-2">
                   <input type="datetime-local" value={todo.scheduleTime?.slice(0, 16) ?? ''}
@@ -382,7 +396,12 @@ export default function TodoDetail({
                   <SelectValue placeholder={t('noWorkspace')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">{t('noWorkspace')}</SelectItem>
+                  <SelectItem
+                    value=""
+                    disabled={(todo.executionType ?? 'manual') !== 'manual' && todo.executionStatus === 'active'}
+                  >
+                    {t('noWorkspace')}
+                  </SelectItem>
                   {workspaces.map((w) => (
                     <SelectItem key={w.id} value={w.id}>
                       {w.name}
