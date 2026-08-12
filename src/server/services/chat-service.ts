@@ -2228,22 +2228,31 @@ export class ChatService {
     // https://code.claude.com/docs/en/scheduled-tasks#disable-scheduled-tasks
     env.CLAUDE_CODE_DISABLE_CRON = '1';
 
-    // Per-runtime task capability shared identically by Claude/OpenCode via
-    // subprocess env and the browser MCP header. Rebuilds rotate this kind
-    // without revoking a simultaneous bot/WeCom capability.
+    // Keep the browser MCP bearer out of the agent subprocess environment.
+    // Shell commands receive only the API-broker audience, so they cannot
+    // bypass the SDK permission gate by POSTing browser tools directly.
     const browserEligible = !isBotSession && session.source !== 'scheduled';
     let taskCapabilityToken: string | undefined;
     if (browserEligible) {
-      const capability = sessionCapabilityService.mintForSession({
+      const runtimeGeneration = randomUUID();
+      const browserCapability = sessionCapabilityService.mintForSession({
         sessionId: session.id,
         workspaceId: workspace.id,
         botId: null,
         kind: 'task',
-        audiences: ['browser-mcp', 'api-broker'],
-        runtimeGeneration: randomUUID(),
+        audiences: ['browser-mcp'],
+        runtimeGeneration,
       });
-      taskCapabilityToken = capability.token;
-      env[SESSION_TOKEN_ENV] = capability.token;
+      const brokerCapability = sessionCapabilityService.mintForSession({
+        sessionId: session.id,
+        workspaceId: workspace.id,
+        botId: null,
+        kind: 'broker',
+        audiences: ['api-broker'],
+        runtimeGeneration,
+      });
+      taskCapabilityToken = browserCapability.token;
+      env[SESSION_TOKEN_ENV] = brokerCapability.token;
     }
 
     // Resolve active provider: session -> default, when not already provided.

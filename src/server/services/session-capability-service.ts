@@ -67,11 +67,12 @@ export interface MintedCapability {
   runtimeGeneration: string;
 }
 
-export type SessionCapabilityKind = 'task' | 'wecom';
+export type SessionCapabilityKind = 'task' | 'broker' | 'wecom';
 export type SessionCapabilityAudience = 'browser-mcp' | 'api-broker' | 'wecom-cli';
 
 const ALLOWED_AUDIENCES: Record<SessionCapabilityKind, ReadonlySet<SessionCapabilityAudience>> = {
   task: new Set(['browser-mcp', 'api-broker']),
+  broker: new Set(['api-broker']),
   wecom: new Set(['wecom-cli']),
 };
 

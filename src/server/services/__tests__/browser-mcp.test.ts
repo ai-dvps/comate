@@ -35,7 +35,7 @@ import { SdkClient } from '../sdk-client.js';
 import { SqliteStore, store as workspaceStore } from '../../storage/sqlite-store.js';
 import { createBrowserBinding } from '../../utils/credential-crypto.js';
 import { BrowserMutationCoordinator } from '../browser-mutation-coordinator.js';
-import { SESSION_TOKEN_ENV } from '../session-capability-service.js';
+import { SESSION_TOKEN_ENV, sessionCapabilityService } from '../session-capability-service.js';
 import type { BrowserAuditToolInput } from '../browser-audit.js';
 import { BrowserUploadStagingService } from '../browser-upload-staging.js';
 import { BrowserTaskStateService } from '../browser-task-state.js';
@@ -3022,11 +3022,12 @@ describe('chat-service browser MCP injection (KTD-3, KTD-4 ③)', { concurrency:
       `per-session MCP URL, got ${browser.url}`,
     );
     assert.strictEqual(browser.headers?.Authorization?.startsWith('Bearer '), true);
-    assert.strictEqual(
-      browser.headers?.Authorization,
-      `Bearer ${(options.env as Record<string, string>)[SESSION_TOKEN_ENV]}`,
-      'Claude MCP and subprocess env must share the same task capability',
-    );
+    const browserToken = browser.headers?.Authorization?.replace(/^Bearer /, '') ?? '';
+    const brokerToken = (options.env as Record<string, string>)[SESSION_TOKEN_ENV];
+    assert.notStrictEqual(browserToken, brokerToken, 'browser authority must not be ambient in the agent subprocess');
+    assert.ok(sessionCapabilityService.resolveForAudience(browserToken, 'browser-mcp'));
+    assert.strictEqual(sessionCapabilityService.resolveForAudience(brokerToken, 'browser-mcp'), null);
+    assert.ok(sessionCapabilityService.resolveForAudience(brokerToken, 'api-broker'));
     assert.strictEqual(
       (options.env as Record<string, string>).CLAUDE_CODE_STREAM_CLOSE_TIMEOUT,
       BROWSER_STREAM_CLOSE_TIMEOUT_MS,
