@@ -26,7 +26,6 @@ import type {
 import type { Provider } from '../models/provider.js';
 import type { BackendDriver } from './backend-driver.js';
 import { BROWSER_MCP_SERVER_KEY } from './browser-mcp.js';
-import { SESSION_TOKEN_ENV } from './session-capability-service.js';
 import { getSidecarBaseUrl } from '../utils/self-port.js';
 import { buildBrowserMcpClientConnection } from './browser-mcp-client-config.js';
 import {
@@ -223,9 +222,11 @@ export class OpencodeBackendDriver implements BackendDriver {
 
   private async init(options: Options): Promise<void> {
     const browserEnabled = Boolean(options.mcpServers?.[BROWSER_MCP_SERVER_KEY]);
-    const taskToken = browserEnabled ? this.deps.env[SESSION_TOKEN_ENV] : undefined;
+    const browserServer = options.mcpServers?.[BROWSER_MCP_SERVER_KEY] as { headers?: Record<string, string> } | undefined;
+    const authorization = browserServer?.headers?.Authorization;
+    const taskToken = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : undefined;
     if (browserEnabled && !taskToken) {
-      throw new Error(`OpenCode runtime is missing ${SESSION_TOKEN_ENV}`);
+      throw new Error('OpenCode runtime is missing its browser MCP bearer');
     }
     this.instance = await opencodeServerManager.ensureServer(
       this.deps.comateSessionId,
