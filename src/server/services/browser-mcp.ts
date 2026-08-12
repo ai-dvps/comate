@@ -132,6 +132,7 @@ import {
   type ApplicationSensitiveRegionProvider,
   type DecisionObservationBudget,
   type DecisionObservationLimits,
+  type DecisionObservationTransform,
 } from './browser-decision-observation.js';
 
 // Re-export so existing consumers of './browser-mcp.js' (chat-service, U3
@@ -142,12 +143,13 @@ export { BROWSER_MCP_SERVER_KEY, BROWSER_TOOL_PREFIX };
 export const BROWSER_MCP_INSTRUCTIONS = `Mutation tools return only bounded receipts, never a page model. After every mutation, call getPageState before using element refs. Use the embedded browser tools in this order:
 1. getPageState — default page observation after an external or user-driven page change, a stale-ref error, or when reading another bounded inventory segment. It provides a page-level, text-only, token-bounded semantic view and element refs without requiring vision.
 2. getDecisionObservation — only when structure is insufficient, obtain one coherent structured-and-visual bundle. Its rectangles are evidence and never executable coordinates.
-3. findElements — search the complete internal element index when the page-state inventory is truncated or the target is not obvious.
-4. getElementDetails — inspect one known ref when more attributes or local context are needed.
-5. act — fill/select/check editable controls. act(click) never dispatches; use activate for page-supplied controls or submit for HTML form submission.
-6. upload — assign approved workspace media to a file-input ref through the shell-owned browser only.
-7. activate — request a single handler-approved physical click for a page-supplied control. Its receipt is not proof of business success; observe afterward.
-8. takeScreenshot — optional and only for genuinely visual questions such as layout, overlap, charts, canvas, or image content. Do not use it for routine page understanding or element discovery, and do not use it as a substitute for getPageState.`;
+3. rebindVisualCandidates — validate model-cited refs from one decision observation through trusted current geometry and hit-testing; it never accepts action coordinates.
+4. findElements — search the complete internal element index when the page-state inventory is truncated or the target is not obvious.
+5. getElementDetails — inspect one known ref when more attributes or local context are needed.
+6. act — fill/select/check editable controls. act(click) never dispatches; use activate for page-supplied controls or submit for HTML form submission.
+7. upload — assign approved workspace media to a file-input ref through the shell-owned browser only.
+8. activate — request a single handler-approved physical click for a page-supplied control. Its receipt is not proof of business success; observe afterward.
+9. takeScreenshot — optional and only for genuinely visual questions such as layout, overlap, charts, canvas, or image content. Do not use it for routine page understanding or element discovery, and do not use it as a substitute for getPageState.`;
 
 /**
  * browser-mcp — the first-class tool surface for the embedded controlled
@@ -424,6 +426,47 @@ function toolError(
 
 function toolJson(payload: Record<string, unknown>): CallToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(payload) }] };
+}
+
+type Geometry = { x: number; y: number; width: number; height: number };
+
+function sameGeometry(left: Geometry, right: Geometry): boolean {
+  return Math.abs(left.x - right.x) <= 0.5 && Math.abs(left.y - right.y) <= 0.5 &&
+    Math.abs(left.width - right.width) <= 0.5 && Math.abs(left.height - right.height) <= 0.5;
+}
+
+function imagePointToCss(
+  point: { x: number; y: number },
+  transform: DecisionObservationTransform,
+): { x: number; y: number } {
+  return {
+    x: transform.captureCss.x + point.x / transform.cssToNormalizedScaleX,
+    y: transform.captureCss.y + point.y / transform.cssToNormalizedScaleY,
+  };
+}
+
+function visualEvidenceCssRect(
+  candidate: { point?: { x: number; y: number }; box?: Geometry },
+  transform: DecisionObservationTransform,
+): Geometry | undefined {
+  if (candidate.point) {
+    const point = imagePointToCss(candidate.point, transform);
+    return { ...point, width: 0.01, height: 0.01 };
+  }
+  if (candidate.box) {
+    const origin = imagePointToCss(candidate.box, transform);
+    return {
+      ...origin,
+      width: candidate.box.width / transform.cssToNormalizedScaleX,
+      height: candidate.box.height / transform.cssToNormalizedScaleY,
+    };
+  }
+  return undefined;
+}
+
+function rectsIntersect(left: Geometry, right: Geometry): boolean {
+  return left.x <= right.x + right.width && right.x <= left.x + left.width &&
+    left.y <= right.y + right.height && right.y <= left.y + left.height;
 }
 
 function mutationAuthorizationError(): CallToolResult {
@@ -985,6 +1028,7 @@ export class BrowserToolContext {
   private capturePrimarySessionId?: string;
   private captureAction = 'One explicitly bracketed browser action';
   private readonly decisionObservations: DecisionObservationCoordinator;
+  private latestDecisionObservation?: { observationId: string; transform: DecisionObservationTransform };
 
   constructor(private readonly deps: BrowserMcpDeps) {
     this.svc = deps.browserService ?? browserService;
@@ -1008,6 +1052,7 @@ export class BrowserToolContext {
     this.networkCapture = undefined;
     this.capturePrimarySessionId = undefined;
     this.refTable.clear();
+    this.latestDecisionObservation = undefined;
     this.lastModel = null;
     this.pageStateCache = null;
     clearSubmitSemanticsRefs(this.deps.sessionId);
@@ -1047,6 +1092,7 @@ export class BrowserToolContext {
         // gate's ref view (U4) is cleared too; navigation memory survives
         // (session-level, KTD-4 ②).
         this.refTable.clear();
+        this.latestDecisionObservation = undefined;
         this.lastModel = null;
         void this.uploadStaging.releaseSession(this.deps.sessionId);
         this.pageStateCache = null;
@@ -1088,6 +1134,7 @@ export class BrowserToolContext {
     options: { maxContentChars?: number; maxActions?: number } = {},
   ): Promise<PageModel> {
     this.pageStateCache = null;
+    this.latestDecisionObservation = undefined;
     const model = await distillPageModel(page, this.refTable, options);
     this.lastModel = model;
     // Publish the session's submit-semantics refs for the canUseTool-layer
@@ -1147,6 +1194,18 @@ export class BrowserToolContext {
         `Element ref "${ref}" (${entry.role} "${entry.name}") no longer resolves to the same semantic element.`,
         'Call getPageState, then retry with the fresh ref.',
       );
+    }
+    const visualBinding = this.refTable.getObservationBinding(ref);
+    if (visualBinding) {
+      const probe = await page.probeBackendNode?.(entry.backendNodeId);
+      if (!probe || !probe.hitTested || !probe.connected || !probe.visible || !probe.inViewport ||
+          probe.occluded || !probe.enabled || !sameGeometry(visualBinding.geometry, probe.geometry)) {
+        return toolError(
+          'browser_visual_binding_stale', 'ref_resolve',
+          `Visual binding for ref "${ref}" no longer matches current trusted geometry and hit-testing.`,
+          'Call getDecisionObservation and rebind the current candidate before acting.',
+        );
+      }
     }
     return entry;
   }
@@ -1214,6 +1273,7 @@ export class BrowserToolContext {
       });
       this.lastModel = observation.model;
       this.pageStateCache = observation.model;
+      this.latestDecisionObservation = { observationId: observation.observationId, transform: observation.transform };
       const { image, ...metadata } = observation;
       return {
         content: [
@@ -1224,6 +1284,67 @@ export class BrowserToolContext {
     } catch (error) {
       return this.toErrorResult(error, 'capture');
     }
+  }
+
+  async handleRebindVisualCandidates(args: {
+    observationId: string;
+    candidates: Array<{
+      ref: string;
+      confidence: number;
+      evidence: string[];
+      point?: { x: number; y: number };
+      box?: { x: number; y: number; width: number; height: number };
+    }>;
+  }): Promise<CallToolResult> {
+    const gate = this.controlGate('control');
+    if (gate) return gate;
+    const observation = this.latestDecisionObservation;
+    if (!observation || observation.observationId !== args.observationId) {
+      return toolJson({
+        ok: false, status: 'structured_only', reason: 'visual_observation_unavailable',
+        next: 'Use getPageState or getDecisionObservation; request handoff if structure remains ambiguous.',
+      });
+    }
+    const page = await this.ensurePage();
+    const viable: Array<{ entry: RefEntry; binding: NonNullable<ReturnType<RefTable['getObservationBinding']>> }> = [];
+    for (const candidate of args.candidates) {
+      const entry = this.refTable.get(candidate.ref);
+      const binding = this.refTable.getObservationBinding(candidate.ref);
+      if (!entry || !binding || binding.observationId !== args.observationId || binding.occluded ||
+          !binding.visible || !binding.inViewport || !binding.enabled) continue;
+      const evidenceRect = visualEvidenceCssRect(candidate, observation.transform);
+      if (evidenceRect && !rectsIntersect(binding.geometry, evidenceRect)) continue;
+      const probePoint = candidate.point ? imagePointToCss(candidate.point, observation.transform) : undefined;
+      const probe = await page.probeBackendNode?.(entry.backendNodeId, probePoint);
+      if (!probe || !probe.connected || !probe.hitTested || probe.occluded || !probe.visible || !probe.inViewport ||
+          !probe.enabled || !sameGeometry(binding.geometry, probe.geometry) || probe.editable !== binding.editable) {
+        if (args.candidates.length === 1) {
+          return toolError(
+            'browser_visual_binding_stale', 'ref_resolve',
+            'The candidate changed since the cited decision observation.',
+            'Capture a fresh decision observation and rebind again.',
+          );
+        }
+        continue;
+      }
+      viable.push({ entry, binding });
+    }
+    if (viable.length !== 1) {
+      return toolJson({ ok: false, status: 'ambiguous', viableCandidates: viable.length });
+    }
+    const { entry, binding } = viable[0];
+    return toolJson({
+      ok: true,
+      status: 'bound',
+      binding: {
+        ref: entry.ref,
+        observationId: binding.observationId,
+        pageRevision: binding.pageRevision,
+        role: entry.role,
+        kind: entry.kind,
+        structuralChecksum: binding.structuralChecksum,
+      },
+    });
   }
 
   async handleFindElements(args: FindElementsArgs): Promise<CallToolResult> {
@@ -2747,6 +2868,36 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     { annotations: { readOnlyHint: true, openWorldHint: true } },
   );
 
+  const visualPointSchema = z.object({
+    x: z.number().finite().min(0).max(2000),
+    y: z.number().finite().min(0).max(2000),
+  }).strict();
+  const visualBoxSchema = z.object({
+    x: z.number().finite().min(0).max(2000),
+    y: z.number().finite().min(0).max(2000),
+    width: z.number().finite().positive().max(2000),
+    height: z.number().finite().positive().max(2000),
+  }).strict();
+  const visualCandidateSchema = z.object({
+    ref: z.string().min(1).max(128),
+    confidence: z.number().finite().min(0).max(1),
+    evidence: z.array(z.enum(['visual', 'relationship', 'geometry', 'state'])).min(1).max(8),
+    point: visualPointSchema.optional(),
+    box: visualBoxSchema.optional(),
+  }).strict().refine((candidate) => !(candidate.point && candidate.box), {
+    message: 'A candidate may cite a point or box, not both',
+  });
+  const rebindVisualCandidatesDef = tool(
+    'rebindVisualCandidates',
+    'Read-only validation for candidate refs cited from one decision observation. Image points or boxes are bounded evidence only; this tool returns a trusted ref or ambiguity and never dispatches input.',
+    z.object({
+      observationId: z.string().uuid(),
+      candidates: z.array(visualCandidateSchema).min(1).max(20),
+    }).strict(),
+    async (args) => ctx.handleRebindVisualCandidates(args),
+    { annotations: { readOnlyHint: true, openWorldHint: true } },
+  );
+
   const findElementsDef = tool(
     'findElements',
     'After getPageState, search the complete internal accessibility index by text or regular ' +
@@ -3015,6 +3166,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     openDef,
     getPageStateDef,
     getDecisionObservationDef,
+    rebindVisualCandidatesDef,
     findElementsDef,
     getElementDetailsDef,
     actDef,

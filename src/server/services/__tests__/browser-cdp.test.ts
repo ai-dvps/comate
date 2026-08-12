@@ -305,6 +305,92 @@ describe('BrowserCdpSession trusted interaction adapter', () => {
     }
   });
 
+  it('probes a backend node with trusted geometry and hit-testing without scrolling or dispatching', async () => {
+    const peer = await withInteractionPeer((command) => {
+      if (command.method === 'DOM.resolveNode') return { object: { objectId: 'target-node' } };
+      if (command.method === 'Runtime.callFunctionOn') {
+        return { result: { value: { connected: true, enabled: true, editable: true, visible: true, inViewport: true } } };
+      }
+      if (command.method === 'DOM.getBoxModel') {
+        return { model: { content: [10, 20, 110, 20, 110, 60, 10, 60] } };
+      }
+      if (command.method === 'DOM.getNodeForLocation') {
+        return { backendNodeId: 42, frameId: 'main-frame' };
+      }
+      return {};
+    });
+    try {
+      const probe = await peer.page.probeBackendNode?.(42, { x: 30, y: 30 });
+      assert.deepEqual(probe, {
+        connected: true,
+        enabled: true,
+        editable: true,
+        visible: true,
+        inViewport: true,
+        occluded: false,
+        geometry: { x: 10, y: 20, width: 100, height: 40 },
+        hitTested: true,
+      });
+      assert.equal(peer.commands.some((command) => command.method === 'DOM.scrollIntoViewIfNeeded'), false);
+      assert.equal(peer.commands.some((command) => command.method === 'Input.dispatchMouseEvent'), false);
+    } finally {
+      await peer.close();
+    }
+  });
+
+  it('fails a read-only backend probe closed on cross-frame occlusion without dispatch', async () => {
+    const peer = await withInteractionPeer((command) => {
+      if (command.method === 'DOM.resolveNode') return { object: { objectId: 'target-node' } };
+      if (command.method === 'Runtime.callFunctionOn') {
+        return { result: { value: { connected: true, enabled: true, editable: false, visible: true, inViewport: true } } };
+      }
+      if (command.method === 'DOM.getBoxModel') {
+        return { model: { content: [0, 0, 40, 0, 40, 40, 0, 40] } };
+      }
+      if (command.method === 'DOM.getNodeForLocation') {
+        return { backendNodeId: 42, frameId: 'child-frame' };
+      }
+      return {};
+    });
+    try {
+      assert.equal(await peer.page.probeBackendNode?.(42), null);
+      assert.equal(peer.commands.some((command) => command.method === 'Input.dispatchMouseEvent'), false);
+    } finally {
+      await peer.close();
+    }
+  });
+
+  it('returns page-space geometry while hit-testing in viewport space on a scrolled page', async () => {
+    const peer = await withInteractionPeer((command) => {
+      if (command.method === 'DOM.resolveNode') return { object: { objectId: 'target-node' } };
+      if (command.method === 'Runtime.callFunctionOn') {
+        return { result: { value: {
+          connected: true, scrollX: 120, scrollY: 240,
+          enabled: true, editable: false, visible: true, inViewport: true,
+        } } };
+      }
+      if (command.method === 'DOM.getBoxModel') {
+        return { model: { content: [10, 20, 110, 20, 110, 60, 10, 60] } };
+      }
+      if (command.method === 'DOM.getNodeForLocation') {
+        assert.deepEqual(
+          { x: command.params.x, y: command.params.y },
+          { x: 30, y: 30 },
+          'page evidence point is translated back to viewport coordinates for CDP hit-testing',
+        );
+        return { backendNodeId: 42, frameId: 'main-frame' };
+      }
+      return {};
+    });
+    try {
+      const probe = await peer.page.probeBackendNode?.(42, { x: 150, y: 270 });
+      assert.deepEqual(probe?.geometry, { x: 130, y: 260, width: 100, height: 40 });
+      assert.equal(peer.commands.some((command) => command.method === 'Input.dispatchMouseEvent'), false);
+    } finally {
+      await peer.close();
+    }
+  });
+
   it('rechecks authority after hit-testing and immediately before mouse dispatch', async () => {
     const peer = await withInteractionPeer((command) => {
       if (command.method === 'DOM.resolveNode') return { object: { objectId: 'target-node' } };

@@ -296,6 +296,8 @@ export interface BrowserCdpSession {
   getDocumentIdentity?(): BrowserDocumentIdentity | null;
   extractPageModel?(expression: string): Promise<PageExtractionBundle>;
   callBackendNode?<T>(backendNodeId: number, functionDeclaration: string): Promise<T | null>;
+  /** Read-only structural/spatial recheck. Never scrolls and never dispatches input. */
+  probeBackendNode?(backendNodeId: number, point?: { x: number; y: number }): Promise<TrustedBackendNodeProbe | null>;
   /** Resolve an AX-backed ref without accepting an arbitrary selector. */
   inspectBackendNode?(backendNodeId: number, functionDeclaration: string): Promise<InspectedElement | null>;
   /** Bare base64 screenshot. Existing callers default to bounded JPEG. */
@@ -324,6 +326,17 @@ export interface BrowserCdpSession {
   onClose(listener: () => void): void;
   onDocumentChange?(listener: () => void): void;
   close(): void;
+}
+
+export interface TrustedBackendNodeProbe {
+  connected: boolean;
+  enabled: boolean;
+  editable: boolean;
+  visible: boolean;
+  inViewport: boolean;
+  occluded: boolean;
+  geometry: { x: number; y: number; width: number; height: number };
+  hitTested: true;
 }
 
 interface TargetInfo {
@@ -357,6 +370,24 @@ const READ_INTERACTION_STATE_FN = `function () {
   return {
     connected: this.isConnected === true,
     enabled: !this.disabled && ariaDisabled !== 'true'
+  };
+}`;
+
+const READ_PROBE_STATE_FN = `function () {
+  if (!this || this.isConnected !== true || !this.getBoundingClientRect) return { connected: false };
+  var rect = this.getBoundingClientRect();
+  var style = window.getComputedStyle(this);
+  var role = String(this.getAttribute && this.getAttribute('role') || '').toLowerCase();
+  var tag = String(this.tagName || '').toLowerCase();
+  var visible = rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0;
+  return {
+    connected: true,
+    scrollX: Number.isFinite(window.scrollX) ? window.scrollX : 0,
+    scrollY: Number.isFinite(window.scrollY) ? window.scrollY : 0,
+    enabled: !this.disabled && String(this.getAttribute && this.getAttribute('aria-disabled') || '').toLowerCase() !== 'true',
+    editable: !!this.isContentEditable || tag === 'textarea' || tag === 'select' || tag === 'input' || role === 'textbox' || role === 'searchbox' || role === 'combobox',
+    visible: visible,
+    inViewport: visible && rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth
   };
 }`;
 
@@ -695,6 +726,99 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
       this.sessionId,
     );
     return result.nodes ?? [];
+  }
+
+  async probeBackendNode(
+    backendNodeId: number,
+    point?: { x: number; y: number },
+  ): Promise<TrustedBackendNodeProbe | null> {
+    let targetObjectId: string | undefined;
+    try {
+      const resolved = await this.connection.send<{ object?: { objectId?: string } }>(
+        'DOM.resolveNode', { backendNodeId }, this.sessionId,
+      );
+      targetObjectId = resolved.object?.objectId;
+      if (!targetObjectId) return null;
+      const stateResult = await this.connection.send<EvaluateResult>('Runtime.callFunctionOn', {
+        objectId: targetObjectId,
+        functionDeclaration: READ_PROBE_STATE_FN,
+        returnByValue: true,
+      }, this.sessionId);
+      const state = stateResult.result?.value as {
+        connected?: boolean; scrollX?: number; scrollY?: number; enabled?: boolean; editable?: boolean; visible?: boolean; inViewport?: boolean;
+      } | undefined;
+      if (!state?.connected || !state.enabled || !state.visible || !state.inViewport) return null;
+
+      const box = await this.connection.send<{ model?: { content?: number[]; border?: number[] } }>(
+        'DOM.getBoxModel', { backendNodeId }, this.sessionId,
+      );
+      const quad = box.model?.content ?? box.model?.border;
+      if (!quad || quad.length < 8 || quad.some((value) => !Number.isFinite(value))) return null;
+      const xs = [quad[0], quad[2], quad[4], quad[6]];
+      const ys = [quad[1], quad[3], quad[5], quad[7]];
+      const viewportGeometry = {
+        x: Math.min(...xs),
+        y: Math.min(...ys),
+        width: Math.max(...xs) - Math.min(...xs),
+        height: Math.max(...ys) - Math.min(...ys),
+      };
+      if (viewportGeometry.width <= 0 || viewportGeometry.height <= 0) return null;
+      const scrollX = Number.isFinite(state.scrollX) ? state.scrollX! : 0;
+      const scrollY = Number.isFinite(state.scrollY) ? state.scrollY! : 0;
+      const geometry = {
+        ...viewportGeometry,
+        x: viewportGeometry.x + scrollX,
+        y: viewportGeometry.y + scrollY,
+      };
+      const pageHitPoint = point ?? {
+        x: geometry.x + geometry.width / 2,
+        y: geometry.y + geometry.height / 2,
+      };
+      if (!Number.isFinite(pageHitPoint.x) || !Number.isFinite(pageHitPoint.y) ||
+          pageHitPoint.x < geometry.x || pageHitPoint.x > geometry.x + geometry.width ||
+          pageHitPoint.y < geometry.y || pageHitPoint.y > geometry.y + geometry.height) return null;
+      const hitPoint = { x: pageHitPoint.x - scrollX, y: pageHitPoint.y - scrollY };
+      const hit = await this.connection.send<{ backendNodeId?: number; frameId?: string }>(
+        'DOM.getNodeForLocation',
+        { x: Math.round(hitPoint.x), y: Math.round(hitPoint.y), includeUserAgentShadowDOM: true, ignorePointerEventsNone: false },
+        this.sessionId,
+      );
+      if (hit.frameId && this.mainFrameId && hit.frameId !== this.mainFrameId) return null;
+      if (typeof hit.backendNodeId !== 'number') return null;
+      if (hit.backendNodeId !== backendNodeId) {
+        let hitObjectId: string | undefined;
+        try {
+          const hitResolved = await this.connection.send<{ object?: { objectId?: string } }>(
+            'DOM.resolveNode', { backendNodeId: hit.backendNodeId }, this.sessionId,
+          );
+          hitObjectId = hitResolved.object?.objectId;
+          if (!hitObjectId) return null;
+          const allowed = await this.connection.send<EvaluateResult>('Runtime.callFunctionOn', {
+            objectId: hitObjectId,
+            functionDeclaration: ALLOWED_HIT_TEST_FN,
+            arguments: [{ objectId: targetObjectId }],
+            returnByValue: true,
+          }, this.sessionId);
+          if (allowed.result?.value !== true) return null;
+        } finally {
+          if (hitObjectId) await this.connection.send('Runtime.releaseObject', { objectId: hitObjectId }, this.sessionId).catch(() => undefined);
+        }
+      }
+      return {
+        connected: true,
+        enabled: true,
+        editable: state.editable === true,
+        visible: true,
+        inViewport: true,
+        occluded: false,
+        geometry,
+        hitTested: true,
+      };
+    } catch {
+      return null;
+    } finally {
+      if (targetObjectId) await this.connection.send('Runtime.releaseObject', { objectId: targetObjectId }, this.sessionId).catch(() => undefined);
+    }
   }
 
   async clickBackendNode(

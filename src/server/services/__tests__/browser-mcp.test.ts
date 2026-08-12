@@ -38,6 +38,7 @@ import { SESSION_TOKEN_ENV } from '../session-capability-service.js';
 import type { BrowserAuditToolInput } from '../browser-audit.js';
 import { BrowserUploadStagingService } from '../browser-upload-staging.js';
 import { PNG } from 'pngjs';
+import { z } from 'zod';
 
 /**
  * browser-mcp tests — the first-class tool surface (KTD-3), the handler-level
@@ -71,6 +72,7 @@ interface FakePageOptions {
   activationSnapshots?: Array<import('../browser-page-model.js').ActivationTargetSnapshot | null>;
   fileInputSnapshots?: Array<import('../browser-page-model.js').FileInputSnapshot | null>;
   uploadReceipt?: import('../browser-cdp.js').BrowserOperationReceipt;
+  observationStates?: Record<number, import('../browser-cdp.js').TrustedBackendNodeProbe>;
 }
 
 class FakeNetworkTransport implements BrowserNetworkCaptureTransport {
@@ -120,6 +122,7 @@ class FakePage implements BrowserCdpSession {
   private activationSnapshots: Array<import('../browser-page-model.js').ActivationTargetSnapshot | null>;
   private fileInputSnapshots: Array<import('../browser-page-model.js').FileInputSnapshot | null>;
   private backendFingerprints: Record<number, import('../browser-page-model.js').ElementFingerprint | null>;
+  private observationStates: Record<number, import('../browser-cdp.js').TrustedBackendNodeProbe>;
 
   constructor(options: FakePageOptions) {
     this.options = options;
@@ -131,6 +134,7 @@ class FakePage implements BrowserCdpSession {
     this.activationSnapshots = [...(options.activationSnapshots ?? [])];
     this.fileInputSnapshots = [...(options.fileInputSnapshots ?? [])];
     this.backendFingerprints = { ...(options.backendFingerprints ?? {}) };
+    this.observationStates = { ...(options.observationStates ?? {}) };
   }
 
   get probe(): { docId: string; domEpoch: number } | null {
@@ -152,6 +156,18 @@ class FakePage implements BrowserCdpSession {
     this.backendFingerprints[backendNodeId] = fingerprint;
   }
 
+  setTrustedProbe(backendNodeId: number, probe: import('../browser-cdp.js').TrustedBackendNodeProbe): void {
+    this.observationStates[backendNodeId] = probe;
+  }
+
+  async probeBackendNode(backendNodeId: number): Promise<import('../browser-cdp.js').TrustedBackendNodeProbe | null> {
+    return this.observationStates[backendNodeId] ?? {
+      connected: true, geometry: { x: 0, y: 0, width: 1, height: 1 },
+      visible: true, inViewport: true, occluded: false, enabled: true,
+      editable: backendNodeId !== 100, hitTested: true,
+    };
+  }
+
   async extractPageModel(): Promise<import('../browser-page-model.js').PageExtractionBundle> {
     if (this.options.extractError) throw this.options.extractError;
     const extraction = this.submitDispatched && this.options.postSubmitExtraction
@@ -170,10 +186,10 @@ class FakePage implements BrowserCdpSession {
 
   async callBackendNode<T>(backendNodeId: number, functionDeclaration: string): Promise<T | null> {
     if (functionDeclaration.includes('__comateDecisionObservationRefState')) {
-      return {
+      return (this.observationStates[backendNodeId] ?? {
         connected: true, geometry: { x: 0, y: 0, width: 1, height: 1 },
         visible: true, inViewport: true, occluded: false, enabled: true, editable: backendNodeId !== 100,
-      } as T;
+      }) as T;
     }
     if (functionDeclaration.includes('__comateFileInputSnapshot')) {
       const next = this.fileInputSnapshots.length > 1 ? this.fileInputSnapshots.shift() : this.fileInputSnapshots[0];
@@ -672,7 +688,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.deepStrictEqual(
       [...harness.tools.keys()].sort(),
-      ['act', 'activate', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getDecisionObservation', 'getElementDetails', 'getPageState', 'open', 'requestHandoff', 'startNetworkCapture', 'stopNetworkCapture', 'submit', 'takeScreenshot', 'upload'],
+      ['act', 'activate', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getDecisionObservation', 'getElementDetails', 'getPageState', 'open', 'rebindVisualCandidates', 'requestHandoff', 'startNetworkCapture', 'stopNetworkCapture', 'submit', 'takeScreenshot', 'upload'],
     );
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
@@ -682,6 +698,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     assert.strictEqual(harness.tools.get('takeScreenshot')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('getPageState')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('getDecisionObservation')?.annotations?.readOnlyHint, true);
+    assert.strictEqual(harness.tools.get('rebindVisualCandidates')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('extract')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('findElements')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('getElementDetails')?.annotations?.readOnlyHint, true);
@@ -699,7 +716,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const defs = buildBrowserToolDefinitions({ sessionId: 's', workspaceId: 'w' });
     assert.deepEqual(
       defs.map((d) => d.name),
-      ['open', 'getPageState', 'getDecisionObservation', 'findElements', 'getElementDetails', 'act', 'upload', 'activate', 'takeScreenshot', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'submit', 'extract', 'requestHandoff', 'close'],
+      ['open', 'getPageState', 'getDecisionObservation', 'rebindVisualCandidates', 'findElements', 'getElementDetails', 'act', 'upload', 'activate', 'takeScreenshot', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'submit', 'extract', 'requestHandoff', 'close'],
     );
     assert.match(defs.find((definition) => definition.name === 'getPageState')?.description ?? '', /default observation/i);
     assert.match(defs.find((definition) => definition.name === 'takeScreenshot')?.description ?? '', /only.*visual/i);
@@ -709,6 +726,9 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const schema = authenticated.inputSchema as { safeParse(value: unknown): { success: boolean } };
     assert.equal(schema.safeParse(sharedContractFixtures.brokerRequest).success, true);
     assert.equal(schema.safeParse({ ...sharedContractFixtures.brokerRequest, unexpected: true }).success, false);
+    const act = defs.find((definition) => definition.name === 'act')!;
+    const actSchema = z.object(act.inputSchema as z.ZodRawShape).strict();
+    assert.equal(actSchema.safeParse({ ref: 'e1-aa', action: 'fill', value: 'x', x: 10, y: 10 }).success, false);
   });
 
   it('fails closed in the mutation handler when operationId is missing', async () => {
@@ -814,6 +834,114 @@ describe('browser-mcp page observation', () => {
     assert.ok(payload.observation.observationId);
     assert.equal(payload.observation.transform.devicePixelRatio, 1);
     assert.equal(payload.observation.image, undefined, 'text metadata never duplicates screenshot bytes');
+  });
+
+  it('rebinds exactly one same-observation visual candidate to a trusted ref', async () => {
+    harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+    const observed = resultPayload(await harness.callTool('getDecisionObservation', {}, {})) as {
+      observation: { observationId: string; model: { forms: Array<{ fields: Array<{ ref: string }> }> } };
+    };
+    const ref = observed.observation.model.forms[0].fields[1].ref;
+    const rebound = resultPayload(await harness.callTool('rebindVisualCandidates', {
+      observationId: observed.observation.observationId,
+      candidates: [{ ref, confidence: 0.72, evidence: ['relationship', 'visual'], point: { x: 0.5, y: 0.5 } }],
+    }, {}));
+
+    assert.equal(rebound.ok, true);
+    assert.equal(rebound.status, 'bound');
+    assert.equal((rebound.binding as { ref: string }).ref, ref);
+    assert.equal(JSON.stringify(rebound).includes('confidence'), false, 'model confidence never becomes authority metadata');
+    assert.equal(JSON.stringify(rebound).includes('point'), false, 'image coordinates are not echoed as action parameters');
+  });
+
+  it('revalidates a visual binding again through resolveCurrentRef before a later action', async () => {
+    const page = new FakePage({ extraction: makeExtraction() });
+    harness = await makeHarness({ page });
+    const observed = resultPayload(await harness.callTool('getDecisionObservation', {}, {})) as {
+      observation: { observationId: string; model: { forms: Array<{ fields: Array<{ ref: string }> }> } };
+    };
+    const ref = observed.observation.model.forms[0].fields[1].ref;
+    await harness.callTool('rebindVisualCandidates', {
+      observationId: observed.observation.observationId,
+      candidates: [{ ref, confidence: 0.8, evidence: ['visual'], point: { x: 0.5, y: 0.5 } }],
+    }, {});
+    page.setTrustedProbe(102, {
+      connected: true, geometry: { x: 5, y: 5, width: 1, height: 1 }, visible: true, inViewport: true,
+      occluded: false, enabled: true, editable: true, hitTested: true,
+    });
+    const acted = await harness.call('act', { ref, action: 'fill', value: 'must-not-dispatch' });
+    assert.equal((resultPayload(acted).error as { code: string }).code, 'browser_visual_binding_stale');
+    assert.deepEqual(page.filledBackendNodes, []);
+  });
+
+  it('keeps zero and multiple viable visual candidates ambiguous regardless of confidence', async () => {
+    harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+    const observed = resultPayload(await harness.callTool('getDecisionObservation', {}, {})) as {
+      observation: { observationId: string; model: { forms: Array<{ fields: Array<{ ref: string }> }> } };
+    };
+    const refs = observed.observation.model.forms[0].fields.slice(0, 2).map((field) => field.ref);
+    const multiple = resultPayload(await harness.callTool('rebindVisualCandidates', {
+      observationId: observed.observation.observationId,
+      candidates: [
+        { ref: refs[0], confidence: 0.99, evidence: ['visual'], point: { x: 0.5, y: 0.5 } },
+        { ref: refs[1], confidence: 0.2, evidence: ['visual'], point: { x: 0.5, y: 0.5 } },
+      ],
+    }, {}));
+    assert.equal(multiple.status, 'ambiguous');
+    assert.equal(multiple.viableCandidates, 2);
+
+    const zero = resultPayload(await harness.callTool('rebindVisualCandidates', {
+      observationId: observed.observation.observationId,
+      candidates: [{ ref: refs[0], confidence: 1, evidence: ['visual'], point: { x: 50, y: 50 } }],
+    }, {}));
+    assert.equal(zero.status, 'ambiguous');
+    assert.equal(zero.viableCandidates, 0);
+  });
+
+  it('fails visual rebinding closed after geometry drift, refresh, or document replacement', async () => {
+    const page = new FakePage({ extraction: makeExtraction() });
+    harness = await makeHarness({ page });
+    const observed = resultPayload(await harness.callTool('getDecisionObservation', {}, {})) as {
+      observation: { observationId: string; model: { forms: Array<{ fields: Array<{ ref: string }> }> } };
+    };
+    const ref = observed.observation.model.forms[0].fields[1].ref;
+    page.setTrustedProbe(102, {
+      connected: true, geometry: { x: 10, y: 10, width: 1, height: 1 }, visible: true, inViewport: true,
+      occluded: false, enabled: true, editable: true, hitTested: true,
+    });
+    const drifted = await harness.callTool('rebindVisualCandidates', {
+      observationId: observed.observation.observationId,
+      candidates: [{ ref, confidence: 1, evidence: ['visual'], point: { x: 0.5, y: 0.5 } }],
+    }, {});
+    assert.equal((resultPayload(drifted).error as { code: string }).code, 'browser_visual_binding_stale');
+
+    await harness.callTool('getPageState', {}, {});
+    const refreshed = resultPayload(await harness.callTool('rebindVisualCandidates', {
+      observationId: observed.observation.observationId,
+      candidates: [{ ref, confidence: 1, evidence: ['visual'], point: { x: 0.5, y: 0.5 } }],
+    }, {}));
+    assert.equal(refreshed.status, 'structured_only');
+
+    page.setDocumentIdentity({ targetId: 'target-1', sessionId: 'session-1', frameId: 'frame-1', loaderId: 'doc-2', generation: 1 });
+    const replaced = resultPayload(await harness.callTool('rebindVisualCandidates', {
+      observationId: observed.observation.observationId,
+      candidates: [{ ref, confidence: 1, evidence: ['visual'], point: { x: 0.5, y: 0.5 } }],
+    }, {}));
+    assert.equal(replaced.status, 'structured_only');
+  });
+
+  it('returns explicit structured-only degradation when visual evidence is unavailable', async () => {
+    harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+    const result = resultPayload(await harness.callTool('rebindVisualCandidates', {
+      observationId: randomUUID(),
+      candidates: [{ ref: 'e1-missing', confidence: 0.5, evidence: ['visual'], box: { x: 0, y: 0, width: 1, height: 1 } }],
+    }, {}));
+    assert.deepEqual(result, {
+      ok: false,
+      status: 'structured_only',
+      reason: 'visual_observation_unavailable',
+      next: 'Use getPageState or getDecisionObservation; request handoff if structure remains ambiguous.',
+    });
   });
 
   it('takeScreenshot maps capture failures to a structured capture error', async () => {

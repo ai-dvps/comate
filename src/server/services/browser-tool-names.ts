@@ -18,6 +18,7 @@ export const BROWSER_TOOL_NAMES = {
   open: `${BROWSER_TOOL_PREFIX}open`,
   getPageState: `${BROWSER_TOOL_PREFIX}getPageState`,
   getDecisionObservation: `${BROWSER_TOOL_PREFIX}getDecisionObservation`,
+  rebindVisualCandidates: `${BROWSER_TOOL_PREFIX}rebindVisualCandidates`,
   findElements: `${BROWSER_TOOL_PREFIX}findElements`,
   getElementDetails: `${BROWSER_TOOL_PREFIX}getElementDetails`,
   takeScreenshot: `${BROWSER_TOOL_PREFIX}takeScreenshot`,
