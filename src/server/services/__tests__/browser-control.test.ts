@@ -412,9 +412,12 @@ describe('browser-control state machine (transition table)', () => {
     const h = track(await makeHarness());
     await h.service.ensureSession({ sessionId: 'sess-1', workspaceId: 'ws-1' });
     assert.strictEqual(h.service.getControlState('sess-1'), 'agent_in_control');
+    let cancelledObservations = 0;
+    h.control.configureObservationCancellation(() => { cancelledObservations += 1; });
 
     const grant = h.control.takeover('sess-1');
     assert.strictEqual(grant.ok, true);
+    assert.strictEqual(cancelledObservations, 1, 'takeover cancels an already in-flight observation');
     assert.strictEqual(
       h.service.getControlState('sess-1'),
       BROWSER_CONTROL_TRANSITIONS.agent_in_control.takeover_click.next,

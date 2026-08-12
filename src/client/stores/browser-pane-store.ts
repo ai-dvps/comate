@@ -66,6 +66,7 @@ export interface BrowserTaskProjection {
   populatedPendingValidation: number
   verified: number
   awaitingAuthority: number
+  recoveryExhausted?: boolean
 }
 
 export interface BrowserPaneState {

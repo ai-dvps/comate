@@ -510,6 +510,7 @@ export class SessionRuntime {
       // approval owner. This avoids a duplicate, weaker generic card.
       if ((toolName === BROWSER_TOOL_NAMES.act && input.action === 'click') ||
           toolName === BROWSER_TOOL_NAMES.startTask || toolName === BROWSER_TOOL_NAMES.abandonTask ||
+          toolName === BROWSER_TOOL_NAMES.recoverTarget ||
           isBrowserActivationClassified(toolName, input) || isBrowserUploadClassified(toolName, input) ||
           isBrowserSubmitClassified(this.sessionId, toolName, input)) {
         // Handler-owned security manifests are the single approval surface.

@@ -87,15 +87,32 @@ describe('BrowserTaskStateService', () => {
     const task = service.createOrReplace(scope, [slot({ population: 'populated', validation: 'verified', evidenceId: 'e-1', observationEpoch: 1 })]);
     const pending = service.recordMutationPending(scope, task.taskId, task.version, {
       slotKey: 'primary_content', operationId: 'op-1', baselineObservationEpoch: 1,
+      baselineObservationId: 'obs-1', baselineDocumentIdentity: 'document-1', baselineStructuralChecksum: 'shape-1',
+      targetBindingDigest: 'target-1', controlEpoch: 'control-1', evidenceClass: 'target_local',
     });
     assert.equal(pending.slots[0].validation, 'pending');
     assert.throws(() => service.validateFromObservation(scope, task.taskId, pending.version, {
       slotKey: 'primary_content', operationId: 'op-1', observationId: 'obs-old', observationEpoch: 1,
+      documentIdentity: 'document-1', structuralChecksum: 'shape-1', targetBindingDigest: 'target-1', controlEpoch: 'control-1', predicateMatched: true,
     }));
+    assert.throws(() => service.validateFromObservation(scope, task.taskId, pending.version, {
+      slotKey: 'primary_content', operationId: 'op-1', observationId: 'obs-wrong', observationEpoch: 2,
+      documentIdentity: 'document-2', structuralChecksum: 'shape-2', targetBindingDigest: 'target-1', controlEpoch: 'control-1', predicateMatched: true,
+    }), /browser_task_observation_not_causal/);
     const verified = service.validateFromObservation(scope, task.taskId, pending.version, {
       slotKey: 'primary_content', operationId: 'op-1', observationId: 'obs-2', observationEpoch: 2,
+      documentIdentity: 'document-1', structuralChecksum: 'shape-2', targetBindingDigest: 'target-1', controlEpoch: 'control-1', predicateMatched: true,
     });
     assert.equal(verified.slots[0].validation, 'verified');
+  });
+
+  it('claims one recovery atomically for a task version, target, and server failure class', () => {
+    const service = new BrowserTaskStateService(new SqliteStore(':memory:'));
+    const task = service.createOrReplace(scope, [slot()]);
+    assert.equal(service.claimRecovery(scope, task.taskId, task.version, 'target-binding-1', 'off_viewport'), true);
+    assert.equal(service.claimRecovery(scope, task.taskId, task.version, 'target-binding-1', 'off_viewport'), false);
+    assert.equal(service.claimRecovery(scope, task.taskId, task.version, 'target-binding-1', 'task_overlay'), true);
+    assert.throws(() => service.claimRecovery(scope, task.taskId, task.version, 'target-binding-1', 'unknown'));
   });
 
   it('reclaims safe progress while revoking evidence, validation, and authority', () => {

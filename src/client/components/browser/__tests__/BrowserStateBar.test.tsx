@@ -194,6 +194,15 @@ describe('BrowserStateBar', () => {
     expect(projection).not.toHaveTextContent('task-')
   })
 
+  it('announces exhausted safe recovery without exposing target details', () => {
+    setSession({ controlState: 'agent_in_control', task: { lifecycle: 'blocked', required: 1, verified: 0,
+      populatedPendingValidation: 0, awaitingAuthority: 0, recoveryExhausted: true } })
+    renderBar()
+    const projection = screen.getByTestId('browser-task-state')
+    expect(projection).toHaveTextContent('Safe recovery is exhausted')
+    expect(projection).not.toHaveTextContent('target')
+  })
+
   // Popout entry (U8/U9: native shell + live control state only).
 
   it('shows the popout button for a live control state in the native shell', () => {

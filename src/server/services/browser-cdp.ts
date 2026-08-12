@@ -298,6 +298,10 @@ export interface BrowserCdpSession {
   callBackendNode?<T>(backendNodeId: number, functionDeclaration: string): Promise<T | null>;
   /** Read-only structural/spatial recheck. Never scrolls and never dispatches input. */
   probeBackendNode?(backendNodeId: number, point?: { x: number; y: number }): Promise<TrustedBackendNodeProbe | null>;
+  /** Typed read-only preflight used by the closed recovery policy. */
+  inspectBackendNodeState?(backendNodeId: number): Promise<TrustedBackendNodeState>;
+  /** Non-activating recovery primitive. It may reveal only the same trusted backend node. */
+  revealBackendNode?(backendNodeId: number): Promise<TrustedBackendNodeReveal>;
   /** Resolve an AX-backed ref without accepting an arbitrary selector. */
   inspectBackendNode?(backendNodeId: number, functionDeclaration: string): Promise<InspectedElement | null>;
   /** Bare base64 screenshot. Existing callers default to bounded JPEG. */
@@ -338,6 +342,18 @@ export interface TrustedBackendNodeProbe {
   geometry: { x: number; y: number; width: number; height: number };
   hitTested: true;
 }
+
+export type TrustedBackendNodeState =
+  | { status: 'ready'; probe: TrustedBackendNodeProbe }
+  | { status: 'unavailable'; connected: false }
+  | { status: 'disabled'; connected: true; enabled: false }
+  | { status: 'not_visible'; connected: true; enabled: true; visible: false }
+  | { status: 'off_viewport'; connected: true; enabled: true; visible: true; inViewport: false; occluded: false }
+  | { status: 'not_actionable'; connected: true; enabled: true; visible: true; inViewport: true };
+
+export type TrustedBackendNodeReveal =
+  | { revealed: true }
+  | { revealed: false; reason: 'target_unavailable' | 'target_disabled' | 'target_not_visible' | 'target_changed' };
 
 interface TargetInfo {
   targetId: string;
@@ -728,6 +744,56 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
     return result.nodes ?? [];
   }
 
+  async inspectBackendNodeState(backendNodeId: number): Promise<TrustedBackendNodeState> {
+    let targetObjectId: string | undefined;
+    try {
+      const resolved = await this.connection.send<{ object?: { objectId?: string } }>(
+        'DOM.resolveNode', { backendNodeId }, this.sessionId,
+      );
+      targetObjectId = resolved.object?.objectId;
+      if (!targetObjectId) return { status: 'unavailable', connected: false };
+      const result = await this.connection.send<EvaluateResult>('Runtime.callFunctionOn', {
+        objectId: targetObjectId,
+        functionDeclaration: READ_PROBE_STATE_FN,
+        returnByValue: true,
+      }, this.sessionId);
+      const state = result.result?.value as {
+        connected?: boolean; enabled?: boolean; visible?: boolean; inViewport?: boolean;
+      } | undefined;
+      if (!state?.connected) return { status: 'unavailable', connected: false };
+      if (!state.enabled) return { status: 'disabled', connected: true, enabled: false };
+      if (!state.visible) return { status: 'not_visible', connected: true, enabled: true, visible: false };
+      if (!state.inViewport) return {
+        status: 'off_viewport', connected: true, enabled: true, visible: true,
+        inViewport: false, occluded: false,
+      };
+    } catch {
+      return { status: 'unavailable', connected: false };
+    } finally {
+      if (targetObjectId) await this.connection.send('Runtime.releaseObject', { objectId: targetObjectId }, this.sessionId).catch(() => undefined);
+    }
+    const probe = await this.probeBackendNode(backendNodeId);
+    return probe
+      ? { status: 'ready', probe }
+      : { status: 'not_actionable', connected: true, enabled: true, visible: true, inViewport: true };
+  }
+
+  async revealBackendNode(backendNodeId: number): Promise<TrustedBackendNodeReveal> {
+    const state = await this.inspectBackendNodeState(backendNodeId);
+    if (state.status !== 'off_viewport') {
+      const reason = state.status === 'unavailable' ? 'target_unavailable'
+        : state.status === 'disabled' ? 'target_disabled'
+          : state.status === 'not_visible' ? 'target_not_visible' : 'target_changed';
+      return { revealed: false, reason };
+    }
+    try {
+      await this.connection.send('DOM.scrollIntoViewIfNeeded', { backendNodeId }, this.sessionId);
+      return { revealed: true };
+    } catch {
+      return { revealed: false, reason: 'target_changed' };
+    }
+  }
+
   async probeBackendNode(
     backendNodeId: number,
     point?: { x: number; y: number },
@@ -841,7 +907,6 @@ class BrowserCdpSessionImpl implements BrowserCdpSession {
       if (!state?.connected) return notDispatched('target_unavailable');
       if (!state.enabled) return notDispatched('target_disabled');
 
-      await this.connection.send('DOM.scrollIntoViewIfNeeded', { backendNodeId }, this.sessionId);
       const box = await this.connection.send<{ model?: { content?: number[]; border?: number[] } }>(
         'DOM.getBoxModel', { backendNodeId }, this.sessionId,
       );
