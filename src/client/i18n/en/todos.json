@@ -94,6 +94,7 @@
   "executionAt": "Run at",
   "executionCron": "Cron expression",
   "executionIdleHint": "Runs in the configured night window when the app is idle.",
+  "executionWorkspaceRequired": "Select a workspace before choosing an automatic run type.",
   "executionNextRun": "Next run: {{time}}",
   "executionActive": "Active",
   "executionPaused": "Paused",
