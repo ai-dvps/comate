@@ -235,6 +235,32 @@ describe('BrowserMutationCoordinator', () => {
     assert.equal(store.getBrowserFinalAction(task.taskId)?.state, 'outcome_unknown');
   });
 
+  it('scopes final-action recovery by principal when operation ids collide', () => {
+    const store = new SqliteStore(':memory:');
+    const tasks = new BrowserTaskStateService(store);
+    const finalSlot: BrowserTaskSlot = {
+      slotKey: 'final_activation_0', discovery: 'available', required: true, population: 'populated',
+      validation: 'verified', authority: 'not_required', populationBucket: 'present', evidenceId: 'obs-1', observationEpoch: 1,
+    };
+    for (const principalId of ['p1', 'p2']) {
+      const taskScope = { workspaceId: 'ws', sessionId: `s-${principalId}`, principalId, runtimeGeneration: 'r', capabilityId: 'c' };
+      const task = tasks.createOrReplace(taskScope, [finalSlot]);
+      tasks.prepareFinalAction(taskScope, task.taskId, task.version, {
+        operationId: 'same-operation', slotKey: finalSlot.slotKey, targetBindingDigest: `target-${principalId}`,
+        controlEpoch: 'control', reviewBinding: createBrowserBinding('browser-final-review', { task: task.taskId }),
+        outcomePredicate: createBrowserBinding('browser-final-outcome', { task: task.taskId }),
+      });
+    }
+    store.proposeBrowserOperation({ operationId: 'same-operation', principalId: 'p1', workspaceId: 'ws', sessionId: 's-p1',
+      runtimeGeneration: 'r', capabilityId: 'c', action: 'activation', parameterDigest: 'v1:publish' });
+    store.markBrowserOperationDispatchIntent('p1', 'same-operation');
+
+    new BrowserMutationCoordinator({ store });
+
+    assert.equal(store.getActiveBrowserTask('ws', 's-p1')?.lifecycle, 'outcome-unknown');
+    assert.equal(store.getActiveBrowserTask('ws', 's-p2')?.lifecycle, 'ready');
+  });
+
   it('does not dispatch when intent persistence fails and returns unknown when terminal persistence fails', async () => {
     const first = coordinator();
     const originalIntent = first.store.markBrowserOperationDispatchIntent.bind(first.store);

@@ -1085,6 +1085,7 @@ export class BrowserToolContext {
     observationId: string; observationEpoch: number; transform: DecisionObservationTransform;
     documentIdentityDigest: string; structuralChecksum: string; controlEpoch: string;
   };
+  private observationSequence = 0;
   private readonly taskEvidenceRefs = new Map<string, string>();
 
   private trace(event: BrowserTaskTraceInput): void {
@@ -1796,7 +1797,7 @@ export class BrowserToolContext {
       this.pageStateCache = observation.model;
       this.latestDecisionObservation = {
         observationId: observation.observationId,
-        observationEpoch: observation.revision.domEpoch,
+        observationEpoch: ++this.observationSequence,
         transform: observation.transform,
         documentIdentityDigest: sha256Hex(JSON.stringify(observation.revision.documentIdentity)),
         structuralChecksum: observation.revision.checksum,

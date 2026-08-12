@@ -122,6 +122,9 @@ jobs:
       - name: Build sidecar
         run: npm run build:sidecar
 
+      - name: Browser acceptance type and deterministic gates
+        run: npm run typecheck && npm run test:browser-acceptance:deterministic
+
       - name: Install Playwright Chromium (macOS/Windows)
         if: runner.os != 'Linux'
         run: npx playwright install chromium

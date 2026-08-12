@@ -269,7 +269,6 @@ export class BrowserTaskStateService {
         current.baselineObservationEpoch == null || input.observationEpoch <= current.baselineObservationEpoch ||
         input.observationId === current.baselineObservationId || input.predicateMatched !== true ||
         input.documentIdentity !== current.baselineDocumentIdentity ||
-        (current.pendingEvidenceClass === 'target_local' && input.structuralChecksum === current.baselineStructuralChecksum) ||
         input.targetBindingDigest !== current.pendingTargetBinding ||
         scope.runtimeGeneration !== current.pendingRuntimeGeneration ||
         scope.capabilityId !== current.pendingCapabilityId || input.controlEpoch !== current.pendingControlEpoch) {

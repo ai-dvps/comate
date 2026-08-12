@@ -102,7 +102,7 @@ describe('BrowserTaskStateService', () => {
     }), /browser_task_observation_not_causal/);
     const verified = service.validateFromObservation(scope, task.taskId, pending.version, {
       slotKey: 'primary_content', operationId: 'op-1', observationId: 'obs-2', observationEpoch: 2,
-      documentIdentity: 'document-1', structuralChecksum: 'shape-2', targetBindingDigest: 'target-1', controlEpoch: 'control-1', predicateMatched: true,
+      documentIdentity: 'document-1', structuralChecksum: 'shape-1', targetBindingDigest: 'target-1', controlEpoch: 'control-1', predicateMatched: true,
     });
     assert.equal(verified.slots[0].validation, 'verified');
   });

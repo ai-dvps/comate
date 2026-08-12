@@ -11,7 +11,8 @@ function sourceFiles(root: string): string[] {
     const file = path.join(root, name);
     const stat = statSync(file);
     if (stat.isDirectory()) files.push(...sourceFiles(file));
-    else if (/\.(?:ts|tsx|js|mjs|cjs|html)$/.test(name) && !/\.(?:test|spec)\./.test(name)) files.push(file);
+    else if (/\.(?:ts|tsx|js|mjs|cjs|html|css|json|ya?ml)$/.test(name) &&
+        !/\.(?:test|spec)\./.test(name) && !/package(?:-lock)?\.json$/.test(name)) files.push(file);
   }
   return files;
 }
