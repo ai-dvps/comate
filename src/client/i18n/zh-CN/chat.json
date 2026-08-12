@@ -97,7 +97,7 @@
       "nearby": "附近内容",
       "editorSummary": "编辑器：共 {{count}} 个，已填写 {{filled}} 个，合计 {{length}} 个字符",
       "finalReview": "最终发布检查",
-      "finalSummary": "任务版本 {{version}} · {{media}} 个媒体 · 原创声明 {{declaration}} · 可见性 {{visibility}}"
+      "finalSummary": "任务版本 {{version}} · {{media}} 个媒体 · 资格声明 {{declaration}} · 可见性 {{visibility}}"
     },
     "browserUpload": {
       "origin": "共享给",

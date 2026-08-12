@@ -330,12 +330,13 @@ export class SqliteStore {
         PRIMARY KEY (task_id, task_version, target_binding_digest, failure_class)
       );
       CREATE TABLE IF NOT EXISTS browser_final_actions (
-        operation_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, task_version INTEGER NOT NULL,
+        operation_id TEXT NOT NULL, task_id TEXT NOT NULL, task_version INTEGER NOT NULL,
         slot_key TEXT NOT NULL, target_binding_digest TEXT NOT NULL, control_epoch TEXT NOT NULL,
         review_key_version INTEGER NOT NULL, review_binding_digest TEXT NOT NULL,
         predicate_key_version INTEGER NOT NULL, predicate_binding_digest TEXT NOT NULL,
         state TEXT NOT NULL, evidence_status TEXT NOT NULL DEFAULT 'none',
-        durable_evidence_id TEXT, last_checked_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        durable_evidence_id TEXT, last_checked_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        PRIMARY KEY (task_id, operation_id)
       );
       CREATE INDEX IF NOT EXISTS idx_browser_tasks_session ON browser_tasks (workspace_id, session_id);
       CREATE INDEX IF NOT EXISTS idx_browser_final_actions_task ON browser_final_actions (task_id, updated_at);
@@ -3913,7 +3914,9 @@ export class SqliteStore {
       const now = new Date().toISOString();
       const orphanedFinalActions = this.db.prepare(`
         SELECT f.task_id, f.operation_id FROM browser_final_actions f
+        JOIN browser_tasks t ON t.task_id = f.task_id
         JOIN browser_operation_ledger o ON o.operation_id = f.operation_id
+          AND o.principal_id = t.principal_id
         WHERE f.state = 'reviewed' AND o.state = 'dispatch_intent'
       `).all() as Array<{ task_id: string; operation_id: string }>;
       const notDispatched: BrowserOperationStoredReceipt = {

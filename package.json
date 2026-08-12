@@ -29,6 +29,7 @@
     "test:shell-cdp:required": "tsx scripts/test-shell-cdp.ts --required",
     "test:electron-cdp": "tsx scripts/test-electron-cdp.ts",
     "test:electron-cdp:required": "tsx scripts/test-electron-cdp.ts --required",
+    "test:browser-acceptance:deterministic": "tsx --test src/server/services/__tests__/browser-task-trace.test.ts src/server/services/browser-mcp-http.test.ts scripts/evaluate-browser-task.test.ts scripts/fixtures/dynamic-publishing-task-fixture.test.ts scripts/browser-production-neutrality.test.ts",
     "test:server": "npm run build:contracts && tsx scripts/test-server.ts",
     "test:scripts": "tsx --test scripts/electron-build-contract.test.ts scripts/verify-packaged-renderer.test.ts scripts/build-bridge-manifest.test.ts scripts/test-server.test.ts scripts/lib/process-cleanup.test.ts scripts/evaluate-browser-task.test.ts scripts/fixtures/dynamic-publishing-task-fixture.test.ts scripts/browser-production-neutrality.test.ts",
     "test:packages": "npm run build:cli && npm test -w packages/comate-api-contracts -w packages/comate-cli -w packages/wecom-cli",
@@ -48,7 +49,7 @@
     "verify:electron-package": "npm run verify:electron:package",
     "test:bridge:manifest": "tsx --test scripts/build-bridge-manifest.test.ts",
     "test:bridge-manifest": "npm run test:bridge:manifest",
-    "release": "npm run build:sidecar && npm run test:shell-cdp:required && npm run test:electron-cdp:required && npm run dist:electron"
+    "release": "npm run typecheck && npm run test:browser-acceptance:deterministic && npm run build:sidecar && npm run test:shell-cdp:required && npm run test:electron-cdp:required && npm run dist:electron"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.220",
