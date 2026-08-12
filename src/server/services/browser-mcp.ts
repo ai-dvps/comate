@@ -1,6 +1,7 @@
 import type { CallToolResult as CallToolResultType } from '@modelcontextprotocol/sdk/types.js';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { createBrowserBinding } from '../utils/credential-crypto.js';
+import { sha256Hex } from '../utils/sha256.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { z, type ZodRawShape, type ZodType } from 'zod';
 import {
@@ -1278,9 +1279,9 @@ export class BrowserToolContext {
     const entry = this.refTable.get(ref);
     const observation = this.latestDecisionObservation;
     if (!task || !tasks || !entry || !observation) return false;
-    const targetBindingDigest = createHash('sha256').update(JSON.stringify({
+    const targetBindingDigest = sha256Hex(JSON.stringify({
       documentIdentity: entry.batch, backendNodeId: entry.backendNodeId, fingerprint: entry.fingerprint,
-    })).digest('hex');
+    }));
     const reviewBinding = createBrowserBinding('browser-final-review', {
       taskId: task.taskId, taskVersion: task.version, operationId, slotKey: binding!.slotKey,
       runtimeGeneration: this.taskScope().runtimeGeneration, capabilityId: this.taskScope().capabilityId,
@@ -1389,11 +1390,11 @@ export class BrowserToolContext {
     const entry = this.refTable.get(targetRef);
     const observationBinding = this.refTable.getObservationBinding(targetRef);
     if (!entry || !observationBinding) throw new Error('browser_task_target_binding_stale');
-    const targetBindingDigest = createHash('sha256').update(JSON.stringify({
+    const targetBindingDigest = sha256Hex(JSON.stringify({
       documentIdentity: observationBinding.documentIdentity,
       backendNodeId: entry.backendNodeId,
       fingerprint: entry.fingerprint,
-    })).digest('hex');
+    }));
     const finalAction = this.deps.taskState.getFinalAction(binding.taskId);
     if (binding.slotKey.startsWith('final_activation_') && finalAction?.operationId === operationId && finalAction.state === 'reviewed') {
       const current = this.deps.taskState.getActive(this.taskScope());
@@ -1448,9 +1449,9 @@ export class BrowserToolContext {
     const currentField = currentEntry
       ? this.lastModel?.forms.flatMap((form) => form.fields).find((field) => field.ref === currentEntry.ref)
       : undefined;
-    const currentTargetBindingDigest = currentEntry ? createHash('sha256').update(JSON.stringify({
+    const currentTargetBindingDigest = currentEntry ? sha256Hex(JSON.stringify({
       documentIdentity: currentEntry.batch, backendNodeId: currentEntry.backendNodeId, fingerprint: currentEntry.fingerprint,
-    })).digest('hex') : 'target-changed';
+    })) : 'target-changed';
     const active = this.deps.taskState.getActive(this.taskScope());
     if (!active || active.taskId !== pending.binding.taskId) return;
     try {
@@ -1504,11 +1505,11 @@ export class BrowserToolContext {
     if (state?.status !== 'off_viewport') {
       return toolError('browser_recovery_blocked', 'control', 'The trusted target is not eligible for the bounded off-viewport reveal.', 'Hand control to the user or capture a fresh coherent observation.');
     }
-    const targetBindingDigest = createHash('sha256').update(JSON.stringify({
+    const targetBindingDigest = sha256Hex(JSON.stringify({
       documentIdentity: observationBinding.documentIdentity,
       backendNodeId: entry.backendNodeId,
       fingerprint: entry.fingerprint,
-    })).digest('hex');
+    }));
     const claimed = tasks.claimRecovery(this.taskScope(), binding.taskId, binding.taskVersion,
       targetBindingDigest, 'off_viewport');
     this.trace({ kind: 'recovery', taskId: binding.taskId, taskVersion: binding.taskVersion,
@@ -1797,7 +1798,7 @@ export class BrowserToolContext {
         observationId: observation.observationId,
         observationEpoch: observation.revision.domEpoch,
         transform: observation.transform,
-        documentIdentityDigest: createHash('sha256').update(JSON.stringify(observation.revision.documentIdentity)).digest('hex'),
+        documentIdentityDigest: sha256Hex(JSON.stringify(observation.revision.documentIdentity)),
         structuralChecksum: observation.revision.checksum,
         controlEpoch: observation.revision.controlEpoch,
       };
@@ -2399,7 +2400,7 @@ export class BrowserToolContext {
     if (!initialDetails) return toolError('browser_declaration_target_invalid', 'ref_resolve', 'The declaration context is unavailable.', 'Capture fresh declaration evidence.');
     const trustedDeclarationRaw = [initialDetails.role, initialDetails.name, initialDetails.nearbyText]
       .filter((value): value is string => typeof value === 'string' && value.length > 0).join('\0').slice(0, 1800);
-    const declarationDigest = createHash('sha256').update(trustedDeclarationRaw.normalize('NFC')).digest('hex');
+    const declarationDigest = sha256Hex(trustedDeclarationRaw.normalize('NFC'));
     const declaration = sanitizeUntrustedPageText(trustedDeclarationRaw.replace(/\0/g, ' · '), 600);
     const targetBinding = {
       document: target.batch, backendNodeId: target.backendNodeId, fingerprint: target.fingerprint,
@@ -2476,12 +2477,14 @@ export class BrowserToolContext {
         !sameElementFingerprint(currentResolved.fingerprint, targetBinding.fingerprint)) {
       return toolError('browser_declaration_target_changed', 'toctou', 'The approved declaration target or task changed.', 'The approval was consumed; observe and request again.');
     }
-    const currentProbe = await page.inspectBackendNodeState?.(target.backendNodeId).catch(() => undefined);
-    const currentState = await page.callBackendNode<{ ok: boolean; checked?: boolean }>(target.backendNodeId, buildBackendCheckStateFunction()).catch(() => null);
-    const currentDetails = await page.inspectBackendNode?.(target.backendNodeId, buildInspectElementFunction());
+    const [currentProbe, currentState, currentDetails] = await Promise.all([
+      page.inspectBackendNodeState?.(target.backendNodeId).catch(() => undefined),
+      page.callBackendNode<{ ok: boolean; checked?: boolean }>(target.backendNodeId, buildBackendCheckStateFunction()).catch(() => null),
+      page.inspectBackendNode?.(target.backendNodeId, buildInspectElementFunction()).catch(() => null),
+    ]);
     const currentDeclarationRaw = currentDetails ? [currentDetails.role, currentDetails.name, currentDetails.nearbyText]
       .filter((value): value is string => typeof value === 'string' && value.length > 0).join('\0').slice(0, 1800) : '';
-    const currentDeclarationDigest = createHash('sha256').update(currentDeclarationRaw.normalize('NFC')).digest('hex');
+    const currentDeclarationDigest = sha256Hex(currentDeclarationRaw.normalize('NFC'));
     if (currentProbe?.status !== 'ready' || !currentState?.ok || typeof currentState.checked !== 'boolean' ||
         currentDeclarationDigest !== declarationDigest) {
       return toolError('browser_declaration_target_changed', 'toctou', 'The approved declaration is no longer safely actionable.', 'The approval was consumed; observe and request again.');
@@ -2513,7 +2516,7 @@ export class BrowserToolContext {
       ]);
       const postDeclarationRaw = postDetails ? [postDetails.role, postDetails.name, postDetails.nearbyText]
         .filter((value): value is string => typeof value === 'string' && value.length > 0).join('\0').slice(0, 1800) : '';
-      const postDeclarationDigest = createHash('sha256').update(postDeclarationRaw.normalize('NFC')).digest('hex');
+      const postDeclarationDigest = sha256Hex(postDeclarationRaw.normalize('NFC'));
       if (!postTarget || postProbe?.status !== 'ready' || !after?.ok || after.checked !== args.intendedState ||
           postDeclarationDigest !== declarationDigest) {
         return toolError('browser_declaration_post_observation_changed', 'toctou', 'The declaration target or checked state changed before coherent verification completed.', 'The click may have occurred, but no declaration authority was recorded; review the current page.');

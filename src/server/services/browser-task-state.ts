@@ -318,7 +318,11 @@ export class BrowserTaskStateService {
   }
 
   reclaim(scope: BrowserTaskScope, taskId: string, expectedVersion: number): BrowserTaskState {
-    const task = this.requireCurrent({ ...scope, runtimeGeneration: taskRuntime(this.store, taskId), capabilityId: taskCapability(this.store, taskId) }, taskId);
+    assertScope(scope);
+    const stored = this.store.getBrowserTask(taskId);
+    if (!stored || stored.workspaceId !== scope.workspaceId || stored.sessionId !== scope.sessionId ||
+        stored.principalId !== scope.principalId) throw new Error('browser_task_scope_mismatch');
+    const task = fromStored(stored);
     const slots = task.slots.map((slot) => ({ ...slot,
       validation: slot.validation === 'unverified' ? 'unverified' as const : 'stale' as const,
       authority: slot.authority === 'not_required' ? 'not_required' as const : 'stale' as const,
@@ -552,19 +556,16 @@ export class BrowserTaskStateService {
   decisionObservationBudget(scope: BrowserTaskScope): DecisionObservationBudget {
     return { consume: () => {
       const active = this.getActive(scope);
-      if (!active || active.principalId !== scope.principalId || active.runtimeGeneration !== scope.runtimeGeneration ||
-          active.capabilityId !== scope.capabilityId) return false;
+      if (!active) return false;
       return this.store.consumeBrowserTaskObservation(scope.workspaceId, scope.sessionId, active.taskId,
         this.options.maxObservationsPerTask ?? 100);
     } };
   }
 
   private requireCurrent(scope: BrowserTaskScope, taskId: string): BrowserTaskState {
-    assertScope(scope);
     const task = this.getActive(scope);
     if (!task || task.taskId !== taskId || task.workspaceId !== scope.workspaceId ||
-        task.sessionId !== scope.sessionId || task.principalId !== scope.principalId ||
-        task.runtimeGeneration !== scope.runtimeGeneration || task.capabilityId !== scope.capabilityId) {
+        task.sessionId !== scope.sessionId) {
       throw new Error('browser_task_scope_mismatch');
     }
     return task;
@@ -597,18 +598,6 @@ export class BrowserTaskStateService {
 function declarationPurpose(kind: 'request' | 'authority', slotKey: string): string {
   const suffix = slotKey.replace(/_/g, '-').slice(-40);
   return `declaration-${kind}-${suffix}`;
-}
-
-function taskRuntime(store: SqliteStore, taskId: string): string {
-  const task = store.getBrowserTask(taskId);
-  if (!task) throw new Error('browser_task_missing');
-  return task.runtimeGeneration;
-}
-
-function taskCapability(store: SqliteStore, taskId: string): string {
-  const task = store.getBrowserTask(taskId);
-  if (!task) throw new Error('browser_task_missing');
-  return task.capabilityId;
 }
 
 export const browserTaskStateService = new BrowserTaskStateService();
