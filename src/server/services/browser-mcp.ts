@@ -126,6 +126,13 @@ import {
   type BrowserMutationCoordinator,
   type BrowserMutationRequest,
 } from './browser-mutation-coordinator.js';
+import {
+  BrowserDecisionObservationError,
+  DecisionObservationCoordinator,
+  type ApplicationSensitiveRegionProvider,
+  type DecisionObservationBudget,
+  type DecisionObservationLimits,
+} from './browser-decision-observation.js';
 
 // Re-export so existing consumers of './browser-mcp.js' (chat-service, U3
 // tests) keep working; the canonical home is browser-tool-names.ts (U4) so
@@ -134,12 +141,13 @@ export { BROWSER_MCP_SERVER_KEY, BROWSER_TOOL_PREFIX };
 
 export const BROWSER_MCP_INSTRUCTIONS = `Mutation tools return only bounded receipts, never a page model. After every mutation, call getPageState before using element refs. Use the embedded browser tools in this order:
 1. getPageState — default page observation after an external or user-driven page change, a stale-ref error, or when reading another bounded inventory segment. It provides a page-level, text-only, token-bounded semantic view and element refs without requiring vision.
-2. findElements — search the complete internal element index when the page-state inventory is truncated or the target is not obvious.
-3. getElementDetails — inspect one known ref when more attributes or local context are needed.
-4. act — fill/select/check editable controls. act(click) never dispatches; use activate for page-supplied controls or submit for HTML form submission.
-5. upload — assign approved workspace media to a file-input ref through the shell-owned browser only.
-6. activate — request a single handler-approved physical click for a page-supplied control. Its receipt is not proof of business success; observe afterward.
-7. takeScreenshot — optional and only for genuinely visual questions such as layout, overlap, charts, canvas, or image content. Do not use it for routine page understanding or element discovery, and do not use it as a substitute for getPageState.`;
+2. getDecisionObservation — only when structure is insufficient, obtain one coherent structured-and-visual bundle. Its rectangles are evidence and never executable coordinates.
+3. findElements — search the complete internal element index when the page-state inventory is truncated or the target is not obvious.
+4. getElementDetails — inspect one known ref when more attributes or local context are needed.
+5. act — fill/select/check editable controls. act(click) never dispatches; use activate for page-supplied controls or submit for HTML form submission.
+6. upload — assign approved workspace media to a file-input ref through the shell-owned browser only.
+7. activate — request a single handler-approved physical click for a page-supplied control. Its receipt is not proof of business success; observe afterward.
+8. takeScreenshot — optional and only for genuinely visual questions such as layout, overlap, charts, canvas, or image content. Do not use it for routine page understanding or element discovery, and do not use it as a substitute for getPageState.`;
 
 /**
  * browser-mcp — the first-class tool surface for the embedded controlled
@@ -255,6 +263,12 @@ export interface BrowserMcpDeps {
   settleMs?: number;
   mutationCoordinator?: BrowserMutationCoordinator;
   uploadStaging?: BrowserUploadStagingService;
+  /** U1 observation coordinator; tests may inject limits through the constructor. */
+  decisionObservationCoordinator?: DecisionObservationCoordinator;
+  decisionObservationLimits?: Partial<DecisionObservationLimits>;
+  /** U3 supplies the task-aware implementation; absence does not invent task state. */
+  decisionObservationBudget?: DecisionObservationBudget;
+  applicationSensitiveRegions?: ApplicationSensitiveRegionProvider;
 }
 
 // ---------------------------------------------------------------------------
@@ -970,6 +984,7 @@ export class BrowserToolContext {
   private networkCapture?: BrowserNetworkCaptureManager;
   private capturePrimarySessionId?: string;
   private captureAction = 'One explicitly bracketed browser action';
+  private readonly decisionObservations: DecisionObservationCoordinator;
 
   constructor(private readonly deps: BrowserMcpDeps) {
     this.svc = deps.browserService ?? browserService;
@@ -982,10 +997,13 @@ export class BrowserToolContext {
     this.audit = deps.audit ?? browserAuditService;
     this.authenticatedRequestBroker = deps.authenticatedRequestBroker ?? browserApiBrokerService;
     this.uploadStaging = deps.uploadStaging ?? browserUploadStagingService;
+    this.decisionObservations = deps.decisionObservationCoordinator ??
+      new DecisionObservationCoordinator(deps.decisionObservationLimits);
   }
 
   /** Abort task-owned capture state without closing the shared browser page. */
   disposeTask(reason: 'connection_closed' = 'connection_closed'): void {
+    this.decisionObservations.cancel();
     this.networkCapture?.abort(reason);
     this.networkCapture = undefined;
     this.capturePrimarySessionId = undefined;
@@ -1020,6 +1038,7 @@ export class BrowserToolContext {
       const page = await connecting;
       page.onDocumentChange?.(() => { void this.uploadStaging.releaseSession(this.deps.sessionId); });
       page.onClose(() => {
+        this.decisionObservations.cancel();
         if (this.pageRegistry.get(key) === connecting) {
           this.pageRegistry.delete(key);
         }
@@ -1173,6 +1192,37 @@ export class BrowserToolContext {
       return toolJson({ ok: true, state });
     } catch (err) {
       return this.toErrorResult(err, 'distill');
+    }
+  }
+
+  async handleGetDecisionObservation(extra?: { signal?: AbortSignal }): Promise<CallToolResult> {
+    const gate = this.controlGate('control');
+    if (gate) return gate;
+    try {
+      const page = await this.ensurePage();
+      const controlState = this.svc.getControlState(this.deps.sessionId) ?? 'agent_in_control';
+      const observation = await this.decisionObservations.observe({
+        page,
+        refTable: this.refTable,
+        signal: extra?.signal ?? new AbortController().signal,
+        isCurrent: this.deps.isInvocationCurrent ?? (() => true),
+        isAgentInControl: () => (this.svc.getControlState(this.deps.sessionId) ?? 'agent_in_control') === 'agent_in_control',
+        controlEpoch: `${this.deps.runtimeGeneration ?? 'unscoped'}:${controlState}`,
+        capabilityEpoch: this.deps.capabilityId ?? 'unscoped',
+        budget: this.deps.decisionObservationBudget,
+        applicationSensitiveRegions: this.deps.applicationSensitiveRegions,
+      });
+      this.lastModel = observation.model;
+      this.pageStateCache = observation.model;
+      const { image, ...metadata } = observation;
+      return {
+        content: [
+          { type: 'image', data: image.data, mimeType: image.mimeType },
+          { type: 'text', text: JSON.stringify({ ok: true, observation: metadata }) },
+        ],
+      };
+    } catch (error) {
+      return this.toErrorResult(error, 'capture');
     }
   }
 
@@ -2557,6 +2607,14 @@ export class BrowserToolContext {
   }
 
   private toErrorResult(err: unknown, stage: ToolStage): CallToolResult {
+    if (err instanceof BrowserDecisionObservationError) {
+      return toolError(
+        err.code,
+        stage,
+        err.message,
+        'Request a fresh decision observation; if coherence cannot be proven, stop or hand control to the user.',
+      );
+    }
     if (err instanceof BrowserUnavailableError) {
       return toolError(
         err.code,
@@ -2676,6 +2734,16 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
       includeContent: z.boolean().optional().describe('Include up to 1,200 characters of main page text (default true)'),
     },
     async (args) => ctx.handleGetPageState(args),
+    { annotations: { readOnlyHint: true, openWorldHint: true } },
+  );
+
+  const getDecisionObservationDef = tool(
+    'getDecisionObservation',
+    'Return one revision-coherent decision observation containing bounded structured evidence, ' +
+      'trusted CSS/image viewport transforms, and a normalized sensitive-masked image. Use it only ' +
+      'when structure alone cannot answer the current decision. Image coordinates are evidence, never action parameters.',
+    {},
+    async (_args, extra) => ctx.handleGetDecisionObservation(extra as { signal?: AbortSignal }),
     { annotations: { readOnlyHint: true, openWorldHint: true } },
   );
 
@@ -2946,6 +3014,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
   return [
     openDef,
     getPageStateDef,
+    getDecisionObservationDef,
     findElementsDef,
     getElementDetailsDef,
     actDef,

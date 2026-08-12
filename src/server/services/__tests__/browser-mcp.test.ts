@@ -37,6 +37,7 @@ import { BrowserMutationCoordinator } from '../browser-mutation-coordinator.js';
 import { SESSION_TOKEN_ENV } from '../session-capability-service.js';
 import type { BrowserAuditToolInput } from '../browser-audit.js';
 import { BrowserUploadStagingService } from '../browser-upload-staging.js';
+import { PNG } from 'pngjs';
 
 /**
  * browser-mcp tests — the first-class tool surface (KTD-3), the handler-level
@@ -168,6 +169,12 @@ class FakePage implements BrowserCdpSession {
   }
 
   async callBackendNode<T>(backendNodeId: number, functionDeclaration: string): Promise<T | null> {
+    if (functionDeclaration.includes('__comateDecisionObservationRefState')) {
+      return {
+        connected: true, geometry: { x: 0, y: 0, width: 1, height: 1 },
+        visible: true, inViewport: true, occluded: false, enabled: true, editable: backendNodeId !== 100,
+      } as T;
+    }
     if (functionDeclaration.includes('__comateFileInputSnapshot')) {
       const next = this.fileInputSnapshots.length > 1 ? this.fileInputSnapshots.shift() : this.fileInputSnapshots[0];
       return (next === undefined ? {
@@ -239,6 +246,18 @@ class FakePage implements BrowserCdpSession {
   }
 
   async evaluate<T>(expression: string): Promise<T> {
+    if (expression.includes('__comateDecisionObservationProbe')) {
+      const current = this.submitDispatched && this.options.postSubmitExtraction
+        ? this.options.postSubmitExtraction
+        : this.options.extraction;
+      return {
+        docId: current.docId, domEpoch: current.domEpoch, checksum: `shape:${current.domEpoch}`,
+        captureCss: { x: 0, y: 0, width: 1, height: 1 },
+        layoutViewport: { x: 0, y: 0, width: 1, height: 1 },
+        visualViewport: { x: 0, y: 0, width: 1, height: 1 },
+        pageScaleFactor: 1, devicePixelRatio: 1, sensitiveRects: [], nonGroundingRects: [],
+      } as T;
+    }
     if (expression.includes('new MutationObserver')) {
       return (
         this.submitDispatched && this.options.postSubmitExtraction
@@ -323,9 +342,14 @@ class FakePage implements BrowserCdpSession {
     if (this.options.inspectError) throw this.options.inspectError;
     return (this.options.inspectResult ?? null) as import('../browser-page-model.js').InspectedElement | null;
   }
-  async captureScreenshot(): Promise<string> {
+  async captureScreenshot(options: { format?: 'jpeg' | 'png' } = {}): Promise<string> {
     this.screenshots += 1;
     if (this.options.screenshotError) throw this.options.screenshotError;
+    if (options.format === 'png') {
+      const image = new PNG({ width: 1, height: 1 });
+      image.data.set([20, 40, 60, 255]);
+      return PNG.sync.write(image).toString('base64');
+    }
     return 'aGVsbG8';
   }
   cookieWrites: Array<Array<Record<string, unknown>>> = [];
@@ -648,7 +672,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.deepStrictEqual(
       [...harness.tools.keys()].sort(),
-      ['act', 'activate', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getElementDetails', 'getPageState', 'open', 'requestHandoff', 'startNetworkCapture', 'stopNetworkCapture', 'submit', 'takeScreenshot', 'upload'],
+      ['act', 'activate', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getDecisionObservation', 'getElementDetails', 'getPageState', 'open', 'requestHandoff', 'startNetworkCapture', 'stopNetworkCapture', 'submit', 'takeScreenshot', 'upload'],
     );
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
@@ -657,6 +681,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.strictEqual(harness.tools.get('takeScreenshot')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('getPageState')?.annotations?.readOnlyHint, true);
+    assert.strictEqual(harness.tools.get('getDecisionObservation')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('extract')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('findElements')?.annotations?.readOnlyHint, true);
     assert.strictEqual(harness.tools.get('getElementDetails')?.annotations?.readOnlyHint, true);
@@ -674,7 +699,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const defs = buildBrowserToolDefinitions({ sessionId: 's', workspaceId: 'w' });
     assert.deepEqual(
       defs.map((d) => d.name),
-      ['open', 'getPageState', 'findElements', 'getElementDetails', 'act', 'upload', 'activate', 'takeScreenshot', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'submit', 'extract', 'requestHandoff', 'close'],
+      ['open', 'getPageState', 'getDecisionObservation', 'findElements', 'getElementDetails', 'act', 'upload', 'activate', 'takeScreenshot', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'submit', 'extract', 'requestHandoff', 'close'],
     );
     assert.match(defs.find((definition) => definition.name === 'getPageState')?.description ?? '', /default observation/i);
     assert.match(defs.find((definition) => definition.name === 'takeScreenshot')?.description ?? '', /only.*visual/i);
@@ -772,6 +797,23 @@ describe('browser-mcp page observation', () => {
     assert.ok(image.data.length > 0, 'bare base64 payload');
     assert.strictEqual(harness.ctx.page.screenshots, 1);
     assert.strictEqual(harness.ctx.auditActions.at(-1)?.url, 'https://shop.example/checkout?token=secret');
+  });
+
+  it('getDecisionObservation returns one coherent text and image bundle', async () => {
+    harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
+    const result = await harness.callTool('getDecisionObservation', {}, {});
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(result.content.map((block) => block.type), ['image', 'text']);
+    const image = result.content[0];
+    assert.equal(image.type, 'image');
+    if (image.type === 'image') assert.equal(image.mimeType, 'image/png');
+    const payload = resultPayload(result) as {
+      ok: boolean; observation: { observationId: string; transform: { devicePixelRatio: number }; image?: unknown };
+    };
+    assert.equal(payload.ok, true);
+    assert.ok(payload.observation.observationId);
+    assert.equal(payload.observation.transform.devicePixelRatio, 1);
+    assert.equal(payload.observation.image, undefined, 'text metadata never duplicates screenshot bytes');
   });
 
   it('takeScreenshot maps capture failures to a structured capture error', async () => {
