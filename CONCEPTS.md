@@ -34,6 +34,12 @@ The set of runtime dependencies vendored alongside the Vendored Steel build prod
 ### 浏览器安全清单 (browser security manifest)
 提交、受控激活和工作区文件出站共用的应用自有审批呈现。清单始终完整显示解析后的来源、受信任警告、明确标注的未受信任页面文本、文件元数据或漂移摘要，不把安全字段藏在“显示更多”后；通用 `canUseTool` 层只分类，绑定目标的 handler 是唯一审批权威。
 
+### 浏览器任务状态 (browser task state)
+内嵌浏览器围绕当前用户目标维护的完成度模型。它把页面控件归入内容类型、主内容、发布元数据、媒体、声明和最终动作等语义槽位，并区分可用、已填写、已验证、受阻、等待用户确认和已完成；动作回执只更新证据，不能单独把任务标记为完成。
+
+### 混合页面观察 (hybrid page observation)
+同一页面修订上的结构化浏览器证据与受控视口图像。结构化证据提供稳定目标、状态和几何关系，视觉证据补足布局与非标准控件语义；视觉推断本身不授予执行权，执行前仍须绑定并复核当前受信任目标。
+
 ### Sanitized API recipe
 A chat-resident description of an HTTP request discovered from one recorded browser action: request shape, variable inputs, authentication placeholders, expected response fields, and bounded response evidence. Credential values and detected secrets are removed before the recipe enters model context, and the recipe is not automatically persisted outside its originating task.
 
