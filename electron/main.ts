@@ -56,6 +56,7 @@ import {
   type UpdaterAdapter,
   type UpdaterController,
 } from './updater';
+import { resolvePackagedRuntime, shouldEnableUpdater } from './runtime-mode';
 
 // ---------------------------------------------------------------------------
 // Early, pre-ready setup (order matters: these must run before 'ready')
@@ -64,6 +65,11 @@ import {
 // Windows toast/shortcut identity (KTD-7). Safe no-op elsewhere.
 app.setAppUserModelId(APP_ID);
 app.setName('Comate');
+
+const isPackagedRuntime = resolvePackagedRuntime(
+  app.isPackaged,
+  process.env['NODE_ENV_ELECTRON_VITE'],
+);
 
 // KTD-7: pin the data dir to the exact legacy Tauri path per platform, and
 // pin Electron's userData (Chromium profile/caches) to a `shell/` subdir
@@ -158,7 +164,7 @@ const debugPortConfigured: Promise<void> = isPrimaryInstance ? (async () => {
 
 const logger: ShellLogger = isPrimaryInstance
   ? createShellLogger(join(legacyDataDir, 'logs'), {
-      mirrorToConsole: !app.isPackaged,
+      mirrorToConsole: !isPackagedRuntime,
     })
   : createNoopShellLogger();
 
@@ -218,12 +224,14 @@ function createElectronUpdaterAdapter(): UpdaterAdapter {
   // downloaded update installs it — performShutdown arms the update grace.
   // Dev feed: only when the developer dropped a dev-app-update.yml into the
   // app root (gitignored) — otherwise check stays a quiet "no update".
-  if (!app.isPackaged) {
-    autoUpdater.forceDevUpdateConfig = existsSync(join(app.getAppPath(), 'dev-app-update.yml'));
-  }
+  const hasDevUpdateConfig =
+    !isPackagedRuntime && existsSync(join(app.getAppPath(), 'dev-app-update.yml'));
+  autoUpdater.forceDevUpdateConfig = hasDevUpdateConfig;
+  const updaterEnabled = shouldEnableUpdater(isPackagedRuntime, hasDevUpdateConfig);
   autoUpdater.logger = logger;
   return {
     async checkForUpdates() {
+      if (!updaterEnabled) return null;
       const result = await autoUpdater.checkForUpdates();
       // electron-updater resolves a non-null { isUpdateAvailable: false,
       // updateInfo } when already up-to-date — map that to null, otherwise
@@ -305,7 +313,7 @@ function showFatalError(message: string): void {
 }
 
 function loadUi(win: BrowserWindow): void {
-  if (app.isPackaged) {
+  if (isPackagedRuntime) {
     void win.loadURL(`${UI_SCHEME}://localhost/index.html`);
     return;
   }
@@ -314,7 +322,7 @@ function loadUi(win: BrowserWindow): void {
     // did-fail-load below retries while the Vite dev server is still booting.
   });
   win.webContents.on('did-fail-load', (_event, _errorCode, _description, validatedURL) => {
-    if (app.isPackaged || !validatedURL.startsWith(devUrl)) return;
+    if (isPackagedRuntime || !validatedURL.startsWith(devUrl)) return;
     setTimeout(() => {
       if (!win.isDestroyed()) {
         void win.loadURL(devUrl).catch(() => {});
@@ -325,7 +333,7 @@ function loadUi(win: BrowserWindow): void {
 
 /** Window/tray icon: staged at resources root packaged, build/ in dev. */
 function shellIconPath(): string {
-  return app.isPackaged
+  return isPackagedRuntime
     ? join(process.resourcesPath, 'icon.png')
     : join(app.getAppPath(), 'build', 'icon.png');
 }
@@ -404,7 +412,7 @@ function createMainWindow(): BrowserWindow {
   // window.open child would inherit the privileged preload.
   const isAllowedUiUrl = (url: string): boolean => {
     if (url.startsWith(`${UI_SCHEME}://localhost`)) return true;
-    return !app.isPackaged && url.startsWith('http://localhost:5173');
+    return !isPackagedRuntime && url.startsWith('http://localhost:5173');
   };
   win.webContents.on('will-navigate', (event, url) => {
     if (isAllowedUiUrl(url)) return;
@@ -734,7 +742,7 @@ async function setupControlChannel(): Promise<void> {
 
 function startSidecar(): void {
   const pathEnv = {
-    isPackaged: app.isPackaged,
+    isPackaged: isPackagedRuntime,
     resourcesPath: process.resourcesPath,
     repoRoot: app.getAppPath(),
     platform: process.platform,
@@ -765,7 +773,7 @@ function startSidecar(): void {
       shellControlToken: shellControlToken ?? undefined,
     }),
     logger,
-    debugStdout: !app.isPackaged,
+    debugStdout: !isPackagedRuntime,
     onExit: (code, signal) => {
       if (!isShuttingDown) {
         showFatalError(
