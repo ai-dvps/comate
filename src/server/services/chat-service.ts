@@ -82,6 +82,7 @@ import {
 import { BROWSER_TOOL_NAMES, isBrowserToolName } from './browser-tool-names.js';
 import { browserApiBrokerService } from './browser-api-broker-service.js';
 import { browserService } from './browser-service.js';
+import { browserTaskStateService } from './browser-task-state.js';
 
 import { browserControlService } from './browser-control.js';
 import { sanitizeSubprocessEnv } from '../utils/sanitize-env.js';
@@ -891,6 +892,7 @@ export class ChatService {
     // Deletion is terminal even when the runtime still exists. closeRuntime
     // deterministically drains runtime-owned browser API state first.
     await this.closeRuntime(id);
+    browserTaskStateService.purgeSession(workspaceId, id);
     if (localSession && localSession.isDraft) {
       sessionCapabilityService.revokeForSession(id);
       return workspaceStore.deleteLocalSession(id);
@@ -1610,7 +1612,9 @@ export class ChatService {
     const runtime = this.runtimes.get(sessionId);
     // Runtime replacement is terminal for capture drains, opaque auth handles,
     // and exact-operation approvals. The browser process/page may stay alive.
-    this.disposeBrowserTaskState(sessionId);
+    this.disposeBrowserRuntimeEphemera(sessionId);
+    const session = workspaceStore.getLocalSession(sessionId);
+    if (session) browserTaskStateService.invalidateRuntime(session.workspaceId, sessionId);
     if (!runtime) return;
     this.clearPendingRebuild(sessionId);
     this.runtimeContexts.delete(sessionId);
@@ -1650,7 +1654,7 @@ export class ChatService {
     this.onRuntimeClose?.(sessionId);
   }
 
-  private disposeBrowserTaskState(sessionId: string): void {
+  private disposeBrowserRuntimeEphemera(sessionId: string): void {
     disposeBrowserToolContext(sessionId);
     browserService.disposeAuthBindings(sessionId);
     browserApiBrokerService.revokeTask(sessionId);

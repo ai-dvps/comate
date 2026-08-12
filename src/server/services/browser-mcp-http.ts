@@ -24,6 +24,7 @@ import {
   sessionCapabilityService,
   type SessionCapabilityService,
 } from './session-capability-service.js';
+import { browserTaskStateService } from './browser-task-state.js';
 
 export interface BrowserMcpHttpDeps {
   workspaceId: string;
@@ -139,6 +140,13 @@ export function createBrowserMcpHttpRouter(
         capabilityId: deps.capabilityId,
         principalId: deps.principalId,
         isInvocationCurrent: deps.isInvocationCurrent,
+        decisionObservationBudget: browserTaskStateService.decisionObservationBudget({
+          workspaceId: deps.workspaceId,
+          sessionId,
+          principalId: deps.principalId,
+          runtimeGeneration: deps.runtimeGeneration,
+          capabilityId: deps.capabilityId,
+        }),
         approvalRequester: deps.approvalRequester,
       })) {
         server.registerTool(def.name, {

@@ -8,14 +8,37 @@ import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert';
 import {
   decryptCredential,
+  createBrowserBinding,
   deriveKeyFromPassphrase,
   encryptCredential,
+  verifyBrowserBinding,
   __setCredentialKey,
+  __setBrowserBindingKeyVersions,
 } from './credential-crypto.js';
 
 describe('credential-crypto', { concurrency: false }, () => {
   afterEach(() => {
     __setCredentialKey(null);
+    __setBrowserBindingKeyVersions(null);
+  });
+
+  it('creates canonical domain-separated browser bindings without exposing a key', () => {
+    __setCredentialKey(deriveKeyFromPassphrase('binding-root'));
+    const a = createBrowserBinding('declaration', { z: 1, nested: { b: 'e\u0301', a: true } });
+    const b = createBrowserBinding('declaration', { nested: { a: true, b: '\u00e9' }, z: 1 });
+    assert.equal(a.digest, b.digest);
+    assert.equal(verifyBrowserBinding('declaration', { nested: { b: '\u00e9', a: true }, z: 1 }, a), true);
+    assert.equal(verifyBrowserBinding('publication-review', { nested: { b: '\u00e9', a: true }, z: 1 }, a), false);
+    assert.throws(() => createBrowserBinding('declaration', { bad: undefined }));
+    assert.throws(() => createBrowserBinding('declaration', { bad: Number.NaN }));
+  });
+
+  it('accepts current and one prior binding-key version only', () => {
+    __setBrowserBindingKeyVersions({ current: 2, prior: 1 });
+    const prior = createBrowserBinding('declaration', { task: 'a' }, 1);
+    assert.equal(verifyBrowserBinding('declaration', { task: 'a' }, prior), true);
+    __setBrowserBindingKeyVersions({ current: 3, prior: 2 });
+    assert.equal(verifyBrowserBinding('declaration', { task: 'a' }, prior), false);
   });
 
   it('round-trips a plaintext value', () => {

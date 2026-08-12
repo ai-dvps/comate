@@ -292,6 +292,36 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_browser_operation_session_state
         ON browser_operation_ledger (session_id, state, created_at)
     `);
+    // Goal-scoped browser task state. Every column is positive-shape: no page
+    // prose, authored values, URLs, coordinates, pixels, or filenames fit.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS browser_task_heads (
+        workspace_id TEXT NOT NULL, session_id TEXT NOT NULL,
+        task_id TEXT NOT NULL, goal_epoch TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, session_id)
+      );
+      CREATE TABLE IF NOT EXISTS browser_tasks (
+        task_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, session_id TEXT NOT NULL,
+        principal_id TEXT NOT NULL, goal_epoch TEXT NOT NULL,
+        runtime_generation TEXT NOT NULL, capability_id TEXT NOT NULL,
+        version INTEGER NOT NULL, lifecycle TEXT NOT NULL,
+        observation_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS browser_task_slots (
+        task_id TEXT NOT NULL, slot_key TEXT NOT NULL,
+        discovery TEXT NOT NULL, required INTEGER NOT NULL,
+        population TEXT NOT NULL, validation TEXT NOT NULL, authority TEXT NOT NULL,
+        population_bucket TEXT NOT NULL, evidence_id TEXT, observation_epoch INTEGER,
+        pending_operation_id TEXT, baseline_observation_epoch INTEGER,
+        PRIMARY KEY (task_id, slot_key)
+      );
+      CREATE TABLE IF NOT EXISTS browser_task_bindings (
+        task_id TEXT NOT NULL, purpose TEXT NOT NULL, key_version INTEGER NOT NULL,
+        binding_digest TEXT NOT NULL, PRIMARY KEY (task_id, purpose)
+      );
+      CREATE INDEX IF NOT EXISTS idx_browser_tasks_session ON browser_tasks (workspace_id, session_id);
+    `);
     // bot_escalation_ledger (U8 phase-2, KTD-16): persistent approval ledger
     // for out-of-sandbox escalation requests. One row per pending approval
     // (id = the approval requestId); the row is the durable record a boot
@@ -2206,9 +2236,14 @@ export class SqliteStore {
   }
 
   deleteLocalSession(id: string): boolean {
-    this.db.prepare('DELETE FROM user_sessions WHERE session_id = ?').run(id);
-    const result = this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
-    return result.changes > 0;
+    return this.db.transaction(() => {
+      const session = this.db.prepare('SELECT workspace_id FROM sessions WHERE id = ?').get(id) as
+        { workspace_id: string } | undefined;
+      if (session) this.purgeBrowserTasksForSession(session.workspace_id, id);
+      this.db.prepare('DELETE FROM user_sessions WHERE session_id = ?').run(id);
+      const result = this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+      return result.changes > 0;
+    })();
   }
 
   clearDraftFlag(id: string): boolean {
@@ -3882,6 +3917,132 @@ export class SqliteStore {
       .map((column) => column.name);
   }
 
+  // -------------------------------------------------------------------------
+  // browser task state — goal-scoped positive-shape persistence
+  // -------------------------------------------------------------------------
+
+  createBrowserTask(input: BrowserTaskCreateInput, slots: BrowserTaskStoredSlot[], replaceTaskId?: string): BrowserTaskStored {
+    return this.db.transaction(() => {
+      const head = this.db.prepare(`
+        SELECT task_id FROM browser_task_heads WHERE workspace_id = ? AND session_id = ?
+      `).get(input.workspaceId, input.sessionId) as { task_id: string } | undefined;
+      if (head && head.task_id !== replaceTaskId) throw new Error('browser_task_active');
+      const now = new Date().toISOString();
+      if (head) {
+        this.db.prepare(`UPDATE browser_tasks SET lifecycle = 'abandoned', version = version + 1, updated_at = ? WHERE task_id = ?`)
+          .run(now, head.task_id);
+        this.db.prepare('DELETE FROM browser_task_bindings WHERE task_id = ?').run(head.task_id);
+      }
+      this.db.prepare(`
+        INSERT INTO browser_tasks
+          (task_id, workspace_id, session_id, principal_id, goal_epoch, runtime_generation,
+           capability_id, version, lifecycle, observation_count, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?, ?)
+      `).run(input.taskId, input.workspaceId, input.sessionId, input.principalId, input.goalEpoch,
+        input.runtimeGeneration, input.capabilityId, input.lifecycle, now, now);
+      this.replaceBrowserTaskSlots(input.taskId, slots);
+      this.db.prepare(`
+        INSERT INTO browser_task_heads (workspace_id, session_id, task_id, goal_epoch)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(workspace_id, session_id) DO UPDATE SET task_id = excluded.task_id, goal_epoch = excluded.goal_epoch
+      `).run(input.workspaceId, input.sessionId, input.taskId, input.goalEpoch);
+      return this.getBrowserTask(input.taskId)!;
+    })();
+  }
+
+  getActiveBrowserTask(workspaceId: string, sessionId: string): BrowserTaskStored | null {
+    const row = this.db.prepare(`
+      SELECT task_id FROM browser_task_heads WHERE workspace_id = ? AND session_id = ?
+    `).get(workspaceId, sessionId) as { task_id: string } | undefined;
+    return row ? this.getBrowserTask(row.task_id) : null;
+  }
+
+  getBrowserTask(taskId: string): BrowserTaskStored | null {
+    const row = this.db.prepare('SELECT * FROM browser_tasks WHERE task_id = ?').get(taskId) as RawBrowserTaskRow | undefined;
+    if (!row) return null;
+    const slots = this.db.prepare('SELECT * FROM browser_task_slots WHERE task_id = ? ORDER BY slot_key')
+      .all(taskId) as RawBrowserTaskSlotRow[];
+    return parseBrowserTaskRow(row, slots);
+  }
+
+  casBrowserTask(taskId: string, expectedVersion: number, patch: BrowserTaskCasPatch, slots: BrowserTaskStoredSlot[]): BrowserTaskStored {
+    return this.db.transaction(() => {
+      const current = this.getBrowserTask(taskId);
+      if (!current || current.version !== expectedVersion) throw new Error('browser_task_stale');
+      const result = this.db.prepare(`
+        UPDATE browser_tasks SET runtime_generation = ?, capability_id = ?, lifecycle = ?,
+          version = version + 1, updated_at = ? WHERE task_id = ? AND version = ?
+      `).run(patch.runtimeGeneration ?? current.runtimeGeneration,
+        patch.capabilityId ?? current.capabilityId, patch.lifecycle,
+        new Date().toISOString(), taskId, expectedVersion);
+      if (result.changes !== 1) throw new Error('browser_task_stale');
+      this.replaceBrowserTaskSlots(taskId, slots);
+      if (patch.revokeBindings) this.db.prepare('DELETE FROM browser_task_bindings WHERE task_id = ?').run(taskId);
+      return this.getBrowserTask(taskId)!;
+    })();
+  }
+
+  consumeBrowserTaskObservation(workspaceId: string, sessionId: string, taskId: string, max: number): boolean {
+    return this.db.prepare(`
+      UPDATE browser_tasks SET observation_count = observation_count + 1, updated_at = ?
+      WHERE task_id = ? AND workspace_id = ? AND session_id = ? AND observation_count < ?
+        AND task_id = (SELECT task_id FROM browser_task_heads WHERE workspace_id = ? AND session_id = ?)
+    `).run(new Date().toISOString(), taskId, workspaceId, sessionId, max, workspaceId, sessionId).changes === 1;
+  }
+
+  abandonBrowserTask(workspaceId: string, sessionId: string, taskId: string, expectedVersion: number): boolean {
+    return this.db.transaction(() => {
+      const changed = this.db.prepare(`
+        UPDATE browser_tasks SET lifecycle = 'abandoned', version = version + 1, updated_at = ?
+        WHERE task_id = ? AND workspace_id = ? AND session_id = ? AND version = ?
+      `).run(new Date().toISOString(), taskId, workspaceId, sessionId, expectedVersion).changes;
+      if (!changed) return false;
+      this.db.prepare('DELETE FROM browser_task_heads WHERE workspace_id = ? AND session_id = ? AND task_id = ?')
+        .run(workspaceId, sessionId, taskId);
+      this.db.prepare('DELETE FROM browser_task_bindings WHERE task_id = ?').run(taskId);
+      return true;
+    })();
+  }
+
+  purgeBrowserTasksForSession(workspaceId: string, sessionId: string): number {
+    return this.db.transaction(() => {
+      const ids = this.db.prepare('SELECT task_id FROM browser_tasks WHERE workspace_id = ? AND session_id = ?')
+        .all(workspaceId, sessionId) as Array<{ task_id: string }>;
+      for (const { task_id } of ids) {
+        this.db.prepare('DELETE FROM browser_task_bindings WHERE task_id = ?').run(task_id);
+        this.db.prepare('DELETE FROM browser_task_slots WHERE task_id = ?').run(task_id);
+      }
+      this.db.prepare('DELETE FROM browser_task_heads WHERE workspace_id = ? AND session_id = ?').run(workspaceId, sessionId);
+      return this.db.prepare('DELETE FROM browser_tasks WHERE workspace_id = ? AND session_id = ?').run(workspaceId, sessionId).changes;
+    })();
+  }
+
+  purgeBrowserTasksForWorkspace(workspaceId: string): number {
+    const rows = this.db.prepare('SELECT DISTINCT session_id FROM browser_tasks WHERE workspace_id = ?')
+      .all(workspaceId) as Array<{ session_id: string }>;
+    return rows.reduce((total, row) => total + this.purgeBrowserTasksForSession(workspaceId, row.session_id), 0);
+  }
+
+  listBrowserTaskColumns(): Record<string, string[]> {
+    const names = ['browser_task_heads', 'browser_tasks', 'browser_task_slots', 'browser_task_bindings'];
+    return Object.fromEntries(names.map((name) => [name,
+      (this.db.prepare(`PRAGMA table_info(${name})`).all() as Array<{ name: string }>).map((column) => column.name),
+    ]));
+  }
+
+  private replaceBrowserTaskSlots(taskId: string, slots: BrowserTaskStoredSlot[]): void {
+    this.db.prepare('DELETE FROM browser_task_slots WHERE task_id = ?').run(taskId);
+    const insert = this.db.prepare(`
+      INSERT INTO browser_task_slots
+        (task_id, slot_key, discovery, required, population, validation, authority,
+         population_bucket, evidence_id, observation_epoch, pending_operation_id, baseline_observation_epoch)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const slot of slots) insert.run(taskId, slot.slotKey, slot.discovery, slot.required ? 1 : 0,
+      slot.population, slot.validation, slot.authority, slot.populationBucket,
+      slot.evidenceId, slot.observationEpoch, slot.pendingOperationId, slot.baselineObservationEpoch);
+  }
+
   private transitionBrowserOperation(
     principalId: string,
     operationId: string,
@@ -4492,6 +4653,77 @@ export interface BrowserOperationEntry extends ProposeBrowserOperationInput {
   receipt: BrowserOperationStoredReceipt | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface BrowserTaskStoredSlot {
+  slotKey: string;
+  discovery: string;
+  required: boolean;
+  population: string;
+  validation: string;
+  authority: string;
+  populationBucket: string;
+  evidenceId: string | null;
+  observationEpoch: number | null;
+  pendingOperationId: string | null;
+  baselineObservationEpoch: number | null;
+}
+
+export interface BrowserTaskCreateInput {
+  taskId: string;
+  workspaceId: string;
+  sessionId: string;
+  principalId: string;
+  goalEpoch: string;
+  runtimeGeneration: string;
+  capabilityId: string;
+  lifecycle: string;
+}
+
+export interface BrowserTaskCasPatch {
+  runtimeGeneration?: string;
+  capabilityId?: string;
+  lifecycle: string;
+  revokeBindings?: boolean;
+}
+
+export interface BrowserTaskStored extends BrowserTaskCreateInput {
+  version: number;
+  observationCount: number;
+  slots: BrowserTaskStoredSlot[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface RawBrowserTaskRow {
+  task_id: string; workspace_id: string; session_id: string; principal_id: string;
+  goal_epoch: string; runtime_generation: string; capability_id: string;
+  version: number; lifecycle: string; observation_count: number;
+  created_at: string; updated_at: string;
+}
+
+interface RawBrowserTaskSlotRow {
+  slot_key: string; discovery: string; required: number; population: string;
+  validation: string; authority: string; population_bucket: string;
+  evidence_id: string | null; observation_epoch: number | null;
+  pending_operation_id: string | null; baseline_observation_epoch: number | null;
+}
+
+function parseBrowserTaskRow(row: RawBrowserTaskRow, slots: RawBrowserTaskSlotRow[]): BrowserTaskStored {
+  return {
+    taskId: row.task_id, workspaceId: row.workspace_id, sessionId: row.session_id,
+    principalId: row.principal_id, goalEpoch: row.goal_epoch,
+    runtimeGeneration: row.runtime_generation, capabilityId: row.capability_id,
+    version: row.version, lifecycle: row.lifecycle, observationCount: row.observation_count,
+    createdAt: row.created_at, updatedAt: row.updated_at,
+    slots: slots.map((slot) => ({
+      slotKey: slot.slot_key, discovery: slot.discovery, required: slot.required === 1,
+      population: slot.population, validation: slot.validation, authority: slot.authority,
+      populationBucket: slot.population_bucket, evidenceId: slot.evidence_id,
+      observationEpoch: slot.observation_epoch, pendingOperationId: slot.pending_operation_id,
+      baselineObservationEpoch: slot.baseline_observation_epoch,
+    })),
+  };
 }
 
 interface RawBrowserOperationRow {

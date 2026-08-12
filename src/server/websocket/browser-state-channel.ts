@@ -6,6 +6,7 @@ import {
   type BrowserServiceEvent,
 } from '../services/browser-service.js';
 import { diagLog } from '../utils/diag-logger.js';
+import { browserTaskStateService, type BrowserTaskProjection, type BrowserTaskStateService } from '../services/browser-task-state.js';
 
 /**
  * browser-state-channel — the `browser_state` WebSocket event family (U5,
@@ -37,6 +38,7 @@ export interface BrowserStateSnapshotEvent {
   workspaceId: string;
   state: BrowserStateSnapshot;
   port?: number;
+  task?: BrowserTaskProjection | null;
 }
 
 interface WsEventEnvelope {
@@ -54,12 +56,17 @@ export class BrowserStateChannel {
   /** socket -> (sessionId -> workspaceId) for disconnect/unsubscribe cleanup. */
   private readonly socketSessions = new Map<WebSocket, Map<string, string>>();
 
-  constructor(service: BrowserService) {
+  constructor(service: BrowserService, tasks: BrowserTaskStateService = browserTaskStateService) {
     this.service = service;
     this.service.onEvent((event) => {
       this.forward(event);
     });
+    tasks.onProjection((workspaceId, sessionId, projection) => {
+      this.forwardTask(workspaceId, sessionId, projection);
+    });
+    this.tasks = tasks;
   }
+  private readonly tasks: BrowserTaskStateService;
 
   /** Introspection for tests and diagnostics. */
   subscriberCount(sessionId: string): number {
@@ -122,8 +129,17 @@ export class BrowserStateChannel {
       sessionId,
       workspaceId,
       state: state ?? 'none',
+      task: this.tasks.projection(workspaceId, sessionId),
       ...(port !== undefined && { port }),
     };
+  }
+
+  private forwardTask(workspaceId: string, sessionId: string, task: BrowserTaskProjection | null): void {
+    const sockets = this.subscriptions.get(sessionId);
+    if (!sockets) return;
+    const data = { type: 'browser_task_state', sessionId, workspaceId, task };
+    const msg = JSON.stringify({ type: 'event', eventType: 'browser_task_state', sessionId, workspaceId, data });
+    for (const socket of sockets) if (socket.readyState === WebSocket.OPEN) socket.send(msg);
   }
 
   private forward(event: BrowserServiceEvent): void {

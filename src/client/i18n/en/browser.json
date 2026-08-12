@@ -27,6 +27,16 @@
     "preparing": "Preparing the browser…",
     "firstUseHint": "The first open may take a few seconds while the browser view is created."
   },
+  "task": {
+    "active": "Task active — {{verified}} of {{required}} required items verified",
+    "awaiting-user": "Task needs your authority",
+    "validating": "Validating {{pending}} updated items",
+    "ready": "Task is ready for review",
+    "blocked": "Task is blocked and needs handoff",
+    "outcome-unknown": "External outcome is unknown — do not repeat the action",
+    "complete": "Task complete",
+    "abandoned": "Task abandoned"
+  },
   "action": {
     "takeover": "Take over",
     "continue": "Continue",

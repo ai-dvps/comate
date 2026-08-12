@@ -1,4 +1,4 @@
-import { randomBytes, createCipheriv, createDecipheriv, scryptSync } from 'crypto';
+import { randomBytes, createCipheriv, createDecipheriv, createHmac, scryptSync, timingSafeEqual } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { getStorageDir } from '../storage/data-dir.js';
@@ -12,6 +12,7 @@ const KEY_FILE = 'credential.key';
 
 let cachedKey: Buffer | null = null;
 let overrideKey: Buffer | null = null;
+let browserBindingVersions = { current: 1, prior: null as number | null };
 
 function getKeyFilePath(): string {
   return join(getStorageDir(), KEY_FILE);
@@ -55,6 +56,73 @@ export function __setCredentialKey(key: Buffer | null): void {
 /** Derive a deterministic key from a passphrase for test or migration use. */
 export function deriveKeyFromPassphrase(passphrase: string): Buffer {
   return scryptSync(passphrase, 'comate-credential-salt', KEY_LENGTH);
+}
+
+export interface BrowserBinding {
+  version: number;
+  digest: string;
+}
+
+function canonicalBindingValue(value: unknown): string {
+  if (value === null) return 'null';
+  if (typeof value === 'string') return `s:${JSON.stringify(value.normalize('NFC'))}`;
+  if (typeof value === 'boolean') return value ? 'b:1' : 'b:0';
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error('Browser binding values must contain finite numbers');
+    return `n:${Object.is(value, -0) ? '0' : String(value)}`;
+  }
+  if (Array.isArray(value)) return `a:[${value.map(canonicalBindingValue).join(',')}]`;
+  if (typeof value === 'object') {
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) throw new Error('Browser binding values must be plain objects');
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => {
+        if (child === undefined) throw new Error('Browser binding values must not contain undefined');
+        return `${canonicalBindingValue(key)}=${canonicalBindingValue(child)}`;
+      });
+    return `o:{${entries.join(',')}}`;
+  }
+  throw new Error(`Unsupported browser binding value type: ${typeof value}`);
+}
+
+function browserBindingDigest(purpose: string, value: unknown, version: number): string {
+  if (!/^[a-z][a-z0-9-]{0,63}$/.test(purpose)) throw new Error('Invalid browser binding purpose');
+  if (!Number.isSafeInteger(version) || version <= 0) throw new Error('Invalid browser binding key version');
+  const derived = createHmac('sha256', getCredentialKey())
+    .update(`comate/browser-binding/key/v${version}\0${purpose}`, 'utf8')
+    .digest();
+  return createHmac('sha256', derived)
+    .update(`comate/browser-binding/value/v1\0${canonicalBindingValue(value)}`, 'utf8')
+    .digest('base64url');
+}
+
+export function createBrowserBinding(
+  purpose: string,
+  value: unknown,
+  version = browserBindingVersions.current,
+): BrowserBinding {
+  if (version !== browserBindingVersions.current && version !== browserBindingVersions.prior) {
+    throw new Error('Browser binding key version is not active');
+  }
+  return { version, digest: browserBindingDigest(purpose, value, version) };
+}
+
+export function verifyBrowserBinding(purpose: string, value: unknown, binding: BrowserBinding): boolean {
+  if (binding.version !== browserBindingVersions.current && binding.version !== browserBindingVersions.prior) return false;
+  if (typeof binding.digest !== 'string' || binding.digest.length > 128) return false;
+  try {
+    const expected = Buffer.from(browserBindingDigest(purpose, value, binding.version));
+    const actual = Buffer.from(binding.digest);
+    return expected.length === actual.length && timingSafeEqual(expected, actual);
+  } catch {
+    return false;
+  }
+}
+
+/** Test/migration seam. It changes only derived browser-binding versions. */
+export function __setBrowserBindingKeyVersions(versions: { current: number; prior: number | null } | null): void {
+  browserBindingVersions = versions ?? { current: 1, prior: null };
 }
 
 /**
