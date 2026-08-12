@@ -548,6 +548,25 @@ describe('SqliteStore unified user sessions', { concurrency: false }, () => {
     assert.strictEqual(store.getActiveUserSession(user.id), null);
   });
 
+  it('deleteLocalSession purges browser task state', async () => {
+    const ws = await createWorkspace('Browser Task Purge');
+    const session = store.createLocalSession(ws.id, 'S1');
+    store.createBrowserTask({
+      workspaceId: ws.id,
+      sessionId: session.id,
+      principalId: 'principal-1',
+      runtimeGeneration: 'runtime-1',
+      capabilityId: 'capability-1',
+      taskId: 'task-1',
+      goalEpoch: 'goal-1',
+      lifecycle: 'active',
+    }, []);
+
+    assert.ok(store.getActiveBrowserTask(ws.id, session.id));
+    assert.equal(store.deleteLocalSession(session.id), true);
+    assert.equal(store.getActiveBrowserTask(ws.id, session.id), null);
+  });
+
   it('getSessionUsers returns linked user ids', async () => {
     const ws = await createWorkspace('US Owners');
     const bot = store.createBot({ name: 'Test Bot', activeWorkspaceId: ws.id });

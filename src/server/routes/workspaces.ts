@@ -6,6 +6,7 @@ import { chatService } from '../services/chat-service.js';
 import { feishuBotService } from '../services/feishu-bot-service.js';
 import { botService } from '../services/bot-service.js';
 import { browserService } from '../services/browser-service.js';
+import { browserTaskStateService } from '../services/browser-task-state.js';
 import { browserAuditService } from '../services/browser-audit.js';
 import {
   mergeSiteAuthForUpdate,
@@ -202,6 +203,7 @@ router.delete('/:id', async (req, res) => {
     // workspace. The browserSiteAuth field dies with the settings row and
     // browser_audit rows are deleted inside store.delete().
     await browserService.teardownWorkspace(req.params.id);
+    browserTaskStateService.purgeWorkspace(req.params.id);
 
     // Disconnect any Feishu bots bound to the deleted workspace.
     for (const bot of botService.listBotsForWorkspace(req.params.id)) {

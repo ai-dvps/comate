@@ -56,6 +56,7 @@ export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBar
 
   const busy = session.pendingVerb !== null
   const state = session.controlState
+  const task = session.task
 
   let stateLabel = t('pane.emptyTitle')
   let stateHint = ''
@@ -98,6 +99,11 @@ export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBar
       <span aria-live="polite" aria-atomic="true" className="sr-only" data-testid="browser-state-live">
         {t('a11y.stateAnnouncement', { state: stateLabel })}
       </span>
+      {task && task.lifecycle !== 'abandoned' && (
+        <div data-testid="browser-task-state" aria-live="polite" className="px-3 py-1 text-[11px] border-b border-border/50 text-text-secondary">
+          {t(`task.${task.lifecycle}`, { verified: task.verified, required: task.required, pending: task.populatedPendingValidation })}
+        </div>
+      )}
 
       {session.unavailable && (
         <div

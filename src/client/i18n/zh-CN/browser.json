@@ -27,6 +27,16 @@
     "preparing": "正在准备浏览器…",
     "firstUseHint": "首次打开需要几秒钟来创建浏览器视图。"
   },
+  "task": {
+    "active": "任务进行中——{{required}} 个必填项中已验证 {{verified}} 个",
+    "awaiting-user": "任务需要你的授权",
+    "validating": "正在验证 {{pending}} 个更新项",
+    "ready": "任务已可进入审核",
+    "blocked": "任务受阻，需要人工接管",
+    "outcome-unknown": "外部结果未知——请勿重复操作",
+    "complete": "任务已完成",
+    "abandoned": "任务已放弃"
+  },
   "action": {
     "takeover": "接管",
     "continue": "继续",

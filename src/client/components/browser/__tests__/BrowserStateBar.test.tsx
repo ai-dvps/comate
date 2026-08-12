@@ -183,6 +183,17 @@ describe('BrowserStateBar', () => {
     expect(screen.getByTestId('browser-state-live')).toHaveTextContent('You are driving')
   })
 
+  it('projects positive-shape task progress without task ids or authored values', () => {
+    setSession({
+      controlState: 'agent_in_control',
+      task: { lifecycle: 'outcome-unknown', required: 4, verified: 3, populatedPendingValidation: 1, awaitingAuthority: 0 },
+    })
+    renderBar()
+    const projection = screen.getByTestId('browser-task-state')
+    expect(projection).toHaveTextContent('External outcome is unknown')
+    expect(projection).not.toHaveTextContent('task-')
+  })
+
   // Popout entry (U8/U9: native shell + live control state only).
 
   it('shows the popout button for a live control state in the native shell', () => {

@@ -232,6 +232,15 @@ describe('browser-pane-store', () => {
     )
   })
 
+  it('keeps task projection in memory from browser_task_state events', () => {
+    wsClientMock.emitEvent({
+      type: 'event', eventType: 'browser_task_state', sessionId: 'sess-1', workspaceId: 'ws1',
+      data: { type: 'browser_task_state', task: { lifecycle: 'blocked', required: 2, verified: 1, populatedPendingValidation: 0, awaitingAuthority: 0 } },
+    } as WsEventMessage)
+    expect(useBrowserPaneStore.getState().sessions['sess-1']?.task?.lifecycle).toBe('blocked')
+    expect(localStorage.getItem('browser-task-state')).toBeNull()
+  })
+
   // -- U9: no viewer URL exists client-side anymore ---------------------------
 
   it('never fetches a viewer URL — state transitions perform no client fetch at all', () => {

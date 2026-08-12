@@ -56,6 +56,16 @@ export interface SessionBrowserState {
    * cleared by activity, snooze, close, or any state transition.
    */
   idlePrompt: boolean
+  task: BrowserTaskProjection | null
+}
+
+export type BrowserTaskLifecycle = 'active' | 'awaiting-user' | 'validating' | 'ready' | 'blocked' | 'outcome-unknown' | 'complete' | 'abandoned'
+export interface BrowserTaskProjection {
+  lifecycle: BrowserTaskLifecycle
+  required: number
+  populatedPendingValidation: number
+  verified: number
+  awaitingAuthority: number
 }
 
 export interface BrowserPaneState {
@@ -112,6 +122,7 @@ export interface BrowserPaneState {
   _applyUnavailable: (sessionId: string, info: BrowserUnavailableInfo) => void
   _applyClosed: (sessionId: string) => void
   _applyIdlePrompt: (sessionId: string, pending: boolean) => void
+  _applyTaskProjection: (sessionId: string, task: BrowserTaskProjection | null) => void
   /** Bridge watcher → store flag (U8 native occlusion). */
   _setNativeViewOccluded: (occluded: boolean) => void
 }
@@ -193,6 +204,7 @@ export const EMPTY_SESSION_BROWSER_STATE: SessionBrowserState = {
   verbError: null,
   rememberSite: false,
   idlePrompt: false,
+  task: null,
 }
 
 export function initialSessionBrowserState(): SessionBrowserState {
@@ -483,6 +495,7 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
     _applyIdlePrompt: (sessionId, pending) => {
       patchSession(sessionId, { idlePrompt: pending })
     },
+    _applyTaskProjection: (sessionId, task) => patchSession(sessionId, { task }),
     _setNativeViewOccluded: (occluded) => {
       if (get().nativeViewOccluded === occluded) return
       set({ nativeViewOccluded: occluded })
@@ -498,6 +511,7 @@ interface BrowserStateEventPayload {
   type: 'browser_state'
   state: BrowserPaneControlState
   port?: number
+  task?: BrowserTaskProjection | null
 }
 
 interface BrowserUnavailableEventPayload {
@@ -517,6 +531,7 @@ function handleBrowserChannelEvent(msg: WsEventMessage): void {
       state: data.state,
       ...(typeof data.port === 'number' ? { port: data.port } : {}),
     })
+    if ('task' in data) store._applyTaskProjection(sessionId, data.task ?? null)
   } else if (msg.eventType === 'browser_unavailable') {
     const data = msg.data as BrowserUnavailableEventPayload
     store._applyUnavailable(sessionId, {
@@ -528,6 +543,9 @@ function handleBrowserChannelEvent(msg: WsEventMessage): void {
   } else if (msg.eventType === 'browser_idle_prompt') {
     const data = msg.data as { pending?: boolean } | undefined
     store._applyIdlePrompt(sessionId, data?.pending === true)
+  } else if (msg.eventType === 'browser_task_state') {
+    const data = msg.data as { task?: BrowserTaskProjection | null } | undefined
+    store._applyTaskProjection(sessionId, data?.task ?? null)
   }
 }
 
