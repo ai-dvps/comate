@@ -218,6 +218,68 @@ describe('BrowserTaskStateService', () => {
     assert.ok(service.getActive({ ...scope, sessionId: 'fork-1' }));
   });
 
+  it('persists a version-bound final action and treats every possible dispatch as outcome unknown', () => {
+    const store = new SqliteStore(':memory:');
+    const service = new BrowserTaskStateService(store);
+    const task = service.createOrReplace(scope, [slot({
+      slotKey: 'final_activation_0', population: 'populated', validation: 'verified',
+    })]);
+    const review = createBrowserBinding('browser-final-review', { taskId: task.taskId, version: task.version });
+    const predicate = createBrowserBinding('browser-final-outcome', { taskId: task.taskId, kind: 'durable_record' });
+
+    const prepared = service.prepareFinalAction(scope, task.taskId, task.version, {
+      operationId: 'publish-op-1', slotKey: 'final_activation_0', targetBindingDigest: 'target-final-1',
+      controlEpoch: 'control-final-1', reviewBinding: review, outcomePredicate: predicate,
+    });
+    assert.equal(prepared.lifecycle, 'ready');
+    const unknown = service.recordFinalDispatch(scope, task.taskId, prepared.version, 'publish-op-1');
+    assert.equal(unknown.lifecycle, 'outcome-unknown');
+    assert.deepEqual(service.projection(scope.workspaceId, scope.sessionId)?.outcome, {
+      possibleDispatch: true, evidenceStatus: 'none', lastCheckedAt: null,
+      canRecheck: true, canAbandon: true, canAcknowledgeDuplicateRisk: true,
+    });
+  });
+
+  it('completes only from trusted correlated durable evidence and keeps weak evidence unknown', () => {
+    const service = new BrowserTaskStateService(new SqliteStore(':memory:'));
+    let task = service.createOrReplace(scope, [slot({
+      slotKey: 'final_activation_0', population: 'populated', validation: 'verified',
+    })]);
+    const review = createBrowserBinding('browser-final-review', { taskId: task.taskId, version: task.version });
+    const predicate = createBrowserBinding('browser-final-outcome', { taskId: task.taskId, kind: 'durable_record' });
+    task = service.prepareFinalAction(scope, task.taskId, task.version, {
+      operationId: 'publish-op-2', slotKey: 'final_activation_0', targetBindingDigest: 'target-final-2',
+      controlEpoch: 'control-final-2', reviewBinding: review, outcomePredicate: predicate,
+    });
+    task = service.recordFinalDispatch(scope, task.taskId, task.version, 'publish-op-2');
+
+    task = service.recordOutcomeCheck(scope, task.taskId, task.version, 'publish-op-2', { status: 'insufficient' });
+    assert.equal(task.lifecycle, 'outcome-unknown');
+    assert.throws(() => service.recordDurableCompletion(scope, task.taskId, task.version, 'caller-evidence'));
+    task = service.recordOutcomeCheck(scope, task.taskId, task.version, 'publish-op-2', {
+      status: 'durable', evidenceId: 'trusted-record-1', correlatedOperationId: 'publish-op-2',
+    });
+    assert.equal(task.lifecycle, 'complete');
+  });
+
+  it('acknowledges duplicate risk by advancing state without dispatch or success', () => {
+    const service = new BrowserTaskStateService(new SqliteStore(':memory:'));
+    let task = service.createOrReplace(scope, [slot({
+      slotKey: 'final_activation_0', population: 'populated', validation: 'verified',
+    })]);
+    const review = createBrowserBinding('browser-final-review', { taskId: task.taskId, version: task.version });
+    const predicate = createBrowserBinding('browser-final-outcome', { taskId: task.taskId, kind: 'durable_record' });
+    task = service.prepareFinalAction(scope, task.taskId, task.version, {
+      operationId: 'publish-op-3', slotKey: 'final_activation_0', targetBindingDigest: 'target-final-3',
+      controlEpoch: 'control-final-3', reviewBinding: review, outcomePredicate: predicate,
+    });
+    task = service.recordFinalDispatch(scope, task.taskId, task.version, 'publish-op-3');
+    const acknowledged = service.acknowledgeDuplicateRisk(scope, task.taskId, task.version, 'publish-op-3');
+    assert.equal(acknowledged.lifecycle, 'awaiting-user');
+    assert.equal(acknowledged.slots[0].validation, 'stale');
+    assert.equal(service.projection(scope.workspaceId, scope.sessionId)?.outcome, undefined);
+  });
+
   it('purges a workspace without affecting another workspace', () => {
     const store = new SqliteStore(':memory:');
     const service = new BrowserTaskStateService(store);

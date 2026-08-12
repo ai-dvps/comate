@@ -3,6 +3,8 @@ import {
   store as defaultStore,
   type BrowserTaskStored,
   type BrowserTaskStoredSlot,
+  type BrowserFinalActionEntry,
+  type BrowserFinalEvidenceStatus,
   type SqliteStore,
 } from '../storage/sqlite-store.js';
 import type { DecisionObservationBudget } from './browser-decision-observation.js';
@@ -61,12 +63,22 @@ export interface BrowserTaskState extends BrowserTaskScope {
 }
 
 export interface BrowserTaskProjection {
+  taskId: string;
+  version: number;
   lifecycle: BrowserTaskLifecycle;
   required: number;
   populatedPendingValidation: number;
   verified: number;
   awaitingAuthority: number;
   recoveryExhausted: boolean;
+  outcome?: {
+    possibleDispatch: boolean;
+    evidenceStatus: BrowserFinalEvidenceStatus;
+    lastCheckedAt: string | null;
+    canRecheck: boolean;
+    canAbandon: boolean;
+    canAcknowledgeDuplicateRisk: boolean;
+  };
 }
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -367,14 +379,111 @@ export class BrowserTaskStateService {
     return updated;
   }
 
-  recordDurableCompletion(scope: BrowserTaskScope, taskId: string, expectedVersion: number, durableEvidenceId: string): BrowserTaskState {
-    if (!ID.test(durableEvidenceId)) throw new Error('invalid_browser_task_evidence');
+  prepareFinalAction(scope: BrowserTaskScope, taskId: string, expectedVersion: number, input: {
+    operationId: string; slotKey: string; targetBindingDigest: string; controlEpoch: string;
+    reviewBinding: BrowserBinding; outcomePredicate: BrowserBinding;
+  }): BrowserTaskState {
+    for (const value of [input.operationId, input.slotKey, input.targetBindingDigest, input.controlEpoch]) {
+      if (!ID.test(value)) throw new Error('invalid_browser_task_final_binding');
+    }
+    if (!input.reviewBinding.digest || input.reviewBinding.digest.length > 256 ||
+        !input.outcomePredicate.digest || input.outcomePredicate.digest.length > 256) {
+      throw new Error('invalid_browser_task_final_binding');
+    }
     const task = this.requireCurrent(scope, taskId);
-    if (task.lifecycle !== 'outcome-unknown' && task.lifecycle !== 'ready') throw new Error('browser_task_not_completable');
-    const updated = fromStored(this.store.casBrowserTask(taskId, expectedVersion,
-      { lifecycle: 'complete', revokeBindings: true }, toStored(task.slots)));
+    if (task.version !== expectedVersion || task.lifecycle !== 'ready') throw new Error('browser_task_not_ready');
+    const updated = fromStored(this.store.createBrowserFinalAction({
+      taskId, expectedVersion, operationId: input.operationId, slotKey: input.slotKey,
+      targetBindingDigest: input.targetBindingDigest, controlEpoch: input.controlEpoch,
+      reviewKeyVersion: input.reviewBinding.version, reviewBindingDigest: input.reviewBinding.digest,
+      predicateKeyVersion: input.outcomePredicate.version, predicateBindingDigest: input.outcomePredicate.digest,
+    }));
     this.emit(updated);
     return updated;
+  }
+
+  awaitFinalReview(scope: BrowserTaskScope, taskId: string, expectedVersion: number): BrowserTaskState {
+    const task = this.requireCurrent(scope, taskId);
+    const updated = fromStored(this.store.casBrowserTask(taskId, expectedVersion,
+      { lifecycle: 'awaiting-user' }, toStored(task.slots)));
+    this.emit(updated);
+    return updated;
+  }
+
+  getFinalAction(taskId: string): BrowserFinalActionEntry | null {
+    return this.store.getBrowserFinalAction(taskId);
+  }
+
+  recordFinalDispatch(scope: BrowserTaskScope, taskId: string, expectedVersion: number, operationId: string): BrowserTaskState {
+    this.requireCurrent(scope, taskId);
+    const updated = fromStored(this.store.transitionBrowserFinalAction({
+      taskId, expectedVersion, operationId, fromStates: ['reviewed'], state: 'outcome_unknown',
+      lifecycle: 'outcome-unknown', evidenceStatus: 'none', revokeBindings: true,
+    }));
+    this.emit(updated);
+    return updated;
+  }
+
+  cancelPreparedFinalAction(scope: BrowserTaskScope, taskId: string, expectedVersion: number, operationId: string): BrowserTaskState {
+    this.requireCurrent(scope, taskId);
+    const updated = fromStored(this.store.transitionBrowserFinalAction({
+      taskId, expectedVersion, operationId, fromStates: ['reviewed'], state: 'cancelled',
+      lifecycle: 'awaiting-user', revokeBindings: true,
+    }));
+    this.emit(updated);
+    return updated;
+  }
+
+  recordOutcomeCheck(scope: BrowserTaskScope, taskId: string, expectedVersion: number, operationId: string,
+    evidence: { status: 'insufficient' | 'conflicting' } |
+      { status: 'durable'; evidenceId: string; correlatedOperationId: string }): BrowserTaskState {
+    this.requireCurrent(scope, taskId);
+    if (evidence.status === 'durable') {
+      if (!ID.test(evidence.evidenceId) || evidence.correlatedOperationId !== operationId) {
+        throw new Error('browser_task_durable_evidence_uncorrelated');
+      }
+      const updated = fromStored(this.store.transitionBrowserFinalAction({
+        taskId, expectedVersion, operationId, fromStates: ['outcome_unknown'], state: 'complete',
+        lifecycle: 'complete', evidenceStatus: 'durable', durableEvidenceId: evidence.evidenceId,
+        checked: true, revokeBindings: true,
+      }));
+      this.emit(updated);
+      return updated;
+    }
+    const updated = fromStored(this.store.transitionBrowserFinalAction({
+      taskId, expectedVersion, operationId, fromStates: ['outcome_unknown'], state: 'outcome_unknown',
+      lifecycle: 'outcome-unknown', evidenceStatus: evidence.status, checked: true,
+    }));
+    this.emit(updated);
+    return updated;
+  }
+
+  abandonOutcomeTracking(scope: BrowserTaskScope, taskId: string, expectedVersion: number, operationId: string): BrowserTaskState {
+    this.requireCurrent(scope, taskId);
+    const updated = fromStored(this.store.transitionBrowserFinalAction({
+      taskId, expectedVersion, operationId, fromStates: ['outcome_unknown'], state: 'abandoned',
+      lifecycle: 'abandoned', revokeBindings: true,
+    }));
+    this.emit(updated);
+    return updated;
+  }
+
+  acknowledgeDuplicateRisk(scope: BrowserTaskScope, taskId: string, expectedVersion: number, operationId: string): BrowserTaskState {
+    const task = this.requireCurrent(scope, taskId);
+    const slots = task.slots.map((slot) => slot.slotKey.startsWith('final_activation_') ? {
+      ...slot, validation: 'stale' as const, evidenceId: null, observationEpoch: null,
+    } : slot);
+    const updated = fromStored(this.store.transitionBrowserFinalAction({
+      taskId, expectedVersion, operationId, fromStates: ['outcome_unknown'], state: 'duplicate_risk_acknowledged',
+      lifecycle: 'awaiting-user', slots: toStored(slots), revokeBindings: true,
+    }));
+    this.emit(updated);
+    return updated;
+  }
+
+  recordDurableCompletion(scope: BrowserTaskScope, taskId: string, expectedVersion: number, durableEvidenceId: string): BrowserTaskState {
+    void scope; void taskId; void expectedVersion; void durableEvidenceId;
+    throw new Error('browser_task_trusted_outcome_observer_required');
   }
 
   abandon(scope: BrowserTaskScope, taskId: string, expectedVersion: number): boolean {
@@ -397,14 +506,42 @@ export class BrowserTaskStateService {
   projection(workspaceId: string, sessionId: string): BrowserTaskProjection | null {
     const task = this.loadActive(workspaceId, sessionId);
     if (!task) return null;
+    const finalAction = this.store.getBrowserFinalAction(task.taskId);
     return {
+      taskId: task.taskId,
+      version: task.version,
       lifecycle: task.lifecycle,
       required: task.slots.filter((slot) => slot.required).length,
       populatedPendingValidation: task.slots.filter((slot) => slot.population === 'populated' && slot.validation !== 'verified').length,
       verified: task.slots.filter((slot) => slot.validation === 'verified').length,
       awaitingAuthority: task.slots.filter((slot) => slot.authority === 'awaiting_user' || slot.authority === 'declined' || slot.authority === 'stale').length,
       recoveryExhausted: task.lifecycle === 'blocked' && this.store.hasBrowserTaskRecovery(task.taskId),
+      ...(task.lifecycle === 'outcome-unknown' && finalAction?.state === 'outcome_unknown' ? { outcome: {
+        possibleDispatch: true,
+        evidenceStatus: finalAction.evidenceStatus,
+        lastCheckedAt: finalAction.lastCheckedAt,
+        canRecheck: true,
+        canAbandon: true,
+        canAcknowledgeDuplicateRisk: true,
+      } } : {}),
     };
+  }
+
+  applicationResolveOutcome(workspaceId: string, sessionId: string, taskId: string, expectedVersion: number,
+    action: 'recheck' | 'abandon' | 'acknowledge_duplicate_risk'): BrowserTaskState {
+    const task = this.loadActive(workspaceId, sessionId);
+    if (!task || task.taskId !== taskId || task.version !== expectedVersion || task.lifecycle !== 'outcome-unknown') {
+      throw new Error('browser_task_outcome_stale');
+    }
+    const scope: BrowserTaskScope = {
+      workspaceId, sessionId, principalId: task.principalId,
+      runtimeGeneration: task.runtimeGeneration, capabilityId: task.capabilityId,
+    };
+    const finalAction = this.store.getBrowserFinalAction(taskId);
+    if (!finalAction || finalAction.state !== 'outcome_unknown') throw new Error('browser_task_outcome_stale');
+    if (action === 'abandon') return this.abandonOutcomeTracking(scope, taskId, expectedVersion, finalAction.operationId);
+    if (action === 'acknowledge_duplicate_risk') return this.acknowledgeDuplicateRisk(scope, taskId, expectedVersion, finalAction.operationId);
+    return this.recordOutcomeCheck(scope, taskId, expectedVersion, finalAction.operationId, { status: 'insufficient' });
   }
 
   onProjection(listener: (workspaceId: string, sessionId: string, projection: BrowserTaskProjection | null) => void): () => void {

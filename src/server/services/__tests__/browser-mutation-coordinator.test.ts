@@ -8,6 +8,8 @@ import {
   type BrowserInvocationScope,
 } from '../browser-mutation-coordinator.js';
 import { buildBrowserToolDefinitions } from '../browser-mcp.js';
+import { BrowserTaskStateService, type BrowserTaskSlot } from '../browser-task-state.js';
+import { createBrowserBinding } from '../../utils/credential-crypto.js';
 
 function scope(overrides: Partial<BrowserInvocationScope> = {}): BrowserInvocationScope {
   return Object.freeze({
@@ -205,6 +207,32 @@ describe('BrowserMutationCoordinator', () => {
     for (const forbidden of ['text', 'url', 'query', 'path', 'filename', 'params', 'exception']) {
       assert.equal(columns.some((column) => column.toLowerCase().includes(forbidden)), false, forbidden);
     }
+  });
+
+  it('reconciles an orphaned final dispatch intent to persistent outcome unknown without replay', () => {
+    const store = new SqliteStore(':memory:');
+    const tasks = new BrowserTaskStateService(store);
+    const taskScope = { workspaceId: 'ws', sessionId: 's', principalId: 'p', runtimeGeneration: 'r', capabilityId: 'c' };
+    const finalSlot: BrowserTaskSlot = {
+      slotKey: 'final_activation_0', discovery: 'available', required: true, population: 'populated',
+      validation: 'verified', authority: 'not_required', populationBucket: 'present', evidenceId: 'obs-1', observationEpoch: 1,
+    };
+    let task = tasks.createOrReplace(taskScope, [finalSlot]);
+    task = tasks.prepareFinalAction(taskScope, task.taskId, task.version, {
+      operationId: 'publish-intent', slotKey: finalSlot.slotKey, targetBindingDigest: 'target-publish',
+      controlEpoch: 'control-publish', reviewBinding: createBrowserBinding('browser-final-review', { task: task.taskId }),
+      outcomePredicate: createBrowserBinding('browser-final-outcome', { task: task.taskId }),
+    });
+    store.proposeBrowserOperation({ operationId: 'publish-intent', principalId: 'p', workspaceId: 'ws', sessionId: 's',
+      runtimeGeneration: 'r', capabilityId: 'c', action: 'activation', parameterDigest: 'v1:publish' });
+    store.markBrowserOperationApproved('p', 'publish-intent');
+    store.markBrowserOperationDispatchIntent('p', 'publish-intent');
+
+    new BrowserMutationCoordinator({ store });
+
+    assert.equal(store.getBrowserOperation('p', 'publish-intent')?.receipt?.outcome, 'outcome_unknown');
+    assert.equal(store.getBrowserTask(task.taskId)?.lifecycle, 'outcome-unknown');
+    assert.equal(store.getBrowserFinalAction(task.taskId)?.state, 'outcome_unknown');
   });
 
   it('does not dispatch when intent persistence fails and returns unknown when terminal persistence fails', async () => {

@@ -262,6 +262,33 @@ describe('ApprovalSurface browser activation and upload manifests', () => {
     expect(screen.queryByText('approval.showMore')).not.toBeInTheDocument()
   })
 
+  it('renders a provenance-tagged final publication review without authored values', () => {
+    render(<ApprovalSurface {...baseProps} pendingItem={pending('mcp__comate-browser__activate', {
+      kind: 'browser_activation', warning: 'Final publication', origin: 'https://example.com',
+      target: { name: { source: 'untrusted_page', text: 'Publish now' } },
+      finalReview: {
+        source: 'user_intent', taskVersion: 9, mediaCount: 1,
+        declarationDisposition: 'confirmed', visibilityDisposition: 'verified',
+        slots: [
+          { source: 'derived_metadata', category: 'primary_content', required: true, disposition: 'verified', populationBucket: 'long' },
+          { source: 'derived_metadata', category: 'topic', required: false, disposition: 'empty', populationBucket: 'empty' },
+        ],
+      },
+    })} />)
+    expect(screen.getByText('primary_content')).toBeInTheDocument()
+    expect(screen.getByText('topic')).toBeInTheDocument()
+    expect(screen.getByText('Publish now')).toBeInTheDocument()
+  })
+
+  it('fails closed when an activation manifest contains private extra fields', () => {
+    render(<ApprovalSurface {...baseProps} pendingItem={pending('mcp__comate-browser__activate', {
+      kind: 'browser_activation', warning: 'Final publication', origin: 'https://example.com', target: {},
+      privateDigest: 'RAW_PRIVATE_DIGEST',
+    })} />)
+    expect(screen.getByRole('alert')).toHaveTextContent('approval.securityManifestInvalid')
+    expect(screen.queryByText('RAW_PRIVATE_DIGEST')).not.toBeInTheDocument()
+  })
+
   it('renders multiple relative workspace files and totals without paths or content', () => {
     const { container } = render(<ApprovalSurface {...baseProps} pendingItem={pending('mcp__comate-browser__upload', {
       kind: 'browser_upload', warning: 'Share local media', origin: 'https://example.com',

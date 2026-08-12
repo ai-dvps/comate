@@ -53,6 +53,7 @@ export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBar
   const close = useBrowserPaneStore((s) => s.close)
   const confirmIdleClose = useBrowserPaneStore((s) => s.confirmIdleClose)
   const snoozeIdle = useBrowserPaneStore((s) => s.snoozeIdle)
+  const resolveTaskOutcome = useBrowserPaneStore((s) => s.resolveTaskOutcome)
 
   const busy = session.pendingVerb !== null
   const state = session.controlState
@@ -99,11 +100,28 @@ export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBar
       <span aria-live="polite" aria-atomic="true" className="sr-only" data-testid="browser-state-live">
         {t('a11y.stateAnnouncement', { state: stateLabel })}
       </span>
-      {task && task.lifecycle !== 'abandoned' && (
+      {task && task.lifecycle !== 'abandoned' && task.lifecycle !== 'outcome-unknown' && (
         <div data-testid="browser-task-state" aria-live="polite" className="px-3 py-1 text-[11px] border-b border-border/50 text-text-secondary">
           {task.recoveryExhausted
             ? t('task.recoveryExhausted')
             : t(`task.${task.lifecycle}`, { verified: task.verified, required: task.required, pending: task.populatedPendingValidation })}
+        </div>
+      )}
+      {task?.lifecycle === 'outcome-unknown' && task.outcome && (
+        <div data-testid="browser-outcome-unknown" role="alert" className="px-3 py-2 text-xs border-b border-warning/40 bg-warning/10 text-warning">
+          <div className="font-medium">{t('task.outcomePossibleDispatch')}</div>
+          <div className="mt-0.5 text-text-secondary">
+            {t('task.outcomeEvidence', { status: task.outcome.evidenceStatus,
+              checked: task.outcome.lastCheckedAt ?? t('task.neverChecked') })}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <button type="button" className={cn('px-2 py-1 rounded border border-border', FOCUS_CLASSES)}
+              onClick={() => void resolveTaskOutcome(sessionId, 'recheck')}>{t('action.recheckOutcome')}</button>
+            <button type="button" className={cn('px-2 py-1 rounded border border-border', FOCUS_CLASSES)}
+              onClick={() => void resolveTaskOutcome(sessionId, 'abandon')}>{t('action.abandonTracking')}</button>
+            <button type="button" className={cn('px-2 py-1 rounded border border-warning/50', FOCUS_CLASSES)}
+              onClick={() => void resolveTaskOutcome(sessionId, 'acknowledge_duplicate_risk')}>{t('action.acknowledgeDuplicateRisk')}</button>
+          </div>
         </div>
       )}
 

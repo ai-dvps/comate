@@ -95,7 +95,9 @@
       "role": "Role",
       "name": "Name",
       "nearby": "Nearby",
-      "editorSummary": "Editors: {{count}} total, {{filled}} filled, {{length}} characters"
+      "editorSummary": "Editors: {{count}} total, {{filled}} filled, {{length}} characters",
+      "finalReview": "Final publication review",
+      "finalSummary": "Task version {{version}} · {{media}} media · declaration {{declaration}} · visibility {{visibility}}"
     },
     "browserUpload": {
       "origin": "Share with",

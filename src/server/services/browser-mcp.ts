@@ -139,6 +139,7 @@ import {
 import type {
   BrowserTaskScope,
   BrowserTaskSlot,
+  BrowserTaskState,
   BrowserTaskStateService,
   PopulationBucket,
 } from './browser-task-state.js';
@@ -234,6 +235,16 @@ export type BrowserApprovalRequester = (
   request: BrowserApprovalRequest,
 ) => Promise<BrowserApprovalDecision>;
 
+export type BrowserTrustedOutcomeResult =
+  | { status: 'insufficient' | 'conflicting' }
+  | { status: 'durable'; evidenceId: string; correlatedOperationId: string };
+
+export interface BrowserTrustedOutcomeObserver {
+  recheck(input: Readonly<{
+    workspaceId: string; sessionId: string; taskId: string; taskVersion: number; operationId: string;
+  }>): Promise<BrowserTrustedOutcomeResult>;
+}
+
 export interface BrowserMcpDeps {
   sessionId: string;
   workspaceId: string;
@@ -286,6 +297,8 @@ export interface BrowserMcpDeps {
   applicationSensitiveRegions?: ApplicationSensitiveRegionProvider;
   /** U3 goal-scoped task authority. Task tools fail closed when it is absent. */
   taskState?: BrowserTaskStateService;
+  /** Trusted application observer. Absence intentionally leaves publication outcome unknown. */
+  businessOutcomeObserver?: BrowserTrustedOutcomeObserver;
   /** Read-only diagnostic sink; failures never influence task authority. */
   taskTrace?: Pick<BrowserTaskTrace, 'append'>;
 }
@@ -1228,6 +1241,114 @@ export class BrowserToolContext {
     }
   }
 
+  private finalTask(binding: TaskMutationBinding | undefined) {
+    if (!binding?.slotKey.startsWith('final_activation_') || !this.deps.taskState) return null;
+    const task = this.deps.taskState.getActive(this.taskScope());
+    return task && task.taskId === binding.taskId && task.version === binding.taskVersion && task.lifecycle === 'ready'
+      ? task : null;
+  }
+
+  private publicationReview(task: BrowserTaskState) {
+    const slots = task.slots.map((slot) => ({
+      source: 'derived_metadata' as const,
+      category: slot.slotKey.replace(/_\d+$/, ''),
+      required: slot.required,
+      disposition: slot.authority === 'confirmed' ? 'authority_confirmed'
+        : slot.validation === 'verified' ? 'verified'
+          : slot.population === 'populated' ? 'pending_validation' : 'empty',
+      populationBucket: slot.populationBucket,
+    }));
+    return {
+      source: 'user_intent' as const,
+      taskVersion: task.version,
+      slots,
+      mediaCount: task.slots.filter((slot) => slot.slotKey.startsWith('media_') && slot.population === 'populated').length,
+      declarationDisposition: task.slots.some((slot) => slot.slotKey.startsWith('declaration_'))
+        ? task.slots.every((slot) => !slot.slotKey.startsWith('declaration_') || slot.authority === 'confirmed')
+          ? 'confirmed' : 'unresolved'
+        : 'not_present',
+      visibilityDisposition: task.slots.some((slot) => slot.slotKey.startsWith('visibility_') && slot.validation === 'verified')
+        ? 'verified' : 'not_present',
+    };
+  }
+
+  private prepareFinalAction(operationId: string, binding: TaskMutationBinding | undefined, ref: string): boolean {
+    const task = this.finalTask(binding);
+    const tasks = this.deps.taskState;
+    const entry = this.refTable.get(ref);
+    const observation = this.latestDecisionObservation;
+    if (!task || !tasks || !entry || !observation) return false;
+    const targetBindingDigest = createHash('sha256').update(JSON.stringify({
+      documentIdentity: entry.batch, backendNodeId: entry.backendNodeId, fingerprint: entry.fingerprint,
+    })).digest('hex');
+    const reviewBinding = createBrowserBinding('browser-final-review', {
+      taskId: task.taskId, taskVersion: task.version, operationId, slotKey: binding!.slotKey,
+      runtimeGeneration: this.taskScope().runtimeGeneration, capabilityId: this.taskScope().capabilityId,
+      controlEpoch: observation.controlEpoch, documentIdentity: observation.documentIdentityDigest,
+      targetBindingDigest, review: this.publicationReview(task),
+    });
+    const outcomePredicate = createBrowserBinding('browser-final-outcome', {
+      taskId: task.taskId, taskVersion: task.version, operationId, targetBindingDigest,
+      evidenceClass: 'business_completion', predicate: 'durable_correlated_record',
+    });
+    tasks.prepareFinalAction(this.taskScope(), task.taskId, task.version, {
+      operationId, slotKey: binding!.slotKey, targetBindingDigest, controlEpoch: observation.controlEpoch,
+      reviewBinding, outcomePredicate,
+    });
+    return true;
+  }
+
+  async handleRecheckTaskOutcome(args: { taskId: string; expectedTaskVersion: number }): Promise<CallToolResult> {
+    const tasks = this.deps.taskState;
+    if (!tasks) return this.taskUnavailable();
+    const task = tasks.getActive(this.taskScope());
+    const action = task ? tasks.getFinalAction(task.taskId) : null;
+    if (!task || task.taskId !== args.taskId || task.version !== args.expectedTaskVersion ||
+        task.lifecycle !== 'outcome-unknown' || !action || action.state !== 'outcome_unknown') {
+      return toolError('browser_task_outcome_stale', 'control', 'Outcome reconciliation is not bound to the current unknown publication.', 'Read current task state.');
+    }
+    const result = this.deps.businessOutcomeObserver
+      ? await this.deps.businessOutcomeObserver.recheck({ workspaceId: task.workspaceId, sessionId: task.sessionId,
+          taskId: task.taskId, taskVersion: task.version, operationId: action.operationId })
+      : { status: 'insufficient' as const };
+    try {
+      const updated = tasks.recordOutcomeCheck(this.taskScope(), task.taskId, task.version, action.operationId, result);
+      return this.taskResult(updated);
+    } catch {
+      return toolError('browser_task_outcome_evidence_rejected', 'control', 'The trusted outcome evidence was stale or uncorrelated.', 'Keep the task outcome unknown and recheck later.');
+    }
+  }
+
+  async handleResolveUnknownOutcome(args: { taskId: string; expectedTaskVersion: number; action: 'abandon' | 'acknowledge_duplicate_risk' }, extra?: unknown): Promise<CallToolResult> {
+    const tasks = this.deps.taskState;
+    if (!tasks) return this.taskUnavailable();
+    const task = tasks.getActive(this.taskScope());
+    const finalAction = task ? tasks.getFinalAction(task.taskId) : null;
+    if (!task || task.taskId !== args.taskId || task.version !== args.expectedTaskVersion ||
+        task.lifecycle !== 'outcome-unknown' || !finalAction || finalAction.state !== 'outcome_unknown') {
+      return toolError('browser_task_outcome_stale', 'control', 'The unknown outcome changed before reconciliation.', 'Read current task state.');
+    }
+    const decision = await this.requestApproval({
+      toolName: args.action === 'abandon' ? BROWSER_TOOL_NAMES.abandonOutcomeTracking : BROWSER_TOOL_NAMES.acknowledgeDuplicateRisk,
+      title: args.action === 'abandon' ? 'Abandon publication outcome tracking' : 'Acknowledge duplicate publication risk',
+      description: args.action === 'abandon'
+        ? 'This closes tracking without claiming publication success.'
+        : 'This does not retry publication. It only permits a new task version and fresh review.',
+      payload: { kind: 'browser_outcome_reconciliation', action: args.action,
+        taskVersion: task.version, possibleDispatch: true },
+    }, (extra as { signal?: AbortSignal } | undefined)?.signal);
+    if (!isApprovalDecision(decision)) return decision;
+    if (decision.behavior !== 'allow') return toolJson({ ok: false, reason: decision.behavior });
+    try {
+      const updated = args.action === 'abandon'
+        ? tasks.abandonOutcomeTracking(this.taskScope(), task.taskId, task.version, finalAction.operationId)
+        : tasks.acknowledgeDuplicateRisk(this.taskScope(), task.taskId, task.version, finalAction.operationId);
+      return this.taskResult(updated);
+    } catch {
+      return toolError('browser_task_outcome_stale', 'control', 'Another reconciliation decision already won.', 'Read current task state.');
+    }
+  }
+
   validateTaskMutationBinding(binding: TaskMutationBinding | undefined, targetRef: string): CallToolResult | null {
     const tasks = this.deps.taskState;
     if (!binding) {
@@ -1253,7 +1374,7 @@ export class BrowserToolContext {
   }
 
   prepareTaskMutation(operationId: string, binding: TaskMutationBinding | undefined, targetRef: string | undefined):
-    { binding: TaskMutationBinding; pendingVersion: number; targetBindingDigest: string; backendNodeId: number; fingerprint: ElementFingerprint } | null {
+    { binding: TaskMutationBinding; pendingVersion: number; targetBindingDigest: string; backendNodeId: number; fingerprint: ElementFingerprint; finalAction?: boolean } | null {
     if (!binding || !targetRef || !this.deps.taskState || !this.latestDecisionObservation) return null;
     const entry = this.refTable.get(targetRef);
     const observationBinding = this.refTable.getObservationBinding(targetRef);
@@ -1263,6 +1384,13 @@ export class BrowserToolContext {
       backendNodeId: entry.backendNodeId,
       fingerprint: entry.fingerprint,
     })).digest('hex');
+    const finalAction = this.deps.taskState.getFinalAction(binding.taskId);
+    if (binding.slotKey.startsWith('final_activation_') && finalAction?.operationId === operationId && finalAction.state === 'reviewed') {
+      const current = this.deps.taskState.getActive(this.taskScope());
+      if (!current || current.taskId !== binding.taskId) throw new Error('browser_task_final_action_stale');
+      return { binding, pendingVersion: current.version, targetBindingDigest, backendNodeId: entry.backendNodeId,
+        fingerprint: entry.fingerprint, finalAction: true };
+    }
     const pending = this.deps.taskState.recordMutationPending(this.taskScope(), binding.taskId, binding.taskVersion, {
       slotKey: binding.slotKey, operationId,
       baselineObservationEpoch: this.latestDecisionObservation.observationEpoch,
@@ -1281,6 +1409,18 @@ export class BrowserToolContext {
   async settleTaskMutation(pending: ReturnType<BrowserToolContext['prepareTaskMutation']>, operationId: string,
     receipt: BrowserOperationReceipt): Promise<void> {
     if (!pending || !this.deps.taskState) return;
+    if (pending.finalAction) {
+      try {
+        if (receipt.dispatchState === 'dispatched') {
+          this.deps.taskState.recordFinalDispatch(this.taskScope(), pending.binding.taskId, pending.pendingVersion, operationId);
+          this.trace({ kind: 'terminal', taskId: pending.binding.taskId, taskVersion: pending.pendingVersion,
+            lifecycle: 'outcome-unknown' });
+        } else {
+          this.deps.taskState.cancelPreparedFinalAction(this.taskScope(), pending.binding.taskId, pending.pendingVersion, operationId);
+        }
+      } catch { /* stale final-action transitions fail closed */ }
+      return;
+    }
     if (receipt.outcome === 'outcome_unknown' && receipt.delta.kind === 'activation') {
       this.deps.taskState.markOutcomeUnknown(this.taskScope(), pending.binding.taskId, pending.pendingVersion);
       this.trace({ kind: 'terminal', taskId: pending.binding.taskId, taskVersion: pending.pendingVersion,
@@ -1327,6 +1467,11 @@ export class BrowserToolContext {
   cancelTaskMutation(pending: ReturnType<BrowserToolContext['prepareTaskMutation']>, operationId: string): void {
     if (!pending || !this.deps.taskState) return;
     try {
+      if (pending.finalAction) {
+        this.deps.taskState.cancelPreparedFinalAction(this.taskScope(), pending.binding.taskId,
+          pending.pendingVersion, operationId);
+        return;
+      }
       this.deps.taskState.cancelMutationPending(this.taskScope(), pending.binding.taskId,
         pending.pendingVersion, pending.binding.slotKey, operationId);
     } catch { /* stale task transitions fail closed */ }
@@ -2523,7 +2668,7 @@ export class BrowserToolContext {
   // -- activate (single-use handler-level approval, KTD5-KTD7) -------------
 
   async handleActivate(
-    args: { ref: string },
+    args: { ref: string; operationId?: string; taskBinding?: TaskMutationBinding },
     extra?: unknown,
     authorizeDispatch?: () => Promise<boolean>,
     recordApproved?: () => Promise<boolean>,
@@ -2532,6 +2677,12 @@ export class BrowserToolContext {
     if (gate) return gate;
     const signal = (extra as { signal?: AbortSignal } | undefined)?.signal;
     try {
+      const finalTask = this.finalTask(args.taskBinding);
+      const activeTask = this.deps.taskState?.getActive(this.taskScope());
+      if ((activeTask?.lifecycle === 'ready' && !finalTask) ||
+          (args.taskBinding?.slotKey.startsWith('final_activation_') && (!finalTask || !args.operationId))) {
+        return toolError('browser_final_action_classification_required', 'control', 'The final action is not bound to the current ready task and operation.', 'Capture fresh task evidence and request a new publication review.');
+      }
       // Reject known non-action classes before live resolution. This cannot
       // grant authority: it only keeps field/file refs out of the generic
       // activation path (and preserves their specialized guidance).
@@ -2591,6 +2742,7 @@ export class BrowserToolContext {
           origin: parsedOrigin,
           target: activationApprovalTarget(target, approvedDetails),
           editorSummary: publicEditorSummary(approvedSnapshot),
+          ...(finalTask ? { finalReview: this.publicationReview(finalTask) } : {}),
         };
         if (reconfirmation) {
           payload.reconfirmation = true;
@@ -2606,6 +2758,9 @@ export class BrowserToolContext {
         }, signal);
         if (!isApprovalDecision(decision)) return decision;
         if (decision.behavior !== 'allow') {
+          if (finalTask) {
+            try { this.deps.taskState?.awaitFinalReview(this.taskScope(), finalTask.taskId, finalTask.version); } catch { /* stale */ }
+          }
           this.audit.logToolAction({
             workspaceId: this.deps.workspaceId,
             sessionId: this.deps.sessionId,
@@ -2656,6 +2811,9 @@ export class BrowserToolContext {
       }
 
       if (recordApproved && !await recordApproved()) return mutationAuthorizationError();
+      if (finalTask && !this.prepareFinalAction(args.operationId!, args.taskBinding, args.ref)) {
+        return toolError('browser_final_action_binding_stale', 'toctou', 'The publication review could not be bound to the current task and target.', 'The approval was consumed; observe and request a fresh review.');
+      }
       const receipt = await page.clickBackendNode(target.backendNodeId, authorizeDispatch);
       await this.uploadStaging.releaseSession(this.deps.sessionId);
       this.audit.logToolAction({
@@ -2680,7 +2838,7 @@ export class BrowserToolContext {
   // -- submit (handler-level hard gate + TOCTOU, KTD-4 ②) ---------------------
 
   async handleSubmit(
-    args: { ref: string; fields?: Record<string, string> },
+    args: { ref: string; fields?: Record<string, string>; operationId?: string; taskBinding?: TaskMutationBinding },
     extra?: unknown,
     authorizeDispatch?: () => Promise<boolean>,
     recordApproved?: () => Promise<boolean>,
@@ -2689,6 +2847,10 @@ export class BrowserToolContext {
     if (gate) return gate;
     const signal = (extra as { signal?: AbortSignal } | undefined)?.signal;
     try {
+      const finalTask = this.finalTask(args.taskBinding);
+      if (this.deps.taskState?.getActive(this.taskScope()) && (!finalTask || !args.operationId)) {
+        return toolError('browser_final_action_classification_required', 'control', 'Submission is not bound to the current ready final-action slot.', 'Use the exact final activation task binding and request a publication review.');
+      }
       const page = await this.ensurePage();
       const resolved = await this.resolveCurrentRef(page, args.ref);
       if (!isRefEntry(resolved)) return resolved;
@@ -2774,17 +2936,29 @@ export class BrowserToolContext {
       let pendingDiffs: ReturnType<typeof diffSubmitSnapshots> = [];
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const reconfirm = attempt > 0;
-        const payload = sanitizeSubmitPayload({
+        const submitPayload = sanitizeSubmitPayload({
           url: this.lastModel?.url ?? '',
           formName,
           snapshot: approvedSnapshot,
         });
+        const payload: Record<string, unknown> = finalTask ? {
+          kind: 'browser_activation',
+          warning: 'This final action may publish content externally.',
+          origin: String(submitPayload.actionOrigin ?? ''),
+          target: { name: { source: 'untrusted_page', text: sanitizeUntrustedPageText(formName, 200) } },
+          editorSummary: {
+            editorCount: approvedSnapshot.fields.length,
+            filledEditorCount: approvedSnapshot.fields.length,
+            totalEditorLength: 0,
+          },
+          finalReview: this.publicationReview(finalTask),
+        } : submitPayload;
         if (reconfirm) {
           payload.reconfirmation = true;
           // Field names + change kinds only (values never leave the page).
           payload.differences = pendingDiffs;
         }
-        const origin = String(payload.actionOrigin ?? '');
+        const origin = String(payload.origin ?? payload.actionOrigin ?? '');
         const decision = await this.requestApproval(
           {
             toolName: BROWSER_TOOL_NAMES.submit,
@@ -2798,12 +2972,15 @@ export class BrowserToolContext {
         );
         if (!isApprovalDecision(decision)) return decision;
         if (decision.behavior !== 'allow') {
+          if (finalTask) {
+            try { this.deps.taskState?.awaitFinalReview(this.taskScope(), finalTask.taskId, finalTask.version); } catch { /* stale */ }
+          }
           diagLog(`[browser-mcp] submit denied session=${this.deps.sessionId} form=${formName}`);
           this.audit.logToolAction({
             workspaceId: this.deps.workspaceId,
             sessionId: this.deps.sessionId,
             toolName: BROWSER_TOOL_NAMES.submit,
-            url: String(payload.actionOrigin ?? ''),
+            url: origin,
             fieldNames: approvedSnapshot.fields.map((field) => field.name),
             outcome: 'denied',
             detail: `form=${formName}`,
@@ -2814,8 +2991,6 @@ export class BrowserToolContext {
             detail: decision.message ?? 'The user denied the form submission.',
           });
         }
-        if (recordApproved && !await recordApproved()) return mutationAuthorizationError();
-
         // TOCTOU: re-read and diff against the approved snapshot BEFORE
         // dispatching. Any drift (page JS rewrote action/values post-
         // approval) aborts and re-confirms once, then fails loudly.
@@ -2848,6 +3023,11 @@ export class BrowserToolContext {
         }
         approvedSnapshot = current;
         pendingDiffs = diffs;
+      }
+
+      if (recordApproved && !await recordApproved()) return mutationAuthorizationError();
+      if (finalTask && !this.prepareFinalAction(args.operationId!, args.taskBinding, args.ref)) {
+        return toolError('browser_final_action_binding_stale', 'toctou', 'The publication review could not be bound to the stable form and task.', 'The approval was consumed; observe and request a fresh review.');
       }
 
       // Dispatch: click the approved submit control when given, else
@@ -3542,6 +3722,32 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     { annotations: { destructiveHint: true, openWorldHint: true } },
   );
   const abandonTaskDef = { ...abandonTaskBase, _meta: { 'anthropic/requiresUserInteraction': true } };
+  const outcomeBindingSchema = z.object({ taskId: taskIdSchema, expectedTaskVersion: taskVersionSchema }).strict();
+  const recheckTaskOutcomeDef = tool(
+    'recheckTaskOutcome',
+    'Read-only reconciliation of the current unknown final action. Caller evidence, success text, URLs, and predicates are never accepted.',
+    outcomeBindingSchema,
+    async (args) => ctx.handleRecheckTaskOutcome(args),
+    { annotations: { readOnlyHint: true, openWorldHint: true } },
+  );
+  const abandonOutcomeTrackingBase = tool(
+    'abandonOutcomeTracking',
+    'Close outcome tracking without claiming publication success. Requires application-owned confirmation.',
+    outcomeBindingSchema,
+    async (args: { taskId: string; expectedTaskVersion: number }, extra) =>
+      ctx.handleResolveUnknownOutcome({ taskId: args.taskId, expectedTaskVersion: args.expectedTaskVersion, action: 'abandon' }, extra),
+    { annotations: { destructiveHint: true, openWorldHint: true } },
+  );
+  const abandonOutcomeTrackingDef = { ...abandonOutcomeTrackingBase, _meta: { 'anthropic/requiresUserInteraction': true } };
+  const acknowledgeDuplicateRiskBase = tool(
+    'acknowledgeDuplicateRisk',
+    'Acknowledge possible duplicate risk and require a new task version and review. This never dispatches publication.',
+    outcomeBindingSchema,
+    async (args: { taskId: string; expectedTaskVersion: number }, extra) =>
+      ctx.handleResolveUnknownOutcome({ taskId: args.taskId, expectedTaskVersion: args.expectedTaskVersion, action: 'acknowledge_duplicate_risk' }, extra),
+    { annotations: { destructiveHint: true, openWorldHint: true } },
+  );
+  const acknowledgeDuplicateRiskDef = { ...acknowledgeDuplicateRiskBase, _meta: { 'anthropic/requiresUserInteraction': true } };
 
   const findElementsDef = tool(
     'findElements',
@@ -3681,7 +3887,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
           { ref: args.ref, taskBinding: args.taskBinding },
           extra,
           (signal, authorize, recordApproved) => ctx.handleActivate(
-            { ref: args.ref },
+            { ref: args.ref, operationId: args.operationId!, taskBinding: args.taskBinding },
             { ...(extra as object), signal },
             authorize,
             recordApproved,
@@ -3761,7 +3967,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
         : executeMutation(
           args.operationId, 'submit', { ref: args.ref, fields: args.fields, taskBinding: args.taskBinding }, extra,
           (signal, authorize, recordApproved) => ctx.handleSubmit(
-            { ref: args.ref },
+            { ref: args.ref, operationId: args.operationId!, taskBinding: args.taskBinding },
             { ...(extra as object), signal },
             authorize,
             recordApproved,
@@ -3855,6 +4061,9 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     proposeTaskEvidenceDef,
     recoverTargetDef,
     abandonTaskDef,
+    recheckTaskOutcomeDef,
+    abandonOutcomeTrackingDef,
+    acknowledgeDuplicateRiskDef,
     findElementsDef,
     getElementDetailsDef,
     actDef,

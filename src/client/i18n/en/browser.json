@@ -36,7 +36,10 @@
     "outcome-unknown": "External outcome is unknown — do not repeat the action",
     "complete": "Task complete",
     "abandoned": "Task abandoned",
-    "recoveryExhausted": "Safe recovery is exhausted — take over or abandon the task"
+    "recoveryExhausted": "Safe recovery is exhausted — take over or abandon the task",
+    "outcomePossibleDispatch": "Publication may have been dispatched. Do not retry.",
+    "outcomeEvidence": "Evidence: {{status}} · last checked {{checked}}",
+    "neverChecked": "not yet"
   },
   "action": {
     "takeover": "Take over",
@@ -52,7 +55,10 @@
     "closeNow": "Close now",
     "notNow": "Not now",
     "closeBrowser": "Close browser",
-    "closeBrowserHint": "Close the browser and free its resources. Your login is preserved for the next time you open one."
+    "closeBrowserHint": "Close the browser and free its resources. Your login is preserved for the next time you open one.",
+    "recheckOutcome": "Recheck",
+    "abandonTracking": "Abandon tracking",
+    "acknowledgeDuplicateRisk": "Acknowledge duplicate risk"
   },
   "popout": {
     "title": "Browser — floating window"

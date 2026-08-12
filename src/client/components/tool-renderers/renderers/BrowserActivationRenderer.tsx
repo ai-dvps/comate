@@ -32,6 +32,29 @@ export function BrowserActivationManifest({ payload }: { payload: BrowserActivat
           })}
         </div>
       ) : null}
+      {payload.finalReview ? (
+        <section aria-label={t('approval.browserActivation.finalReview')} className="rounded border border-border/50 px-3 py-2 space-y-2">
+          <div className="text-[10px] uppercase tracking-wide text-text-tertiary">
+            {t('approval.browserActivation.finalReview')}
+          </div>
+          <div className="text-xs text-text-secondary">
+            {t('approval.browserActivation.finalSummary', {
+              version: payload.finalReview.taskVersion,
+              media: payload.finalReview.mediaCount,
+              declaration: payload.finalReview.declarationDisposition,
+              visibility: payload.finalReview.visibilityDisposition,
+            })}
+          </div>
+          <ul className="space-y-1 text-xs">
+            {payload.finalReview.slots.map((slot, index) => (
+              <li key={`${slot.category}-${index}`} className="flex items-center justify-between gap-3">
+                <span className="text-text-primary">{slot.category}</span>
+                <span className="text-text-tertiary">{slot.disposition} · {slot.populationBucket}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       {payload.differences?.length ? (
         <ul className="list-disc pl-5 text-xs text-text-secondary">
           {payload.differences.map((difference) => <li key={difference}>{difference}</li>)}

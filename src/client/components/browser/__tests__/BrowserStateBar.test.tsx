@@ -183,15 +183,23 @@ describe('BrowserStateBar', () => {
     expect(screen.getByTestId('browser-state-live')).toHaveTextContent('You are driving')
   })
 
-  it('projects positive-shape task progress without task ids or authored values', () => {
+  it('prioritizes unknown outcome and exposes only safe reconciliation actions', () => {
+    useBrowserPaneStore.setState({ activeWorkspaceId: 'ws-1' })
     setSession({
       controlState: 'agent_in_control',
-      task: { lifecycle: 'outcome-unknown', required: 4, verified: 3, populatedPendingValidation: 1, awaitingAuthority: 0 },
+      task: { taskId: 'task-1', version: 8, lifecycle: 'outcome-unknown', required: 4, verified: 3,
+        populatedPendingValidation: 1, awaitingAuthority: 0,
+        outcome: { possibleDispatch: true, evidenceStatus: 'insufficient', lastCheckedAt: null,
+          canRecheck: true, canAbandon: true, canAcknowledgeDuplicateRisk: true } },
     })
     renderBar()
-    const projection = screen.getByTestId('browser-task-state')
-    expect(projection).toHaveTextContent('External outcome is unknown')
-    expect(projection).not.toHaveTextContent('task-')
+    const projection = screen.getByTestId('browser-outcome-unknown')
+    expect(projection).toHaveTextContent('Publication may have been dispatched')
+    expect(screen.queryByText('Retry')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Recheck' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Abandon tracking' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Acknowledge duplicate risk' })).toBeInTheDocument()
+    expect(projection).not.toHaveTextContent('task-1')
   })
 
   it('announces exhausted safe recovery without exposing target details', () => {
