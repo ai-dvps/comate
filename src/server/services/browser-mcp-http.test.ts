@@ -7,6 +7,7 @@ import express from 'express';
 import { createBrowserMcpHttpRouter } from './browser-mcp-http.js';
 import { SessionCapabilityService } from './session-capability-service.js';
 import { SqliteStore } from '../storage/sqlite-store.js';
+import { BrowserTaskStateService } from './browser-task-state.js';
 
 const MCP_HEADERS = (token: string) => ({
   'content-type': 'application/json',
@@ -20,10 +21,12 @@ describe('browser-mcp-http (U6)', { concurrency: false }, () => {
   let capabilities: SessionCapabilityService;
   let taskToken: string;
   let depsCalls: number;
+  let taskState: BrowserTaskStateService;
 
   beforeEach(async () => {
     const app = express();
     capabilities = new SessionCapabilityService(new SqliteStore(':memory:'), { skipBootInvalidation: true });
+    taskState = new BrowserTaskStateService(new SqliteStore(':memory:'));
     taskToken = capabilities.mintForSession({
       sessionId: 's1', workspaceId: 'ws-for-s1', botId: null,
       kind: 'task', audiences: ['browser-mcp', 'api-broker'], runtimeGeneration: 'g1',
@@ -37,6 +40,7 @@ describe('browser-mcp-http (U6)', { concurrency: false }, () => {
         return {
           workspaceId: `ws-for-${sessionId}`,
           approvalRequester: async () => ({ behavior: 'allow' as const }),
+          taskState,
         };
       }, { capabilities }),
     );
@@ -138,6 +142,23 @@ describe('browser-mcp-http (U6)', { concurrency: false }, () => {
       assert.ok(names.includes(expected), `tool ${expected} listed`);
     }
     assert.ok(!names.includes('snapshot'), 'legacy snapshot tool is not exposed');
+  });
+
+  it('executes the same task outcome through the authenticated HTTP contract used by both adapters', async () => {
+    const started = await post('s1', { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'startTask', arguments: {} } });
+    assert.equal(started.status, 200);
+    const startText = started.json.result.content.find((block: { type: string }) => block.type === 'text').text;
+    const startPayload = JSON.parse(startText) as { task: { lifecycle: string; taskId: string; version: number } };
+    assert.equal(startPayload.task.lifecycle, 'active');
+
+    const observed = await post('s1', { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'getTaskState', arguments: {} } });
+    const observedText = observed.json.result.content.find((block: { type: string }) => block.type === 'text').text;
+    const observedPayload = JSON.parse(observedText) as { task: { lifecycle: string; taskId: string; version: number } };
+    assert.deepEqual(observedPayload.task, startPayload.task);
+
+    const abandoned = await post('s1', { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'abandonTask', arguments: { taskId: startPayload.task.taskId, expectedTaskVersion: startPayload.task.version } } });
+    const abandonedText = abandoned.json.result.content.find((block: { type: string }) => block.type === 'text').text;
+    assert.equal((JSON.parse(abandonedText) as { abandoned: boolean }).abandoned, true);
   });
 
   it('rejects non-POST methods', async () => {

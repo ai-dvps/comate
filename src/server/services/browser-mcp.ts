@@ -107,7 +107,7 @@ import {
   sanitizeUrl,
 } from './browser-api-sanitizer.js';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
-import { browserTaskTrace, type BrowserTaskTrace, type BrowserTaskTraceInput } from './browser-task-trace.js';
+import { browserTaskTrace, type BrowserTaskOperationClass, type BrowserTaskTrace, type BrowserTaskTraceInput } from './browser-task-trace.js';
 import {
   BROWSER_MCP_SERVER_KEY,
   BROWSER_TOOL_NAMES,
@@ -1313,6 +1313,10 @@ export class BrowserToolContext {
       : { status: 'insufficient' as const };
     try {
       const updated = tasks.recordOutcomeCheck(this.taskScope(), task.taskId, task.version, action.operationId, result);
+      this.trace({ kind: 'transition', taskId: updated.taskId, taskVersion: updated.version,
+        from: task.lifecycle, to: updated.lifecycle, reason: 'outcome' });
+      if (updated.lifecycle === 'complete') this.trace({ kind: 'terminal', taskId: updated.taskId,
+        taskVersion: updated.version, lifecycle: 'complete' });
       return this.taskResult(updated);
     } catch {
       return toolError('browser_task_outcome_evidence_rejected', 'control', 'The trusted outcome evidence was stale or uncorrelated.', 'Keep the task outcome unknown and recheck later.');
@@ -1338,11 +1342,17 @@ export class BrowserToolContext {
         taskVersion: task.version, possibleDispatch: true },
     }, (extra as { signal?: AbortSignal } | undefined)?.signal);
     if (!isApprovalDecision(decision)) return decision;
+    this.trace({ kind: 'approval', taskId: task.taskId, taskVersion: task.version,
+      approved: decision.behavior === 'allow' });
     if (decision.behavior !== 'allow') return toolJson({ ok: false, reason: decision.behavior });
     try {
       const updated = args.action === 'abandon'
         ? tasks.abandonOutcomeTracking(this.taskScope(), task.taskId, task.version, finalAction.operationId)
         : tasks.acknowledgeDuplicateRisk(this.taskScope(), task.taskId, task.version, finalAction.operationId);
+      this.trace({ kind: 'transition', taskId: updated.taskId, taskVersion: updated.version,
+        from: task.lifecycle, to: updated.lifecycle, reason: 'user' });
+      if (updated.lifecycle === 'abandoned') this.trace({ kind: 'terminal', taskId: updated.taskId,
+        taskVersion: updated.version, lifecycle: 'abandoned' });
       return this.taskResult(updated);
     } catch {
       return toolError('browser_task_outcome_stale', 'control', 'Another reconciliation decision already won.', 'Read current task state.');
@@ -1373,7 +1383,7 @@ export class BrowserToolContext {
     return null;
   }
 
-  prepareTaskMutation(operationId: string, binding: TaskMutationBinding | undefined, targetRef: string | undefined):
+  prepareTaskMutation(operationId: string, binding: TaskMutationBinding | undefined, targetRef: string | undefined, operationClass: BrowserTaskOperationClass = 'unclassified'):
     { binding: TaskMutationBinding; pendingVersion: number; targetBindingDigest: string; backendNodeId: number; fingerprint: ElementFingerprint; finalAction?: boolean } | null {
     if (!binding || !targetRef || !this.deps.taskState || !this.latestDecisionObservation) return null;
     const entry = this.refTable.get(targetRef);
@@ -1402,7 +1412,7 @@ export class BrowserToolContext {
       evidenceClass: 'target_local',
     });
     this.trace({ kind: 'operation_intent', taskId: binding.taskId, taskVersion: binding.taskVersion,
-      operationId, slotKey: binding.slotKey });
+      operationId, slotKey: binding.slotKey, operationClass });
     return { binding, pendingVersion: pending.version, targetBindingDigest, backendNodeId: entry.backendNodeId, fingerprint: entry.fingerprint };
   }
 
@@ -1544,6 +1554,8 @@ export class BrowserToolContext {
     }
     try {
       const task = tasks.createOrReplace(scope, [], active ? { replaceTaskId: active.taskId } : {});
+      this.trace({ kind: 'transition', taskId: task.taskId, taskVersion: task.version,
+        from: active?.lifecycle ?? 'active', to: task.lifecycle, reason: active ? 'user' : 'discovery' });
       return this.taskResult(task);
     } catch (error) {
       return toolError('browser_task_transition_rejected', 'control', error instanceof Error ? error.message : String(error), 'Read getTaskState and retry only against the current version.');
@@ -1586,6 +1598,7 @@ export class BrowserToolContext {
       });
     }
     try {
+      const previous = tasks.getActive(this.taskScope());
       const task = tasks.recordTrustedDiscovery(this.taskScope(), args.taskId, args.expectedTaskVersion, discovered);
       this.taskEvidenceRefs.clear();
       for (const proposal of args.proposals) {
@@ -1594,6 +1607,8 @@ export class BrowserToolContext {
           proposal.ref,
         );
       }
+      this.trace({ kind: 'transition', taskId: task.taskId, taskVersion: task.version,
+        from: previous?.lifecycle ?? 'active', to: task.lifecycle, reason: 'discovery' });
       return this.taskResult(task);
     } catch (error) {
       return toolError('browser_task_transition_rejected', 'control', error instanceof Error ? error.message : String(error), 'Read getTaskState and use a fresh coherent observation.');
@@ -1614,10 +1629,17 @@ export class BrowserToolContext {
       payload: { kind: 'browser_task_abandon', taskId: active.taskId, taskVersion: active.version },
       signal: extra?.signal,
     });
+    this.trace({ kind: 'approval', taskId: active.taskId, taskVersion: active.version,
+      approved: decision.behavior === 'allow' });
     if (decision.behavior !== 'allow') return toolJson({ ok: false, abandoned: false, reason: 'user_denied' });
     if (!await (this.deps.isInvocationCurrent ?? (() => true))()) return mutationAuthorizationError();
     try {
-      return toolJson({ ok: tasks.abandon(this.taskScope(), args.taskId, args.expectedTaskVersion), abandoned: true });
+      const ok = tasks.abandon(this.taskScope(), args.taskId, args.expectedTaskVersion);
+      this.trace({ kind: 'transition', taskId: active.taskId, taskVersion: active.version + 1,
+        from: active.lifecycle, to: 'abandoned', reason: 'user' });
+      this.trace({ kind: 'terminal', taskId: active.taskId, taskVersion: active.version + 1,
+        lifecycle: 'abandoned' });
+      return toolJson({ ok, abandoned: true });
     } catch (error) {
       return toolError('browser_task_transition_rejected', 'control', error instanceof Error ? error.message : String(error), 'Read getTaskState before abandoning the task.');
     }
@@ -3223,6 +3245,9 @@ export class BrowserToolContext {
     const ctl = this.handoffCtl;
     const signal = (extra as { signal?: AbortSignal } | undefined)?.signal;
     diagLog(`[browser-mcp] handoff requested session=${sessionId} reason=${args.reason}`);
+    const traceTask = this.deps.taskState?.getActive(this.taskScope());
+    if (traceTask) this.trace({ kind: 'handoff', taskId: traceTask.taskId, taskVersion: traceTask.version,
+      disposition: 'requested' });
 
     // The browser must exist for a takeover; ensurePage also transparently
     // rebuilds a session_lost browser (transition table: tool call → rebuild).
@@ -3315,7 +3340,10 @@ export class BrowserToolContext {
         }
       }
 
-      return await this.handoffCompletionResult(completion);
+      const result = await this.handoffCompletionResult(completion);
+      if (traceTask) this.trace({ kind: 'handoff', taskId: traceTask.taskId, taskVersion: traceTask.version,
+        disposition: completion?.reason === 'handed_back' ? 'returned' : 'cancelled' });
+      return result;
     } finally {
       ctl.completeHandoff(sessionId, completion?.reason ?? 'declined');
     }
@@ -3529,6 +3557,16 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     contextRegistry.set(deps.sessionId, ctx);
   }
   const mutations = deps.mutationCoordinator ?? browserMutationCoordinator;
+  const traceOperationClass = (action: BrowserMutationRequest['action']): BrowserTaskOperationClass => {
+    if (action === 'fill' || action === 'select' || action === 'check') return 'field';
+    if (action === 'upload') return 'file';
+    if (action === 'declaration') return 'declaration';
+    if (action === 'activation') return 'activation';
+    if (action === 'submit') return 'submit';
+    if (action === 'open') return 'navigation';
+    if (action === 'close' || action === 'control') return 'control';
+    return 'unclassified';
+  };
   const executeMutation = async (
     operationId: string,
     action: BrowserMutationRequest['action'],
@@ -3561,7 +3599,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
       deferredDispatchIntent: true,
       approvalRequired,
       prepareDispatch: action === 'declaration' ? undefined : () => {
-        taskPending = ctx.prepareTaskMutation(operationId, privateRecord.taskBinding, privateRecord.ref);
+        taskPending = ctx.prepareTaskMutation(operationId, privateRecord.taskBinding, privateRecord.ref, traceOperationClass(action));
         return true;
       },
       rollbackPreparedDispatch: action === 'declaration' ? undefined : () => ctx.cancelTaskMutation(taskPending, operationId),

@@ -368,6 +368,26 @@ try {
     }
   });
 
+  await check('E8b packaged Electron exposes typed inspect/reveal without implicit activation', async () => {
+    assert(gate2TargetId, 'no gate-2 target');
+    const page = await connectShellPage({ port: debugPort, targetId: gate2TargetId });
+    try {
+      const html = '<!doctype html><style>body{margin:0}button{margin-top:1400px}</style><button>Continue</button><script>window.activations=0;document.querySelector("button").onclick=()=>window.activations++</script>';
+      await page.navigate(`data:text/html,${encodeURIComponent(html)}`);
+      const refs = new RefTable();
+      const model = await distillPageModel(page, refs);
+      const action = model.actions.find((item) => item.name === 'Continue');
+      const backendNodeId = action ? refs.get(action.ref)?.backendNodeId : undefined;
+      assert(typeof backendNodeId === 'number', 'off-viewport Electron action missing');
+      const state = await page.inspectBackendNodeState?.(backendNodeId!);
+      assert(state?.status === 'off_viewport', `inspect status ${JSON.stringify(state)}`);
+      assert((await page.revealBackendNode?.(backendNodeId!))?.revealed === true, 'Electron reveal failed');
+      assert((await page.evaluate<number>('window.activations')) === 0, 'reveal implicitly activated the target');
+    } finally {
+      page.close();
+    }
+  });
+
   await check('E9 window.open becomes a managed same-partition overlay (OAuth decision)', async () => {
     assert(gate2TargetId, 'no gate-2 target');
     const page = await connectShellPage({ port: debugPort, targetId: gate2TargetId });
