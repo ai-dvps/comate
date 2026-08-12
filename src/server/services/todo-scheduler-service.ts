@@ -10,7 +10,7 @@ export const TODO_RUN_RETENTION_DAYS = 90;
 
 interface Deps {
   store?: SqliteStore;
-  execution?: TodoExecutionService;
+  execution?: Pick<TodoExecutionService, 'runNow'>;
   now?: () => Date;
   hasExecutingSession?: () => boolean;
 }
@@ -32,7 +32,7 @@ export class TodoSchedulerService {
   private timer: NodeJS.Timeout | null = null;
   private ticking = false;
   private readonly store: SqliteStore;
-  private readonly execution: TodoExecutionService;
+  private readonly execution: Pick<TodoExecutionService, 'runNow'>;
   private readonly now: () => Date;
   private readonly hasExecutingSession: () => boolean;
 
@@ -104,7 +104,10 @@ export class TodoSchedulerService {
       const window = await getNightWindow();
       if (!window.enabled || !inWindow(now, window.start, window.end) || this.hasExecutingSession()) return;
       const idle = this.automatedTodos()
-        .filter((todo) => todo.executionType === 'idle')
+        // Legacy/global items may predate route validation. Keep them active
+        // and visible for repair instead of disabling them before runNow
+        // rejects the missing workspace.
+        .filter((todo) => todo.executionType === 'idle' && todo.workspaceId)
         .sort((a, b) => (a.dueDate ?? '9999').localeCompare(b.dueDate ?? '9999') || a.createdAt.localeCompare(b.createdAt));
       const next = idle[0];
       if (!next) return;
