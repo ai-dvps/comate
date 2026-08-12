@@ -33,6 +33,10 @@ export interface BrowserMutationRequest {
   deferredDispatchIntent?: boolean;
   /** Handler owns a human approval round-trip and must persist allow before intent. */
   approvalRequired?: boolean;
+  /** Persist trusted task validation state at the final dispatch boundary. */
+  prepareDispatch?: () => boolean | Promise<boolean>;
+  /** Compensate prepareDispatch only when durable dispatch intent could not be recorded. */
+  rollbackPreparedDispatch?: () => void | Promise<void>;
   dispatch: (
     signal: AbortSignal,
     authorizeDispatch: () => Promise<boolean>,
@@ -201,6 +205,7 @@ export class BrowserMutationCoordinator {
     }
 
     let intentPersisted = false;
+    let dispatchPrepared = false;
     let authorizationFailure: BrowserOperationReceipt | undefined;
     const recordApproved = async (): Promise<boolean> => {
       if (approvalPersisted) return true;
@@ -236,12 +241,25 @@ export class BrowserMutationCoordinator {
         return false;
       }
       try {
-        intentPersisted = this.store.markBrowserOperationDispatchIntent(scope.principalId, scope.operationId);
+        dispatchPrepared = request.prepareDispatch ? await request.prepareDispatch() : true;
       } catch {
+        dispatchPrepared = false;
+      }
+      if (!dispatchPrepared) {
         authorizationFailure = notDispatched('dispatch_failed');
         return false;
       }
-      if (!intentPersisted) authorizationFailure = notDispatched('dispatch_failed');
+      try {
+        intentPersisted = this.store.markBrowserOperationDispatchIntent(scope.principalId, scope.operationId);
+      } catch {
+        await Promise.resolve(request.rollbackPreparedDispatch?.()).catch(() => undefined);
+        authorizationFailure = notDispatched('dispatch_failed');
+        return false;
+      }
+      if (!intentPersisted) {
+        await Promise.resolve(request.rollbackPreparedDispatch?.()).catch(() => undefined);
+        authorizationFailure = notDispatched('dispatch_failed');
+      }
       return intentPersisted;
     };
     let receipt: BrowserOperationReceipt;

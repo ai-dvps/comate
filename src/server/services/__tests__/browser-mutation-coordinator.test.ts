@@ -237,4 +237,46 @@ describe('BrowserMutationCoordinator', () => {
     assert.equal(cancelledUnknown.outcome, 'outcome_unknown');
     assert.equal(cancelledUnknown.retrySafe, false);
   });
+
+  it('prepares task validation only at dispatch and never again on idempotent replay', async () => {
+    const { coordinator: mutations } = coordinator();
+    let prepares = 0;
+    let dispatches = 0;
+    const request = {
+      action: 'fill' as const, privateParameters: { ref: 'e1' }, deferredDispatchIntent: true,
+      prepareDispatch: () => { prepares += 1; return true; },
+      dispatch: async (_signal: AbortSignal, authorize: () => Promise<boolean>) => {
+        assert.equal(await authorize(), true);
+        dispatches += 1;
+        return { outcome: 'dispatched_verified' as const, dispatchState: 'dispatched' as const,
+          verified: true, retrySafe: false, delta: { kind: 'field' as const, changed: true } };
+      },
+    };
+    await mutations.execute(scope({ operationId: 'task-bound' }), request);
+    await mutations.execute(scope({ operationId: 'task-bound' }), request);
+    assert.equal(prepares, 1);
+    assert.equal(dispatches, 1);
+  });
+
+  it('rolls back task preparation when intent persistence fails', async () => {
+    const { coordinator: mutations, store } = coordinator();
+    store.markBrowserOperationDispatchIntent = () => { throw new Error('intent failed'); };
+    let prepared = false;
+    let rollbacks = 0;
+    let dispatches = 0;
+    const receipt = await mutations.execute(scope({ operationId: 'prepare-fails-closed' }), {
+      action: 'fill', privateParameters: {}, deferredDispatchIntent: true,
+      prepareDispatch: () => { prepared = true; return true; },
+      rollbackPreparedDispatch: () => { prepared = false; rollbacks += 1; },
+      dispatch: async (_signal, authorize) => {
+        if (await authorize()) dispatches += 1;
+        return { outcome: 'not_dispatched', dispatchState: 'not_dispatched', verified: false,
+          retrySafe: true, reason: 'dispatch_failed', delta: { kind: 'none', changed: false } };
+      },
+    });
+    assert.equal(receipt.outcome, 'not_dispatched');
+    assert.equal(prepared, false);
+    assert.equal(rollbacks, 1);
+    assert.equal(dispatches, 0);
+  });
 });

@@ -314,14 +314,24 @@ export class SqliteStore {
         population TEXT NOT NULL, validation TEXT NOT NULL, authority TEXT NOT NULL,
         population_bucket TEXT NOT NULL, evidence_id TEXT, observation_epoch INTEGER,
         pending_operation_id TEXT, baseline_observation_epoch INTEGER,
+        baseline_observation_id TEXT, baseline_document_identity TEXT, baseline_structural_checksum TEXT,
+        pending_target_binding TEXT, pending_runtime_generation TEXT,
+        pending_capability_id TEXT, pending_control_epoch TEXT, pending_evidence_class TEXT,
         PRIMARY KEY (task_id, slot_key)
       );
       CREATE TABLE IF NOT EXISTS browser_task_bindings (
         task_id TEXT NOT NULL, purpose TEXT NOT NULL, key_version INTEGER NOT NULL,
         binding_digest TEXT NOT NULL, PRIMARY KEY (task_id, purpose)
       );
+      CREATE TABLE IF NOT EXISTS browser_task_recoveries (
+        task_id TEXT NOT NULL, task_version INTEGER NOT NULL,
+        target_binding_digest TEXT NOT NULL, failure_class TEXT NOT NULL,
+        claimed_at TEXT NOT NULL,
+        PRIMARY KEY (task_id, task_version, target_binding_digest, failure_class)
+      );
       CREATE INDEX IF NOT EXISTS idx_browser_tasks_session ON browser_tasks (workspace_id, session_id);
     `);
+    this.ensureBrowserTaskCausalColumns();
     // bot_escalation_ledger (U8 phase-2, KTD-16): persistent approval ledger
     // for out-of-sandbox escalation requests. One row per pending approval
     // (id = the approval requestId); the row is the durable record a boot
@@ -3921,6 +3931,33 @@ export class SqliteStore {
   // browser task state — goal-scoped positive-shape persistence
   // -------------------------------------------------------------------------
 
+  private ensureBrowserTaskCausalColumns(): void {
+    const existing = new Set((this.db.prepare('PRAGMA table_info(browser_task_slots)').all() as Array<{ name: string }>)
+      .map((column) => column.name));
+    const additions: Array<[string, string]> = [
+      ['baseline_observation_id', 'TEXT'], ['baseline_document_identity', 'TEXT'], ['baseline_structural_checksum', 'TEXT'],
+      ['pending_target_binding', 'TEXT'], ['pending_runtime_generation', 'TEXT'],
+      ['pending_capability_id', 'TEXT'], ['pending_control_epoch', 'TEXT'],
+      ['pending_evidence_class', 'TEXT'],
+    ];
+    for (const [name, type] of additions) {
+      if (!existing.has(name)) this.db.exec(`ALTER TABLE browser_task_slots ADD COLUMN ${name} ${type}`);
+    }
+  }
+
+  claimBrowserTaskRecovery(taskId: string, taskVersion: number, targetBindingDigest: string, failureClass: string): boolean {
+    return this.db.prepare(`
+      INSERT OR IGNORE INTO browser_task_recoveries
+        (task_id, task_version, target_binding_digest, failure_class, claimed_at)
+      SELECT task_id, version, ?, ?, ? FROM browser_tasks
+      WHERE task_id = ? AND version = ?
+    `).run(targetBindingDigest, failureClass, new Date().toISOString(), taskId, taskVersion).changes === 1;
+  }
+
+  hasBrowserTaskRecovery(taskId: string): boolean {
+    return this.db.prepare('SELECT 1 FROM browser_task_recoveries WHERE task_id = ? LIMIT 1').get(taskId) !== undefined;
+  }
+
   createBrowserTask(input: BrowserTaskCreateInput, slots: BrowserTaskStoredSlot[], replaceTaskId?: string): BrowserTaskStored {
     return this.db.transaction(() => {
       const head = this.db.prepare(`
@@ -4009,6 +4046,7 @@ export class SqliteStore {
       const ids = this.db.prepare('SELECT task_id FROM browser_tasks WHERE workspace_id = ? AND session_id = ?')
         .all(workspaceId, sessionId) as Array<{ task_id: string }>;
       for (const { task_id } of ids) {
+        this.db.prepare('DELETE FROM browser_task_recoveries WHERE task_id = ?').run(task_id);
         this.db.prepare('DELETE FROM browser_task_bindings WHERE task_id = ?').run(task_id);
         this.db.prepare('DELETE FROM browser_task_slots WHERE task_id = ?').run(task_id);
       }
@@ -4024,7 +4062,7 @@ export class SqliteStore {
   }
 
   listBrowserTaskColumns(): Record<string, string[]> {
-    const names = ['browser_task_heads', 'browser_tasks', 'browser_task_slots', 'browser_task_bindings'];
+    const names = ['browser_task_heads', 'browser_tasks', 'browser_task_slots', 'browser_task_bindings', 'browser_task_recoveries'];
     return Object.fromEntries(names.map((name) => [name,
       (this.db.prepare(`PRAGMA table_info(${name})`).all() as Array<{ name: string }>).map((column) => column.name),
     ]));
@@ -4035,12 +4073,16 @@ export class SqliteStore {
     const insert = this.db.prepare(`
       INSERT INTO browser_task_slots
         (task_id, slot_key, discovery, required, population, validation, authority,
-         population_bucket, evidence_id, observation_epoch, pending_operation_id, baseline_observation_epoch)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         population_bucket, evidence_id, observation_epoch, pending_operation_id, baseline_observation_epoch,
+         baseline_observation_id, baseline_document_identity, baseline_structural_checksum, pending_target_binding,
+         pending_runtime_generation, pending_capability_id, pending_control_epoch, pending_evidence_class)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const slot of slots) insert.run(taskId, slot.slotKey, slot.discovery, slot.required ? 1 : 0,
       slot.population, slot.validation, slot.authority, slot.populationBucket,
-      slot.evidenceId, slot.observationEpoch, slot.pendingOperationId, slot.baselineObservationEpoch);
+      slot.evidenceId, slot.observationEpoch, slot.pendingOperationId, slot.baselineObservationEpoch,
+      slot.baselineObservationId, slot.baselineDocumentIdentity, slot.baselineStructuralChecksum, slot.pendingTargetBinding,
+      slot.pendingRuntimeGeneration, slot.pendingCapabilityId, slot.pendingControlEpoch, slot.pendingEvidenceClass);
   }
 
   private transitionBrowserOperation(
@@ -4667,6 +4709,14 @@ export interface BrowserTaskStoredSlot {
   observationEpoch: number | null;
   pendingOperationId: string | null;
   baselineObservationEpoch: number | null;
+  baselineObservationId: string | null;
+  baselineDocumentIdentity: string | null;
+  baselineStructuralChecksum: string | null;
+  pendingTargetBinding: string | null;
+  pendingRuntimeGeneration: string | null;
+  pendingCapabilityId: string | null;
+  pendingControlEpoch: string | null;
+  pendingEvidenceClass: string | null;
 }
 
 export interface BrowserTaskCreateInput {
@@ -4707,6 +4757,10 @@ interface RawBrowserTaskSlotRow {
   validation: string; authority: string; population_bucket: string;
   evidence_id: string | null; observation_epoch: number | null;
   pending_operation_id: string | null; baseline_observation_epoch: number | null;
+  baseline_observation_id: string | null; baseline_document_identity: string | null; baseline_structural_checksum: string | null;
+  pending_target_binding: string | null; pending_runtime_generation: string | null;
+  pending_capability_id: string | null; pending_control_epoch: string | null;
+  pending_evidence_class: string | null;
 }
 
 function parseBrowserTaskRow(row: RawBrowserTaskRow, slots: RawBrowserTaskSlotRow[]): BrowserTaskStored {
@@ -4722,6 +4776,11 @@ function parseBrowserTaskRow(row: RawBrowserTaskRow, slots: RawBrowserTaskSlotRo
       populationBucket: slot.population_bucket, evidenceId: slot.evidence_id,
       observationEpoch: slot.observation_epoch, pendingOperationId: slot.pending_operation_id,
       baselineObservationEpoch: slot.baseline_observation_epoch,
+      baselineObservationId: slot.baseline_observation_id, baselineDocumentIdentity: slot.baseline_document_identity,
+      baselineStructuralChecksum: slot.baseline_structural_checksum,
+      pendingTargetBinding: slot.pending_target_binding, pendingRuntimeGeneration: slot.pending_runtime_generation,
+      pendingCapabilityId: slot.pending_capability_id, pendingControlEpoch: slot.pending_control_epoch,
+      pendingEvidenceClass: slot.pending_evidence_class,
     })),
   };
 }

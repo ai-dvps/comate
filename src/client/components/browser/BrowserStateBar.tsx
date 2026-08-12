@@ -101,7 +101,9 @@ export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBar
       </span>
       {task && task.lifecycle !== 'abandoned' && (
         <div data-testid="browser-task-state" aria-live="polite" className="px-3 py-1 text-[11px] border-b border-border/50 text-text-secondary">
-          {t(`task.${task.lifecycle}`, { verified: task.verified, required: task.required, pending: task.populatedPendingValidation })}
+          {task.recoveryExhausted
+            ? t('task.recoveryExhausted')
+            : t(`task.${task.lifecycle}`, { verified: task.verified, required: task.required, pending: task.populatedPendingValidation })}
         </div>
       )}
 

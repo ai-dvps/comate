@@ -35,7 +35,8 @@
     "blocked": "Task is blocked and needs handoff",
     "outcome-unknown": "External outcome is unknown — do not repeat the action",
     "complete": "Task complete",
-    "abandoned": "Task abandoned"
+    "abandoned": "Task abandoned",
+    "recoveryExhausted": "Safe recovery is exhausted — take over or abandon the task"
   },
   "action": {
     "takeover": "Take over",

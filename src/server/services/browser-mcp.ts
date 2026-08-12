@@ -1,5 +1,5 @@
 import type { CallToolResult as CallToolResultType } from '@modelcontextprotocol/sdk/types.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { z, type ZodRawShape, type ZodType } from 'zod';
 import {
@@ -106,6 +106,7 @@ import {
   sanitizeUrl,
 } from './browser-api-sanitizer.js';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
+import { browserTaskTrace, type BrowserTaskTrace, type BrowserTaskTraceInput } from './browser-task-trace.js';
 import {
   BROWSER_MCP_SERVER_KEY,
   BROWSER_TOOL_NAMES,
@@ -280,6 +281,8 @@ export interface BrowserMcpDeps {
   applicationSensitiveRegions?: ApplicationSensitiveRegionProvider;
   /** U3 goal-scoped task authority. Task tools fail closed when it is absent. */
   taskState?: BrowserTaskStateService;
+  /** Read-only diagnostic sink; failures never influence task authority. */
+  taskTrace?: Pick<BrowserTaskTrace, 'append'>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1059,8 +1062,15 @@ export class BrowserToolContext {
   private capturePrimarySessionId?: string;
   private captureAction = 'One explicitly bracketed browser action';
   private readonly decisionObservations: DecisionObservationCoordinator;
-  private latestDecisionObservation?: { observationId: string; observationEpoch: number; transform: DecisionObservationTransform };
+  private latestDecisionObservation?: {
+    observationId: string; observationEpoch: number; transform: DecisionObservationTransform;
+    documentIdentityDigest: string; structuralChecksum: string; controlEpoch: string;
+  };
   private readonly taskEvidenceRefs = new Map<string, string>();
+
+  private trace(event: BrowserTaskTraceInput): void {
+    try { (this.deps.taskTrace ?? browserTaskTrace).append(event); } catch { /* diagnostic only */ }
+  }
 
   constructor(private readonly deps: BrowserMcpDeps) {
     this.svc = deps.browserService ?? browserService;
@@ -1075,7 +1085,12 @@ export class BrowserToolContext {
     this.uploadStaging = deps.uploadStaging ?? browserUploadStagingService;
     this.decisionObservations = deps.decisionObservationCoordinator ??
       new DecisionObservationCoordinator(deps.decisionObservationLimits);
+    this.handoffCtl.configureObservationCancellation((sessionId) => {
+      deps.contextRegistry?.get(sessionId)?.cancelDecisionObservation();
+    });
   }
+
+  cancelDecisionObservation(): void { this.decisionObservations.cancel(); }
 
   /** Abort task-owned capture state without closing the shared browser page. */
   disposeTask(reason: 'connection_closed' = 'connection_closed'): void {
@@ -1230,6 +1245,128 @@ export class BrowserToolContext {
       return toolError('browser_task_target_binding_stale', 'control', 'The target ref is not the trusted ref proposed for this task slot and observation.', 'Propose fresh task evidence for this exact target before acting.');
     }
     return null;
+  }
+
+  prepareTaskMutation(operationId: string, binding: TaskMutationBinding | undefined, targetRef: string | undefined):
+    { binding: TaskMutationBinding; pendingVersion: number; targetBindingDigest: string; backendNodeId: number; fingerprint: ElementFingerprint } | null {
+    if (!binding || !targetRef || !this.deps.taskState || !this.latestDecisionObservation) return null;
+    const entry = this.refTable.get(targetRef);
+    const observationBinding = this.refTable.getObservationBinding(targetRef);
+    if (!entry || !observationBinding) throw new Error('browser_task_target_binding_stale');
+    const targetBindingDigest = createHash('sha256').update(JSON.stringify({
+      documentIdentity: observationBinding.documentIdentity,
+      backendNodeId: entry.backendNodeId,
+      fingerprint: entry.fingerprint,
+    })).digest('hex');
+    const pending = this.deps.taskState.recordMutationPending(this.taskScope(), binding.taskId, binding.taskVersion, {
+      slotKey: binding.slotKey, operationId,
+      baselineObservationEpoch: this.latestDecisionObservation.observationEpoch,
+      baselineObservationId: binding.observationId,
+      baselineDocumentIdentity: this.latestDecisionObservation.documentIdentityDigest,
+      baselineStructuralChecksum: this.latestDecisionObservation.structuralChecksum,
+      targetBindingDigest,
+      controlEpoch: this.latestDecisionObservation.controlEpoch,
+      evidenceClass: 'target_local',
+    });
+    this.trace({ kind: 'operation_intent', taskId: binding.taskId, taskVersion: binding.taskVersion,
+      operationId, slotKey: binding.slotKey });
+    return { binding, pendingVersion: pending.version, targetBindingDigest, backendNodeId: entry.backendNodeId, fingerprint: entry.fingerprint };
+  }
+
+  async settleTaskMutation(pending: ReturnType<BrowserToolContext['prepareTaskMutation']>, operationId: string,
+    receipt: BrowserOperationReceipt): Promise<void> {
+    if (!pending || !this.deps.taskState) return;
+    if (receipt.outcome === 'outcome_unknown' && receipt.delta.kind === 'activation') {
+      this.deps.taskState.markOutcomeUnknown(this.taskScope(), pending.binding.taskId, pending.pendingVersion);
+      this.trace({ kind: 'terminal', taskId: pending.binding.taskId, taskVersion: pending.pendingVersion,
+        lifecycle: 'outcome-unknown' });
+      return;
+    }
+    if (receipt.dispatchState !== 'dispatched') {
+      this.cancelTaskMutation(pending, operationId);
+      return;
+    }
+    const observed = await this.handleGetDecisionObservation();
+    if (observed.isError || !this.latestDecisionObservation) return;
+    const currentEntry = this.refTable.currentEntries().find((entry) => entry.backendNodeId === pending.backendNodeId &&
+      sameElementFingerprint(entry.fingerprint, pending.fingerprint));
+    const currentField = currentEntry
+      ? this.lastModel?.forms.flatMap((form) => form.fields).find((field) => field.ref === currentEntry.ref)
+      : undefined;
+    const currentTargetBindingDigest = currentEntry ? createHash('sha256').update(JSON.stringify({
+      documentIdentity: currentEntry.batch, backendNodeId: currentEntry.backendNodeId, fingerprint: currentEntry.fingerprint,
+    })).digest('hex') : 'target-changed';
+    const active = this.deps.taskState.getActive(this.taskScope());
+    if (!active || active.taskId !== pending.binding.taskId) return;
+    try {
+      this.deps.taskState.validateFromObservation(this.taskScope(), pending.binding.taskId, active.version, {
+        slotKey: pending.binding.slotKey, operationId,
+        observationId: this.latestDecisionObservation.observationId,
+        observationEpoch: this.latestDecisionObservation.observationEpoch,
+        documentIdentity: this.latestDecisionObservation.documentIdentityDigest,
+        structuralChecksum: this.latestDecisionObservation.structuralChecksum,
+        targetBindingDigest: currentTargetBindingDigest,
+        controlEpoch: this.latestDecisionObservation.controlEpoch,
+        predicateMatched: receipt.matchesRequested === true && currentField?.filled === true,
+      });
+      this.trace({ kind: 'validation', taskId: pending.binding.taskId, taskVersion: active.version,
+        slotKey: pending.binding.slotKey, accepted: true });
+    } catch {
+      // A fresh but non-causal or predicate-mismatching observation remains
+      // descriptive; it never authorizes retry or advances the task.
+      this.trace({ kind: 'validation', taskId: pending.binding.taskId, taskVersion: active.version,
+        slotKey: pending.binding.slotKey, accepted: false });
+    }
+  }
+
+  cancelTaskMutation(pending: ReturnType<BrowserToolContext['prepareTaskMutation']>, operationId: string): void {
+    if (!pending || !this.deps.taskState) return;
+    try {
+      this.deps.taskState.cancelMutationPending(this.taskScope(), pending.binding.taskId,
+        pending.pendingVersion, pending.binding.slotKey, operationId);
+    } catch { /* stale task transitions fail closed */ }
+  }
+
+  async handleRecoverTarget(binding: TaskMutationBinding, targetRef: string): Promise<CallToolResult> {
+    const bindingError = this.validateTaskMutationBinding(binding, targetRef);
+    if (bindingError) return bindingError;
+    const tasks = this.deps.taskState;
+    if (!tasks) return this.taskUnavailable();
+    const entry = this.refTable.get(targetRef);
+    const observationBinding = this.refTable.getObservationBinding(targetRef);
+    if (!entry || !observationBinding) {
+      return toolError('browser_recovery_binding_stale', 'control', 'Recovery requires the exact trusted target binding from the cited observation.', 'Capture a new decision observation.');
+    }
+    const page = await this.ensurePage();
+    const state = await page.inspectBackendNodeState?.(entry.backendNodeId).catch(() => undefined);
+    // No overlay attestation exists yet. Unknown occlusion is never promoted
+    // to a same-task overlay and therefore fails closed.
+    if (state?.status !== 'off_viewport') {
+      return toolError('browser_recovery_blocked', 'control', 'The trusted target is not eligible for the bounded off-viewport reveal.', 'Hand control to the user or capture a fresh coherent observation.');
+    }
+    const targetBindingDigest = createHash('sha256').update(JSON.stringify({
+      documentIdentity: observationBinding.documentIdentity,
+      backendNodeId: entry.backendNodeId,
+      fingerprint: entry.fingerprint,
+    })).digest('hex');
+    const claimed = tasks.claimRecovery(this.taskScope(), binding.taskId, binding.taskVersion,
+      targetBindingDigest, 'off_viewport');
+    this.trace({ kind: 'recovery', taskId: binding.taskId, taskVersion: binding.taskVersion,
+      category: 'off_viewport', claimed });
+    if (!claimed) {
+      try { tasks.blockRecoveryExhausted(this.taskScope(), binding.taskId, binding.taskVersion, binding.slotKey); } catch { /* stale task */ }
+      return toolError('browser_recovery_exhausted', 'control', 'The one safe reveal attempt for this task version and target is already exhausted.', 'Hand control to the user.');
+    }
+    const revealed = await page.revealBackendNode?.(entry.backendNodeId).catch(() => undefined);
+    this.refTable.clear();
+    this.taskEvidenceRefs.clear();
+    this.latestDecisionObservation = undefined;
+    this.lastModel = null;
+    this.pageStateCache = null;
+    if (!revealed?.revealed) {
+      return toolError('browser_recovery_target_changed', 'control', 'The trusted target changed during the non-activating reveal.', 'Capture a fresh coherent observation; do not replay the mutation.');
+    }
+    return toolJson({ ok: true, recovery: 'off_viewport', revealed: true, requiresReobservation: true });
   }
 
   async handleStartTask(args: { replaceTaskId?: string; expectedTaskVersion?: number }, extra?: { signal?: AbortSignal }): Promise<CallToolResult> {
@@ -1488,7 +1625,13 @@ export class BrowserToolContext {
         observationId: observation.observationId,
         observationEpoch: observation.revision.domEpoch,
         transform: observation.transform,
+        documentIdentityDigest: createHash('sha256').update(JSON.stringify(observation.revision.documentIdentity)).digest('hex'),
+        structuralChecksum: observation.revision.checksum,
+        controlEpoch: observation.revision.controlEpoch,
       };
+      const activeTask = this.deps.taskState?.getActive(this.taskScope());
+      if (activeTask) this.trace({ kind: 'observation', taskId: activeTask.taskId,
+        taskVersion: activeTask.version, observationId: observation.observationId, accepted: true });
       const { image, ...metadata } = observation;
       return {
         content: [
@@ -3018,6 +3161,10 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
       recordApproved: () => Promise<boolean>,
     ) => Promise<CallToolResult>,
   ): Promise<CallToolResult> => {
+    const privateRecord = privateParameters && typeof privateParameters === 'object'
+      ? privateParameters as { taskBinding?: TaskMutationBinding; ref?: string }
+      : {};
+    let taskPending: ReturnType<BrowserToolContext['prepareTaskMutation']> = null;
     const invocation: BrowserInvocationScope = Object.freeze({
       workspaceId: deps.workspaceId,
       sessionId: deps.sessionId,
@@ -3034,6 +3181,11 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
       privateParameters,
       deferredDispatchIntent: true,
       approvalRequired,
+      prepareDispatch: () => {
+        taskPending = ctx.prepareTaskMutation(operationId, privateRecord.taskBinding, privateRecord.ref);
+        return true;
+      },
+      rollbackPreparedDispatch: () => ctx.cancelTaskMutation(taskPending, operationId),
       dispatch: async (signal, authorizeDispatch, recordApproved) => {
         let dispatchAuthorized = false;
         const trackedAuthorize = async (): Promise<boolean> => {
@@ -3045,6 +3197,12 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
         return mutationReceiptForResult(action, handlerResult, dispatchAuthorized);
       },
     });
+    if (privateRecord.taskBinding) {
+      try { (deps.taskTrace ?? browserTaskTrace).append({ kind: 'receipt',
+        taskId: privateRecord.taskBinding.taskId, taskVersion: privateRecord.taskBinding.taskVersion,
+        operationId, outcome: receipt.outcome }); } catch { /* diagnostic only */ }
+    }
+    await ctx.settleTaskMutation(taskPending, operationId, receipt);
     return toolJson({ receipt });
   };
   const operationIdSchema = z.string().min(1).max(128)
@@ -3166,6 +3324,16 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     }).strict(),
     async (args) => ctx.handleProposeTaskEvidence(args),
     { annotations: { readOnlyHint: false, openWorldHint: true } },
+  );
+  const recoverTargetDef = tool(
+    'recoverTarget',
+    'Perform the one server-classified, non-activating reveal allowed for an exact trusted task target. It never accepts coordinates, selectors, overlay claims, or a caller-selected failure category.',
+    z.object({
+      ref: z.string().min(1).max(128),
+      taskBinding: taskMutationBindingSchema,
+    }).strict(),
+    async (args: { ref: string; taskBinding: TaskMutationBinding }) => ctx.handleRecoverTarget(args.taskBinding, args.ref),
+    { annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true } },
   );
   const abandonTaskBase = tool(
     'abandonTask',
@@ -3461,6 +3629,7 @@ export function buildBrowserToolDefinitions(deps: BrowserMcpDeps): BrowserToolDe
     getTaskStateDef,
     startTaskDef,
     proposeTaskEvidenceDef,
+    recoverTargetDef,
     abandonTaskDef,
     findElementsDef,
     getElementDetailsDef,

@@ -35,7 +35,8 @@
     "blocked": "任务受阻，需要人工接管",
     "outcome-unknown": "外部结果未知——请勿重复操作",
     "complete": "任务已完成",
-    "abandoned": "任务已放弃"
+    "abandoned": "任务已放弃",
+    "recoveryExhausted": "安全恢复次数已用尽 — 请接管或放弃任务"
   },
   "action": {
     "takeover": "接管",

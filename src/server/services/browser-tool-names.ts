@@ -22,6 +22,7 @@ export const BROWSER_TOOL_NAMES = {
   getTaskState: `${BROWSER_TOOL_PREFIX}getTaskState`,
   startTask: `${BROWSER_TOOL_PREFIX}startTask`,
   proposeTaskEvidence: `${BROWSER_TOOL_PREFIX}proposeTaskEvidence`,
+  recoverTarget: `${BROWSER_TOOL_PREFIX}recoverTarget`,
   abandonTask: `${BROWSER_TOOL_PREFIX}abandonTask`,
   findElements: `${BROWSER_TOOL_PREFIX}findElements`,
   getElementDetails: `${BROWSER_TOOL_PREFIX}getElementDetails`,

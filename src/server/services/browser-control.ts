@@ -213,6 +213,7 @@ export interface BrowserControlDeps {
   audit?: Pick<BrowserAuditService, 'logControl'>;
   /** Synchronous out-of-band cancellation; must never wait on mutation mutex. */
   cancelMutations?: (sessionId: string, reason: string) => void;
+  cancelObservations?: (sessionId: string) => void;
 }
 
 interface HandoffRecord {
@@ -275,6 +276,15 @@ export class BrowserControlService {
     this.deps.timeoutApprovalCard = channel.timeoutApprovalCard;
   }
 
+  configureObservationCancellation(cancel: (sessionId: string) => void): void {
+    this.deps.cancelObservations = cancel;
+  }
+
+  private cancelAgentWork(sessionId: string): void {
+    this.deps.cancelMutations?.(sessionId, 'control_taken_over');
+    this.deps.cancelObservations?.(sessionId);
+  }
+
   getHandoff(sessionId: string): BrowserHandoffInfo | undefined {
     const record = this.records.get(sessionId);
     if (!record) return undefined;
@@ -304,13 +314,13 @@ export class BrowserControlService {
     const cell = BROWSER_CONTROL_TRANSITIONS[state].takeover_click;
     switch (cell.effect) {
       case 'proactive_takeover':
-        this.deps.cancelMutations?.(sessionId, 'control_taken_over');
+        this.cancelAgentWork(sessionId);
         this.deps.browserService.setControlState(sessionId, 'user_in_control', 'user_takeover');
         diagLog(`[browser-control] proactive takeover session=${sessionId}`);
         this.logControl(sessionId, 'takeover', 'ok', 'proactive');
         return { ok: true };
       case 'grant_handoff': {
-        this.deps.cancelMutations?.(sessionId, 'control_taken_over');
+        this.cancelAgentWork(sessionId);
         // Resolving card #1 allow is the takeover grant; the handoff handler's
         // continuation performs the state flip (single flip path).
         const record = this.records.get(sessionId);
@@ -504,7 +514,7 @@ export class BrowserControlService {
     if (!record) return;
     record.phase = 'in_takeover';
     record.cardRequestId = null;
-    this.deps.cancelMutations?.(sessionId, 'control_taken_over');
+    this.cancelAgentWork(sessionId);
     this.deps.browserService.setControlState(sessionId, 'user_in_control', 'handoff_granted');
     diagLog(`[browser-control] takeover approved session=${sessionId}`);
   }

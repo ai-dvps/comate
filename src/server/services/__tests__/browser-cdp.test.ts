@@ -269,7 +269,7 @@ describe('BrowserCdpSession trusted interaction adapter', () => {
     };
   }
 
-  it('scrolls, hit-tests, and emits exactly one trusted mouse press/release pair', async () => {
+  it('hit-tests without implicit scrolling and emits exactly one trusted mouse press/release pair', async () => {
     const peer = await withInteractionPeer((command) => {
       if (command.method === 'DOM.resolveNode') return { object: { objectId: 'target-node' } };
       if (command.method === 'Runtime.callFunctionOn') {
@@ -296,10 +296,34 @@ describe('BrowserCdpSession trusted interaction adapter', () => {
         peer.commands.filter((command) => command.method === 'Input.dispatchMouseEvent').map((command) => command.params.type),
         ['mousePressed', 'mouseReleased'],
       );
+      assert.equal(peer.commands.some((command) => command.method === 'DOM.scrollIntoViewIfNeeded'), false);
       assert.equal(
         peer.commands.some((command) => command.method === 'Runtime.callFunctionOn' && String(command.params.functionDeclaration).includes('.click(')),
         false,
       );
+    } finally {
+      await peer.close();
+    }
+  });
+
+  it('classifies an off-viewport node and reveals it without dispatching input', async () => {
+    const peer = await withInteractionPeer((command) => {
+      if (command.method === 'DOM.resolveNode') return { object: { objectId: 'target-node' } };
+      if (command.method === 'Runtime.callFunctionOn') {
+        return { result: { value: {
+          connected: true, enabled: true, editable: false, visible: true, inViewport: false,
+        } } };
+      }
+      return {};
+    });
+    try {
+      assert.deepEqual(await peer.page.inspectBackendNodeState?.(42), {
+        status: 'off_viewport', connected: true, enabled: true, visible: true,
+        inViewport: false, occluded: false,
+      });
+      assert.deepEqual(await peer.page.revealBackendNode?.(42), { revealed: true });
+      assert.equal(peer.commands.filter((command) => command.method === 'DOM.scrollIntoViewIfNeeded').length, 1);
+      assert.equal(peer.commands.some((command) => command.method === 'Input.dispatchMouseEvent'), false);
     } finally {
       await peer.close();
     }

@@ -553,6 +553,7 @@ async function makeHarness(options: {
   approvalRequester?: BrowserMcpDeps['approvalRequester'];
   operationStore?: SqliteStore;
   taskState?: BrowserMcpDeps['taskState'];
+  taskTrace?: BrowserMcpDeps['taskTrace'];
 }): Promise<Harness> {
   const storageDir = mkdtempSync(path.join(tmpdir(), 'comate-browser-mcp-'));
   const shell = await startFakeBrowserShell();
@@ -607,6 +608,7 @@ async function makeHarness(options: {
     isInvocationCurrent: options.isInvocationCurrent ?? (() => true),
     audit: { logToolAction: (input) => { auditActions.push(input); return null; } },
     taskState: options.taskState,
+    taskTrace: options.taskTrace,
   };
   if (options.approvalRequester) {
     deps.approvalRequester = options.approvalRequester;
@@ -691,7 +693,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     assert.deepStrictEqual(
       [...harness.tools.keys()].sort(),
-      ['abandonTask', 'act', 'activate', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getDecisionObservation', 'getElementDetails', 'getPageState', 'getTaskState', 'open', 'proposeTaskEvidence', 'rebindVisualCandidates', 'requestHandoff', 'startNetworkCapture', 'startTask', 'stopNetworkCapture', 'submit', 'takeScreenshot', 'upload'],
+      ['abandonTask', 'act', 'activate', 'authenticatedRequest', 'close', 'extract', 'findElements', 'getDecisionObservation', 'getElementDetails', 'getPageState', 'getTaskState', 'open', 'proposeTaskEvidence', 'rebindVisualCandidates', 'recoverTarget', 'requestHandoff', 'startNetworkCapture', 'startTask', 'stopNetworkCapture', 'submit', 'takeScreenshot', 'upload'],
     );
     rmSync(harness.storageDir, { recursive: true, force: true });
   });
@@ -719,7 +721,7 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     const defs = buildBrowserToolDefinitions({ sessionId: 's', workspaceId: 'w' });
     assert.deepEqual(
       defs.map((d) => d.name),
-      ['open', 'getPageState', 'getDecisionObservation', 'rebindVisualCandidates', 'getTaskState', 'startTask', 'proposeTaskEvidence', 'abandonTask', 'findElements', 'getElementDetails', 'act', 'upload', 'activate', 'takeScreenshot', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'submit', 'extract', 'requestHandoff', 'close'],
+      ['open', 'getPageState', 'getDecisionObservation', 'rebindVisualCandidates', 'getTaskState', 'startTask', 'proposeTaskEvidence', 'recoverTarget', 'abandonTask', 'findElements', 'getElementDetails', 'act', 'upload', 'activate', 'takeScreenshot', 'startNetworkCapture', 'stopNetworkCapture', 'authenticatedRequest', 'submit', 'extract', 'requestHandoff', 'close'],
     );
     assert.match(defs.find((definition) => definition.name === 'getPageState')?.description ?? '', /default observation/i);
     assert.match(defs.find((definition) => definition.name === 'takeScreenshot')?.description ?? '', /only.*visual/i);
@@ -755,6 +757,18 @@ describe('browser-mcp tool surface (KTD-3)', () => {
     assert.equal(schema.safeParse(base).success, true);
     assert.equal(schema.safeParse({ ...base, verified: true }).success, false);
     assert.equal(schema.safeParse({ ...base, proposals: [{ ...base.proposals[0], required: false, authority: 'confirmed' }] }).success, false);
+  });
+
+  it('recovery schema accepts only an exact task binding and ref', () => {
+    const definition = buildBrowserToolDefinitions({ sessionId: 's', workspaceId: 'w' })
+      .find((item) => item.name === 'recoverTarget')!;
+    const schema = definition.inputSchema as { safeParse(value: unknown): { success: boolean } };
+    const input = { ref: 'e1-aa', taskBinding: {
+      taskId: '11111111-1111-4111-8111-111111111111', taskVersion: 1,
+      slotKey: 'title_0', observationId: '22222222-2222-4222-8222-222222222222',
+    } };
+    assert.equal(schema.safeParse(input).success, true);
+    assert.equal(schema.safeParse({ ...input, failureClass: 'off_viewport', x: 1, y: 2 }).success, false);
   });
 
   it('task tools fail closed without U3 and cannot reclaim by caller-selected task id', async () => {
@@ -877,6 +891,18 @@ describe('browser-mcp page observation', () => {
     assert.ok(payload.observation.observationId);
     assert.equal(payload.observation.transform.devicePixelRatio, 1);
     assert.equal(payload.observation.image, undefined, 'text metadata never duplicates screenshot bytes');
+  });
+
+  it('emits task observation trace without allowing trace failure to affect authority', async () => {
+    const taskState = new BrowserTaskStateService(new SqliteStore(':memory:'));
+    taskState.createOrReplace({ workspaceId: 'workspace-1', sessionId: 'chat-session-1', principalId: 'principal-test',
+      runtimeGeneration: 'runtime-test', capabilityId: 'capability-test' }, []);
+    let appends = 0;
+    harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }), taskState,
+      taskTrace: { append: () => { appends += 1; throw new Error('diagnostic sink failed'); } } });
+    const result = await harness.callTool('getDecisionObservation', {}, {});
+    assert.equal(result.isError, undefined);
+    assert.equal(appends, 1);
   });
 
   it('rebinds exactly one same-observation visual candidate to a trusted ref', async () => {
