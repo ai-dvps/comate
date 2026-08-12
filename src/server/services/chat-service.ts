@@ -451,7 +451,7 @@ export class ChatService {
         },
         signal,
       });
-      return { behavior: decision.behavior };
+      return { behavior: decision.behavior === 'allow' ? 'allow' as const : 'deny' as const };
     });
     // Wire the browser handoff controller's runtime channel (U5, KTD-6): the
     // controller resolves/timeouts the session's live browser card through
@@ -510,11 +510,17 @@ export class ChatService {
         title: request.title,
         ...(request.description !== undefined && { description: request.description }),
         ...(request.signal !== undefined && { signal: request.signal }),
+        ...(request.timeoutMs !== undefined && { timeout: request.timeoutMs }),
       },
     );
-    return result.behavior === 'allow'
-      ? { behavior: 'allow' as const }
-      : { behavior: 'deny' as const, message: result.message };
+    if (result.behavior === 'allow') return { behavior: 'allow' as const };
+    const provenance = runtime.consumeResolutionProvenance(requestId);
+    if (provenance?.decision === 'later') return { behavior: 'later' as const, message: result.message };
+    if (provenance?.source === 'timeout') return { behavior: 'timeout' as const, message: result.message };
+    if (['aborted', 'stopped', 'session-closed'].includes(provenance?.source ?? '')) {
+      return { behavior: 'revoked' as const, message: result.message };
+    }
+    return { behavior: 'deny' as const, message: result.message };
   };
 
   /**

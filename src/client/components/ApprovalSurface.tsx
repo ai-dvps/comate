@@ -23,6 +23,7 @@ import {
   CollapsibleTrigger,
 } from './ui/collapsible'
 import { cn } from './ui/utils'
+import { BROWSER_TOOL_NAMES } from '@server/services/browser-tool-names'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
 import PreviewPane from './PreviewPane'
@@ -116,6 +117,7 @@ interface ApprovalSurfaceProps {
   onAllow: () => void
   onAllowAlways: () => void
   onDeny: (message: string) => void
+  onDecideLater: () => void
   onAnswerQuestion: (answers: Record<string, string>) => void
   onChatAbout: () => void
   onStop: () => void
@@ -129,6 +131,7 @@ export default function ApprovalSurface({
   onAllow,
   onAllowAlways,
   onDeny,
+  onDecideLater,
   onAnswerQuestion,
   onChatAbout,
   onStop,
@@ -136,6 +139,13 @@ export default function ApprovalSurface({
   const { t } = useTranslation('chat')
   const titleId = useId()
   const [isExpanded, setIsExpanded] = useState(true)
+
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    return () => {
+      if (previous?.isConnected) previous.focus()
+    }
+  }, [pendingItem.requestId])
 
   // Reset to expanded when a new pending item arrives so the user notices it.
   useEffect(() => {
@@ -250,6 +260,7 @@ export default function ApprovalSurface({
                   onAllow={onAllow}
                   onAllowAlways={onAllowAlways}
                   onDeny={onDeny}
+                  onDecideLater={onDecideLater}
                 />
               )}
             </div>
@@ -328,22 +339,27 @@ function ApprovalView({
   onAllow,
   onAllowAlways,
   onDeny,
+  onDecideLater,
 }: {
   item: PendingApproval
   isResolving: boolean
   onAllow: () => void
   onAllowAlways: () => void
   onDeny: (message: string) => void
+  onDecideLater: () => void
 }) {
   const { t } = useTranslation('chat')
   const [showMore, setShowMore] = useState(false)
   const hasSuggestions = item.suggestions && item.suggestions.length > 0
 
-  useCommandEnter(onAllow, !isResolving)
-
   const renderer = getToolRenderer(item.toolName)
   const hasCustomRenderer = !!renderer
   const isSecurityManifest = isSecurityManifestRenderer(item.toolName)
+  const isDeclaration = item.toolName === BROWSER_TOOL_NAMES.setDeclaration
+  const renderedManifest = isSecurityManifest && renderer ? renderer(item.input) : null
+  const invalidSecurityManifest = isSecurityManifest && renderedManifest == null
+
+  useCommandEnter(onAllow, !isResolving && !isDeclaration)
 
   // Reset Show more across pendingItem swaps
   useEffect(() => {
@@ -378,7 +394,11 @@ function ApprovalView({
       <div className="mb-3 max-h-[60vh] overflow-y-auto">
         {isSecurityManifest && renderer ? (
           <div className="bg-bg rounded px-2 py-1.5">
-            {renderer(item.input) ?? <StructuredFallback data={item.input} />}
+            {renderedManifest ?? (
+              <div role="alert" aria-live="assertive" className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {t('approval.securityManifestInvalid')}
+              </div>
+            )}
             <div className="mt-2 text-[10px] text-text-tertiary font-mono break-all">
               {t('approval.securityManifestRequest')}: {item.requestId}
             </div>
@@ -403,17 +423,17 @@ function ApprovalView({
       </div>
 
       <div className="flex items-center gap-2">
-        <Button onClick={onAllow} disabled={isResolving} size="sm" autoFocus>
+        <Button onClick={onAllow} disabled={isResolving || invalidSecurityManifest} size="sm" autoFocus={!isDeclaration}>
           {isResolving ? (
             <span className="flex items-center gap-1">
               <Loader2 className="w-3 h-3 animate-spin" />
               …
             </span>
           ) : (
-            t('approval.allow')
+            isDeclaration ? t('approval.browserDeclaration.confirmAction') : t('approval.allow')
           )}
         </Button>
-        {hasSuggestions && (
+        {hasSuggestions && !isDeclaration && (
           <Button
             onClick={onAllowAlways}
             disabled={isResolving}
@@ -421,6 +441,11 @@ function ApprovalView({
             size="sm"
           >
             {t('approval.allowAlways')}
+          </Button>
+        )}
+        {isDeclaration && (
+          <Button onClick={onDecideLater} disabled={isResolving} variant="secondary" size="sm" autoFocus>
+            {t('approval.browserDeclaration.decideLater')}
           </Button>
         )}
         <Button

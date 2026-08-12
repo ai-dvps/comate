@@ -329,6 +329,16 @@ export default function ChatPanel({
     }
   }
 
+  const handleDecideLater = async () => {
+    if (!activeSessionId || !currentApproval) return
+    setResolvingRequestId(currentApproval.requestId)
+    try {
+      await resolveApproval(workspaceId, activeSessionId, currentApproval.requestId, { behavior: 'later' })
+    } finally {
+      setResolvingRequestId(null)
+    }
+  }
+
   const handleAnswerQuestion = async (answers: Record<string, string>) => {
     if (!activeSessionId || !currentApproval) return
     setResolvingRequestId(currentApproval.requestId)
@@ -525,6 +535,7 @@ export default function ChatPanel({
                     onAllow={handleAllow}
                     onAllowAlways={handleAllowAlways}
                     onDeny={handleDeny}
+                    onDecideLater={handleDecideLater}
                     onAnswerQuestion={handleAnswerQuestion}
                     onChatAbout={handleChatAbout}
                     onStop={handleStop}

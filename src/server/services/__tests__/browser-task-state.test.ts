@@ -7,6 +7,7 @@ import {
   deriveBrowserTaskLifecycle,
   type BrowserTaskSlot,
 } from '../browser-task-state.js';
+import { createBrowserBinding } from '../../utils/credential-crypto.js';
 
 const scope = {
   workspaceId: 'ws-1', sessionId: 'session-1', principalId: 'principal-1',
@@ -132,6 +133,75 @@ describe('BrowserTaskStateService', () => {
     assert.equal(service.decisionObservationBudget(scope).consume(), true);
     assert.equal(service.decisionObservationBudget(scope).consume(), true);
     assert.equal(service.decisionObservationBudget(scope).consume(), false);
+  });
+
+  it('consumes one declaration request exactly once and records purpose-separated authority', () => {
+    const store = new SqliteStore(':memory:');
+    const service = new BrowserTaskStateService(store);
+    const task = service.createOrReplace(scope, [slot({
+      slotKey: 'declaration_0', population: 'populated', validation: 'verified',
+    })]);
+    const request = createBrowserBinding('declaration-request', {
+      taskId: task.taskId, taskVersion: task.version, slotKey: 'declaration_0', requestId: 'request-1',
+    });
+    const awaiting = service.beginDeclarationRequest(scope, task.taskId, task.version, 'declaration_0', request);
+    assert.equal(awaiting.slots[0].authority, 'awaiting_user');
+
+    const consumed = service.consumeDeclarationRequest(
+      scope, task.taskId, awaiting.version, 'declaration_0', request, 'approved',
+    );
+    assert.equal(consumed.slots[0].authority, 'awaiting_user');
+    assert.throws(() => service.consumeDeclarationRequest(
+      scope, task.taskId, consumed.version, 'declaration_0', request, 'approved',
+    ), /browser_task_binding_stale/);
+
+    const authority = createBrowserBinding('declaration-authority', {
+      taskId: task.taskId, slotKey: 'declaration_0', intendedState: true,
+    });
+    const confirmed = service.confirmDeclarationAuthority(
+      scope, task.taskId, consumed.version, 'declaration_0', authority,
+      { observationId: 'observation-confirmed', observationEpoch: 7 },
+    );
+    assert.equal(confirmed.slots[0].authority, 'confirmed');
+    assert.equal(confirmed.slots[0].population, 'populated');
+    assert.equal(confirmed.slots[0].validation, 'verified');
+    assert.equal(confirmed.slots[0].evidenceId, 'observation-confirmed');
+    assert.equal(confirmed.slots[0].observationEpoch, 7);
+    assert.equal(service.verifyDeclarationAuthority(task.taskId, 'declaration_0', authority), true);
+    assert.equal(service.verifyDeclarationAuthority(task.taskId, 'declaration_0', request), false);
+  });
+
+  it('keeps later awaiting user, records denial distinctly, and stales authority on mutation', () => {
+    const store = new SqliteStore(':memory:');
+    const service = new BrowserTaskStateService(store);
+    let task = service.createOrReplace(scope, [
+      slot({ slotKey: 'declaration_0', population: 'populated', validation: 'verified' }),
+      slot({ slotKey: 'title_0', population: 'populated', validation: 'verified' }),
+    ]);
+    let request = createBrowserBinding('declaration-request', { request: 1 });
+    task = service.beginDeclarationRequest(scope, task.taskId, task.version, 'declaration_0', request);
+    task = service.consumeDeclarationRequest(scope, task.taskId, task.version, 'declaration_0', request, 'later');
+    assert.equal(task.slots.find((item) => item.slotKey === 'declaration_0')?.authority, 'awaiting_user');
+
+    request = createBrowserBinding('declaration-request', { request: 2 });
+    task = service.beginDeclarationRequest(scope, task.taskId, task.version, 'declaration_0', request);
+    task = service.consumeDeclarationRequest(scope, task.taskId, task.version, 'declaration_0', request, 'denied');
+    assert.equal(task.slots.find((item) => item.slotKey === 'declaration_0')?.authority, 'declined');
+
+    request = createBrowserBinding('declaration-request', { request: 3 });
+    task = service.beginDeclarationRequest(scope, task.taskId, task.version, 'declaration_0', request);
+    task = service.consumeDeclarationRequest(scope, task.taskId, task.version, 'declaration_0', request, 'approved');
+    const authority = createBrowserBinding('declaration-authority', { authority: 1 });
+    task = service.confirmDeclarationAuthority(scope, task.taskId, task.version, 'declaration_0', authority,
+      { observationId: 'observation-confirmed', observationEpoch: 7 });
+    const pending = service.recordMutationPending(scope, task.taskId, task.version, {
+      slotKey: 'title_0', operationId: 'op-title', baselineObservationEpoch: 1,
+      baselineObservationId: 'obs-title', baselineDocumentIdentity: 'document-title',
+      baselineStructuralChecksum: 'shape-title', targetBindingDigest: 'target-title',
+      controlEpoch: 'control-title', evidenceClass: 'target_local',
+    });
+    assert.equal(pending.slots.find((item) => item.slotKey === 'declaration_0')?.authority, 'stale');
+    assert.equal(service.verifyDeclarationAuthority(task.taskId, 'declaration_0', authority), false);
   });
 
   it('persists only positive-shape columns and purges sessions without touching forks', () => {

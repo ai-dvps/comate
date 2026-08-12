@@ -165,8 +165,10 @@ describe('chat route approvals funnel (U8, KTD-15)', { concurrency: false }, () 
   it('resolves through the existing runtime with desktop provenance', async () => {
     const resolveCalls: Array<{ requestId: string; result: unknown; provenance: unknown }> = [];
     const fakeRuntime = {
+      getPendingCardState: () => ({ type: 'approval' as const, toolName: 'mcp__comate-browser__submit' }),
       resolveApproval: (requestId: string, result: unknown, provenance?: unknown) => {
         resolveCalls.push({ requestId, result, provenance });
+        return true;
       },
     };
     const stub = stubChatService({
@@ -196,8 +198,10 @@ describe('chat route approvals funnel (U8, KTD-15)', { concurrency: false }, () 
   it('deny resolutions carry the same desktop provenance', async () => {
     const resolveCalls: Array<{ result: unknown; provenance: unknown }> = [];
     const fakeRuntime = {
+      getPendingCardState: () => ({ type: 'approval' as const, toolName: 'mcp__comate-browser__submit' }),
       resolveApproval: (_requestId: string, result: unknown, provenance?: unknown) => {
         resolveCalls.push({ result, provenance });
+        return true;
       },
     };
     const stub = stubChatService({
@@ -218,6 +222,7 @@ describe('chat route approvals funnel (U8, KTD-15)', { concurrency: false }, () 
       });
       assert.deepStrictEqual(resolveCalls[0].provenance, {
         source: 'desktop',
+        decision: 'deny',
         approver: { type: 'user' },
       });
     } finally {

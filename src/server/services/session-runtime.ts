@@ -60,6 +60,7 @@ diagLog('[SessionRuntime] module loaded');
  */
 export interface ApprovalResolutionProvenance {
   source: string;
+  decision?: 'deny' | 'later';
   approver?: { type: string; channelKey?: string; channelUserId?: string };
 }
 
@@ -510,6 +511,7 @@ export class SessionRuntime {
       // approval owner. This avoids a duplicate, weaker generic card.
       if ((toolName === BROWSER_TOOL_NAMES.act && input.action === 'click') ||
           toolName === BROWSER_TOOL_NAMES.startTask || toolName === BROWSER_TOOL_NAMES.abandonTask ||
+          toolName === BROWSER_TOOL_NAMES.setDeclaration ||
           toolName === BROWSER_TOOL_NAMES.recoverTarget ||
           isBrowserActivationClassified(toolName, input) || isBrowserUploadClassified(toolName, input) ||
           isBrowserSubmitClassified(this.sessionId, toolName, input)) {
@@ -1031,9 +1033,9 @@ export class SessionRuntime {
     this.kimiLoopDetector?.reset();
   }
 
-  resolveApproval(requestId: string, result: PermissionResult, provenance?: ApprovalResolutionProvenance): void {
+  resolveApproval(requestId: string, result: PermissionResult, provenance?: ApprovalResolutionProvenance): boolean {
     const pending = this.pendingApprovals.get(requestId);
-    if (!pending) return;
+    if (!pending) return false;
     if (provenance) {
       this.rememberResolutionProvenance(requestId, provenance);
     }
@@ -1052,6 +1054,7 @@ export class SessionRuntime {
         : result;
 
     pending.resolve(finalResult);
+    return true;
   }
 
   /**
