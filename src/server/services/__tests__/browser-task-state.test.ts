@@ -236,7 +236,7 @@ describe('BrowserTaskStateService', () => {
     assert.equal(unknown.lifecycle, 'outcome-unknown');
     assert.deepEqual(service.projection(scope.workspaceId, scope.sessionId)?.outcome, {
       possibleDispatch: true, evidenceStatus: 'none', lastCheckedAt: null,
-      canRecheck: true, canAbandon: true, canAcknowledgeDuplicateRisk: true,
+      canRecheck: false, canAbandon: true, canAcknowledgeDuplicateRisk: true,
     });
   });
 

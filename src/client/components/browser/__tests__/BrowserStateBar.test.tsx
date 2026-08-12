@@ -190,13 +190,13 @@ describe('BrowserStateBar', () => {
       task: { taskId: 'task-1', version: 8, lifecycle: 'outcome-unknown', required: 4, verified: 3,
         populatedPendingValidation: 1, awaitingAuthority: 0,
         outcome: { possibleDispatch: true, evidenceStatus: 'insufficient', lastCheckedAt: null,
-          canRecheck: true, canAbandon: true, canAcknowledgeDuplicateRisk: true } },
+          canRecheck: false, canAbandon: true, canAcknowledgeDuplicateRisk: true } },
     })
     renderBar()
     const projection = screen.getByTestId('browser-outcome-unknown')
     expect(projection).toHaveTextContent('Publication may have been dispatched')
     expect(screen.queryByText('Retry')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Recheck' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Recheck' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Abandon tracking' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Acknowledge duplicate risk' })).toBeInTheDocument()
     expect(projection).not.toHaveTextContent('task-1')

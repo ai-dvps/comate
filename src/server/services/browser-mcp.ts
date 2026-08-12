@@ -1434,9 +1434,10 @@ export class BrowserToolContext {
       return;
     }
     if (receipt.outcome === 'outcome_unknown' && receipt.delta.kind === 'activation') {
-      this.deps.taskState.markOutcomeUnknown(this.taskScope(), pending.binding.taskId, pending.pendingVersion);
-      this.trace({ kind: 'terminal', taskId: pending.binding.taskId, taskVersion: pending.pendingVersion,
-        lifecycle: 'outcome-unknown' });
+      // Only a prepared final action may enter the global outcome-unknown
+      // state. A task-local activation remains unverified and must be
+      // reconciled from fresh evidence without replaying the activation.
+      this.cancelTaskMutation(pending, operationId);
       return;
     }
     if (receipt.dispatchState !== 'dispatched') {
@@ -1444,7 +1445,10 @@ export class BrowserToolContext {
       return;
     }
     const observed = await this.handleGetDecisionObservation();
-    if (observed.isError || !this.latestDecisionObservation) return;
+    if (observed.isError || !this.latestDecisionObservation) {
+      this.cancelTaskMutation(pending, operationId);
+      return;
+    }
     const currentEntry = this.refTable.currentEntries().find((entry) => entry.backendNodeId === pending.backendNodeId &&
       sameElementFingerprint(entry.fingerprint, pending.fingerprint));
     const currentField = currentEntry
@@ -1473,6 +1477,7 @@ export class BrowserToolContext {
       // descriptive; it never authorizes retry or advances the task.
       this.trace({ kind: 'validation', taskId: pending.binding.taskId, taskVersion: active.version,
         slotKey: pending.binding.slotKey, accepted: false });
+      this.cancelTaskMutation(pending, operationId);
     }
   }
 

@@ -115,8 +115,10 @@ export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBar
               checked: task.outcome.lastCheckedAt ?? t('task.neverChecked') })}
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
-            <button type="button" className={cn('px-2 py-1 rounded border border-border', FOCUS_CLASSES)}
-              onClick={() => void resolveTaskOutcome(sessionId, 'recheck')}>{t('action.recheckOutcome')}</button>
+            {task.outcome.canRecheck && (
+              <button type="button" className={cn('px-2 py-1 rounded border border-border', FOCUS_CLASSES)}
+                onClick={() => void resolveTaskOutcome(sessionId, 'recheck')}>{t('action.recheckOutcome')}</button>
+            )}
             <button type="button" className={cn('px-2 py-1 rounded border border-border', FOCUS_CLASSES)}
               onClick={() => void resolveTaskOutcome(sessionId, 'abandon')}>{t('action.abandonTracking')}</button>
             <button type="button" className={cn('px-2 py-1 rounded border border-warning/50', FOCUS_CLASSES)}
