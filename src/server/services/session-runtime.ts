@@ -105,6 +105,7 @@ const READONLY_TOOLS: readonly string[] = [
   BROWSER_TOOL_NAMES.getPageState,
   BROWSER_TOOL_NAMES.getDecisionObservation,
   BROWSER_TOOL_NAMES.rebindVisualCandidates,
+  BROWSER_TOOL_NAMES.getTaskState,
   BROWSER_TOOL_NAMES.takeScreenshot,
   BROWSER_TOOL_NAMES.extract,
   BROWSER_TOOL_NAMES.findElements,
@@ -508,6 +509,7 @@ export class SessionRuntime {
       // generic auto/readonly branch, but the bound handler is the sole
       // approval owner. This avoids a duplicate, weaker generic card.
       if ((toolName === BROWSER_TOOL_NAMES.act && input.action === 'click') ||
+          toolName === BROWSER_TOOL_NAMES.startTask || toolName === BROWSER_TOOL_NAMES.abandonTask ||
           isBrowserActivationClassified(toolName, input) || isBrowserUploadClassified(toolName, input) ||
           isBrowserSubmitClassified(this.sessionId, toolName, input)) {
         // Handler-owned security manifests are the single approval surface.

@@ -134,6 +134,7 @@ export class BrowserTaskStateService {
       const prior = byKey.get(slot.slotKey);
       byKey.set(slot.slotKey, prior ? {
         ...slot,
+        required: prior.required || slot.required,
         population: prior.population,
         populationBucket: prior.populationBucket,
         authority: prior.authority,
@@ -184,6 +185,26 @@ export class BrowserTaskStateService {
       runtimeGeneration: scope.runtimeGeneration, capabilityId: scope.capabilityId,
       lifecycle: deriveBrowserTaskLifecycle(slots), revokeBindings: true,
     }, toStored(slots)));
+  }
+
+  /** Application-owned runtime recovery: the server selects the session's active head. */
+  reclaimActive(scope: BrowserTaskScope): BrowserTaskState | null {
+    assertScope(scope);
+    const task = this.loadActive(scope.workspaceId, scope.sessionId);
+    if (!task) return null;
+    if (task.principalId !== scope.principalId) throw new Error('browser_task_scope_mismatch');
+    if (task.runtimeGeneration === scope.runtimeGeneration && task.capabilityId === scope.capabilityId) return task;
+    const slots = task.slots.map((slot) => ({ ...slot,
+      validation: slot.validation === 'unverified' ? 'unverified' as const : 'stale' as const,
+      authority: slot.authority === 'not_required' ? 'not_required' as const : 'stale' as const,
+      evidenceId: null, observationEpoch: null, pendingOperationId: null,
+      baselineObservationEpoch: null }));
+    const updated = fromStored(this.store.casBrowserTask(task.taskId, task.version, {
+      runtimeGeneration: scope.runtimeGeneration, capabilityId: scope.capabilityId,
+      lifecycle: deriveBrowserTaskLifecycle(slots), revokeBindings: true,
+    }, toStored(slots)));
+    this.emit(updated);
+    return updated;
   }
 
   invalidateRuntime(workspaceId: string, sessionId: string): BrowserTaskState | null {

@@ -22,6 +22,39 @@ function slot(overrides: Partial<BrowserTaskSlot> = {}): BrowserTaskSlot {
 }
 
 describe('BrowserTaskStateService', () => {
+  it('reclaims the server-selected active head for a rebuilt runtime without caller task selection', () => {
+    const service = new BrowserTaskStateService(new SqliteStore(':memory:'));
+    const oldScope = { workspaceId: 'w', sessionId: 's', principalId: 'p', runtimeGeneration: 'g1', capabilityId: 'c1' };
+    const task = service.createOrReplace(oldScope, [{
+      slotKey: 'title_0', discovery: 'available', required: true, population: 'populated',
+      validation: 'verified', authority: 'confirmed', populationBucket: 'short',
+      evidenceId: 'ev1', observationEpoch: 1,
+    }]);
+    service.invalidateRuntime('w', 's');
+    const nextScope = { ...oldScope, runtimeGeneration: 'g2', capabilityId: 'c2' };
+    const reclaimed = service.reclaimActive(nextScope);
+    assert.equal(reclaimed?.taskId, task.taskId);
+    assert.equal(reclaimed?.runtimeGeneration, 'g2');
+    assert.equal(reclaimed?.slots[0].validation, 'stale');
+    assert.equal(reclaimed?.slots[0].authority, 'stale');
+    assert.equal(reclaimed?.slots[0].evidenceId, null);
+  });
+
+  it('never lets a later discovery proposal downgrade a required slot', () => {
+    const service = new BrowserTaskStateService(new SqliteStore(':memory:'));
+    const scope = { workspaceId: 'w', sessionId: 's', principalId: 'p', runtimeGeneration: 'g', capabilityId: 'c' };
+    const task = service.createOrReplace(scope, [{
+      slotKey: 'title_0', discovery: 'available', required: true, population: 'empty',
+      validation: 'unverified', authority: 'not_required', populationBucket: 'empty',
+      evidenceId: 'ev1', observationEpoch: 1,
+    }]);
+    const updated = service.recordTrustedDiscovery(scope, task.taskId, task.version, [{
+      slotKey: 'title_0', discovery: 'available', required: false, population: 'empty',
+      validation: 'unverified', authority: 'not_required', populationBucket: 'empty',
+      evidenceId: 'ev2', observationEpoch: 2,
+    }]);
+    assert.equal(updated.slots[0].required, true);
+  });
   it('derives lifecycle from orthogonal slot states with safe priority', () => {
     assert.equal(deriveBrowserTaskLifecycle([slot()]), 'active');
     assert.equal(deriveBrowserTaskLifecycle([slot({ population: 'populated', validation: 'pending' })]), 'validating');

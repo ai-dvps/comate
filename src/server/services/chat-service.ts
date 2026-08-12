@@ -530,6 +530,8 @@ export class ChatService {
   } | null> {
     const workspace = await this.findWorkspaceForSession(sessionId);
     if (!workspace) return null;
+    const localSession = workspaceStore.getLocalSession(sessionId);
+    if (!localSession || localSession.botId || localSession.source === 'scheduled') return null;
     return {
       workspaceId: workspace.id,
       workspaceFolder: workspace.folderPath,
@@ -2222,8 +2224,9 @@ export class ChatService {
     // Per-runtime task capability shared identically by Claude/OpenCode via
     // subprocess env and the browser MCP header. Rebuilds rotate this kind
     // without revoking a simultaneous bot/WeCom capability.
+    const browserEligible = !isBotSession && session.source !== 'scheduled';
     let taskCapabilityToken: string | undefined;
-    if (!isBotSession) {
+    if (browserEligible) {
       const capability = sessionCapabilityService.mintForSession({
         sessionId: session.id,
         workspaceId: workspace.id,
@@ -2302,7 +2305,7 @@ export class ChatService {
       sidecarLog(`[ChatService.buildSdkOptions] set WECOM_CLI_PATH=${wecomCliPath}`);
     }
 
-    if (!isBotSession) {
+    if (browserEligible) {
       const comateCliPath = resolveComateCliPath();
       if (comateCliPath) {
         prependEnvPath(env, path.dirname(comateCliPath));
@@ -2342,7 +2345,7 @@ export class ChatService {
     // sessions never get the browser tool surface (KTD-4 ③: the injection
     // condition itself is the first line of bot defense). The instance is
     // keyed by sessionId; the browser process outlives it via browserService.
-    if (!isBotSession) {
+    if (browserEligible) {
       // U6 (KTD-6): the browser MCP surface is served by the sidecar over
       // HTTP so both backends consume it; the per-session URL binds tools to
       // this session's embedded browser.

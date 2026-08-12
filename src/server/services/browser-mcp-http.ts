@@ -25,11 +25,13 @@ import {
   type SessionCapabilityService,
 } from './session-capability-service.js';
 import { browserTaskStateService } from './browser-task-state.js';
+import type { BrowserTaskStateService } from './browser-task-state.js';
 
 export interface BrowserMcpHttpDeps {
   workspaceId: string;
   workspaceFolder?: string;
   approvalRequester: BrowserMcpDeps['approvalRequester'];
+  taskState?: BrowserTaskStateService;
 }
 
 interface AuthorizedBrowserMcpHttpDeps extends BrowserMcpHttpDeps {
@@ -131,6 +133,15 @@ export function createBrowserMcpHttpRouter(
         : null;
     },
     registerTools: (server, sessionId, deps) => {
+      const taskState = deps.taskState ?? browserTaskStateService;
+      const taskScope = {
+        workspaceId: deps.workspaceId,
+        sessionId,
+        principalId: deps.principalId,
+        runtimeGeneration: deps.runtimeGeneration,
+        capabilityId: deps.capabilityId,
+      };
+      taskState.reclaimActive(taskScope);
       for (const def of buildBrowserToolDefinitions({
         sessionId,
         workspaceId: deps.workspaceId,
@@ -140,13 +151,8 @@ export function createBrowserMcpHttpRouter(
         capabilityId: deps.capabilityId,
         principalId: deps.principalId,
         isInvocationCurrent: deps.isInvocationCurrent,
-        decisionObservationBudget: browserTaskStateService.decisionObservationBudget({
-          workspaceId: deps.workspaceId,
-          sessionId,
-          principalId: deps.principalId,
-          runtimeGeneration: deps.runtimeGeneration,
-          capabilityId: deps.capabilityId,
-        }),
+        taskState,
+        decisionObservationBudget: taskState.decisionObservationBudget(taskScope),
         approvalRequester: deps.approvalRequester,
       })) {
         server.registerTool(def.name, {
