@@ -523,7 +523,7 @@ export class BrowserTaskStateService {
         possibleDispatch: true,
         evidenceStatus: finalAction.evidenceStatus,
         lastCheckedAt: finalAction.lastCheckedAt,
-        canRecheck: true,
+        canRecheck: false,
         canAbandon: true,
         canAcknowledgeDuplicateRisk: true,
       } } : {}),
@@ -544,7 +544,10 @@ export class BrowserTaskStateService {
     if (!finalAction || finalAction.state !== 'outcome_unknown') throw new Error('browser_task_outcome_stale');
     if (action === 'abandon') return this.abandonOutcomeTracking(scope, taskId, expectedVersion, finalAction.operationId);
     if (action === 'acknowledge_duplicate_risk') return this.acknowledgeDuplicateRisk(scope, taskId, expectedVersion, finalAction.operationId);
-    return this.recordOutcomeCheck(scope, taskId, expectedVersion, finalAction.operationId, { status: 'insufficient' });
+    // The application route has no trusted business-outcome observer. Keep
+    // the task unchanged instead of recording a synthetic failed check; the
+    // MCP path may recheck only through its injected trusted observer.
+    return task;
   }
 
   onProjection(listener: (workspaceId: string, sessionId: string, projection: BrowserTaskProjection | null) => void): () => void {
