@@ -87,6 +87,7 @@ import { browserTaskStateService } from './browser-task-state.js';
 import { browserControlService } from './browser-control.js';
 import { sanitizeSubprocessEnv } from '../utils/sanitize-env.js';
 import { getSidecarBaseUrl } from '../utils/self-port.js';
+import { buildBrowserMcpClientConnection } from './browser-mcp-client-config.js';
 import { SCHEDULED_TASKS_MCP_KEY, getScheduledTasksMcpToken } from './scheduled-tasks-mcp.js';
 import { makeScheduledRunStopHook } from './goal-stop-hook.js';
 import {
@@ -2357,8 +2358,7 @@ export class ChatService {
       // this session's embedded browser.
       mcpServers[BROWSER_MCP_SERVER_KEY] = {
         type: 'http',
-        url: `${getSidecarBaseUrl()}/mcp/browser/${session.id}`,
-        headers: { Authorization: `Bearer ${taskCapabilityToken}` },
+        ...buildBrowserMcpClientConnection(getSidecarBaseUrl(), session.id, taskCapabilityToken!),
       } as import('@anthropic-ai/claude-agent-sdk').McpServerConfig;
       // Submit/handoff handler approval round-trips can wait on a human far
       // past the 60s SDK default — per-session env, never process-global.

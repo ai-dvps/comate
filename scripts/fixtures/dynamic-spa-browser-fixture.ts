@@ -6,13 +6,13 @@ export function dynamicSpaBrowserFixtureHtml(): string {
       #media { position:absolute; width:1px; height:1px; opacity:0; }
       #body { height:120px; overflow:auto; border:1px solid #999; }
     </style></head><body>
-    <div id="entry" tabindex="0">写长文</div>
+    <div id="entry" tabindex="0">Open long form</div>
     <main id="editor" hidden>
-      <label>标题<textarea name="title"></textarea></label>
-      <div id="body" role="textbox" aria-label="正文" contenteditable="true"></div>
-      <label id="media-label" for="media">添加图片</label>
+      <label>Title<textarea name="title"></textarea></label>
+      <div id="body" role="textbox" aria-label="Primary content" contenteditable="true"></div>
+      <label id="media-label" for="media">Add media</label>
       <input id="media" type="file" accept="image/png,image/jpeg" multiple>
-      <button id="publish" type="button">发布长文</button>
+      <button id="publish" type="button">Release document</button>
     </main>
     <div id="churn" aria-hidden="true"></div>
     <script>

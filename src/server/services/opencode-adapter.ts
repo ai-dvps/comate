@@ -28,6 +28,7 @@ import type { BackendDriver } from './backend-driver.js';
 import { BROWSER_MCP_SERVER_KEY } from './browser-mcp.js';
 import { SESSION_TOKEN_ENV } from './session-capability-service.js';
 import { getSidecarBaseUrl } from '../utils/self-port.js';
+import { buildBrowserMcpClientConnection } from './browser-mcp-client-config.js';
 import {
   opencodeFetch,
   opencodeServerManager,
@@ -101,8 +102,7 @@ function buildSessionMcpConfig(comateSessionId: string, taskToken: string): Reco
   return {
     [BROWSER_MCP_SERVER_KEY]: {
       type: 'remote',
-      url: `${getSidecarBaseUrl()}/mcp/browser/${comateSessionId}`,
-      headers: { Authorization: `Bearer ${taskToken}` },
+      ...buildBrowserMcpClientConnection(getSidecarBaseUrl(), comateSessionId, taskToken),
       oauth: false,
     },
   };

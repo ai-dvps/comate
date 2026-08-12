@@ -35,6 +35,7 @@ import { chromium as playwrightChromium } from 'playwright';
 import { createGateHarness } from './lib/gate-harness.js';
 import { waitForChildProcessClose } from './lib/process-cleanup.js';
 import { dynamicSpaBrowserFixtureHtml } from './fixtures/dynamic-spa-browser-fixture.js';
+import { dynamicPublishingTaskFixtureHtml } from './fixtures/dynamic-publishing-task-fixture.js';
 
 const { unavailable, check, assert, results } = createGateHarness({
   gateName: 'shell CDP contract suite',
@@ -157,6 +158,13 @@ const fixture = createServer((req, res) => {
   if (url.pathname === '/dynamic-spa') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(dynamicSpaBrowserFixtureHtml());
+    return;
+  }
+  if (url.pathname === '/task-fixture') {
+    const kind = url.searchParams.get('kind') === 'admin' ? 'admin' : 'publishing';
+    const scenario = url.searchParams.get('scenario') === 'below-viewport' ? 'below-viewport' : 'happy';
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(dynamicPublishingTaskFixtureHtml({ kind, scenario }));
     return;
   }
   if (url.pathname === '/form') {
@@ -358,7 +366,7 @@ try {
       await page.navigate(`${fixtureOrigin}/dynamic-spa`);
       const initialRefs = new RefTable();
       const initial = await distillPageModel(page, initialRefs);
-      const entry = initial.actions.find((action) => action.name === '写长文');
+      const entry = initial.actions.find((action) => action.name === 'Open long form');
       assert(entry, `DOM-only entry missing: ${JSON.stringify(initial.actions)}`);
       await new Promise((resolve) => setTimeout(resolve, 120));
       const entryBackend = initialRefs.get(entry!.ref)?.backendNodeId;
@@ -369,9 +377,9 @@ try {
       const model = await distillPageModel(page, refs);
       const fields = model.forms.flatMap((form) => form.fields);
       const title = fields.find((field) => field.name === 'title');
-      const body = fields.find((field) => field.label === '正文');
+      const body = fields.find((field) => field.label === 'Primary content');
       const media = fields.find((field) => field.type === 'file');
-      const publish = model.actions.find((action) => action.name === '发布长文');
+      const publish = model.actions.find((action) => action.name === 'Release document');
       assert(title && body && media && publish, `authoring controls missing: ${JSON.stringify({ fields, actions: model.actions })}`);
       const titleBackend = refs.get(title!.ref)?.backendNodeId;
       const bodyBackend = refs.get(body!.ref)?.backendNodeId;
@@ -386,7 +394,7 @@ try {
       // exactly as the agent contract requires before the later activation.
       const postUploadRefs = new RefTable();
       const postUpload = await distillPageModel(page, postUploadRefs);
-      const freshPublish = postUpload.actions.find((action) => action.name === '发布长文');
+      const freshPublish = postUpload.actions.find((action) => action.name === 'Release document');
       const publishBackend = freshPublish ? postUploadRefs.get(freshPublish.ref)?.backendNodeId : undefined;
       assert(typeof publishBackend === 'number', 'fresh publish backend ref missing after upload');
       const publishIdentity = await page.callBackendNode?.<{ tag: string; text: string; connected: boolean }>(
@@ -408,6 +416,44 @@ try {
       assert(state.files === 1 && state.fileChanges + state.fileInputs >= 1, `file events missing: ${JSON.stringify(state)}`);
       assert(state.entryClicks === 1 && state.entryTrusted === true, 'entry click was not one trusted event');
       assert(state.publishClicks === 1 && state.publishTrusted === true, 'publish click was not one trusted event');
+      await page.navigate(`${fixtureOrigin}/interaction`);
+    } finally {
+      page.close();
+    }
+  });
+
+  await check('A2c neutral cross-domain fixture and typed off-viewport recovery use real CDP', async () => {
+    const page = await connectShellPage({ port: debugPort, targetId: targetA.targetId });
+    try {
+      await page.navigate(`${fixtureOrigin}/task-fixture?kind=admin&scenario=happy`);
+      let refs = new RefTable();
+      let model = await distillPageModel(page, refs);
+      const mode = model.actions.find((action) => action.name === 'Detailed record');
+      assert(mode, 'administrative entry was not discovered without publishing vocabulary');
+      const modeBackend = refs.get(mode!.ref)?.backendNodeId;
+      assert(typeof modeBackend === 'number', 'administrative entry backend identity missing');
+      assert((await page.clickBackendNode(modeBackend!)).outcome === 'dispatched_verified', 'administrative entry activation failed');
+      refs = new RefTable();
+      model = await distillPageModel(page, refs);
+      assert(model.forms.flatMap((form) => form.fields).some((field) => field.label === 'Compliance note'), 'administrative primary field missing');
+
+      await page.navigate(`${fixtureOrigin}/task-fixture?kind=publishing&scenario=below-viewport`);
+      refs = new RefTable();
+      model = await distillPageModel(page, refs);
+      const longForm = model.actions.find((action) => action.name === 'Long-form document');
+      const longFormBackend = longForm ? refs.get(longForm.ref)?.backendNodeId : undefined;
+      assert(typeof longFormBackend === 'number', 'long-form entry missing');
+      await page.clickBackendNode(longFormBackend!);
+      refs = new RefTable();
+      model = await distillPageModel(page, refs);
+      const media = model.forms.flatMap((form) => form.fields).find((field) => field.type === 'file');
+      const mediaBackend = media ? refs.get(media.ref)?.backendNodeId : undefined;
+      assert(typeof mediaBackend === 'number', 'below-viewport media input missing');
+      const before = await page.inspectBackendNodeState?.(mediaBackend!);
+      assert(before?.status === 'off_viewport', `expected off_viewport, got ${JSON.stringify(before)}`);
+      assert((await page.revealBackendNode?.(mediaBackend!))?.revealed === true, 'trusted reveal failed');
+      const probe = await page.evaluate<{ finalActivations: number }>('window.__fixtureProbe');
+      assert(probe.finalActivations === 0, 'reveal dispatched an activation');
       await page.navigate(`${fixtureOrigin}/interaction`);
     } finally {
       page.close();
@@ -758,16 +804,16 @@ try {
   await check('B8b handler-approved dynamic SPA entry and publish activation stay single-dispatch', async () => {
     const approvalsBefore = handlerApprovalCount;
     const opened = resultJson(await ctxA.handleOpen({ url: `${fixtureHttp}/dynamic-spa` }));
-    const entry = (opened['model'] as PageModelShape).actions.find((action) => action.name === '写长文');
+    const entry = (opened['model'] as PageModelShape).actions.find((action) => action.name === 'Open long form');
     assert(entry, 'dynamic SPA entry was not discovered through the tool model');
     await new Promise((resolve) => setTimeout(resolve, 120));
     const entryResult = resultJson(await ctxA.handleActivate({ ref: entry!.ref }));
     assert(entryResult['ok'] === true, `entry activation failed: ${JSON.stringify(entryResult)}`);
     const observed = resultJson(await ctxA.handleGetPageState({}));
     const elements = (observed['state'] as { elements: Array<{ ref: string; kind: string; name: string }> }).elements;
-    const title = elements.find((element) => element.kind === 'field' && element.name === '标题');
-    const body = elements.find((element) => element.kind === 'field' && element.name === '正文');
-    const publish = elements.find((element) => element.kind === 'action' && element.name === '发布长文');
+    const title = elements.find((element) => element.kind === 'field' && element.name === 'Title');
+    const body = elements.find((element) => element.kind === 'field' && element.name === 'Primary content');
+    const publish = elements.find((element) => element.kind === 'action' && element.name === 'Release document');
     assert(title && body && publish, `tool model missed authoring controls: ${JSON.stringify(elements)}`);
     resultJson(await ctxA.handleAct({ ref: title!.ref, action: 'fill', value: 'MCP 动态长文标题' }));
     resultJson(await ctxA.handleAct({ ref: body!.ref, action: 'fill', value: 'MCP 第一段\nMCP 第二段 😀' }));
