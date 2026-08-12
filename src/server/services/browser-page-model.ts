@@ -800,8 +800,14 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
 
   function elementState(el) {
     try {
-      var isVisible = el.getClientRects().length > 0;
+      var clientRects = el.getClientRects();
+      if (clientRects.length === 0) return { visible: false, inViewport: false };
       var rect = el.getBoundingClientRect();
+      var style = window.getComputedStyle(el);
+      var opacity = Number(style.opacity || 1);
+      var isVisible = rect.width > 0 && rect.height > 0 &&
+        style.display !== 'none' && style.visibility !== 'hidden' && style.visibility !== 'collapse' &&
+        Number.isFinite(opacity) && opacity > 0;
       return {
         visible: isVisible,
         inViewport: isVisible && rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth
@@ -840,8 +846,15 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
       }
       t = out.join(' ').trim(); if (t) return t.slice(0, 80);
     }
+    t = el.getAttribute('aria-placeholder'); if (t) return t.trim().slice(0, 80);
     t = el.getAttribute('placeholder'); if (t) return t.trim().slice(0, 80);
     t = el.getAttribute('name'); if (t) return t.slice(0, 80);
+    if (isEditableRoot(el)) {
+      var placeholder = el.hasAttribute('data-placeholder') ? el : el.querySelector('[data-placeholder]');
+      if (placeholder && placeholder.closest('[contenteditable],[role="textbox"]') === el) {
+        t = placeholder.getAttribute('data-placeholder'); if (t) return t.trim().slice(0, 80);
+      }
+    }
     return el.id ? el.id.slice(0, 80) : '';
   }
   function relationshipName(el) {
@@ -1032,6 +1045,7 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
       var ftype = fieldType(el, tag);
       if (ftype === 'hidden' || ftype === 'fieldset' || ftype === 'object') continue;
       if (ftype === 'file' && !usableFileInput(el)) continue;
+      if (ftype !== 'file' && !visible(el)) continue;
       totalFieldCount += 1;
       if (ftype === 'password') hasPasswordField = true;
       if (keepForm && fields.length < MAX_FIELDS) {
