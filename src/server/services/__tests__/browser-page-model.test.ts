@@ -179,6 +179,9 @@ function runExtractor(html: string): RawPageExtraction {
       }
       const index = Number(element.getAttribute('data-index') ?? 1);
       const left = index * 2;
+      if (element.hasAttribute('data-zero-height')) {
+        return { left, top: 10, right: left + 10, bottom: 10, width: 10, height: 0, x: left, y: 10, toJSON() {} };
+      }
       return { left, top: 10, right: left + 10, bottom: 30, width: 10, height: 20, x: left, y: 10, toJSON() {} };
     },
   });
@@ -471,6 +474,38 @@ describe('browser-page-model distillation (KTD-3)', () => {
     assert.deepStrictEqual({ multiple: upload?.multiple, accept: upload?.accept }, { multiple: true, accept: 'image/png,image/jpeg' });
     assert.ok(!extraction.contentText.includes(sentinel));
     assert.ok(!JSON.stringify(extraction.domCandidates).includes(sentinel));
+  });
+
+  it('names a ProseMirror editor from its descendant placeholder and excludes zero-height textarea mirrors', () => {
+    const extraction = runExtractor(`<!doctype html><body>
+      <form>
+        <textarea class="d-text" placeholder="输入标题" data-index="1"></textarea>
+        <textarea class="d-text d-textarea-shadow" data-zero-height data-index="2"></textarea>
+      </form>
+      <div class="rich-editor-content" data-index="3">
+        <div contenteditable="true" class="tiptap ProseMirror" data-index="4"><p class="is-empty is-editor-empty" data-placeholder="输入文字，内容将自动保存"><br></p></div>
+      </div>
+    </body>`);
+
+    assert.deepStrictEqual([...extraction.forms[0].fields].map((field) => field.label), ['输入标题']);
+    assert.deepStrictEqual(
+      [...extraction.standalone].map((field) => ({ label: field.label, tag: field.tag, contentLength: field.contentLength })),
+      [
+        { label: '输入文字，内容将自动保存', tag: 'div', contentLength: 0 },
+      ],
+    );
+  });
+
+  it('uses editable placeholder fallbacks and excludes style-hidden editors', () => {
+    const extraction = runExtractor(`<!doctype html><body>
+      <div contenteditable="true" aria-placeholder="ARIA placeholder" data-index="1"></div>
+      <div contenteditable="true" data-placeholder="Root placeholder" data-index="2"></div>
+      <div contenteditable="true" aria-label="Transparent" style="opacity:0" data-index="3"></div>
+      <div contenteditable="true" aria-label="Hidden" style="visibility:hidden" data-index="4"></div>
+      <div contenteditable="true" aria-label="Collapsed" style="visibility:collapse" data-index="5"></div>
+    </body>`);
+
+    assert.deepStrictEqual([...extraction.standalone].map((field) => field.label), ['ARIA placeholder', 'Root placeholder']);
   });
 
   it('rebuilds once when candidate mapping crosses a document generation', async () => {
