@@ -5,6 +5,10 @@ import { botService } from './bot-service.js';
 import { chatService } from './chat-service.js';
 import { createFeishuSessionForUser } from './feishu-session-helpers.js';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import { buildTerminalDecisionCard, type FeishuCardV2 } from './feishu-card-builder.js';
+import { humanizeBotToolName, summarizeBotToolOperation } from '../utils/bot-tool-presentation.js';
+import { computeAlwaysAllowRules, exactSessionUpdatedPermissions } from './bot-escalation-guard.js';
+import { validateQuestionAnswers } from '../utils/question-answer-validation.js';
 
 export interface CardActionPayload {
   action: string;
@@ -12,7 +16,7 @@ export interface CardActionPayload {
   botId?: string;
   sessionId?: string;
   requestId?: string;
-  behavior?: 'allow' | 'deny';
+  behavior?: 'allow' | 'always_allow' | 'deny';
   questionIndex?: number;
   answer?: string;
   multiSelect?: boolean;
@@ -20,11 +24,17 @@ export interface CardActionPayload {
 
 export interface CardActionCallbacks {
   setActiveWorkspace?: (workspaceId: string, botId: string, actorUserId: string) => Promise<void>;
+  beforeDecisionResolve?: (sessionId: string, decision: 'allow' | 'deny' | 'question') => void;
 }
 
 interface PendingQuestionState {
   questions: QuestionPayload[];
   selected: Map<number, Set<string>>;
+}
+
+export interface CardActionResult {
+  toast: { type: 'success' | 'error'; content: string };
+  terminalCard?: FeishuCardV2;
 }
 
 export class FeishuCardActionHandler {
@@ -39,13 +49,19 @@ export class FeishuCardActionHandler {
     });
   }
 
-  async handle(openId: string, payload: CardActionPayload, callbacks?: CardActionCallbacks): Promise<unknown> {
-    const now = Date.now();
-    const last = this.rateLimit.get(openId) ?? 0;
-    if (now - last < this.rateLimitMs) {
-      return this.toast('操作过于频繁，请稍后再试。', 'error');
+  unregisterQuestion(requestId: string): void {
+    this.pendingQuestions.delete(requestId);
+  }
+
+  async handle(openId: string, payload: CardActionPayload, callbacks?: CardActionCallbacks): Promise<CardActionResult> {
+    if (payload.action !== 'question' && payload.action !== 'question_submit') {
+      const now = Date.now();
+      const last = this.rateLimit.get(openId) ?? 0;
+      if (now - last < this.rateLimitMs) {
+        return this.toast('操作过于频繁，请稍后再试。', 'error');
+      }
+      this.rateLimit.set(openId, now);
     }
-    this.rateLimit.set(openId, now);
 
     const workspace = await workspaceStore.get(payload.workspaceId);
     if (!workspace) {
@@ -60,11 +76,11 @@ export class FeishuCardActionHandler {
       case 'create_session':
         return this.handleCreateSession(openId, workspace);
       case 'approval':
-        return this.handleApproval(openId, workspace, payload);
+        return this.handleApproval(openId, workspace, payload, callbacks);
       case 'question':
         return this.handleQuestionOption(openId, workspace, payload);
       case 'question_submit':
-        return this.handleQuestionSubmit(openId, workspace, payload);
+        return this.handleQuestionSubmit(openId, workspace, payload, callbacks);
       default:
         return this.toast('未知操作。', 'error');
     }
@@ -75,7 +91,7 @@ export class FeishuCardActionHandler {
     workspace: Workspace,
     payload: CardActionPayload,
     callbacks?: CardActionCallbacks,
-  ): Promise<unknown> {
+  ): Promise<CardActionResult> {
     if (!payload.botId) {
       return this.toast('缺少机器人信息。', 'error');
     }
@@ -98,7 +114,7 @@ export class FeishuCardActionHandler {
     openId: string,
     workspace: Workspace,
     payload: CardActionPayload,
-  ): unknown {
+  ): CardActionResult {
     const sessionId = payload.sessionId;
     if (!sessionId) {
       return this.toast('缺少会话信息。', 'error');
@@ -118,7 +134,7 @@ export class FeishuCardActionHandler {
   private async handleCreateSession(
     openId: string,
     workspace: Workspace,
-  ): Promise<unknown> {
+  ): Promise<CardActionResult> {
     const session = await createFeishuSessionForUser(workspace, openId);
     return this.toast(`会话 “${session.name}” 已创建并选中。`);
   }
@@ -149,7 +165,8 @@ export class FeishuCardActionHandler {
     openId: string,
     workspace: Workspace,
     payload: CardActionPayload,
-  ): unknown {
+    callbacks?: CardActionCallbacks,
+  ): CardActionResult {
     const sessionId = payload.sessionId;
     const requestId = payload.requestId;
     if (!sessionId || !requestId) {
@@ -164,21 +181,59 @@ export class FeishuCardActionHandler {
       return this.toast('会话运行时已关闭，请重新发送消息。', 'error');
     }
 
+    const pending = runtime.getPendingCardState(requestId);
+    if (!pending || pending.type !== 'approval') {
+      return this.toast('请求已过期或已处理。', 'error');
+    }
+    const command = typeof pending.input.command === 'string' ? pending.input.command : undefined;
+    const alwaysAllow = computeAlwaysAllowRules({
+      toolName: pending.toolName ?? '',
+      command,
+      suggestions: pending.suggestions,
+    });
+    if (payload.behavior === 'always_allow' && alwaysAllow.rules.length === 0) {
+      return this.toast('该操作不支持始终允许。', 'error');
+    }
+
     let result: PermissionResult;
-    if (payload.behavior === 'allow') {
-      result = { behavior: 'allow', updatedInput: {} };
+    if (payload.behavior === 'allow' || payload.behavior === 'always_allow') {
+      result = {
+        behavior: 'allow',
+        updatedInput: pending.input,
+        updatedPermissions: payload.behavior === 'always_allow'
+          ? exactSessionUpdatedPermissions(alwaysAllow.rules)
+          : undefined,
+      };
     } else {
       result = { behavior: 'deny', message: 'User denied this tool call.' };
     }
-    runtime.resolveApproval(requestId, result);
-    return this.toast(payload.behavior === 'allow' ? '已允许。' : '已拒绝。');
+    callbacks?.beforeDecisionResolve?.(
+      sessionId,
+      payload.behavior === 'deny' ? 'deny' : 'allow',
+    );
+    if (!runtime.resolveApproval(requestId, result)) {
+      return this.toast('请求已过期或已处理。', 'error');
+    }
+    const selection = payload.behavior === 'always_allow'
+      ? '对此规则始终允许'
+      : payload.behavior === 'allow' ? '仅本次允许' : '拒绝';
+    return {
+      ...this.toast(
+        payload.behavior === 'always_allow' ? '已始终允许。' : payload.behavior === 'allow' ? '已允许。' : '已拒绝。',
+      ),
+      terminalCard: buildTerminalDecisionCard({
+        title: payload.behavior === 'deny' ? '操作已拒绝' : '操作已允许',
+        description: `${pending.title ?? humanizeBotToolName(pending.toolName ?? '')}\n操作：${summarizeBotToolOperation(pending.input, pending.toolName ?? '相关操作', 160)}`,
+        selection,
+      }),
+    };
   }
 
   private handleQuestionOption(
     openId: string,
     workspace: Workspace,
     payload: CardActionPayload,
-  ): unknown {
+  ): CardActionResult {
     const sessionId = payload.sessionId;
     const requestId = payload.requestId;
     if (!sessionId || !requestId) {
@@ -194,9 +249,13 @@ export class FeishuCardActionHandler {
     }
 
     const idx = payload.questionIndex ?? 0;
+    const question = state.questions[idx];
     const answer = payload.answer ?? '';
-    if (payload.multiSelect) {
-      const set = state.selected.get(idx) ?? new Set();
+    if (!question?.options?.some((option) => option.label === answer)) {
+      return this.toast('该选项无效或已过期。', 'error');
+    }
+    const set = state.selected.get(idx) ?? new Set();
+    if (question.multiSelect) {
       if (set.has(answer)) {
         set.delete(answer);
       } else {
@@ -206,17 +265,18 @@ export class FeishuCardActionHandler {
       return this.toast(`已更新选择：${Array.from(set).join(', ')}`);
     }
 
-    // Single-select: resolve immediately
-    const answers = this.buildAnswers(state.questions, [[idx, answer]]);
-    this.resolveQuestion(sessionId, requestId, state.questions, answers);
-    return this.toast('已提交。');
+    set.clear();
+    set.add(answer);
+    state.selected.set(idx, set);
+    return this.toast(`已选择：${answer}`);
   }
 
   private handleQuestionSubmit(
     openId: string,
     workspace: Workspace,
     payload: CardActionPayload,
-  ): unknown {
+    callbacks?: CardActionCallbacks,
+  ): CardActionResult {
     const sessionId = payload.sessionId;
     const requestId = payload.requestId;
     if (!sessionId || !requestId) {
@@ -231,6 +291,12 @@ export class FeishuCardActionHandler {
       return this.toast('问题已过期或不存在。', 'error');
     }
 
+    for (const [index, question] of state.questions.entries()) {
+      if (question.options?.length && !state.selected.get(index)?.size) {
+        return this.toast(`请先回答：${question.question}`, 'error');
+      }
+    }
+
     const selections: Array<[number, string]> = [];
     for (const [idx, set] of state.selected) {
       for (const answer of set) {
@@ -238,40 +304,56 @@ export class FeishuCardActionHandler {
       }
     }
     const answers = this.buildAnswers(state.questions, selections);
-    this.resolveQuestion(sessionId, requestId, state.questions, answers);
-    return this.toast('已提交。');
+    const validation = validateQuestionAnswers(state.questions, answers);
+    if (!validation.valid) {
+      return this.toast('请为每个问题选择有效答案。', 'error');
+    }
+    callbacks?.beforeDecisionResolve?.(sessionId, 'question');
+    if (!this.resolveQuestion(sessionId, requestId, state.questions, validation.answers)) {
+      return this.toast('问题已过期或已处理。', 'error');
+    }
+    return {
+      ...this.toast('已提交。'),
+      terminalCard: buildTerminalDecisionCard({
+        title: '回答已提交',
+        description: state.questions.map((question) => question.question).join('\n'),
+        selection: Object.values(validation.answers).join('；'),
+      }),
+    };
   }
 
   private resolveQuestion(
     sessionId: string,
     requestId: string,
     questions: QuestionPayload[],
-    answers: string[],
-  ): void {
-    this.pendingQuestions.delete(requestId);
+    answers: Record<string, string>,
+  ): boolean {
     const runtime = chatService.getRuntimeIfExists(sessionId);
-    if (!runtime) return;
+    if (!runtime || runtime.getPendingCardState(requestId)?.type !== 'question') return false;
     const result: PermissionResult = {
       behavior: 'allow',
       updatedInput: { questions, answers },
     };
-    runtime.resolveApproval(requestId, result);
+    const resolved = runtime.resolveApproval(requestId, result);
+    if (resolved) this.pendingQuestions.delete(requestId);
+    return resolved;
   }
 
   private buildAnswers(
     questions: QuestionPayload[],
     selections: Array<[number, string]>,
-  ): string[] {
-    const answers = new Array(questions.length).fill('');
+  ): Record<string, string> {
+    const answers = Object.fromEntries(questions.map((question) => [question.question, '']));
     for (const [idx, answer] of selections) {
-      if (idx < 0 || idx >= answers.length) continue;
-      const existing = answers[idx];
-      answers[idx] = existing ? `${existing}, ${answer}` : answer;
+      const question = questions[idx];
+      if (!question) continue;
+      const existing = answers[question.question];
+      answers[question.question] = existing ? `${existing}, ${answer}` : answer;
     }
     return answers;
   }
 
-  private toast(content: string, type: 'success' | 'error' = 'success'): unknown {
+  private toast(content: string, type: 'success' | 'error' = 'success'): CardActionResult {
     return {
       toast: {
         type,

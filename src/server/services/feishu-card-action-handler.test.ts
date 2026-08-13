@@ -133,15 +133,31 @@ describe('FeishuCardActionHandler', { concurrency: false }, () => {
     assert.ok((result as { toast: { content: string } }).toast.content.includes(nonOwnerUserId));
   });
 
-  it('approval resolves allow/deny on the runtime for the owner', async () => {
+  it('approval supports persistent allow and rejects replayed requests', async () => {
     const { sessionId } = await createFeishuSessionForUser(nonOwnerUserId);
 
     let resolvedRequestId: string | null = null;
     let resolvedResult: unknown = null;
+    let pending = true;
     chatService.getRuntimeIfExists = () => ({
+      getPendingCardState: () => pending ? ({
+        type: 'approval',
+        toolName: 'Bash',
+        title: 'Run command?',
+        description: 'Confirm',
+        input: { command: 'npm test' },
+        suggestions: [{
+          type: 'addRules',
+          rules: [{ toolName: 'Bash', ruleContent: 'npm test' }],
+          behavior: 'allow',
+          destination: 'session',
+        }],
+      }) : undefined,
       resolveApproval: (requestId: string, result: unknown) => {
         resolvedRequestId = requestId;
         resolvedResult = result;
+        pending = false;
+        return true;
       },
     }) as ReturnType<typeof chatService.getRuntimeIfExists>;
 
@@ -150,22 +166,34 @@ describe('FeishuCardActionHandler', { concurrency: false }, () => {
       workspaceId: 'ws-1',
       sessionId,
       requestId: 'req-1',
-      behavior: 'allow',
+      behavior: 'always_allow',
     };
     const result = await handler.handle(nonOwnerUserId, payload);
 
     assert.strictEqual(resolvedRequestId, 'req-1');
     assert.strictEqual((resolvedResult as { behavior: string }).behavior, 'allow');
-    assert.strictEqual((result as { toast: { content: string } }).toast.content, '已允许。');
+    assert.deepStrictEqual((resolvedResult as { updatedPermissions?: unknown[] }).updatedPermissions, [{
+      type: 'addRules',
+      rules: [{ toolName: 'Bash', ruleContent: 'npm test' }],
+      behavior: 'allow',
+      destination: 'session',
+    }]);
+    assert.strictEqual((result as { toast: { content: string } }).toast.content, '已始终允许。');
+    assert.ok((result as { terminalCard?: unknown }).terminalCard);
+
+    const replay = await handler.handle(nonOwnerUserId, payload);
+    assert.strictEqual((replay as { toast: { type: string } }).toast.type, 'error');
   });
 
-  it('question single-select resolves immediately', async () => {
+  it('question single-select waits for submit and terminalizes with the answer', async () => {
     const { sessionId } = await createFeishuSessionForUser(nonOwnerUserId);
 
     let resolvedInput: unknown = null;
     chatService.getRuntimeIfExists = () => ({
+      getPendingCardState: () => ({ type: 'question' }),
       resolveApproval: (_requestId: string, result: unknown) => {
         resolvedInput = result;
+        return true;
       },
     }) as ReturnType<typeof chatService.getRuntimeIfExists>;
 
@@ -184,7 +212,76 @@ describe('FeishuCardActionHandler', { concurrency: false }, () => {
     };
     const result = await handler.handle(nonOwnerUserId, payload);
 
-    assert.strictEqual((resolvedInput as { updatedInput: { answers: string[] } }).updatedInput.answers[0], 'A');
-    assert.strictEqual((result as { toast: { content: string } }).toast.content, '已提交。');
+    assert.strictEqual(resolvedInput, null);
+    assert.match((result as { toast: { content: string } }).toast.content, /已选择/);
+
+    const submitted = await handler.handle(nonOwnerUserId, {
+      action: 'question_submit',
+      workspaceId: 'ws-1',
+      sessionId,
+      requestId: 'req-1',
+    });
+    assert.strictEqual(
+      (resolvedInput as { updatedInput: { answers: Record<string, string> } }).updatedInput.answers['Pick one'],
+      'A',
+    );
+    assert.ok((submitted as { terminalCard?: unknown }).terminalCard);
+  });
+
+  it('rejects forged question options and ignores client-carried selection mode', async () => {
+    const { sessionId } = await createFeishuSessionForUser(nonOwnerUserId);
+    chatService.getRuntimeIfExists = () => ({
+      getPendingCardState: () => ({ type: 'question' }),
+      resolveApproval: () => true,
+    }) as ReturnType<typeof chatService.getRuntimeIfExists>;
+    handler.registerQuestion('req-forged', [
+      { question: 'Pick one', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false },
+    ]);
+
+    const forged = await handler.handle(nonOwnerUserId, {
+      action: 'question',
+      workspaceId: 'ws-1',
+      sessionId,
+      requestId: 'req-forged',
+      questionIndex: 0,
+      answer: 'INJECTED',
+      multiSelect: true,
+    });
+    assert.strictEqual((forged as { toast: { type: string } }).toast.type, 'error');
+
+    await handler.handle(nonOwnerUserId, {
+      action: 'question', workspaceId: 'ws-1', sessionId, requestId: 'req-forged',
+      questionIndex: 0, answer: 'A', multiSelect: true,
+    });
+    await handler.handle(nonOwnerUserId, {
+      action: 'question', workspaceId: 'ws-1', sessionId, requestId: 'req-forged',
+      questionIndex: 0, answer: 'B', multiSelect: true,
+    });
+    const submitted = await handler.handle(nonOwnerUserId, {
+      action: 'question_submit', workspaceId: 'ws-1', sessionId, requestId: 'req-forged',
+    });
+    const cardText = JSON.stringify((submitted as { terminalCard: unknown }).terminalCard);
+    assert.match(cardText, /B/);
+    assert.doesNotMatch(cardText, /A；B/);
+  });
+
+  it('keeps the question pending when submit has no selection', async () => {
+    const { sessionId } = await createFeishuSessionForUser(nonOwnerUserId);
+    let resolveCalls = 0;
+    chatService.getRuntimeIfExists = () => ({
+      getPendingCardState: () => ({ type: 'question' }),
+      resolveApproval: () => { resolveCalls++; return true; },
+    }) as ReturnType<typeof chatService.getRuntimeIfExists>;
+    handler.registerQuestion('req-empty', [
+      { question: 'Pick one', options: [{ label: 'A' }], multiSelect: false },
+    ]);
+
+    const result = await handler.handle(nonOwnerUserId, {
+      action: 'question_submit', workspaceId: 'ws-1', sessionId, requestId: 'req-empty',
+    });
+
+    assert.strictEqual(resolveCalls, 0);
+    assert.strictEqual(result.toast.type, 'error');
+    assert.strictEqual(result.terminalCard, undefined);
   });
 });

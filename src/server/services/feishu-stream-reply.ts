@@ -13,11 +13,20 @@ import { FeishuCardStream, hasVisibleChar } from './feishu-card-stream.js';
 import { getRandomAcknowledgment } from '../utils/bot-placeholder.js';
 import { sendPlainTextMessage } from './feishu-message-utils.js';
 import { diagLog } from '../utils/diag-logger.js';
+import { botToolStatusText, summarizeBotToolOperation } from '../utils/bot-tool-presentation.js';
+import { computeAlwaysAllowRules } from './bot-escalation-guard.js';
 
 export interface FeishuStreamReplyHandle {
   handler: ((id: number, event: SseEvent) => void) & { cleanup: () => void };
   finalize: () => Promise<void>;
   interrupt: (message: string) => boolean;
+  setStatus: (message: string) => void;
+}
+
+interface FeishuStreamReplyOptions {
+  onWaiting?: () => void;
+  initialHint?: string;
+  onCardDeliveryFailure?: (requestId: string) => void;
 }
 
 export class FeishuStreamReply {
@@ -28,6 +37,7 @@ export class FeishuStreamReply {
   private sessionId: string;
   private onWaiting?: () => void;
   private initialHint?: string;
+  private onCardDeliveryFailure?: FeishuStreamReplyOptions['onCardDeliveryFailure'];
   private callbacks?: { onFinalized?: () => void; onCleanup?: () => void };
 
   private controller: FeishuCardStream | null = null;
@@ -47,7 +57,7 @@ export class FeishuStreamReply {
     openId: string,
     workspaceId: string,
     sessionId: string,
-    options?: { onWaiting?: () => void; initialHint?: string },
+    options?: FeishuStreamReplyOptions,
   ) {
     this.thread = thread;
     this.larkClient = larkClient;
@@ -56,6 +66,7 @@ export class FeishuStreamReply {
     this.sessionId = sessionId;
     this.onWaiting = options?.onWaiting;
     this.initialHint = options?.initialHint;
+    this.onCardDeliveryFailure = options?.onCardDeliveryFailure;
   }
 
   async start(options?: {
@@ -97,6 +108,7 @@ export class FeishuStreamReply {
       handler,
       finalize: () => this.finalize(),
       interrupt: (message: string) => this.interrupt(message),
+      setStatus: (message: string) => this.setPlaceholder(message),
     };
   }
 
@@ -128,7 +140,7 @@ export class FeishuStreamReply {
         break;
       case 'tool_use_start':
         if (this.collecting) {
-          this.setPlaceholder(`\n\n🔧 ${event.toolName}...`);
+          this.setPlaceholder(`\n\n${botToolStatusText(event.toolName)}`);
         }
         break;
       case 'tool_result':
@@ -136,7 +148,7 @@ export class FeishuStreamReply {
         break;
       case 'subagent_start':
         if (this.collecting) {
-          this.setPlaceholder(`\n\n🤖 ${event.description ?? '运行子代理'}...`);
+          this.setPlaceholder('\n\n正在处理一个并行任务…');
         }
         break;
       case 'subagent_done':
@@ -173,14 +185,17 @@ export class FeishuStreamReply {
       case 'pending_approval':
         diagLog(`[FeishuStreamReply ${this.sessionId}] handler event=pending_approval requestId=${event.requestId}`);
         this.signalWaiting();
+        this.setPlaceholder('\n\n⏸️ 等待你确认一项操作…');
         this.postApprovalCard(event);
         break;
       case 'pending_question':
         diagLog(`[FeishuStreamReply ${this.sessionId}] handler event=pending_question requestId=${event.requestId}`);
         this.signalWaiting();
+        this.setPlaceholder('\n\n⏸️ 等待你回答一个问题…');
         this.postQuestionCard(event);
         break;
       case 'approval_timeout':
+        feishuCardActionHandler.unregisterQuestion(event.requestId);
         this.sendTextMessage('⏰ 请求已超时，已按拒绝处理。');
         break;
       default:
@@ -189,7 +204,7 @@ export class FeishuStreamReply {
   }
 
   private setPlaceholder(text: string): void {
-    if (this.visiblePlaceholder) return;
+    if (this.visiblePlaceholder === text) return;
     this.visiblePlaceholder = text;
     this.updateController();
   }
@@ -288,6 +303,14 @@ export class FeishuStreamReply {
   private postApprovalCard(event: Extract<SseEvent, { type: 'pending_approval' }>): void {
     if (this.seenPendingApprovals.has(event.requestId)) return;
     this.seenPendingApprovals.add(event.requestId);
+    const command = event.input && typeof event.input === 'object'
+      ? (event.input as Record<string, unknown>).command
+      : undefined;
+    const alwaysAllow = computeAlwaysAllowRules({
+      toolName: event.toolName,
+      command: typeof command === 'string' ? command : undefined,
+      suggestions: event.suggestions,
+    });
     const card = buildApprovalCard({
       requestId: event.requestId,
       workspaceId: this.workspaceId,
@@ -295,10 +318,17 @@ export class FeishuStreamReply {
       toolName: event.toolName,
       title: event.title,
       description: event.description,
-      inputSummary: event.inputSummary,
+      operationSummary: summarizeBotToolOperation(
+        event.input,
+        event.inputSummary || event.toolName,
+        160,
+      ),
+      allowAlways: alwaysAllow.rules.length > 0,
     });
     this.sendCard(card).catch((err) => {
       console.error('[FeishuStreamReply] Failed to post approval card:', err);
+      this.setPlaceholder('\n\n⚠️ 确认卡片发送失败，本次操作已取消。');
+      this.onCardDeliveryFailure?.(event.requestId);
     });
   }
 
@@ -314,6 +344,9 @@ export class FeishuStreamReply {
     });
     this.sendCard(card).catch((err) => {
       console.error('[FeishuStreamReply] Failed to post question card:', err);
+      feishuCardActionHandler.unregisterQuestion(event.requestId);
+      this.setPlaceholder('\n\n⚠️ 问题卡片发送失败，本次请求已取消。');
+      this.onCardDeliveryFailure?.(event.requestId);
     });
   }
 

@@ -20,7 +20,7 @@ import type {
   EscalationNoticeCardOptions,
   EscalationResultCardOptions,
 } from '../types/wecom-template-card.js';
-import { getWecomToolCategory } from '../utils/wecom-tool-presentation.js';
+import { getBotToolCategory } from '../utils/bot-tool-presentation.js';
 
 const KEY_PREFIX = 'comate:1:';
 const MAX_KEY_BYTES = 1024;
@@ -231,7 +231,7 @@ export function buildToolApprovalCard(options: ToolApprovalCardOptions): Templat
 }
 
 function humanizeToolName(toolName: string): string {
-  switch (getWecomToolCategory(toolName)) {
+  switch (getBotToolCategory(toolName)) {
     case 'project_read': return '读取项目内容';
     case 'command': return '执行命令';
     case 'file_write': return '修改文件';

@@ -1,11 +1,11 @@
 import '../test-utils/test-env.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { summarizeWecomToolOperation } from './wecom-tool-presentation.js';
+import { summarizeBotToolOperation } from './bot-tool-presentation.js';
 
-describe('summarizeWecomToolOperation', () => {
+describe('summarizeBotToolOperation', () => {
   it('redacts authorization headers, bearer tokens, and credential flags', () => {
-    const summary = summarizeWecomToolOperation(
+    const summary = summarizeBotToolOperation(
       {
         command:
           `PASSWORD=hunter2 curl -H 'Authorization: Bearer header-secret' ` +
@@ -25,7 +25,7 @@ describe('summarizeWecomToolOperation', () => {
   });
 
   it('redacts URL userinfo and sensitive query parameters while retaining useful URL context', () => {
-    const summary = summarizeWecomToolOperation(
+    const summary = summarizeBotToolOperation(
       {
         url: 'https://alice:password@example.com/v1/items?token=url-secret&limit=20&api_key=key-secret',
       },
@@ -40,7 +40,21 @@ describe('summarizeWecomToolOperation', () => {
   });
 
   it('redacts sensitive fallback text before applying the display bound', () => {
-    const summary = summarizeWecomToolOperation(undefined, 'Bearer fallback-secret for request', 100);
+    const summary = summarizeBotToolOperation(undefined, 'Bearer fallback-secret for request', 100);
     assert.equal(summary, 'Bearer [REDACTED] for request');
+  });
+
+  it('redacts common credential headers and JSON secret fields', () => {
+    const summary = summarizeBotToolOperation(
+      {
+        command: `curl -H "X-API-Key: key-123" -H 'Cookie: session=abc' --data '{"password":"p4ss","token":"tok"}' https://example.com`,
+      },
+      'fallback',
+      500,
+    );
+
+    assert.doesNotMatch(summary, /key-123|session=abc|p4ss|"tok"/);
+    assert.match(summary, /X-API-Key: \[REDACTED\]/);
+    assert.match(summary, /"password":\s*"\[REDACTED\]"/);
   });
 });

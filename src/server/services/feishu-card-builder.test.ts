@@ -7,6 +7,7 @@ import {
   buildDisabledSessionListCard,
   buildApprovalCard,
   buildQuestionCard,
+  buildTerminalDecisionCard,
   buildStreamingAnswerCard,
   markdownText,
   plainText,
@@ -240,7 +241,7 @@ describe('buildApprovalCard', () => {
       toolName: 'read_file',
       title: 'Confirm?',
       description: 'desc',
-      inputSummary: 'args',
+      operationSummary: 'args',
     });
     assert.strictEqual(card.schema, '2.0');
 
@@ -271,6 +272,29 @@ describe('buildApprovalCard', () => {
         },
       },
     ]);
+  });
+
+  it('uses a user-facing operation summary and only offers persistent approval when supported', () => {
+    const card = buildApprovalCard({
+      requestId: 'req-1',
+      workspaceId: 'ws-1',
+      sessionId: 's1',
+      toolName: 'Bash',
+      operationSummary: 'npm test',
+      allowAlways: true,
+    });
+
+    const texts = findAllByTag(card.body.elements, 'div')
+      .map((item) => (item.text as { content: string }).content);
+    assert.ok(texts.some((text) => text.includes('执行命令')));
+    assert.ok(texts.some((text) => text.includes('npm test')));
+    assert.ok(!texts.some((text) => text.includes('工具：')));
+
+    const buttons = findAllByTag(card.body.elements, 'button');
+    assert.deepStrictEqual(
+      buttons.map((button) => (button.text as { content: string }).content),
+      ['仅本次允许', '对此规则始终允许', '拒绝'],
+    );
   });
 });
 
@@ -362,12 +386,45 @@ describe('buildQuestionCard', () => {
     });
 
     const buttons = findAllByTag(card.body.elements, 'button');
-    assert.strictEqual(buttons.length, 1); // submit only
+    assert.strictEqual(buttons.length, 0);
 
     const texts = findAllByTag(card.body.elements, 'div');
     assert.ok(
       texts.some((t) => (t.text as { content: string }).content === '请在聊天中直接回复该问题。'),
     );
+  });
+
+  it('shows option descriptions', () => {
+    const card = buildQuestionCard({
+      requestId: 'req-1',
+      workspaceId: 'ws-1',
+      sessionId: 's1',
+      questions: [{
+        question: 'Environment?',
+        options: [{ label: 'Staging', description: 'Use the test environment' }],
+        multiSelect: false,
+      }],
+    });
+
+    const button = findAllByTag(card.body.elements, 'button')[0];
+    assert.match((button.text as { content: string }).content, /Use the test environment/);
+  });
+});
+
+describe('buildTerminalDecisionCard', () => {
+  it('preserves decision context without interactive buttons', () => {
+    const card = buildTerminalDecisionCard({
+      title: '操作已允许',
+      description: '执行命令\n操作：npm test',
+      selection: '仅本次允许',
+    });
+
+    assert.strictEqual(findAllByTag(card.body.elements, 'button').length, 0);
+    const texts = findAllByTag(card.body.elements, 'div')
+      .map((item) => (item.text as { content: string }).content)
+      .join('\n');
+    assert.match(texts, /npm test/);
+    assert.match(texts, /仅本次允许/);
   });
 });
 
