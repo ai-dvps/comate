@@ -11,6 +11,7 @@ export interface FileTab {
   name: string
   content: string
   isBinary: boolean
+  imageDataUrl?: string
 }
 
 export interface DiffTab {
@@ -37,6 +38,8 @@ interface FileContentResponse {
   content?: string | null
   isBinary?: boolean
   size?: number
+  encoding?: string
+  mimeType?: string
 }
 
 interface GitCompareResponse {
@@ -144,13 +147,25 @@ export const useRightPanelStore = create<RightPanelState>((set, get) => ({
         throw new Error(body.error || `HTTP ${res.status}`)
       }
       const data = (await res.json()) as FileContentResponse
+      const imageDataUrl =
+        data.encoding === 'base64' &&
+        typeof data.mimeType === 'string' &&
+        data.mimeType.startsWith('image/') &&
+        typeof data.content === 'string'
+          ? `data:${data.mimeType};base64,${data.content}`
+          : undefined
       const tab: FileTab = {
         type: 'file',
         id,
         path,
         name,
-        content: typeof data.content === 'string' ? data.content : '',
+        content: imageDataUrl
+          ? ''
+          : typeof data.content === 'string'
+            ? data.content
+            : '',
         isBinary: data.isBinary === true,
+        imageDataUrl,
       }
       set((state) => ({
         openTabs: [...state.openTabs, tab],

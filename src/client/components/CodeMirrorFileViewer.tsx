@@ -60,7 +60,7 @@ export default function CodeMirrorFileViewer({
           </span>
         </div>
 
-        {!tab.isBinary && (
+        {!tab.isBinary && !tab.imageDataUrl && (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -77,7 +77,15 @@ export default function CodeMirrorFileViewer({
       </div>
 
       <div className={cn('flex-1 overflow-auto', isMarkdown(tab.name) && 'p-0')} data-testid="file-viewer-content">
-        {tab.isBinary ? (
+        {tab.imageDataUrl ? (
+          <div className="flex items-center justify-center h-full p-4 bg-surface/50">
+            <img
+              src={tab.imageDataUrl}
+              alt={tab.name}
+              className="max-w-full max-h-full object-contain"
+            />
+          </div>
+        ) : tab.isBinary ? (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-text-secondary">
             <FileWarning className="w-8 h-8" />
             <p className="text-sm">{t('gitChanges.binaryPlaceholder')}</p>

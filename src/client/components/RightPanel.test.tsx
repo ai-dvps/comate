@@ -348,6 +348,31 @@ describe('RightPanelContent', () => {
     expect(activeTab).toHaveClass('bg-surface-hover')
   })
 
+  it('renders binary image tabs as an image preview', () => {
+    const imageTab: FileTab = {
+      type: 'file',
+      id: 'file:assets/logo.png',
+      path: 'assets/logo.png',
+      name: 'logo.png',
+      content: '',
+      isBinary: true,
+      imageDataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+    }
+
+    useRightPanelStore.setState({
+      openTabs: [imageTab],
+      activeTabId: imageTab.id,
+    })
+
+    renderWithI18n(<RightPanelContent workspacePath="/workspace" contentWidth={400} />)
+
+    expect(screen.getByRole('img', { name: 'logo.png' })).toHaveAttribute(
+      'src',
+      imageTab.imageDataUrl,
+    )
+    expect(screen.queryByText('Binary file cannot be displayed')).not.toBeInTheDocument()
+  })
+
   it('closes tabs and shows empty state when the last tab is closed', async () => {
     const user = userEvent.setup()
     const fileTab: FileTab = {

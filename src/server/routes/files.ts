@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { readdir, readFile, stat } from 'fs/promises';
+import { realpath, readdir, readFile, stat } from 'fs/promises';
 import path from 'path';
 import { store } from '../storage/sqlite-store.js';
 import { searchFiles } from '../services/file-search.js';
@@ -13,12 +13,34 @@ interface FileNode {
   children?: FileNode[];
 }
 
-async function validatePath(workspacePath: string, requestedPath: string): Promise<string | null> {
-  const resolvedBase = path.resolve(workspacePath);
-  const resolvedRequested = path.resolve(resolvedBase, requestedPath);
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  '.avif': 'image/avif',
+  '.bmp': 'image/bmp',
+  '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.webp': 'image/webp',
+};
 
-  // Ensure the resolved path is within the workspace folder
-  if (!resolvedRequested.startsWith(resolvedBase)) {
+const MAX_IMAGE_PREVIEW_BYTES = 20 * 1024 * 1024;
+
+function isWithinWorkspace(workspacePath: string, requestedPath: string): boolean {
+  return requestedPath === workspacePath || requestedPath.startsWith(`${workspacePath}${path.sep}`);
+}
+
+async function validatePath(workspacePath: string, requestedPath: string): Promise<string | null> {
+  const resolvedBase = await realpath(workspacePath);
+  const requestedCandidate = path.resolve(resolvedBase, requestedPath);
+
+  if (!isWithinWorkspace(resolvedBase, requestedCandidate)) {
+    return null;
+  }
+
+  const resolvedRequested = await realpath(requestedCandidate);
+  if (!isWithinWorkspace(resolvedBase, resolvedRequested)) {
     return null;
   }
 
@@ -127,6 +149,32 @@ router.get('/content', async (req, res) => {
     const fileStat = await stat(targetPath);
     if (!fileStat.isFile()) {
       res.status(400).json({ error: 'Not a file' });
+      return;
+    }
+
+    const mimeType = IMAGE_MIME_TYPES[path.extname(targetPath).toLowerCase()];
+    if (mimeType) {
+      if (fileStat.size > MAX_IMAGE_PREVIEW_BYTES) {
+        res.json({
+          path: relativePath,
+          content: null,
+          mimeType,
+          isBinary: true,
+          size: fileStat.size,
+          previewUnavailable: 'too_large',
+        });
+        return;
+      }
+
+      const buffer = await readFile(targetPath);
+      res.json({
+        path: relativePath,
+        content: buffer.toString('base64'),
+        encoding: 'base64',
+        mimeType,
+        isBinary: true,
+        size: fileStat.size,
+      });
       return;
     }
 

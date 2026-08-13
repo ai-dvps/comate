@@ -55,6 +55,28 @@ describe('right-panel-store', () => {
     )
   })
 
+  it('openFile preserves image data for previewing binary image files', async () => {
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            content: 'iVBORw0KGgo=',
+            isBinary: true,
+            encoding: 'base64',
+            mimeType: 'image/png',
+          }),
+      }),
+    ) as unknown as typeof global.fetch
+
+    await useRightPanelStore.getState().openFile('ws1', 'assets/logo.png', 'logo.png')
+
+    const tab = useRightPanelStore.getState().openTabs[0] as FileTab
+    expect(tab.content).toBe('')
+    expect(tab.isBinary).toBe(true)
+    expect(tab.imageDataUrl).toBe('data:image/png;base64,iVBORw0KGgo=')
+  })
+
   it('opening the same file twice dedupes and activates the existing tab', async () => {
     global.fetch = vi.fn(() =>
       Promise.resolve({
