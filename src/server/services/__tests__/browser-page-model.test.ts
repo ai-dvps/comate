@@ -4,6 +4,7 @@ import assert from 'node:assert';
 import { JSDOM } from 'jsdom';
 import {
   RefTable,
+  buildElementFingerprintFunction,
   buildPageState,
   buildExtractorScript,
   buildInspectElementStateFunction,
@@ -376,6 +377,33 @@ describe('browser-page-model sensitivity ruleset (KTD-8)', () => {
   });
 });
 
+describe('browser-page-model element fingerprints', () => {
+  it('normalizes role-less contenteditable roots without overriding native control roles', () => {
+    const fingerprint = Function(`return (${buildElementFingerprintFunction()})`)() as (this: {
+      tagName: string;
+      isContentEditable: boolean;
+      multiple?: boolean;
+      size?: number;
+      getAttribute(name: string): string | null;
+    }) => unknown;
+    const element = (tagName: string, type?: string) => ({
+      tagName,
+      isContentEditable: true,
+      getAttribute: (name: string) => name === 'type' ? type ?? null : null,
+    });
+
+    for (const [target, expected] of [
+      [element('DIV'), { tag: 'div', type: 'div', role: 'textbox', editable: true, fileInput: false }],
+      [element('FORM'), { tag: 'form', type: 'form', role: 'form', editable: false, fileInput: false }],
+      [element('BUTTON'), { tag: 'button', type: 'submit', role: 'button', editable: false, fileInput: false }],
+      [element('SELECT'), { tag: 'select', type: 'select', role: 'combobox', editable: true, fileInput: false }],
+      [element('INPUT', 'checkbox'), { tag: 'input', type: 'checkbox', role: 'checkbox', editable: true, fileInput: false }],
+    ] as const) {
+      assert.deepEqual(fingerprint.call(target), expected);
+    }
+  });
+});
+
 describe('browser-page-model accessibility tree processing', () => {
   it('keeps only widget roles, skips ignored nodes, dedupes by backendNodeId', () => {
     const actions = extractActionsFromAxTree(makeAxNodes());
@@ -474,6 +502,23 @@ describe('browser-page-model distillation (KTD-3)', () => {
     assert.deepStrictEqual({ multiple: upload?.multiple, accept: upload?.accept }, { multiple: true, accept: 'image/png,image/jpeg' });
     assert.ok(!extraction.contentText.includes(sentinel));
     assert.ok(!JSON.stringify(extraction.domCandidates).includes(sentinel));
+  });
+
+  it('does not promote contenteditable native controls or forms to rich-text roots', () => {
+    const extraction = runExtractor(`<!doctype html><body>
+      <form contenteditable="true" aria-label="form editor"></form>
+      <button contenteditable="true" aria-label="button editor">Button</button>
+      <select contenteditable="true" aria-label="select control"><option>One</option></select>
+      <div contenteditable="true" aria-label="body editor"></div>
+    </body>`);
+
+    assert.deepEqual(
+      [...extraction.standalone].map((field) => ({ label: field.label, contentLength: field.contentLength })),
+      [
+        { label: 'select control', contentLength: undefined },
+        { label: 'body editor', contentLength: 0 },
+      ],
+    );
   });
 
   it('names a ProseMirror editor from its descendant placeholder and excludes zero-height textarea mirrors', () => {

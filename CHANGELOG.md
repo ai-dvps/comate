@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Embedded browser now identifies ProseMirror-style rich-text editors reliably** — Page discovery ignores zero-area textarea mirrors and derives a bounded editor name from nested placeholder metadata when standard accessible labels are absent, so agents can target the real long-form editor instead of an invisible sizing control.
+- **Embedded browser now identifies and edits ProseMirror-style rich-text editors reliably** — Page discovery ignores zero-area textarea mirrors, derives a bounded editor name from nested placeholder metadata, and consistently treats role-less contenteditable roots as textboxes during ref revalidation, so agents can target and fill the real long-form editor.
 - **Night-idle todos now explain missing workspace setup** — Automatic run types require a workspace, legacy workspace-less night-idle todos remain visible for repair, and selecting a workspace reactivates affected items instead of silently consuming them.
 - **Prompt send controls stay inside the composer at narrow widths** — Optional toolbar controls now yield space before the send or stop buttons can overflow the input card.
 - **Electron development sidecar now loads its staged SQLite binding** — Development launches resolve `better_sqlite3.node` from the resource directory supplied by the Electron shell instead of looking for an unpackaged native module inside the sidecar snapshot.
