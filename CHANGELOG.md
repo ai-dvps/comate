@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Multi-question prompts now submit successfully** — Answering an `AskUserQuestion` card with multiple questions no longer fails with “Approval is no longer pending,” and the server uses the canonical pending question payload when resolving the response.
 - **Embedded browser now identifies and edits ProseMirror-style rich-text editors reliably** — Page discovery ignores zero-area textarea mirrors, derives a bounded editor name from nested placeholder metadata, and consistently treats role-less contenteditable roots as textboxes during ref revalidation, so agents can target and fill the real long-form editor.
 - **Night-idle todos now explain missing workspace setup** — Automatic run types require a workspace, legacy workspace-less night-idle todos remain visible for repair, and selecting a workspace reactivates affected items instead of silently consuming them.
 - **Prompt send controls stay inside the composer at narrow widths** — Optional toolbar controls now yield space before the send or stop buttons can overflow the input card.

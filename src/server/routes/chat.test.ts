@@ -195,6 +195,103 @@ describe('chat route approvals funnel (U8, KTD-15)', { concurrency: false }, () 
     }
   });
 
+  it('resolves a multi-question AskUserQuestion with the pending server questions', async () => {
+    const questions = [
+      {
+        question: 'Choose a color',
+        options: [{ label: 'Red' }, { label: 'Blue' }],
+        multiSelect: false,
+      },
+      {
+        question: 'Choose environments',
+        options: [{ label: 'Staging' }, { label: 'Production' }],
+        multiSelect: true,
+      },
+    ];
+    const answers = {
+      'Choose a color': 'Blue',
+      'Choose environments': 'Staging, Production',
+    };
+    const resolveCalls: Array<{ requestId: string; result: unknown; provenance: unknown }> = [];
+    const fakeRuntime = {
+      getPendingCardState: () => ({ type: 'question' as const, questions }),
+      resolveApproval: (requestId: string, result: unknown, provenance?: unknown) => {
+        resolveCalls.push({ requestId, result, provenance });
+        return true;
+      },
+    };
+    const stub = stubChatService({
+      getRuntimeIfExists: () => fakeRuntime,
+    });
+    try {
+      const handler = await importApprovalsHandler();
+      const res = createMockRes();
+      await handler(
+        {
+          params: { id: 'ws-1', sessionId: 'sess-1', requestId: 'req-question' },
+          body: {
+            behavior: 'allow',
+            answers,
+            questions: [{ question: 'untrusted client copy', options: [], multiSelect: false }],
+          },
+        },
+        res,
+      );
+
+      assert.strictEqual(res.statusCode, 200);
+      assert.deepStrictEqual(res.jsonBody, { ok: true });
+      assert.deepStrictEqual(resolveCalls, [
+        {
+          requestId: 'req-question',
+          result: {
+            behavior: 'allow',
+            updatedInput: { questions, answers },
+          },
+          provenance: {
+            source: 'desktop',
+            approver: { type: 'user' },
+          },
+        },
+      ]);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('rejects malformed question answers without consuming the pending request', async () => {
+    let resolveCalls = 0;
+    const fakeRuntime = {
+      getPendingCardState: () => ({
+        type: 'question' as const,
+        questions: [{ question: 'Choose one', options: [{ label: 'A' }], multiSelect: false }],
+      }),
+      resolveApproval: () => {
+        resolveCalls++;
+        return true;
+      },
+    };
+    const stub = stubChatService({
+      getRuntimeIfExists: () => fakeRuntime,
+    });
+    try {
+      const handler = await importApprovalsHandler();
+      const res = createMockRes();
+      await handler(
+        {
+          params: { id: 'ws-1', sessionId: 'sess-1', requestId: 'req-question' },
+          body: { behavior: 'allow', answers: null },
+        },
+        res,
+      );
+
+      assert.strictEqual(res.statusCode, 400);
+      assert.deepStrictEqual(res.jsonBody, { error: 'answers must be an object for a question response' });
+      assert.strictEqual(resolveCalls, 0);
+    } finally {
+      stub.restore();
+    }
+  });
+
   it('deny resolutions carry the same desktop provenance', async () => {
     const resolveCalls: Array<{ result: unknown; provenance: unknown }> = [];
     const fakeRuntime = {
