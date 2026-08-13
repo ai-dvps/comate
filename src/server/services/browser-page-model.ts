@@ -66,6 +66,8 @@ const IN_PAGE_SENSITIVE_FN = `function __comateSensitive(el) {
   return ${SENSITIVE_NAME_PATTERN.toString()}.test(hay);
 }`;
 
+const RICH_EDITABLE_EXCLUDED_TAGS = ['input', 'textarea', 'select', 'button', 'form'] as const;
+
 // ---------------------------------------------------------------------------
 // Model types
 // ---------------------------------------------------------------------------
@@ -957,9 +959,7 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
     try { sensitive = __comateSensitive(el); } catch (e) { sensitive = type === 'password'; }
     var value, filled = false, contentLength;
     var isCheckable = type === 'checkbox' || type === 'radio';
-    var contenteditable = (el.getAttribute('contenteditable') || '').toLowerCase();
-    var editableRoot = tag !== 'input' && tag !== 'textarea' && tag !== 'select' && tag !== 'button' &&
-      (el.isContentEditable || (el.hasAttribute('contenteditable') && contenteditable !== 'false') || (el.getAttribute('role') || '').toLowerCase() === 'textbox');
+    var editableRoot = isEditableRoot(el);
     try {
       var raw = editableRoot ? String(el.textContent || '') : (isCheckable ? String(!!el.checked) : String(el.value == null ? '' : el.value));
       filled = raw.length > 0 && raw !== 'false';
@@ -1018,7 +1018,7 @@ export function buildExtractorScript(maxContentChars = EXTRACTOR_MAX_CONTENT_CHA
   function isEditableRoot(el) {
     if (!el || !el.tagName) return false;
     var tag = el.tagName.toLowerCase();
-    if (tag === 'input' || tag === 'textarea' || tag === 'select') return false;
+    if (${JSON.stringify(RICH_EDITABLE_EXCLUDED_TAGS)}.indexOf(tag) !== -1) return false;
     var ce = (el.getAttribute('contenteditable') || '').toLowerCase();
     return (el.hasAttribute('contenteditable') && ce !== 'false' && (el.isContentEditable || ce === '' || ce === 'true' || ce === 'plaintext-only')) ||
       (el.getAttribute('role') || '').toLowerCase() === 'textbox';
@@ -1654,8 +1654,10 @@ export function buildElementFingerprintFunction(): string {
     var tag = this.tagName.toLowerCase();
     var type = tag === 'input' ? (this.getAttribute('type') || 'text').toLowerCase() : (tag === 'button' ? (this.getAttribute('type') || 'submit').toLowerCase() : tag);
     var role = (this.getAttribute('role') || '').toLowerCase();
+    var richEditable = this.isContentEditable && ${JSON.stringify(RICH_EDITABLE_EXCLUDED_TAGS)}.indexOf(tag) === -1;
     if (!role) {
-      if (tag === 'form') role = 'form';
+      if (richEditable) role = 'textbox';
+      else if (tag === 'form') role = 'form';
       else if (tag === 'button' || (tag === 'input' && ['button','submit','reset','image'].indexOf(type) !== -1)) role = 'button';
       else if (tag === 'select') role = (this.multiple || this.size > 1) ? 'listbox' : 'combobox';
       else if (tag === 'textarea') role = 'textbox';
@@ -1666,17 +1668,18 @@ export function buildElementFingerprintFunction(): string {
       else if (tag === 'input' && type === 'search') role = 'searchbox';
       else if (tag === 'input') role = 'textbox';
     }
-    var editable = tag === 'textarea' || tag === 'select' || tag === 'input' || this.isContentEditable || role === 'textbox' || role === 'searchbox' || role === 'combobox';
+    var editable = tag === 'textarea' || tag === 'select' || tag === 'input' || richEditable || role === 'textbox' || role === 'searchbox' || role === 'combobox';
     return { tag: tag.slice(0, 40), type: type.slice(0, 40), role: role.slice(0, 80), editable: editable, fileInput: tag === 'input' && type === 'file' };
   }`;
 }
 
 function normalizedFieldRole(
-  field: Pick<RawExtractedField, 'tag' | 'type' | 'role' | 'multiple' | 'size'>,
+  field: Pick<RawExtractedField, 'tag' | 'type' | 'role' | 'multiple' | 'size' | 'contentLength'>,
 ): string {
   if (field.role) return field.role.toLowerCase().slice(0, 80);
   const tag = field.tag.toLowerCase();
   const type = field.type.toLowerCase();
+  if (field.contentLength !== undefined) return 'textbox';
   if (tag === 'button' || (tag === 'input' && ['button', 'submit', 'reset', 'image'].includes(type))) return 'button';
   if (tag === 'select') return field.multiple || (field.size ?? 0) > 1 ? 'listbox' : 'combobox';
   if (tag === 'textarea') return 'textbox';

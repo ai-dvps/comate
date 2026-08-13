@@ -1603,6 +1603,37 @@ describe('browser-mcp act', () => {
     });
   });
 
+  it('fills a contenteditable field without an explicit role after ref revalidation', async () => {
+    const extraction = makeExtraction({
+      forms: [],
+      standalone: [{
+        fieldIndex: -1,
+        label: '输入文字，内容将自动保存',
+        tag: 'div',
+        type: 'div',
+        required: false,
+        disabled: false,
+        readOnly: false,
+        sensitive: false,
+        filled: false,
+        contentLength: 0,
+        submitSemantics: false,
+        xpath: '/html[1]/body[1]/div[1]',
+      }],
+    });
+    harness = await makeHarness({ page: new FakePage({ extraction }) });
+    const opened = await harness.call('open', { url: 'https://creator.example/editor' });
+    const bodyRef = (resultPayload(opened).model as {
+      forms: Array<{ fields: Array<{ ref: string; name: string }> }>;
+    }).forms[0].fields.find((field) => field.name === '输入文字，内容将自动保存')?.ref;
+    assert.ok(bodyRef);
+
+    const result = await harness.call('act', { ref: bodyRef, action: 'fill', value: '正文' });
+
+    assert.strictEqual(result.isError, undefined, JSON.stringify(resultPayload(result)));
+    assert.deepEqual(harness.ctx.page.filledBackendNodes, [{ backendNodeId: 101, text: '正文' }]);
+  });
+
   it('fails closed for human-only fields without invoking the trusted adapter', async () => {
     harness = await makeHarness({ page: new FakePage({ extraction: makeExtraction() }) });
     const { cardRef } = await openAndGetRefs(harness);
