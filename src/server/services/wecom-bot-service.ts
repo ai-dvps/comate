@@ -28,6 +28,7 @@ import { saveMediaFile } from './wecom-file-storage.js';
 import { validateSendFilePath } from './wecom-send-file-policy.js';
 import { REPLY_TOOL_NAME, evaluateToolPermission, resolveEffectivePolicy } from './tool-permission-policy.js';
 import { diagLog } from '../utils/diag-logger.js';
+import { summarizeWecomToolOperation } from '../utils/wecom-tool-presentation.js';
 import {
   buildWecomSessionListCard,
   buildWecomWorkspaceListCard,
@@ -41,7 +42,6 @@ import {
   formatQuestionFold,
   formatPermissionFold,
   type NormalizedSelectedItem,
-  type PermissionFoldAction,
 } from './wecom-template-card.js';
 import { botEscalationLedger } from './bot-escalation-ledger.js';
 import { exactSessionUpdatedPermissions } from './bot-escalation-guard.js';
@@ -670,6 +670,26 @@ export class WeComBotService {
     const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
     if (!sessionId) return;
 
+    const runtime = chatService.getRuntimeIfExists(sessionId);
+    const pendingFreeText = runtime?.getPendingFreeTextQuestion?.();
+    const freeTextAnswer = content.trim();
+    if (runtime && pendingFreeText && freeTextAnswer) {
+      const question = pendingFreeText.questions[0];
+      const answers = { [question.question]: freeTextAnswer };
+      this.foldIntoActiveStream(
+        sessionId,
+        formatQuestionFold(pendingFreeText.questions, answers),
+      );
+      runtime.resolveApproval(pendingFreeText.requestId, {
+        behavior: 'allow',
+        updatedInput: { questions: pendingFreeText.questions, answers },
+      });
+      diagLog(
+        `[WeComBotService] resolved free-text question sessionId=${sessionId} requestId=${pendingFreeText.requestId}`,
+      );
+      return;
+    }
+
     const conn = this.getConnectionForWorkspace(workspaceId);
     if (!conn) return;
 
@@ -679,7 +699,7 @@ export class WeComBotService {
       frame,
       sessionId,
       wecomUserId,
-      (card) => this.sendTemplateCard(workspaceId, wecomUserId, card),
+      (card) => this.sendSessionTemplateCard(workspaceId, wecomUserId, sessionId, card),
       {
         onFinalized: () => this.activeStreamReplies.delete(sessionId),
         onCleanup: () => this.activeStreamReplies.delete(sessionId),
@@ -1056,7 +1076,7 @@ export class WeComBotService {
           frame,
           sessionId,
           wecomUserId,
-          (card) => this.sendTemplateCard(workspaceId, wecomUserId, card),
+          (card) => this.sendSessionTemplateCard(workspaceId, wecomUserId, sessionId, card),
           {
             onFinalized: () => this.activeStreamReplies.delete(sessionId),
             onCleanup: () => this.activeStreamReplies.delete(sessionId),
@@ -1105,7 +1125,7 @@ export class WeComBotService {
         frame,
         sessionId,
         wecomUserId,
-        (card) => this.sendTemplateCard(workspaceId, wecomUserId, card),
+        (card) => this.sendSessionTemplateCard(workspaceId, wecomUserId, sessionId, card),
         {
           onFinalized: () => this.activeStreamReplies.delete(sessionId),
           onCleanup: () => this.activeStreamReplies.delete(sessionId),
@@ -1343,12 +1363,44 @@ export class WeComBotService {
   async sendTemplateCard(workspaceId: string, toUser: string, card: TemplateCard): Promise<void> {
     const conn = this.getConnectionForWorkspace(workspaceId);
     if (!conn || conn.status !== 'connected') {
-      return;
+      throw new Error(`Bot for workspace ${workspaceId} is not connected`);
     }
     await conn.client.sendMessage(toUser, {
       msgtype: 'template_card',
       template_card: card,
     });
+  }
+
+  /**
+   * Deliver an interactive card for a live session. If delivery fails, deny
+   * the matching request so the agent cannot remain blocked on a prompt the
+   * user never received. Admin escalations are excluded: their durable
+   * notifier queue owns disconnected delivery and eventual settlement.
+   */
+  private async sendSessionTemplateCard(
+    workspaceId: string,
+    toUser: string,
+    sessionId: string,
+    card: TemplateCard,
+  ): Promise<void> {
+    try {
+      await this.sendTemplateCard(workspaceId, toUser, card);
+    } catch (error) {
+      const requestId = card.task_id;
+      if (requestId && !botEscalationLedger.get(requestId)) {
+        const runtime = chatService.getRuntimeIfExists(sessionId);
+        if (runtime?.getPendingCardState(requestId)) {
+          runtime.resolveApproval(requestId, {
+            behavior: 'deny',
+            message: 'WeCom confirmation card could not be delivered.',
+          });
+          diagLog(
+            `[WeComBotService] denied undeliverable card sessionId=${sessionId} requestId=${requestId}`,
+          );
+        }
+      }
+      throw error;
+    }
   }
 
   async sendFile(workspaceId: string, toUser: string, filePath: string, isAdmin = false): Promise<void> {
@@ -1482,14 +1534,30 @@ export class WeComBotService {
     }
 
     if (pending.type === 'approval') {
-      // Fold the resolved permission into the streaming reply BEFORE the agent
-      // resumes, so the receipt lands above the continuation in one bubble
-      // (R1/R6). Redacted to tool name + outcome only (R3).
-      const foldAction: PermissionFoldAction =
-        parsed.action === 'deny' ? 'deny' : parsed.action === 'always_allow' ? 'always_allow' : 'allow';
-      this.foldIntoActiveStream(
+      if (parsed.action === 'always_allow' && !pending.suggestions?.length) {
+        await this.updateCardToTerminal(
+          workspaceId,
+          frame,
+          parsed,
+          '该操作不支持始终允许',
+        );
+        return;
+      }
+      const terminalNotice =
+        parsed.action === 'deny'
+          ? '已拒绝'
+          : parsed.action === 'always_allow'
+            ? '已始终允许'
+            : '已允许';
+      const terminalContext = {
+        title: pending.title ?? '操作确认',
+        desc: `${pending.description ?? '请求执行一项操作'}\n操作：${summarizeWecomToolOperation(pending.input, pending.toolName ?? '相关操作', 160)}`,
+      };
+      this.setActiveStreamStatus(
         parsed.sessionId,
-        formatPermissionFold(pending.toolName ?? 'unknown', foldAction),
+        parsed.action === 'deny'
+          ? '\n\n已记录你的拒绝，继续处理…'
+          : '\n\n已确认，继续处理…',
       );
       if (parsed.action === 'deny') {
         const toolName = pending.toolName ?? 'unknown';
@@ -1506,7 +1574,6 @@ export class WeComBotService {
           source: 'self-approval',
           approver: { type: 'wecom', channelKey: 'wecom', channelUserId: parsed.wecomUserId },
         });
-        await this.updateCardToTerminal(workspaceId, frame, parsed, '已拒绝');
       } else {
         runtime.resolveApproval(parsed.requestId, {
           behavior: 'allow',
@@ -1515,21 +1582,25 @@ export class WeComBotService {
           source: 'self-approval',
           approver: { type: 'wecom', channelKey: 'wecom', channelUserId: parsed.wecomUserId },
         });
-        await this.updateCardToTerminal(workspaceId, frame, parsed, parsed.action === 'always_allow' ? '已始终允许' : '已允许');
       }
+      await this.updateCardToTerminal(workspaceId, frame, parsed, terminalNotice, terminalContext);
       return;
     }
 
-    // Question: parse selected options and resolve with answers. Fold the
-    // resolved Q&A into the streaming reply BEFORE resuming the agent so the
-    // answer sits above the continuation in one bubble (R1/R2/R6).
+    // Question: parse selected options, preserve the answer on the terminal
+    // card, then resume the existing stream without duplicating a receipt in
+    // the final answer bubble.
     const answers = this.buildAnswersFromCardEvent(parsed, pending.questions);
-    this.foldIntoActiveStream(parsed.sessionId, formatQuestionFold(pending.questions, answers));
+    this.setActiveStreamStatus(parsed.sessionId, '\n\n已收到你的回答，继续处理…');
     runtime.resolveApproval(parsed.requestId, {
       behavior: 'allow',
       updatedInput: { questions: pending.questions, answers },
     });
-    await this.updateCardToTerminal(workspaceId, frame, parsed, '已提交');
+    await this.updateCardToTerminal(workspaceId, frame, parsed, '已提交', {
+      title: '回答已提交',
+      desc: pending.questions.map((question) => question.question).join('\n'),
+      selectionText: Object.values(answers).filter(Boolean).join('；') || '未选择',
+    });
   }
 
   /**
@@ -1980,6 +2051,11 @@ export class WeComBotService {
     stream.appendNarrative(text);
   }
 
+  private setActiveStreamStatus(sessionId: string, text: string): void {
+    const stream = this.activeStreamReplies.get(sessionId);
+    stream?.setPlaceholder?.(text, false);
+  }
+
   private buildAnswersFromCardEvent(
     parsed: { requestId: string; selectedItems?: NormalizedSelectedItem[] },
     questions: QuestionPayload[],
@@ -2017,11 +2093,17 @@ export class WeComBotService {
     frame: WsFrame<EventMessageWith<TemplateCardEventData>>,
     parsed: { cardType?: string; taskId?: string },
     notice: string,
+    context?: { title?: string; desc?: string; selectionText?: string },
   ): Promise<void> {
     const conn = this.getConnectionForWorkspace(workspaceId);
     if (!conn || conn.status !== 'connected' || !frame.body) return;
 
-    const card = buildTerminalCard(parsed.cardType ?? 'button_interaction', notice, parsed.taskId);
+    const card = buildTerminalCard(
+      parsed.cardType ?? 'button_interaction',
+      notice,
+      parsed.taskId,
+      context,
+    );
     try {
       await conn.client.updateTemplateCard({ headers: frame.headers }, card);
     } catch (err) {

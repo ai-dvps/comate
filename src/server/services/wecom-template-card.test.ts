@@ -94,17 +94,20 @@ describe('wecom-template-card', () => {
         toolName: 'Bash',
         title: '执行 Bash 命令',
         description: '请求执行 shell 命令',
+        operationSummary: 'npm test',
+        allowAlways: true,
       });
 
       assert.strictEqual(card.card_type, 'button_interaction');
       assert.ok(card.main_title);
       assert.strictEqual(card.main_title?.title, '执行 Bash 命令');
-      assert.strictEqual(card.main_title?.desc, '请求执行 shell 命令');
+      assert.match(card.main_title?.desc ?? '', /请求执行 shell 命令/);
+      assert.match(card.main_title?.desc ?? '', /npm test/);
       assert.ok(card.button_list);
       assert.strictEqual(card.button_list?.length, 3);
 
       const texts = card.button_list?.map((b) => b.text);
-      assert.deepStrictEqual(texts, ['允许', '始终允许', '拒绝']);
+      assert.deepStrictEqual(texts, ['仅本次允许', '对此规则始终允许', '拒绝']);
 
       // Each button key should decode successfully
       for (const btn of card.button_list ?? []) {
@@ -123,9 +126,9 @@ describe('wecom-template-card', () => {
       });
 
       assert.ok(card.main_title);
-      assert.ok(card.main_title?.title?.includes('Edit'));
+      assert.strictEqual(card.main_title?.title, '需要确认：修改文件');
       assert.ok(card.main_title?.desc);
-      assert.strictEqual(card.button_list?.length, 3);
+      assert.deepStrictEqual(card.button_list?.map((button) => button.text), ['仅本次允许', '拒绝']);
     });
 
     it('includes task_id when provided', () => {
@@ -144,6 +147,7 @@ describe('wecom-template-card', () => {
         requestId: 'req-4',
         sessionId: 'sess-4',
         toolName: 'Bash',
+        allowAlways: true,
       });
 
       const allowDecoded = decodeButtonKey(card.button_list![0].key);
@@ -154,6 +158,26 @@ describe('wecom-template-card', () => {
 
       const denyDecoded = decodeButtonKey(card.button_list![2].key);
       assert.strictEqual(denyDecoded?.action, 'deny');
+    });
+
+    it('only offers always-allow when a persistent permission can be written', () => {
+      const oneShot = buildToolApprovalCard({
+        requestId: 'req-once',
+        sessionId: 'sess-once',
+        toolName: 'Bash',
+      });
+      const persistent = buildToolApprovalCard({
+        requestId: 'req-persistent',
+        sessionId: 'sess-persistent',
+        toolName: 'Bash',
+        allowAlways: true,
+      });
+
+      assert.deepStrictEqual(oneShot.button_list?.map((button) => button.text), ['仅本次允许', '拒绝']);
+      assert.deepStrictEqual(
+        persistent.button_list?.map((button) => button.text),
+        ['仅本次允许', '对此规则始终允许', '拒绝'],
+      );
     });
   });
 
@@ -183,6 +207,31 @@ describe('wecom-template-card', () => {
       assert.strictEqual(card.checkbox?.option_list[1].text, '否');
       assert.ok(card.submit_button);
       assert.strictEqual(card.submit_button?.text, '提交');
+    });
+
+    it('shows option descriptions without preselecting a multiple-question answer', () => {
+      const card = buildQuestionCard({
+        requestId: 'req-q-desc',
+        sessionId: 'sess-q-desc',
+        questions: [
+          {
+            question: '选择环境',
+            header: '环境',
+            options: [{ label: '测试', description: '不会影响生产数据' }, { label: '生产' }],
+            multiSelect: false,
+          },
+          {
+            question: '选择范围',
+            header: '范围',
+            options: [{ label: '单个项目' }, { label: '全部项目' }],
+            multiSelect: false,
+          },
+        ],
+      });
+
+      assert.match(card.select_list?.[0].option_list[0].text ?? '', /不会影响生产数据/);
+      assert.strictEqual(card.select_list?.[0].selected_id, undefined);
+      assert.strictEqual(card.select_list?.[1].selected_id, undefined);
     });
 
     it('builds a multiple_interaction card for multiple questions', () => {
@@ -355,6 +404,19 @@ describe('wecom-template-card', () => {
       assert.strictEqual((card as Record<string, { text?: string; key?: string }>).submit_button?.key, 'terminal');
       assert.deepStrictEqual(card.card_action, { type: 0 });
       assert.strictEqual(card.task_id, 'task-m1');
+    });
+
+    it('preserves decision context and the selected answer in a terminal card', () => {
+      const card = buildTerminalCard('vote_interaction', '已提交', 'task-context', {
+        title: '回答已提交',
+        desc: '选择发布环境',
+        selectionText: '测试环境',
+      });
+
+      assert.strictEqual(card.main_title?.title, '回答已提交');
+      assert.strictEqual(card.main_title?.desc, '选择发布环境');
+      assert.strictEqual(card.checkbox?.option_list[0].text, '测试环境');
+      assert.strictEqual(card.checkbox?.disable, true);
     });
   });
 

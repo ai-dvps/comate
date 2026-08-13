@@ -73,15 +73,35 @@ describe('wecom-stream-reply', () => {
     const card = sentCards[0];
     assert.strictEqual(card.card_type, 'button_interaction');
     assert.strictEqual(card.main_title.title, 'Run command?');
-    assert.strictEqual(card.main_title.desc, 'Confirm this command');
+    assert.match(card.main_title.desc, /Confirm this command/);
+    assert.match(card.main_title.desc, /ls/);
     assert.strictEqual(card.task_id, 'req-approval-1');
-    assert.strictEqual(card.button_list.length, 3);
+    assert.strictEqual(card.button_list.length, 2);
 
     const actions = card.button_list.map((b: any) => decodeButtonKey(b.key)?.action);
-    assert.deepStrictEqual(actions, ['allow', 'always_allow', 'deny']);
+    assert.deepStrictEqual(actions, ['allow', 'deny']);
 
     const sessionIds = card.button_list.map((b: any) => decodeButtonKey(b.key)?.sessionId);
-    assert.deepStrictEqual(sessionIds, ['sess-1', 'sess-1', 'sess-1']);
+    assert.deepStrictEqual(sessionIds, ['sess-1', 'sess-1']);
+  });
+
+  it('shows always-allow only when the approval carries persistent suggestions', () => {
+    const { handler } = createStreamReply(conn, makeFrame(), 'sess-1', 'user-1');
+
+    handler(1, {
+      type: 'pending_approval',
+      requestId: 'req-persistent',
+      toolName: 'Bash',
+      toolUseId: 'tu-persistent',
+      input: { command: 'npm test' },
+      inputSummary: 'npm test',
+      suggestions: [{ type: 'addRules', rules: [], behavior: 'allow', destination: 'session' }],
+    } as SseEvent);
+
+    assert.deepStrictEqual(
+      sentCards[0].button_list.map((button: any) => button.text),
+      ['仅本次允许', '对此规则始终允许', '拒绝'],
+    );
   });
 
   it('sends a question card on pending_question', () => {
@@ -297,6 +317,45 @@ describe('wecom-stream-reply', () => {
         `animation frame "${call.text}" should start with base "${baseText}"`,
       );
     }
+  });
+
+  it('replaces a tool placeholder with an accurate waiting-for-approval status', async () => {
+    const calls: Array<{ text: string; finish?: boolean }> = [];
+    const replyConn = makeMockReplyConn(calls);
+    replyConn.sendTemplateCard = async () => undefined;
+    const { handler } = createStreamReply(replyConn, makeFrame(), 'sess-1', 'user-1');
+
+    handler(1, { type: 'assistant_start', messageId: 'm1' } as SseEvent);
+    handler(1, { type: 'tool_use_start', messageId: 'm1', toolName: 'Bash' } as SseEvent);
+    handler(1, {
+      type: 'pending_approval',
+      requestId: 'req-waiting',
+      toolName: 'Bash',
+      toolUseId: 'tu-waiting',
+      input: { command: 'npm test' },
+      inputSummary: 'npm test',
+    } as SseEvent);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const latest = calls.at(-1)?.text ?? '';
+    assert.match(latest, /等待你确认/);
+    assert.doesNotMatch(latest, /Bash/);
+    handler.cleanup();
+  });
+
+  it('uses user-facing grouped status text instead of raw internal tool names', async () => {
+    const calls: Array<{ text: string; finish?: boolean }> = [];
+    const replyConn = makeMockReplyConn(calls);
+    const { handler } = createStreamReply(replyConn, makeFrame(), 'sess-1', 'user-1');
+
+    handler(1, { type: 'assistant_start', messageId: 'm1' } as SseEvent);
+    handler(1, { type: 'tool_use_start', messageId: 'm1', toolName: 'mcp__browser__extract' } as SseEvent);
+    await new Promise((resolve) => setTimeout(resolve, 180));
+
+    const latest = calls.at(-1)?.text ?? '';
+    assert.match(latest, /检查页面/);
+    assert.doesNotMatch(latest, /mcp__browser__extract/);
+    handler.cleanup();
   });
 
   it('keeps the fixed text for the thinking placeholder', async () => {
