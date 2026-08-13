@@ -251,22 +251,29 @@ router.post('/sessions/:sessionId/approvals/:requestId', async (req, res) => {
       return;
     }
     const pending = runtime.getPendingCardState(requestId);
-    if (!pending || pending.type !== 'approval') {
+    if (!pending) {
       res.status(409).json({ error: 'Approval is no longer pending', code: 'APPROVAL_NOT_FOUND' });
       return;
     }
-    if (behavior === 'later' && pending.toolName !== BROWSER_TOOL_NAMES.setDeclaration) {
+    if (
+      behavior === 'later'
+      && (pending.type !== 'approval' || pending.toolName !== BROWSER_TOOL_NAMES.setDeclaration)
+    ) {
       res.status(400).json({ error: 'Decide later is only available for declaration approvals' });
       return;
     }
 
     let result: PermissionResult;
     if (behavior === 'allow') {
-      if (answers) {
+      if (pending.type === 'question') {
+        if (answers === null || typeof answers !== 'object' || Array.isArray(answers)) {
+          res.status(400).json({ error: 'answers must be an object for a question response' });
+          return;
+        }
         // AskUserQuestion response
         result = {
           behavior: 'allow',
-          updatedInput: { questions: req.body.questions, answers },
+          updatedInput: { questions: pending.questions, answers },
         };
       } else {
         result = { behavior: 'allow', updatedPermissions };
