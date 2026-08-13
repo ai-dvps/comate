@@ -20,6 +20,7 @@ import type {
   EscalationNoticeCardOptions,
   EscalationResultCardOptions,
 } from '../types/wecom-template-card.js';
+import { getWecomToolCategory } from '../utils/wecom-tool-presentation.js';
 
 const KEY_PREFIX = 'comate:1:';
 const MAX_KEY_BYTES = 1024;
@@ -172,13 +173,45 @@ export function isEscalationAction(a: ToolApprovalAction): boolean {
 
 /**
  * Build a `button_interaction` template card for tool approvals.
- * Shows the tool category, a brief description, and three buttons.
+ * Shows the tool category, a brief description, and two or three buttons.
  */
 export function buildToolApprovalCard(options: ToolApprovalCardOptions): TemplateCard {
-  const { requestId, sessionId, toolName, title, description, taskId } = options;
+  const {
+    requestId,
+    sessionId,
+    toolName,
+    title,
+    description,
+    operationSummary,
+    allowAlways = false,
+    taskId,
+  } = options;
 
-  const mainTitle: string = title ?? `请求执行工具: ${toolName}`;
-  const subTitle: string = description ?? '请确认是否允许执行该操作';
+  const mainTitle: string = title ?? `需要确认：${humanizeToolName(toolName)}`;
+  const descLines = [description ?? '请确认是否允许执行该操作'];
+  if (operationSummary?.trim()) {
+    descLines.push(`操作：${truncateFold(operationSummary.trim(), 160)}`);
+  }
+
+  const buttonList: Array<{ text: string; style: number; key: string }> = [
+    {
+      text: '仅本次允许',
+      style: 1,
+      key: encodeButtonKey(requestId, 'allow', sessionId),
+    },
+  ];
+  if (allowAlways) {
+    buttonList.push({
+      text: '对此规则始终允许',
+      style: 2,
+      key: encodeButtonKey(requestId, 'always_allow', sessionId),
+    });
+  }
+  buttonList.push({
+    text: '拒绝',
+    style: 4,
+    key: encodeButtonKey(requestId, 'deny', sessionId),
+  });
 
   const card: TemplateCard = {
     card_type: 'button_interaction',
@@ -188,29 +221,30 @@ export function buildToolApprovalCard(options: ToolApprovalCardOptions): Templat
     },
     main_title: {
       title: mainTitle,
-      desc: subTitle,
+      desc: descLines.join('\n'),
     },
     task_id: taskId,
-    button_list: [
-      {
-        text: '允许',
-        style: 1,
-        key: encodeButtonKey(requestId, 'allow', sessionId),
-      },
-      {
-        text: '始终允许',
-        style: 2,
-        key: encodeButtonKey(requestId, 'always_allow', sessionId),
-      },
-      {
-        text: '拒绝',
-        style: 4,
-        key: encodeButtonKey(requestId, 'deny', sessionId),
-      },
-    ],
+    button_list: buttonList,
   };
 
   return card;
+}
+
+function humanizeToolName(toolName: string): string {
+  switch (getWecomToolCategory(toolName)) {
+    case 'project_read': return '读取项目内容';
+    case 'command': return '执行命令';
+    case 'file_write': return '修改文件';
+    case 'web_research': return '查询资料';
+    case 'question': return '回答问题';
+    case 'browser': return '操作浏览器';
+    default: return '执行操作';
+  }
+}
+
+function formatQuestionOption(option: { label: string; description?: string }): string {
+  if (!option.description?.trim()) return option.label;
+  return truncateFold(`${option.label} — ${option.description.trim()}`, 80);
 }
 
 /**
@@ -259,7 +293,7 @@ export function buildQuestionCard(options: QuestionCardOptions): TemplateCard {
         mode: q.multiSelect ? 1 : 0,
         option_list: q.options.map((opt, idx) => ({
           id: String(idx),
-          text: opt.label,
+          text: formatQuestionOption(opt),
         })),
       },
       submit_button: {
@@ -275,9 +309,8 @@ export function buildQuestionCard(options: QuestionCardOptions): TemplateCard {
     title: q.header ?? `问题 ${qIdx + 1}`,
     option_list: q.options.map((opt, idx) => ({
       id: String(idx),
-      text: opt.label,
+      text: formatQuestionOption(opt),
     })),
-    selected_id: q.options[0]?.label ? '0' : undefined,
   }));
 
   return {
@@ -478,9 +511,13 @@ export function buildTerminalCard(
   originalCardType: string,
   notice: string,
   taskId?: string,
+  context?: { title?: string; desc?: string; selectionText?: string },
 ): TemplateCard {
   const source = { desc: 'Comate', desc_color: 0 } as const;
-  const mainTitle = { title: notice, desc: '' };
+  const mainTitle = {
+    title: context?.title ?? notice,
+    desc: context?.desc ?? '',
+  };
   const terminalButton = { text: notice, key: 'terminal' };
 
   if (originalCardType === 'vote_interaction') {
@@ -493,7 +530,7 @@ export function buildTerminalCard(
         question_key: 'terminal',
         mode: 0,
         disable: true,
-        option_list: [{ id: '0', text: notice, is_checked: true }],
+        option_list: [{ id: '0', text: context?.selectionText ?? notice, is_checked: true }],
       },
       card_action: { type: 0 },
       submit_button: terminalButton,
@@ -510,10 +547,10 @@ export function buildTerminalCard(
       select_list: [
         {
           question_key: 'terminal',
-          title: '已选择',
+          title: context?.title ?? '已选择',
           disable: true,
           selected_id: '0',
-          option_list: [{ id: '0', text: notice }],
+          option_list: [{ id: '0', text: context?.selectionText ?? notice }],
         },
       ],
       card_action: { type: 0 },
@@ -526,8 +563,8 @@ export function buildTerminalCard(
     card_type: 'text_notice',
     source,
     main_title: {
-      title: '已处理',
-      desc: notice,
+      title: context?.title ?? '已处理',
+      desc: [context?.desc, notice].filter(Boolean).join('\n'),
     },
     card_action: { type: 0 },
     task_id: taskId,

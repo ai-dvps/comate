@@ -2643,3 +2643,135 @@ describe('session-runtime pending approval fresh-subscription replay (U6, KTD-23
     await questionPromise;
   });
 });
+
+describe('session-runtime free-text question routing', { concurrency: false }, () => {
+  let runtime: SessionRuntime | undefined;
+
+  afterEach(async () => {
+    if (runtime && !runtime.isClosed()) {
+      await runtime.close();
+    }
+    runtime = undefined;
+  });
+
+  function createMockSdkClient(): SdkClient {
+    const mockQuery = {
+      interrupt: () => Promise.resolve(),
+      close: () => {},
+    } as unknown as Query;
+    const messages = (async function* () {})();
+    return {
+      createStreamingQuery: () => ({ query: mockQuery, messages }),
+    } as unknown as SdkClient;
+  }
+
+  function openRuntime(): SessionRuntime {
+    return SessionRuntime.open(
+      `free-text-${Math.random()}`,
+      'ws1',
+      'nonce',
+      {} as Options,
+      createMockSdkClient(),
+    );
+  }
+
+  it('fails closed for an empty question payload without registering pending state', async () => {
+    runtime = openRuntime();
+
+    const result = await runtime.requestToolQuestion('empty', [], {});
+
+    assert.strictEqual(result.behavior, 'deny');
+    assert.match(result.message ?? '', /requires at least one question/i);
+    assert.strictEqual(runtime.getPendingCardState('empty'), undefined);
+    assert.strictEqual(runtime.getPendingFreeTextQuestion(), undefined);
+  });
+
+  it('exposes one pending free-text question and clears it after settlement', async () => {
+    runtime = openRuntime();
+    const questions = [{ question: 'Which branch?', options: [], multiSelect: false }];
+    const pending = runtime.requestToolQuestion('free-text', questions, {});
+
+    assert.deepStrictEqual(runtime.getPendingFreeTextQuestion(), {
+      requestId: 'free-text',
+      questions,
+    });
+
+    assert.strictEqual(runtime.resolveApproval('free-text', {
+      behavior: 'allow',
+      updatedInput: { answers: { 'Which branch?': 'main' } },
+    }), true);
+    assert.strictEqual((await pending).behavior, 'allow');
+    assert.strictEqual(runtime.getPendingFreeTextQuestion(), undefined);
+    assert.strictEqual(runtime.getPendingCardState('free-text'), undefined);
+  });
+
+  it('does not expose an option-based question as free text', async () => {
+    runtime = openRuntime();
+    const pending = runtime.requestToolQuestion(
+      'options',
+      [{ question: 'Proceed?', options: [{ label: 'Yes' }], multiSelect: false }],
+      {},
+    );
+
+    assert.strictEqual(runtime.getPendingFreeTextQuestion(), undefined);
+    assert.strictEqual(runtime.getPendingCardState('options')?.type, 'question');
+
+    runtime.resolveApproval('options', { behavior: 'deny', message: 'No' });
+    await pending;
+  });
+
+  it('fails closed for multiple questions containing free text', async () => {
+    runtime = openRuntime();
+    const result = await runtime.requestToolQuestion(
+      'mixed',
+      [
+        { question: 'Which branch?', options: [], multiSelect: false },
+        { question: 'Proceed?', options: [{ label: 'Yes' }], multiSelect: false },
+      ],
+      {},
+    );
+
+    assert.strictEqual(result.behavior, 'deny');
+    assert.match(result.message ?? '', /one free-text question at a time/i);
+    assert.strictEqual(runtime.getPendingCardState('mixed'), undefined);
+  });
+
+  it('keeps multiple option-based questions resolvable by the card flow', async () => {
+    runtime = openRuntime();
+    const pending = runtime.requestToolQuestion(
+      'multiple-options',
+      [
+        { question: 'Environment?', options: [{ label: 'Staging' }], multiSelect: false },
+        { question: 'Deploy?', options: [{ label: 'Yes' }, { label: 'No' }], multiSelect: false },
+      ],
+      {},
+    );
+
+    assert.strictEqual(runtime.getPendingFreeTextQuestion(), undefined);
+    assert.strictEqual(runtime.getPendingCardState('multiple-options')?.type, 'question');
+
+    runtime.resolveApproval('multiple-options', { behavior: 'allow', updatedInput: {} });
+    assert.strictEqual((await pending).behavior, 'allow');
+  });
+
+  it('only exposes a free-text question when exactly one such pending exists', async () => {
+    runtime = openRuntime();
+    const firstQuestions = [{ question: 'First?', options: [], multiSelect: false }];
+    const secondQuestions = [{ question: 'Second?', options: [], multiSelect: false }];
+    const first = runtime.requestToolQuestion('first', firstQuestions, {});
+    const second = runtime.requestToolQuestion('second', secondQuestions, {});
+
+    assert.strictEqual(runtime.getPendingFreeTextQuestion(), undefined);
+
+    runtime.resolveApproval('first', { behavior: 'deny', message: 'Cancelled' });
+    await first;
+    assert.deepStrictEqual(runtime.getPendingFreeTextQuestion(), {
+      requestId: 'second',
+      questions: secondQuestions,
+    });
+
+    runtime.resolveApproval('second', { behavior: 'deny', message: 'Cancelled' });
+    await second;
+    assert.strictEqual(runtime.getPendingFreeTextQuestion(), undefined);
+  });
+});

@@ -585,6 +585,94 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     assert.strictEqual(sentMessages[0].body.template_card.card_type, 'text_notice');
   });
 
+  it('rejects template-card delivery when the bot is disconnected', async () => {
+    const ws = (await workspaceStore.list())[0];
+    const conn = (service as any).connections.values().next().value;
+    conn.status = 'disconnected';
+
+    await assert.rejects(
+      service.sendTemplateCard(ws.id, 'owner-1', {
+        card_type: 'text_notice',
+        main_title: { title: 'Test', desc: 'Desc' },
+      } as any),
+      /is not connected/,
+    );
+  });
+
+  it('denies a pending session request when its interactive card cannot be delivered', async () => {
+    const ws = (await workspaceStore.list())[0];
+    const conn = (service as any).connections.values().next().value;
+    conn.status = 'disconnected';
+
+    await assert.rejects(
+      (service as any).sendSessionTemplateCard(ws.id, 'owner-1', testSessionId, {
+        card_type: 'button_interaction',
+        task_id: 'req-undeliverable',
+        main_title: { title: '确认操作', desc: 'Desc' },
+      }),
+      /is not connected/,
+    );
+
+    assert.deepStrictEqual(resolvedApprovals, [{
+      requestId: 'req-undeliverable',
+      result: {
+        behavior: 'deny',
+        message: 'WeCom confirmation card could not be delivered.',
+      },
+    }]);
+  });
+
+  it('denies a pending question when its answer card cannot be delivered', async () => {
+    const ws = (await workspaceStore.list())[0];
+    const conn = (service as any).connections.values().next().value;
+    conn.status = 'disconnected';
+    pendingCardState = {
+      type: 'question',
+      questions: [{ question: 'Which target?', options: [{ label: 'A' }], multiSelect: false }],
+    };
+
+    await assert.rejects(
+      (service as any).sendSessionTemplateCard(ws.id, 'owner-1', testSessionId, {
+        card_type: 'vote_interaction',
+        task_id: 'req-question-undeliverable',
+        main_title: { title: '需要你的回答', desc: 'Which target?' },
+      }),
+      /is not connected/,
+    );
+
+    assert.strictEqual(resolvedApprovals.length, 1);
+    assert.strictEqual(resolvedApprovals[0].requestId, 'req-question-undeliverable');
+    assert.strictEqual(resolvedApprovals[0].result.behavior, 'deny');
+  });
+
+  it('leaves disconnected admin escalations to the durable delivery queue', async () => {
+    const ws = (await workspaceStore.list())[0];
+    const bot = workspaceStore.listBots()[0];
+    const conn = (service as any).connections.values().next().value;
+    conn.status = 'disconnected';
+    botEscalationLedger.createPending({
+      requestId: 'req-admin-queued',
+      botId: bot.id,
+      sessionId: testSessionId,
+      audience: 'admins',
+      requester: { channel: 'wecom', channelUserId: 'owner-1', role: 'normal' },
+      recipients: [{ userId: 'admin-1', taskId: 'req-admin-queued' }],
+      rulePayload: { toolName: 'Bash', command: 'npm test', dedupeSignature: 'Bash:npm test' },
+    });
+
+    await assert.rejects(
+      (service as any).sendSessionTemplateCard(ws.id, 'owner-1', testSessionId, {
+        card_type: 'text_notice',
+        task_id: 'req-admin-queued',
+        main_title: { title: '等待管理员审批', desc: 'Desc' },
+      }),
+      /is not connected/,
+    );
+
+    assert.strictEqual(resolvedApprovals.length, 0);
+    assert.strictEqual(botEscalationLedger.get('req-admin-queued')?.state, 'pending');
+  });
+
   it('resolves approval when user clicks allow', async () => {
     const ws = (await workspaceStore.list())[0];
     const key = encodeButtonKey('req-1', 'allow', testSessionId);
@@ -596,7 +684,7 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     assert.strictEqual(resolvedApprovals[0].result.updatedPermissions, undefined);
     assert.strictEqual(updatedCards.length, 1);
     assert.strictEqual(updatedCards[0].card.card_type, 'text_notice');
-    assert.strictEqual(updatedCards[0].card.main_title.desc, '已允许');
+    assert.match(updatedCards[0].card.main_title.desc, /已允许$/);
     assert.deepStrictEqual(updatedCards[0].card.card_action, { type: 0 });
   });
 
@@ -609,7 +697,18 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     assert.strictEqual(resolvedApprovals[0].requestId, 'req-1');
     assert.strictEqual(resolvedApprovals[0].result.behavior, 'allow');
     assert.deepStrictEqual(resolvedApprovals[0].result.updatedPermissions, [{ id: 'suggestion-1' }]);
-    assert.strictEqual(updatedCards[0].card.main_title.desc, '已始终允许');
+    assert.match(updatedCards[0].card.main_title.desc, /已始终允许$/);
+  });
+
+  it('rejects a forged always_allow action when no persistent suggestion exists', async () => {
+    const ws = (await workspaceStore.list())[0];
+    pendingCardState = { type: 'approval', toolName: 'Bash', toolUseId: 'tu-once', suggestions: [] };
+    const key = encodeButtonKey('req-1', 'always_allow', testSessionId);
+
+    await (service as any).handleTemplateCardEvent(ws.id, makeCardEvent(key));
+
+    assert.strictEqual(resolvedApprovals.length, 0);
+    assert.strictEqual(updatedCards[0].card.main_title.desc, '该操作不支持始终允许');
   });
 
   it('resolves approval when user clicks deny', async () => {
@@ -624,7 +723,7 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
 
     assert.strictEqual(resolvedApprovals.length, 1);
     assert.strictEqual(resolvedApprovals[0].result.behavior, 'deny');
-    assert.strictEqual(updatedCards[0].card.main_title.desc, '已拒绝');
+    assert.match(updatedCards[0].card.main_title.desc, /已拒绝$/);
     assert.ok(
       logs.some((line) =>
         line.includes('reason=user-deny') &&
@@ -702,7 +801,49 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
       questions: pendingCardState.questions,
       answers: { 'Choose one': 'B' },
     });
-    assert.strictEqual(updatedCards[0].card.main_title.desc, '已提交');
+    assert.match(updatedCards[0].card.main_title.desc, /已提交$/);
+  });
+
+  it('uses a normal text reply to resolve one pending free-text question', async () => {
+    const ws = (await workspaceStore.list())[0];
+    const questions = [{ question: '请描述目标', options: [], multiSelect: false }];
+    let pushedMessages = 0;
+    const previousPushMessage = chatService.pushMessage;
+    chatService.getRuntimeIfExists = () =>
+      ({
+        getPendingFreeTextQuestion: () => ({ requestId: 'req-free-text', questions }),
+        resolveApproval: (requestId: string, result: any) => {
+          callOrder.push('resolve');
+          resolvedApprovals.push({ requestId, result });
+        },
+      }) as any;
+    chatService.pushMessage = async () => {
+      pushedMessages += 1;
+    };
+    injectActiveStream();
+
+    try {
+      await (service as any).handleTextMessage(ws.id, {
+        headers: { req_id: 'req-free-text' },
+        body: {
+          msgid: 'msg-free-text',
+          aibotid: 'bot-1',
+          from: { userid: 'owner-1' },
+          msgtype: 'text',
+          text: { content: '先完成登录流程' },
+        },
+      });
+    } finally {
+      chatService.pushMessage = previousPushMessage;
+    }
+
+    assert.strictEqual(pushedMessages, 0, 'answer must not become a second user turn');
+    assert.strictEqual(resolvedApprovals[0].requestId, 'req-free-text');
+    assert.deepStrictEqual(resolvedApprovals[0].result.updatedInput, {
+      questions,
+      answers: { '请描述目标': '先完成登录流程' },
+    });
+    assert.deepStrictEqual(foldedTexts, ['❓请描述目标\n↳ 你的选择：先完成登录流程']);
   });
 
   it('resolves multiple questions from a multiple_interaction card', async () => {
@@ -764,7 +905,7 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     });
   });
 
-  it('folds an approved permission into the active stream before resolving (R1/R3/R6)', async () => {
+  it('keeps an approved permission receipt out of the final answer bubble', async () => {
     const ws = (await workspaceStore.list())[0];
     pendingCardState = { type: 'approval', toolName: 'Bash', toolUseId: 'tu-1', suggestions: [] };
     injectActiveStream();
@@ -772,14 +913,14 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     const key = encodeButtonKey('req-1', 'allow', testSessionId);
     await (service as any).handleTemplateCardEvent(ws.id, makeCardEvent(key));
 
-    assert.deepStrictEqual(foldedTexts, ['🔐 Bash → 已允许']);
-    assert.deepStrictEqual(callOrder, ['fold', 'resolve']);
+    assert.deepStrictEqual(foldedTexts, []);
+    assert.deepStrictEqual(callOrder, ['resolve']);
     assert.strictEqual(resolvedApprovals.length, 1);
     assert.strictEqual(resolvedApprovals[0].result.behavior, 'allow');
-    assert.strictEqual(updatedCards[0].card.main_title.desc, '已允许');
+    assert.match(updatedCards[0].card.main_title.desc, /已允许$/);
   });
 
-  it('folds a denied permission into the active stream before resolving (R3/R6)', async () => {
+  it('keeps a denied permission receipt out of the final answer bubble', async () => {
     const ws = (await workspaceStore.list())[0];
     pendingCardState = { type: 'approval', toolName: 'Bash', toolUseId: 'tu-1', suggestions: [] };
     injectActiveStream();
@@ -787,13 +928,13 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     const key = encodeButtonKey('req-1', 'deny', testSessionId);
     await (service as any).handleTemplateCardEvent(ws.id, makeCardEvent(key));
 
-    assert.deepStrictEqual(foldedTexts, ['🔐 Bash → 已拒绝']);
-    assert.deepStrictEqual(callOrder, ['fold', 'resolve']);
+    assert.deepStrictEqual(foldedTexts, []);
+    assert.deepStrictEqual(callOrder, ['resolve']);
     assert.strictEqual(resolvedApprovals[0].result.behavior, 'deny');
-    assert.strictEqual(updatedCards[0].card.main_title.desc, '已拒绝');
+    assert.match(updatedCards[0].card.main_title.desc, /已拒绝$/);
   });
 
-  it('folds an always_allow permission with the always-allow outcome (R3)', async () => {
+  it('keeps an always-allow receipt out of the final answer bubble', async () => {
     const ws = (await workspaceStore.list())[0];
     pendingCardState = { type: 'approval', toolName: 'Edit', toolUseId: 'tu-2', suggestions: [{ id: 's-1' }] };
     injectActiveStream();
@@ -801,12 +942,12 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     const key = encodeButtonKey('req-1', 'always_allow', testSessionId);
     await (service as any).handleTemplateCardEvent(ws.id, makeCardEvent(key));
 
-    assert.deepStrictEqual(foldedTexts, ['🔐 Edit → 已始终允许']);
+    assert.deepStrictEqual(foldedTexts, []);
     assert.deepStrictEqual(resolvedApprovals[0].result.updatedPermissions, [{ id: 's-1' }]);
-    assert.strictEqual(updatedCards[0].card.main_title.desc, '已始终允许');
+    assert.match(updatedCards[0].card.main_title.desc, /已始终允许$/);
   });
 
-  it('folds a resolved question answer into the active stream before resolving (R2/R6)', async () => {
+  it('keeps a card question receipt out of the final answer bubble', async () => {
     const ws = (await workspaceStore.list())[0];
     pendingCardState = {
       type: 'question',
@@ -822,12 +963,12 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
       }),
     );
 
-    assert.deepStrictEqual(foldedTexts, ['❓Choose one\n↳ 你的选择：B']);
-    assert.deepStrictEqual(callOrder, ['fold', 'resolve']);
+    assert.deepStrictEqual(foldedTexts, []);
+    assert.deepStrictEqual(callOrder, ['resolve']);
     assert.deepStrictEqual(resolvedApprovals[0].result.updatedInput.answers, { 'Choose one': 'B' });
   });
 
-  it('folds multi-select question answers with joined labels (R2)', async () => {
+  it('keeps multi-select receipts on the terminal card', async () => {
     const ws = (await workspaceStore.list())[0];
     pendingCardState = {
       type: 'question',
@@ -843,7 +984,7 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
       }),
     );
 
-    assert.deepStrictEqual(foldedTexts, ['❓Pick all\n↳ 你的选择：A, C']);
+    assert.deepStrictEqual(foldedTexts, []);
   });
 
   it('skips the fold when no stream is active and still resolves (R4/AE5)', async () => {
@@ -855,7 +996,7 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
 
     assert.deepStrictEqual(foldedTexts, []);
     assert.strictEqual(resolvedApprovals.length, 1);
-    assert.strictEqual(updatedCards[0].card.main_title.desc, '已允许');
+    assert.match(updatedCards[0].card.main_title.desc, /已允许$/);
   });
 
   it('skips the fold when a question resolves with no answer (empty fold) (R4)', async () => {
@@ -883,10 +1024,10 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     const key = encodeButtonKey('req-1', 'allow', testSessionId);
     await assert.doesNotReject(() => (service as any).handleTemplateCardEvent(ws.id, makeCardEvent(key)));
 
-    // The handler offered the fold but ignored the false return and continued.
-    assert.deepStrictEqual(foldedTexts, ['🔐 Bash → 已允许']);
+    // The terminal card owns the receipt; the final answer bubble stays clean.
+    assert.deepStrictEqual(foldedTexts, []);
     assert.strictEqual(resolvedApprovals.length, 1);
-    assert.strictEqual(updatedCards[0].card.main_title.desc, '已允许');
+    assert.match(updatedCards[0].card.main_title.desc, /已允许$/);
   });
 
   it('card approval resolution carries self-approval provenance (U8, KTD-15)', async () => {

@@ -115,6 +115,11 @@ const READONLY_TOOLS: readonly string[] = [
   BROWSER_TOOL_NAMES.stopNetworkCapture,
 ];
 
+const EMPTY_QUESTION_DENY_MESSAGE =
+  'AskUserQuestion requires at least one question.';
+const AMBIGUOUS_FREE_TEXT_QUESTION_DENY_MESSAGE =
+  'AskUserQuestion free-text prompts must contain exactly one question. Ask one free-text question at a time.';
+
 export class SessionRuntime {
   private sessionId: string;
   private workspaceId: string;
@@ -1065,7 +1070,16 @@ export class SessionRuntime {
   getPendingCardState(
     requestId: string,
   ):
-    | { type: 'approval'; toolName?: string; toolUseId?: string; suggestions?: PermissionSuggestion[]; audience?: BotEscalationAudience }
+    | {
+        type: 'approval';
+        input: Record<string, unknown>;
+        toolName?: string;
+        toolUseId?: string;
+        title?: string;
+        description?: string;
+        suggestions?: PermissionSuggestion[];
+        audience?: BotEscalationAudience;
+      }
     | { type: 'question'; questions: QuestionPayload[] }
     | undefined {
     const pending = this.pendingApprovals.get(requestId);
@@ -1075,11 +1089,38 @@ export class SessionRuntime {
     }
     return {
       type: 'approval',
+      input: pending.input,
       toolName: pending.toolName,
       toolUseId: pending.toolUseId,
+      title: pending.title,
+      description: pending.description,
       suggestions: pending.suggestions,
       audience: pending.audience,
     };
+  }
+
+  /**
+   * Return the only pending single free-text question, if there is one.
+   * Channel adapters use this to route the next ordinary chat message back to
+   * AskUserQuestion instead of accidentally starting a second user turn.
+   */
+  getPendingFreeTextQuestion():
+    | { requestId: string; questions: QuestionPayload[] }
+    | undefined {
+    let match: { requestId: string; questions: QuestionPayload[] } | undefined;
+    for (const [requestId, pending] of this.pendingApprovals) {
+      const questions = pending.questions ?? [];
+      if (
+        pending.type !== 'question' ||
+        questions.length !== 1 ||
+        questions[0].options.length !== 0
+      ) {
+        continue;
+      }
+      if (match) return undefined;
+      match = { requestId, questions };
+    }
+    return match;
   }
 
   /**
@@ -1154,6 +1195,21 @@ export class SessionRuntime {
     }
     if (this.pendingApprovals.has(requestId)) {
       throw new Error(`Duplicate pending approval requestId: ${requestId}`);
+    }
+    if (questions.length === 0) {
+      return Promise.resolve({
+        behavior: 'deny',
+        message: EMPTY_QUESTION_DENY_MESSAGE,
+      });
+    }
+    if (
+      questions.length > 1 &&
+      questions.some((question) => question.options.length === 0)
+    ) {
+      return Promise.resolve({
+        behavior: 'deny',
+        message: AMBIGUOUS_FREE_TEXT_QUESTION_DENY_MESSAGE,
+      });
     }
     const timerInfo = options.timeout ? this.startTimeoutTimer(requestId, options.timeout) : undefined;
     this.emitter.emitPendingQuestion(requestId, questions, timerInfo?.expiresAt);

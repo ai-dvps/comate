@@ -6,6 +6,7 @@ import { splitWecomMessage } from '../utils/wecom-message-split.js';
 import { buildToolApprovalCard, buildQuestionCard, buildEscalationNoticeCard } from './wecom-template-card.js';
 import { botEscalationLedger } from './bot-escalation-ledger.js';
 import { diagLog } from '../utils/diag-logger.js';
+import { getWecomToolCategory, summarizeWecomToolOperation } from '../utils/wecom-tool-presentation.js';
 
 const THINKING_PLACEHOLDER = '\n\n收到，正在处理中.';
 const THINKING_PLACEHOLDER_PREFIX = '\n\n收到，正在处理中';
@@ -13,19 +14,16 @@ const THINKING_PLACEHOLDER_PREFIX = '\n\n收到，正在处理中';
 /** Cap for command summaries rendered into escalation cards. */
 const ESCALATION_COMMAND_SUMMARY_MAX = 120;
 
-/**
- * Command summary for the requester's read-only escalation notice (U11):
- * prefer the literal `command` field of the tool input, fall back to the
- * emitter's inputSummary, truncate to the card budget.
- */
-function summarizeCommand(input: unknown, inputSummary: string | undefined): string {
-  const command =
-    input && typeof input === 'object' && typeof (input as Record<string, unknown>).command === 'string'
-      ? ((input as Record<string, unknown>).command as string)
-      : (inputSummary ?? '');
-  return command.length > ESCALATION_COMMAND_SUMMARY_MAX
-    ? `${command.slice(0, ESCALATION_COMMAND_SUMMARY_MAX)}…`
-    : command;
+function toolStatusText(toolName: string): string {
+  switch (getWecomToolCategory(toolName)) {
+    case 'project_read': return '🔎 正在查看项目内容…';
+    case 'command': return '⚙️ 正在执行命令…';
+    case 'file_write': return '✏️ 正在修改文件…';
+    case 'web_research': return '🌐 正在查询资料…';
+    case 'question': return '💬 正在整理需要确认的信息…';
+    case 'browser': return '🌐 正在检查页面…';
+    default: return '⚙️ 正在执行相关操作…';
+  }
 }
 
 /**
@@ -206,7 +204,9 @@ export function createStreamReply(
     console.error('Failed to send WeCom processing placeholder:', err);
   });
   animationInterval = setInterval(sendAnimationFrame, 600);
+  animationInterval.unref();
   safeguardTimer = setTimeout(fireSafeguard, SAFEGUARD_DELAY_MS);
+  safeguardTimer.unref();
 
   const flushStream = debounce(() => {
     // Skip passive refreshes once the safeguard has fired or the passive bubble
@@ -217,15 +217,18 @@ export function createStreamReply(
     });
   }, 150);
 
-  const setPlaceholder = (text: string, animate: boolean = false) => {
+  const setPlaceholder = (text: string, animate: boolean = false, immediate: boolean = false) => {
     // Placeholders are passive-display hints; do not add them once the passive
     // channel is closed (they are not part of the answer text) or the passive
     // bubble has already been finished on an earlier result.
     if (passiveClosed || bubbleFinalized) return;
+    if (currentPlaceholder === text) return;
+    stopAnimation();
     clearPlaceholder();
     currentPlaceholder = text;
     responseText += text;
-    flushStream.flush();
+    flushStream();
+    if (immediate) flushStream.flush();
     if (animate) {
       const baseText = text.replace(/\.*$/, '');
       let dotCount = 0;
@@ -246,6 +249,7 @@ export function createStreamReply(
           console.error('Failed to send WeCom placeholder animation frame:', err);
         });
       }, 600);
+      placeholderAnimationInterval.unref();
     }
   };
 
@@ -431,6 +435,7 @@ export function createStreamReply(
     diagLog(
       `[WeComStreamReply ${sessionId}] appending narrative block (no finalize) len=${text.length}`,
     );
+    flushStream();
     flushStream.flush();
     return true;
   };
@@ -454,13 +459,11 @@ export function createStreamReply(
       } else if (collecting && event.type === 'thinking_start') {
         setPlaceholder(THINKING_PLACEHOLDER, true);
       } else if (collecting && event.type === 'tool_use_start') {
-        clearPlaceholder();
-        setPlaceholder(`\n\n🔧 ${event.toolName}...`, false);
+        setPlaceholder(`\n\n${toolStatusText(event.toolName)}`, false);
       } else if (event.type === 'tool_result') {
         clearPlaceholder();
       } else if (event.type === 'subagent_start') {
-        clearPlaceholder();
-        setPlaceholder(`\n\n🤖 ${event.description ?? 'Running subagent'}...`, false);
+        setPlaceholder('\n\n🤝 正在并行分析…', false);
       } else if (event.type === 'subagent_done') {
         clearPlaceholder();
       } else if (collecting && event.type === 'assistant_done') {
@@ -491,6 +494,13 @@ export function createStreamReply(
       } else if (event.type === 'pending_approval') {
         if (sentTemplateCards.has(event.requestId)) return;
         sentTemplateCards.add(event.requestId);
+        setPlaceholder(
+          event.audience === 'admins'
+            ? '\n\n⏸️ 已提交管理员审批，等待处理…'
+            : '\n\n⏸️ 等待你确认一项操作…',
+          false,
+          true,
+        );
         // U11 (KTD-15): an admins-audience escalation must NOT give the
         // requester an actionable card (self-approval is not supervision).
         // The requester gets a READ-ONLY notice card; owner/admin recipients
@@ -502,7 +512,11 @@ export function createStreamReply(
             1,
             Math.round(((Number.isFinite(expiresAtMs) ? expiresAtMs : Date.now()) - Date.now()) / 60000),
           );
-          const commandSummary = summarizeCommand(event.input, event.inputSummary);
+          const commandSummary = summarizeWecomToolOperation(
+            event.input,
+            event.inputSummary ?? event.toolName,
+            ESCALATION_COMMAND_SUMMARY_MAX,
+          );
           const card = buildEscalationNoticeCard({
             commandSummary,
             toolName: event.toolName,
@@ -526,6 +540,12 @@ export function createStreamReply(
           toolName: event.toolName,
           title: event.title,
           description: event.description,
+          operationSummary: summarizeWecomToolOperation(
+            event.input,
+            event.inputSummary ?? event.toolName,
+            160,
+          ),
+          allowAlways: (event.suggestions?.length ?? 0) > 0,
           taskId: event.requestId,
         });
         diagLog(`[WeComStreamReply ${sessionId}] send approval-card requestId=${event.requestId} tool=${event.toolName}`);
@@ -534,11 +554,13 @@ export function createStreamReply(
           (err: Error) => {
             console.error('Failed to send WeCom approval card:', err);
             diagLog(`[WeComStreamReply ${sessionId}] send approval-card FAIL requestId=${event.requestId} err=${err.message}`);
+            setPlaceholder('\n\n⚠️ 确认卡发送失败，请稍后重试或发送 /stop。', false, true);
           },
         );
       } else if (event.type === 'pending_question') {
         if (sentTemplateCards.has(event.requestId)) return;
         sentTemplateCards.add(event.requestId);
+        setPlaceholder('\n\n⏸️ 等待你回答一个问题…', false, true);
         const card = buildQuestionCard({
           requestId: event.requestId,
           sessionId,
@@ -551,6 +573,7 @@ export function createStreamReply(
           (err: Error) => {
             console.error('Failed to send WeCom question card:', err);
             diagLog(`[WeComStreamReply ${sessionId}] send question-card FAIL requestId=${event.requestId} err=${err.message}`);
+            setPlaceholder('\n\n⚠️ 问题卡发送失败，请稍后重试或发送 /stop。', false, true);
           },
         );
       } else if (event.type === 'approval_timeout') {

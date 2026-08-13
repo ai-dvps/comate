@@ -57,6 +57,10 @@ export interface ToolApprovalCardOptions {
   toolName: string;
   title?: string;
   description?: string;
+  /** Short, requester-visible summary of the exact operation being approved. */
+  operationSummary?: string;
+  /** Whether the runtime supplied a permission rule that can actually persist. */
+  allowAlways?: boolean;
   /** A stable task_id so later updateTemplateCard can target the card. */
   taskId?: string;
 }
