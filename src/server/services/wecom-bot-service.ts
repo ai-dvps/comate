@@ -28,7 +28,8 @@ import { saveMediaFile } from './wecom-file-storage.js';
 import { validateSendFilePath } from './wecom-send-file-policy.js';
 import { REPLY_TOOL_NAME, evaluateToolPermission, resolveEffectivePolicy } from './tool-permission-policy.js';
 import { diagLog } from '../utils/diag-logger.js';
-import { summarizeWecomToolOperation } from '../utils/wecom-tool-presentation.js';
+import { summarizeBotToolOperation } from '../utils/bot-tool-presentation.js';
+import { validateQuestionAnswers } from '../utils/question-answer-validation.js';
 import {
   buildWecomSessionListCard,
   buildWecomWorkspaceListCard,
@@ -44,7 +45,7 @@ import {
   type NormalizedSelectedItem,
 } from './wecom-template-card.js';
 import { botEscalationLedger } from './bot-escalation-ledger.js';
-import { exactSessionUpdatedPermissions } from './bot-escalation-guard.js';
+import { computeAlwaysAllowRules, exactSessionUpdatedPermissions } from './bot-escalation-guard.js';
 import { subscribeEscalationPending, subscribeEscalationResolved } from './bot-escalation-notifier.js';
 
 const MAX_SEND_FILE_SIZE_BYTES = 20 * 1024 * 1024;
@@ -1534,7 +1535,13 @@ export class WeComBotService {
     }
 
     if (pending.type === 'approval') {
-      if (parsed.action === 'always_allow' && !pending.suggestions?.length) {
+      const command = typeof pending.input?.command === 'string' ? pending.input.command : undefined;
+      const alwaysAllow = computeAlwaysAllowRules({
+        toolName: pending.toolName ?? '',
+        command,
+        suggestions: pending.suggestions,
+      });
+      if (parsed.action === 'always_allow' && alwaysAllow.rules.length === 0) {
         await this.updateCardToTerminal(
           workspaceId,
           frame,
@@ -1551,7 +1558,7 @@ export class WeComBotService {
             : '已允许';
       const terminalContext = {
         title: pending.title ?? '操作确认',
-        desc: `${pending.description ?? '请求执行一项操作'}\n操作：${summarizeWecomToolOperation(pending.input, pending.toolName ?? '相关操作', 160)}`,
+        desc: `${pending.description ?? '请求执行一项操作'}\n操作：${summarizeBotToolOperation(pending.input, pending.toolName ?? '相关操作', 160)}`,
       };
       this.setActiveStreamStatus(
         parsed.sessionId,
@@ -1577,13 +1584,22 @@ export class WeComBotService {
       } else {
         runtime.resolveApproval(parsed.requestId, {
           behavior: 'allow',
-          updatedPermissions: parsed.action === 'always_allow' ? pending.suggestions : undefined,
+          updatedPermissions: parsed.action === 'always_allow'
+            ? exactSessionUpdatedPermissions(alwaysAllow.rules)
+            : undefined,
         }, {
           source: 'self-approval',
           approver: { type: 'wecom', channelKey: 'wecom', channelUserId: parsed.wecomUserId },
         });
       }
-      await this.updateCardToTerminal(workspaceId, frame, parsed, terminalNotice, terminalContext);
+      await this.updateCardToTerminal(
+        workspaceId,
+        frame,
+        parsed,
+        terminalNotice,
+        terminalContext,
+        true,
+      );
       return;
     }
 
@@ -1591,16 +1607,32 @@ export class WeComBotService {
     // card, then resume the existing stream without duplicating a receipt in
     // the final answer bubble.
     const answers = this.buildAnswersFromCardEvent(parsed, pending.questions);
+    const validation = validateQuestionAnswers(pending.questions, answers);
+    if (!validation.valid) {
+      try {
+        await this.sendDirectMessage(workspaceId, parsed.wecomUserId, '请为每个问题选择有效答案后再提交。');
+      } catch (err) {
+        console.error('[WeComBotService] Failed to send invalid-answer notice:', err);
+      }
+      return;
+    }
     this.setActiveStreamStatus(parsed.sessionId, '\n\n已收到你的回答，继续处理…');
     runtime.resolveApproval(parsed.requestId, {
       behavior: 'allow',
-      updatedInput: { questions: pending.questions, answers },
+      updatedInput: { questions: pending.questions, answers: validation.answers },
     });
-    await this.updateCardToTerminal(workspaceId, frame, parsed, '已提交', {
-      title: '回答已提交',
-      desc: pending.questions.map((question) => question.question).join('\n'),
-      selectionText: Object.values(answers).filter(Boolean).join('；') || '未选择',
-    });
+    await this.updateCardToTerminal(
+      workspaceId,
+      frame,
+      parsed,
+      '已提交',
+      {
+        title: '回答已提交',
+        desc: pending.questions.map((question) => question.question).join('\n'),
+        selectionText: Object.values(validation.answers).join('；'),
+      },
+      true,
+    );
   }
 
   /**
@@ -1862,7 +1894,7 @@ export class WeComBotService {
     // Terminal update within the 5s click-response window; the requester and
     // the non-clicking recipients are notified by the gate continuation via
     // the escalation notifier (their cards cannot be server-terminated).
-    await this.updateCardToTerminal(workspaceId, frame, parsed, terminalText);
+    await this.updateCardToTerminal(workspaceId, frame, parsed, terminalText, undefined, true);
   }
 
   /**
@@ -2094,6 +2126,7 @@ export class WeComBotService {
     parsed: { cardType?: string; taskId?: string },
     notice: string,
     context?: { title?: string; desc?: string; selectionText?: string },
+    notifyOnFailure = false,
   ): Promise<void> {
     const conn = this.getConnectionForWorkspace(workspaceId);
     if (!conn || conn.status !== 'connected' || !frame.body) return;
@@ -2108,6 +2141,20 @@ export class WeComBotService {
       await conn.client.updateTemplateCard({ headers: frame.headers }, card);
     } catch (err) {
       console.error('[WeComBotService] Failed to update template card:', err);
+      if (!notifyOnFailure) return;
+
+      const wecomUserId = frame.body.from?.userid;
+      if (!wecomUserId) return;
+      try {
+        await conn.client.sendMessage(wecomUserId, {
+          msgtype: 'markdown',
+          markdown: {
+            content: `操作结果：${notice}\n> 原卡片状态更新失败，请勿重复点击。`,
+          },
+        });
+      } catch (sendErr) {
+        console.error('[WeComBotService] Failed to send terminal fallback:', sendErr);
+      }
     }
   }
 

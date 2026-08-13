@@ -142,7 +142,7 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
     handler(1, { type: 'assistant_start' } as SseEvent);
     handler(1, { type: 'tool_use_start', toolName: 'Bash' } as SseEvent);
     await sleep(150);
-    assert.ok(lastContentCall()?.data.content.includes('🔧 Bash'));
+    assert.ok(lastContentCall()?.data.content.includes('正在执行命令'));
     const countAfterPlaceholder = calls.filter((c) => c.method === 'cardElement.content').length;
 
     handler(1, { type: 'tool_result' } as SseEvent);
@@ -165,7 +165,7 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
     handler(1, { type: 'assistant_start' } as SseEvent);
     handler(1, { type: 'subagent_start', description: 'Running subagent' } as SseEvent);
     await sleep(150);
-    assert.ok(lastContentCall()?.data.content.includes('🤖'));
+    assert.ok(lastContentCall()?.data.content.includes('正在处理一个并行任务'));
     const countAfterPlaceholder = calls.filter((c) => c.method === 'cardElement.content').length;
 
     handler(1, { type: 'subagent_done' } as SseEvent);
@@ -349,6 +349,50 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
     assert.strictEqual(waitingCount, 1);
     const card = findPostedCard((c) => c.body?.elements?.[0]?.content === '需要你的确认');
     assert.ok(card, 'approval card should be posted');
+    await sleep(150);
+    assert.match(lastContentCall()?.data.content ?? '', /等待你确认/);
+    assert.doesNotMatch(lastContentCall()?.data.content ?? '', /Bash/);
+  });
+
+  it('uses grouped user-facing status text instead of internal tool names', async () => {
+    const reply = createReply();
+    const { handler } = await reply.start();
+    handler(1, { type: 'assistant_start' } as SseEvent);
+    handler(2, { type: 'tool_use_start', toolName: 'mcp__browser__extract' } as SseEvent);
+    await sleep(150);
+
+    assert.match(lastContentCall()?.data.content ?? '', /检查页面/);
+    assert.doesNotMatch(lastContentCall()?.data.content ?? '', /mcp__browser__extract/);
+  });
+
+  it('fails a pending request closed when its card cannot be delivered', async () => {
+    let failedRequestId: string | undefined;
+    mockClient.im.v1.message.create = async (args: unknown) => {
+      calls.push({ method: 'im.message.create', args });
+      const body = args as { data: { content: string } };
+      if (body.data.content.includes('需要你的确认')) throw new Error('offline');
+      return { data: { message_id: 'msg-1' } };
+    };
+    const reply = new FeishuStreamReply(
+      mockThread,
+      mockClient,
+      'openid-1',
+      'ws-1',
+      'session-1',
+      { onCardDeliveryFailure: (requestId) => { failedRequestId = requestId; } },
+    );
+    const { handler } = await reply.start();
+    handler(1, {
+      type: 'pending_approval',
+      requestId: 'req-failed',
+      toolName: 'Bash',
+      toolUseId: 'tu-failed',
+      input: { command: 'npm test' },
+      inputSummary: 'npm test',
+    } as SseEvent);
+    await sleep(20);
+
+    assert.strictEqual(failedRequestId, 'req-failed');
   });
 
   it('posts a question card on pending_question', async () => {
@@ -420,7 +464,7 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
     handler(1, { type: 'assistant_start' } as SseEvent);
     handler(1, { type: 'tool_use_start', toolName: 'Bash' } as SseEvent);
     await sleep(150);
-    assert.ok(lastContentCall()?.data.content.includes('🔧 Bash'));
+    assert.ok(lastContentCall()?.data.content.includes('正在执行命令'));
 
     const didInterrupt = interrupt('已中断');
     assert.strictEqual(didInterrupt, true);

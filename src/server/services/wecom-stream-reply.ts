@@ -6,7 +6,8 @@ import { splitWecomMessage } from '../utils/wecom-message-split.js';
 import { buildToolApprovalCard, buildQuestionCard, buildEscalationNoticeCard } from './wecom-template-card.js';
 import { botEscalationLedger } from './bot-escalation-ledger.js';
 import { diagLog } from '../utils/diag-logger.js';
-import { getWecomToolCategory, summarizeWecomToolOperation } from '../utils/wecom-tool-presentation.js';
+import { getBotToolCategory, summarizeBotToolOperation } from '../utils/bot-tool-presentation.js';
+import { computeAlwaysAllowRules } from './bot-escalation-guard.js';
 
 const THINKING_PLACEHOLDER = '\n\n收到，正在处理中.';
 const THINKING_PLACEHOLDER_PREFIX = '\n\n收到，正在处理中';
@@ -15,7 +16,7 @@ const THINKING_PLACEHOLDER_PREFIX = '\n\n收到，正在处理中';
 const ESCALATION_COMMAND_SUMMARY_MAX = 120;
 
 function toolStatusText(toolName: string): string {
-  switch (getWecomToolCategory(toolName)) {
+  switch (getBotToolCategory(toolName)) {
     case 'project_read': return '🔎 正在查看项目内容…';
     case 'command': return '⚙️ 正在执行命令…';
     case 'file_write': return '✏️ 正在修改文件…';
@@ -512,7 +513,7 @@ export function createStreamReply(
             1,
             Math.round(((Number.isFinite(expiresAtMs) ? expiresAtMs : Date.now()) - Date.now()) / 60000),
           );
-          const commandSummary = summarizeWecomToolOperation(
+          const commandSummary = summarizeBotToolOperation(
             event.input,
             event.inputSummary ?? event.toolName,
             ESCALATION_COMMAND_SUMMARY_MAX,
@@ -534,18 +535,26 @@ export function createStreamReply(
           );
           return;
         }
+        const command = event.input && typeof event.input === 'object'
+          ? (event.input as Record<string, unknown>).command
+          : undefined;
+        const alwaysAllow = computeAlwaysAllowRules({
+          toolName: event.toolName,
+          command: typeof command === 'string' ? command : undefined,
+          suggestions: event.suggestions,
+        });
         const card = buildToolApprovalCard({
           requestId: event.requestId,
           sessionId,
           toolName: event.toolName,
           title: event.title,
           description: event.description,
-          operationSummary: summarizeWecomToolOperation(
+          operationSummary: summarizeBotToolOperation(
             event.input,
             event.inputSummary ?? event.toolName,
             160,
           ),
-          allowAlways: (event.suggestions?.length ?? 0) > 0,
+          allowAlways: alwaysAllow.rules.length > 0,
           taskId: event.requestId,
         });
         diagLog(`[WeComStreamReply ${sessionId}] send approval-card requestId=${event.requestId} tool=${event.toolName}`);

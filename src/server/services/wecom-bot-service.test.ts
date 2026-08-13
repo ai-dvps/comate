@@ -463,7 +463,18 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     updatedCards = [];
     foldedTexts = [];
     callOrder = [];
-    pendingCardState = { type: 'approval', toolName: 'Bash', toolUseId: 'tu-deny-1', suggestions: [{ id: 'suggestion-1' }] };
+    pendingCardState = {
+      type: 'approval',
+      toolName: 'Bash',
+      toolUseId: 'tu-deny-1',
+      input: { command: 'npm test' },
+      suggestions: [{
+        type: 'addRules',
+        rules: [{ toolName: 'Bash', ruleContent: 'npm test' }],
+        behavior: 'allow',
+        destination: 'session',
+      }],
+    };
 
     // Set up workspace, bot, and user
     const ws = await workspaceStore.create({ name: 'Card Test', folderPath: tempDir });
@@ -688,6 +699,33 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     assert.deepStrictEqual(updatedCards[0].card.card_action, { type: 0 });
   });
 
+  it('sends one fallback receipt when a settled approval card cannot become terminal', async () => {
+    const ws = (await workspaceStore.list())[0];
+    const conn = (service as any).connections.values().next().value;
+    const sentMessages: Array<{ userId: string; body: any }> = [];
+    conn.client.updateTemplateCard = async () => {
+      throw new Error('update failed');
+    };
+    conn.client.sendMessage = async (userId: string, body: any) => {
+      sentMessages.push({ userId, body });
+    };
+
+    const key = encodeButtonKey('req-1', 'allow', testSessionId);
+    await (service as any).handleTemplateCardEvent(ws.id, makeCardEvent(key));
+
+    assert.strictEqual(resolvedApprovals.length, 1);
+    assert.strictEqual(resolvedApprovals[0].result.behavior, 'allow');
+    assert.deepStrictEqual(sentMessages, [{
+      userId: 'owner-1',
+      body: {
+        msgtype: 'markdown',
+        markdown: {
+          content: '操作结果：已允许\n> 原卡片状态更新失败，请勿重复点击。',
+        },
+      },
+    }]);
+  });
+
   it('resolves approval when user clicks always_allow with suggestions', async () => {
     const ws = (await workspaceStore.list())[0];
     const key = encodeButtonKey('req-1', 'always_allow', testSessionId);
@@ -696,7 +734,12 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     assert.strictEqual(resolvedApprovals.length, 1);
     assert.strictEqual(resolvedApprovals[0].requestId, 'req-1');
     assert.strictEqual(resolvedApprovals[0].result.behavior, 'allow');
-    assert.deepStrictEqual(resolvedApprovals[0].result.updatedPermissions, [{ id: 'suggestion-1' }]);
+    assert.deepStrictEqual(resolvedApprovals[0].result.updatedPermissions, [{
+      type: 'addRules',
+      rules: [{ toolName: 'Bash', ruleContent: 'npm test' }],
+      behavior: 'allow',
+      destination: 'session',
+    }]);
     assert.match(updatedCards[0].card.main_title.desc, /已始终允许$/);
   });
 
@@ -936,14 +979,30 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
 
   it('keeps an always-allow receipt out of the final answer bubble', async () => {
     const ws = (await workspaceStore.list())[0];
-    pendingCardState = { type: 'approval', toolName: 'Edit', toolUseId: 'tu-2', suggestions: [{ id: 's-1' }] };
+    pendingCardState = {
+      type: 'approval',
+      toolName: 'Bash',
+      toolUseId: 'tu-2',
+      input: { command: 'npm test' },
+      suggestions: [{
+        type: 'addRules',
+        rules: [{ toolName: 'Bash', ruleContent: 'npm test' }],
+        behavior: 'allow',
+        destination: 'session',
+      }],
+    };
     injectActiveStream();
 
     const key = encodeButtonKey('req-1', 'always_allow', testSessionId);
     await (service as any).handleTemplateCardEvent(ws.id, makeCardEvent(key));
 
     assert.deepStrictEqual(foldedTexts, []);
-    assert.deepStrictEqual(resolvedApprovals[0].result.updatedPermissions, [{ id: 's-1' }]);
+    assert.deepStrictEqual(resolvedApprovals[0].result.updatedPermissions, [{
+      type: 'addRules',
+      rules: [{ toolName: 'Bash', ruleContent: 'npm test' }],
+      behavior: 'allow',
+      destination: 'session',
+    }]);
     assert.match(updatedCards[0].card.main_title.desc, /已始终允许$/);
   });
 
@@ -999,7 +1058,7 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     assert.match(updatedCards[0].card.main_title.desc, /已允许$/);
   });
 
-  it('skips the fold when a question resolves with no answer (empty fold) (R4)', async () => {
+  it('keeps a question pending and prompts once when no answer is selected', async () => {
     const ws = (await workspaceStore.list())[0];
     pendingCardState = {
       type: 'question',
@@ -1007,13 +1066,37 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     };
     injectActiveStream();
 
-    // Submit with no selected_items → answers {} → formatQuestionFold returns '' → fold skipped.
+    const sentMessages: Array<{ userId: string; body: any }> = [];
+    const conn = (service as any).connections.values().next().value;
+    conn.client.sendMessage = async (userId: string, body: any) => {
+      sentMessages.push({ userId, body });
+    };
+
     const key = encodeButtonKey('req-1', 'allow', testSessionId);
     await (service as any).handleTemplateCardEvent(ws.id, makeCardEvent(key));
 
     assert.deepStrictEqual(foldedTexts, []);
-    assert.strictEqual(resolvedApprovals.length, 1);
-    assert.deepStrictEqual(resolvedApprovals[0].result.updatedInput.answers, {});
+    assert.strictEqual(resolvedApprovals.length, 0);
+    assert.strictEqual(updatedCards.length, 0);
+    assert.deepStrictEqual(sentMessages, [{
+      userId: 'owner-1',
+      body: { msgtype: 'markdown', markdown: { content: '请为每个问题选择有效答案后再提交。' } },
+    }]);
+  });
+
+  it('rejects multiple selections for a single-choice question', async () => {
+    const ws = (await workspaceStore.list())[0];
+    pendingCardState = {
+      type: 'question',
+      questions: [{ question: 'Choose one', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false }],
+    };
+    const key = encodeButtonKey('req-1', 'allow', testSessionId);
+    await (service as any).handleTemplateCardEvent(ws.id, makeCardEvent(key, {
+      event: { selected_items: [{ question_key: key, option_ids: ['0', '1'] }] },
+    }));
+
+    assert.strictEqual(resolvedApprovals.length, 0);
+    assert.strictEqual(updatedCards.length, 0);
   });
 
   it('tolerates the stream reporting a closed passive reply (append returns false) (R7)', async () => {

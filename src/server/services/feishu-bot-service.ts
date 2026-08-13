@@ -700,12 +700,27 @@ export class FeishuBotService {
       const result = await feishuCardActionHandler.handle(event.user.userId, payload, {
         setActiveWorkspace: (workspaceId: string, botId: string, actorUserId: string) =>
           this.setActiveWorkspace(workspaceId, botId, actorUserId),
+        beforeDecisionResolve: (sessionId, decision) => {
+          this.activeStreamReplies.get(sessionId)?.setStatus(
+            decision === 'question'
+              ? '\n\n已收到你的回答，继续处理…'
+              : decision === 'deny'
+                ? '\n\n已记录你的拒绝，继续处理…'
+                : '\n\n已确认，继续处理…',
+          );
+        },
       });
-      const content = this.extractToastContent(result);
-      if (content) {
+      const content = result.toast.content;
+      const terminalCard = result.terminalCard;
+      if (terminalCard && result.toast.type === 'success') {
+        this.pendingCardActionResponses.set(event.messageId, {
+          toast: result.toast,
+          card: { type: 'raw', data: terminalCard },
+        });
+      } else if (content) {
         await this.safePostActionResponse(event, content);
       }
-      if (payload.action === 'select_session' && this.isSuccessToast(result)) {
+      if (payload.action === 'select_session' && result.toast.type === 'success') {
         const response = await this.buildSelectSessionActionResponse(
           event.messageId,
           payload.workspaceId,
@@ -739,16 +754,6 @@ export class FeishuBotService {
     const action = (nested as Record<string, unknown>).action;
     if (!action || typeof action !== 'object') return undefined;
     return (action as Record<string, unknown>).form_value as Record<string, unknown> | undefined;
-  }
-
-  private getToast(result: unknown): Record<string, unknown> | undefined {
-    if (!result || typeof result !== 'object' || !('toast' in result)) return undefined;
-    const toast = (result as Record<string, unknown>).toast;
-    return toast && typeof toast === 'object' ? (toast as Record<string, unknown>) : undefined;
-  }
-
-  private isSuccessToast(result: unknown): boolean {
-    return this.getToast(result)?.type === 'success';
   }
 
   private async patchSessionListCardInactive(
@@ -867,11 +872,6 @@ export class FeishuBotService {
       typeof record.action === 'string' &&
       typeof record.workspaceId === 'string'
     );
-  }
-
-  private extractToastContent(result: unknown): string | undefined {
-    const toast = this.getToast(result);
-    return typeof toast?.content === 'string' ? toast.content : undefined;
   }
 
   private async safePostActionResponse(event: ActionEvent, text: string): Promise<void> {
@@ -1070,6 +1070,28 @@ export class FeishuBotService {
       return;
     }
 
+    const runtime = chatService.getRuntimeIfExists(sessionId);
+    const pendingFreeText = runtime?.getPendingFreeTextQuestion?.();
+    const answer = text.trim();
+    if (runtime && pendingFreeText && answer) {
+      const question = pendingFreeText.questions[0];
+      const resolved = runtime.resolveApproval(pendingFreeText.requestId, {
+        behavior: 'allow',
+        updatedInput: {
+          questions: pendingFreeText.questions,
+          answers: { [question.question]: answer },
+        },
+      });
+      if (resolved) {
+        feishuCardActionHandler.unregisterQuestion(pendingFreeText.requestId);
+        this.activeStreamReplies.get(sessionId)?.setStatus('\n\n已收到你的回答，继续处理…');
+        diagLog(
+          `[FeishuBotService] resolved free-text question sessionId=${sessionId} requestId=${pendingFreeText.requestId}`,
+        );
+        return;
+      }
+    }
+
     const larkClient = this.getActiveConnection()?.larkClient;
     if (!larkClient) return;
 
@@ -1079,7 +1101,16 @@ export class FeishuBotService {
       feishuUserId,
       workspace.id,
       sessionId,
-      { initialHint },
+      {
+        initialHint,
+        onCardDeliveryFailure: (requestId) => {
+          const activeRuntime = chatService.getRuntimeIfExists(sessionId);
+          activeRuntime?.resolveApproval(requestId, {
+            behavior: 'deny',
+            message: 'The Feishu decision card could not be delivered.',
+          });
+        },
+      },
     );
 
     let handler: ((id: number, event: SseEvent) => void) & { cleanup: () => void } | undefined;

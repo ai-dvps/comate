@@ -363,6 +363,81 @@ describe('FeishuBotService', () => {
       assert.strictEqual(pushArgs[2], 'hello again');
     });
 
+    it('uses a chat reply to settle a pending free-text question without starting a new turn', async () => {
+      activeSessions.set(getFeishuBotUserId(feishuUserId), 'session-existing');
+      createdSessions.push({ workspaceId: workspace.id, name: 'Existing', source: 'feishu' });
+      let pushed = false;
+      let resolved: unknown;
+      chatService.pushMessage = async () => { pushed = true; };
+      chatService.getRuntimeIfExists = () => ({
+        getPendingFreeTextQuestion: () => ({
+          requestId: 'question-1',
+          questions: [{ question: 'Why?', multiSelect: false }],
+        }),
+        resolveApproval: (_requestId: string, result: unknown) => {
+          resolved = result;
+          return true;
+        },
+      }) as ReturnType<typeof chatService.getRuntimeIfExists>;
+
+      await (service as unknown as {
+        handleChatMessage: (thread: MockThread, feishuUserId: string, text: string) => Promise<void>;
+      }).handleChatMessage(thread, feishuUserId, 'Because it is safer');
+
+      assert.strictEqual(pushed, false);
+      assert.deepStrictEqual(
+        (resolved as { updatedInput: { answers: Record<string, string> } }).updatedInput.answers,
+        { 'Why?': 'Because it is safer' },
+      );
+      assert.strictEqual(larkCalls.filter((call) => call.method === 'card.create').length, 0);
+    });
+
+    it('denies a pending decision when its Feishu card cannot be delivered', async () => {
+      activeSessions.set(getFeishuBotUserId(feishuUserId), 'session-existing');
+      createdSessions.push({ workspaceId: workspace.id, name: 'Existing', source: 'feishu' });
+      const connection = (service as unknown as {
+        connections: Map<string, { larkClient: MockLarkClient }>;
+      }).connections.get(botId)!;
+      const originalCreate = connection.larkClient.im.v1.message.create;
+      connection.larkClient.im.v1.message.create = async (args) => {
+        if (args.data.content.includes('需要你的确认')) throw new Error('offline');
+        return originalCreate(args);
+      };
+
+      let resolved: { requestId: string; result: unknown } | undefined;
+      chatService.getRuntimeIfExists = () => ({
+        getPendingFreeTextQuestion: () => undefined,
+        getPendingCardState: (requestId: string) => requestId === 'approval-1'
+          ? { type: 'approval', input: { command: 'npm test' }, toolName: 'Bash' }
+          : undefined,
+        resolveApproval: (requestId: string, result: unknown) => {
+          resolved = { requestId, result };
+          return true;
+        },
+      }) as ReturnType<typeof chatService.getRuntimeIfExists>;
+      chatService.pushMessage = async (_sessionId, _workspaceId, _text, _isBot, handler) => {
+        (handler as (id: number, event: SseEvent) => void)(1, {
+          type: 'pending_approval',
+          requestId: 'approval-1',
+          toolName: 'Bash',
+          toolUseId: 'tool-1',
+          input: { command: 'npm test' },
+          inputSummary: 'npm test',
+        });
+      };
+
+      await (service as unknown as {
+        handleChatMessage: (thread: MockThread, feishuUserId: string, text: string) => Promise<void>;
+      }).handleChatMessage(thread, feishuUserId, 'run tests');
+      await sleep(20);
+
+      assert.strictEqual(resolved?.requestId, 'approval-1');
+      assert.deepStrictEqual(resolved?.result, {
+        behavior: 'deny',
+        message: 'The Feishu decision card could not be delivered.',
+      });
+    });
+
     it('replies with an error when session creation fails', async () => {
       chatService.createSession = async () => {
         throw new Error('db down');

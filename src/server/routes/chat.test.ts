@@ -292,6 +292,76 @@ describe('chat route approvals funnel (U8, KTD-15)', { concurrency: false }, () 
     }
   });
 
+  it('rejects non-string, missing, and unknown question answers', async () => {
+    let resolveCalls = 0;
+    const fakeRuntime = {
+      getPendingCardState: () => ({
+        type: 'question' as const,
+        questions: [{ question: 'Choose one', options: [{ label: 'A' }], multiSelect: false }],
+      }),
+      resolveApproval: () => {
+        resolveCalls++;
+        return true;
+      },
+    };
+    const stub = stubChatService({ getRuntimeIfExists: () => fakeRuntime });
+    try {
+      const handler = await importApprovalsHandler();
+      for (const answers of [
+        { 'Choose one': 1 },
+        {},
+        { 'Choose one': 'A', Extra: 'B' },
+      ]) {
+        const res = createMockRes();
+        await handler(
+          {
+            params: { id: 'ws-1', sessionId: 'sess-1', requestId: 'req-question' },
+            body: { behavior: 'allow', answers },
+          },
+          res,
+        );
+        assert.strictEqual(res.statusCode, 400);
+        assert.strictEqual(typeof res.jsonBody.error, 'string');
+      }
+      assert.strictEqual(resolveCalls, 0);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('rejects empty, out-of-option, and invalid single/multi-choice answers', async () => {
+    let resolveCalls = 0;
+    const questions = [
+      { question: 'Choose one', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false },
+      { question: 'Choose many', options: [{ label: 'X' }, { label: 'Y' }], multiSelect: true },
+    ];
+    const fakeRuntime = {
+      getPendingCardState: () => ({ type: 'question' as const, questions }),
+      resolveApproval: () => { resolveCalls++; return true; },
+    };
+    const stub = stubChatService({ getRuntimeIfExists: () => fakeRuntime });
+    try {
+      const handler = await importApprovalsHandler();
+      for (const answers of [
+        { 'Choose one': '', 'Choose many': 'X' },
+        { 'Choose one': 'C', 'Choose many': 'X' },
+        { 'Choose one': 'A, B', 'Choose many': 'X' },
+        { 'Choose one': 'A', 'Choose many': 'X, Z' },
+        { 'Choose one': 'A', 'Choose many': 'X, X' },
+      ]) {
+        const res = createMockRes();
+        await handler({
+          params: { id: 'ws-1', sessionId: 'sess-1', requestId: 'req-question' },
+          body: { behavior: 'allow', answers },
+        }, res);
+        assert.strictEqual(res.statusCode, 400);
+      }
+      assert.strictEqual(resolveCalls, 0);
+    } finally {
+      stub.restore();
+    }
+  });
+
   it('deny resolutions carry the same desktop provenance', async () => {
     const resolveCalls: Array<{ result: unknown; provenance: unknown }> = [];
     const fakeRuntime = {

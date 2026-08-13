@@ -10,6 +10,7 @@ import { diagLog } from '../utils/diag-logger.js';
 import { getLoopbackAuth } from '../services/security/loopback-auth.js';
 import type { BotUser } from '../models/bot-user.js';
 import { loadWorkflowState, listWorkflowRunIds } from '../services/workflow-loader.js';
+import { validateQuestionAnswers } from '../utils/question-answer-validation.js';
 
 const router = Router({ mergeParams: true });
 const WORKFLOW_ID_RE = /^[a-zA-Z0-9_-]+$/;
@@ -266,14 +267,15 @@ router.post('/sessions/:sessionId/approvals/:requestId', async (req, res) => {
     let result: PermissionResult;
     if (behavior === 'allow') {
       if (pending.type === 'question') {
-        if (answers === null || typeof answers !== 'object' || Array.isArray(answers)) {
-          res.status(400).json({ error: 'answers must be an object for a question response' });
+        const validation = validateQuestionAnswers(pending.questions, answers);
+        if (!validation.valid) {
+          res.status(400).json({ error: validation.error });
           return;
         }
         // AskUserQuestion response
         result = {
           behavior: 'allow',
-          updatedInput: { questions: pending.questions, answers },
+          updatedInput: { questions: pending.questions, answers: validation.answers },
         };
       } else {
         result = { behavior: 'allow', updatedPermissions };

@@ -1,6 +1,7 @@
 import type { Workspace } from '../models/workspace.js';
 import type { ChatSession } from '../models/session.js';
 import type { QuestionPayload } from '../types/message.js';
+import { humanizeBotToolName } from '../utils/bot-tool-presentation.js';
 
 /**
  * Feishu Cards v2 interactive card.
@@ -243,32 +244,44 @@ export function buildApprovalCard(params: {
   toolName: string;
   title?: string;
   description?: string;
-  inputSummary?: string;
+  operationSummary?: string;
+  allowAlways?: boolean;
 }): FeishuCardV2 {
-  const { requestId, workspaceId, sessionId, toolName, title, description, inputSummary } = params;
+  const {
+    requestId, workspaceId, sessionId, toolName, title, description,
+    operationSummary, allowAlways,
+  } = params;
   const elements: unknown[] = [
     markdownText('需要你的确认'),
-    markdownText(`工具：**${toolName}**`),
+    plainText(title ?? `确认${humanizeBotToolName(toolName)}`),
   ];
 
-  if (title) {
-    elements.push(plainText(title));
-  }
   if (description) {
     elements.push(plainText(description));
   }
-  if (inputSummary) {
-    elements.push(markdownText(`\`\`\`\n${inputSummary}\n\`\`\``));
+  if (operationSummary) {
+    elements.push(plainText(`操作：${operationSummary}`));
   }
 
   elements.push(
-    actionButton('允许', 'primary', {
+    actionButton(allowAlways ? '仅本次允许' : '允许', 'primary', {
       action: 'approval',
       workspaceId,
       sessionId,
       requestId,
       behavior: 'allow',
     }),
+  );
+  if (allowAlways) {
+    elements.push(actionButton('对此规则始终允许', 'default', {
+      action: 'approval',
+      workspaceId,
+      sessionId,
+      requestId,
+      behavior: 'always_allow',
+    }));
+  }
+  elements.push(
     actionButton('拒绝', 'default', {
       action: 'approval',
       workspaceId,
@@ -289,17 +302,21 @@ export function buildQuestionCard(params: {
 }): FeishuCardV2 {
   const { requestId, workspaceId, sessionId, questions } = params;
   const elements: unknown[] = [markdownText('需要你的回答'), plainText('请回答以下问题：')];
+  let hasOptions = false;
 
   for (const [index, question] of questions.entries()) {
     elements.push(plainText(question.question));
 
     if (question.options && question.options.length > 0) {
+      hasOptions = true;
       if (question.multiSelect) {
         elements.push(plainText('（多选）'));
       }
       for (const option of question.options) {
         elements.push(
-          actionButton(option.label, 'default', {
+          actionButton(
+            option.description ? `${option.label} — ${option.description}` : option.label,
+            'default', {
             action: 'question',
             workspaceId,
             sessionId,
@@ -307,7 +324,7 @@ export function buildQuestionCard(params: {
             questionIndex: index,
             answer: option.label,
             multiSelect: question.multiSelect,
-          }),
+            }),
         );
       }
     } else {
@@ -316,15 +333,28 @@ export function buildQuestionCard(params: {
     }
   }
 
-  elements.push(
-    actionButton('提交', 'primary', {
-      action: 'question_submit',
-      workspaceId,
-      sessionId,
-      requestId,
-    }),
-  );
+  if (hasOptions) {
+    elements.push(
+      actionButton('提交', 'primary', {
+        action: 'question_submit',
+        workspaceId,
+        sessionId,
+        requestId,
+      }),
+    );
+  }
 
+  return cardV2(elements);
+}
+
+export function buildTerminalDecisionCard(params: {
+  title: string;
+  description?: string;
+  selection?: string;
+}): FeishuCardV2 {
+  const elements: unknown[] = [plainText(params.title)];
+  if (params.description) elements.push(plainText(params.description));
+  if (params.selection) elements.push(plainText(`你的选择：${params.selection}`));
   return cardV2(elements);
 }
 
