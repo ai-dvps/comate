@@ -70,5 +70,9 @@ describe('Electron CSP allows required remote content', () => {
       imgSrcMatch[1].includes('https://oneid-private-prod-1258344699.cos.ap-guangzhou.myqcloud.com'),
       `img-src must allow the SkillHub Enterprise logo origin; got: ${imgSrcMatch[1]}`,
     );
+    assert.ok(
+      imgSrcMatch[1].split(/\s+/).includes('data:'),
+      `img-src must allow data URLs used by workspace image previews; got: ${imgSrcMatch[1]}`,
+    );
   });
 });
