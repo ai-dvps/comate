@@ -21,7 +21,7 @@ import { FOCUS_CLASSES } from './focus-classes'
  * BrowserStateBar — the persistent control-state strip (R3). Renders the five
  * U6 states from the browser_state channel plus the local busy window:
  *
- *   agent_in_control  → "Claude is driving"   + [Take over]
+ *   agent_in_control  → "Comate is driving"   + [Take over]
  *   handoff_pending   → "asking you to take over" + [Take over] / [Continue=decline]
  *   user_in_control   → "You are driving"     + [Continue]
  *   (pendingVerb)     → transitioning — controls disabled (the flip lands when

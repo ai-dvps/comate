@@ -68,11 +68,11 @@ describe('BrowserStateBar', () => {
 
   // Five-state rendering, one assertion bundle each (plan test scenario).
 
-  it('agent_in_control: shows "Claude is driving" with an enabled Take over button', () => {
+  it('agent_in_control: shows "Comate is driving" with an enabled Take over button', () => {
     setSession({ controlState: 'agent_in_control', port: 4001 })
     renderBar()
 
-    expect(screen.getByTestId('browser-state-label')).toHaveTextContent('Claude is driving')
+    expect(screen.getByTestId('browser-state-label')).toHaveTextContent('Comate is driving')
     const takeover = screen.getByTestId('browser-takeover-button')
     expect(takeover).toBeEnabled()
     expect(screen.queryByTestId('browser-handback-button')).not.toBeInTheDocument()
@@ -172,7 +172,7 @@ describe('BrowserStateBar', () => {
   it('announces control-state transitions via aria-live', () => {
     setSession({ controlState: 'agent_in_control', port: 4001 })
     const { rerender } = renderBar()
-    expect(screen.getByTestId('browser-state-live')).toHaveTextContent('Claude is driving')
+    expect(screen.getByTestId('browser-state-live')).toHaveTextContent('Comate is driving')
 
     setSession({ controlState: 'user_in_control', port: 4001 })
     rerender(

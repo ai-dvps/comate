@@ -12,7 +12,7 @@
     "needsDesktopDetail": "The in-app browser view is only available in the Comate desktop app. Browser tools may still run against an external CDP endpoint, but nothing can be displayed here."
   },
   "state": {
-    "agentDriving": "Claude is driving",
+    "agentDriving": "Comate is driving",
     "agentDrivingHint": "You are watching in read-only mode",
     "handoffPending": "Claude is asking you to take over",
     "handoffPendingHint": "Take over to continue, or let Claude keep going",
