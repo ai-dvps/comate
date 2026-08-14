@@ -100,5 +100,11 @@ SkillHub 中以企业为发现入口的标准 Skill 目录。用户先浏览企�
 
 ## Desktop shell
 
+### Agent Command Center
+桌面端常驻左侧的后台工作监督与导航区域。它按 Workspace 组织 Session，承载搜索、状态筛选、Bot 连接状态和需要用户参与的提示；用户在中间区域一次只处理一个激活 Session。
+
+### Typed context tab
+桌面端右侧工作区中带有内容类型和归属范围的标签页。Browser tab 归属于 Session，File 与 Changes tab 归属于 Workspace；File 和 Changes 各自在内容右侧携带可收起的导航列表。
+
 ### 桥接版本 (bridge release)
 Tauri→Electron 壳迁移中，最后一个 Tauri 版本承担的特殊角色：其自动更新通道指向首个 Electron 安装包，把存量用户平滑带到 Electron 线；更新失败时用户可回滚到该版本安装包。Linux 无桥接版本——首个 Linux 版本即 Electron 版本。
