@@ -40,8 +40,7 @@ import SandboxDegradedBanner from './components/SandboxDegradedBanner'
 import { ToolRendererProvider } from './components/tool-renderers/ToolRendererContext'
 import { useMigrationNotice } from './hooks/use-migration-notice'
 import {
-  getDetachedBrowserPlacement,
-  onDetachedBrowserPlacementChange,
+  watchDetachedBrowserPlacement,
 } from './lib/detached-browser-api'
 
 type AppPanel = 'settings' | 'analytics' | 'todos' | 'plugins' | 'skills'
@@ -210,20 +209,8 @@ function App() {
   }, [activeWorkspaceId, activeWorkspaceSessionId])
 
   useEffect(() => {
-    let disposed = false
-    let placementEventReceived = false
     const setPlacement = useBrowserPaneStore.getState().setDetachedPlacement
-    const unsubscribe = onDetachedBrowserPlacementChange((placement) => {
-      placementEventReceived = true
-      if (!disposed) setPlacement(placement)
-    })
-    void getDetachedBrowserPlacement().then((placement) => {
-      if (!disposed && !placementEventReceived) setPlacement(placement)
-    })
-    return () => {
-      disposed = true
-      unsubscribe()
-    }
+    return watchDetachedBrowserPlacement(setPlacement)
   }, [])
 
   const {

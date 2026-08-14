@@ -35,11 +35,18 @@ export interface BrowserBodyProps {
   /** False while this surface is keep-alive mounted but off screen. */
   surfaceVisible?: boolean
   focusOnMount?: boolean
+  onFocusOnMount?: () => void
 }
 
 const EMPTY_SESSION = EMPTY_SESSION_BROWSER_STATE
 
-export default function BrowserBody({ workspaceId, sessionId, surfaceVisible = true, focusOnMount = false }: BrowserBodyProps) {
+export default function BrowserBody({
+  workspaceId,
+  sessionId,
+  surfaceVisible = true,
+  focusOnMount = false,
+  onFocusOnMount,
+}: BrowserBodyProps) {
   const { t } = useTranslation('browser')
   const session = useBrowserPaneStore((s) => s.sessions[sessionId] ?? EMPTY_SESSION)
   const hasInFlightBrowserTool = useChatStore((s) =>
@@ -84,6 +91,7 @@ export default function BrowserBody({ workspaceId, sessionId, surfaceVisible = t
         controlState={session.controlState}
         surfaceVisible={surfaceVisible}
         focusOnMount={focusOnMount}
+        onFocusOnMount={onFocusOnMount}
       />
     )
   }

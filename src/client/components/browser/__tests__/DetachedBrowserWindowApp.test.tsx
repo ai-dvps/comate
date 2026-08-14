@@ -34,6 +34,27 @@ vi.mock('../../../lib/detached-browser-api', () => ({
   notifyDetachedBrowserSessionEnded: desktopApi.notifyEnded,
   onDetachedBrowserPlacementChange: desktopApi.onPlacementChange,
   restoreDetachedBrowser: desktopApi.restore,
+  detachedBrowserPlacementsEqual: (
+    left: DetachedBrowserPlacement | null,
+    right: DetachedBrowserPlacement | null,
+  ) => left?.workspaceId === right?.workspaceId
+    && left?.sessionId === right?.sessionId
+    && left?.title === right?.title,
+  watchDetachedBrowserPlacement: (handler: (placement: DetachedBrowserPlacement | null) => void) => {
+    let received = false
+    let disposed = false
+    const unsubscribe = desktopApi.onPlacementChange((placement: DetachedBrowserPlacement | null) => {
+      received = true
+      if (!disposed) handler(placement)
+    })
+    void desktopApi.getPlacement().then((placement) => {
+      if (!disposed && !received) handler(placement)
+    })
+    return () => {
+      disposed = true
+      unsubscribe()
+    }
+  },
 }))
 
 vi.mock('../../../stores/browser-pane-store', () => ({

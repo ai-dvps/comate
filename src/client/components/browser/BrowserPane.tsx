@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import BrowserStateBar from './BrowserStateBar'
 import BrowserBody from './BrowserBody'
@@ -41,7 +41,7 @@ export default function BrowserPane({ workspaceId, surfaceVisible = true }: Brow
   const sessionTitle = useChatStore((s) =>
     s.sessions[workspaceId]?.find((session) => session.id === sessionId)?.name,
   )
-  const focusAfterRestoreRef = useRef(false)
+  const [focusAfterRestore, setFocusAfterRestore] = useState(false)
   const isDetached = detachedPlacement?.workspaceId === workspaceId
     && detachedPlacement.sessionId === sessionId
 
@@ -59,7 +59,7 @@ export default function BrowserPane({ workspaceId, surfaceVisible = true }: Brow
   }, [sessionId, sessionTitle, t, workspaceId])
 
   const handleRestore = useCallback(() => {
-    focusAfterRestoreRef.current = true
+    setFocusAfterRestore(true)
     void restoreDetachedBrowser()
   }, [])
 
@@ -85,7 +85,8 @@ export default function BrowserPane({ workspaceId, surfaceVisible = true }: Brow
             workspaceId={workspaceId}
             sessionId={sessionId}
             surfaceVisible={surfaceVisible}
-            focusOnMount={focusAfterRestoreRef.current}
+            focusOnMount={focusAfterRestore}
+            onFocusOnMount={() => setFocusAfterRestore(false)}
           />
         ) : (
           <div data-testid="browser-pane-dormant" className="h-full" />
