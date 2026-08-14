@@ -6,6 +6,28 @@ export interface DetachedBrowserPlacement {
   title: string;
 }
 
+const PLACEMENT_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
+const MAX_PLACEMENT_TITLE_LENGTH = 200;
+
+export function parseDetachedBrowserPlacement(value: unknown): DetachedBrowserPlacement | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const { workspaceId, sessionId, title } = value as Record<string, unknown>;
+  if (
+    typeof workspaceId !== 'string' ||
+    !PLACEMENT_ID_PATTERN.test(workspaceId) ||
+    typeof sessionId !== 'string' ||
+    !PLACEMENT_ID_PATTERN.test(sessionId) ||
+    typeof title !== 'string'
+  ) {
+    return null;
+  }
+  const normalizedTitle = title.trim();
+  if (normalizedTitle.length === 0 || normalizedTitle.length > MAX_PLACEMENT_TITLE_LENGTH) {
+    return null;
+  }
+  return { workspaceId, sessionId, title: normalizedTitle };
+}
+
 export interface DetachedWindowCloseEvent {
   preventDefault(): void;
 }

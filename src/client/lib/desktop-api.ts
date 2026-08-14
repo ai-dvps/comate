@@ -49,6 +49,12 @@ export interface BrowserViewRect {
 
 export type BrowserViewInputMode = 'user' | 'agent';
 
+export interface DetachedBrowserPlacement {
+  workspaceId: string;
+  sessionId: string;
+  title: string;
+}
+
 /**
  * The `window.comate` surface exposed by electron/preload.ts. Everything
  * except getApiInfo is optional: the preload exposes capabilities as the
@@ -99,6 +105,17 @@ export interface ComateBridge {
     setOcclusionExemption?: (sessionId: string | null) => Promise<void>;
     /** Esc intercepted on a user-driven view; returns an unsubscribe. */
     onEscape?: (handler: (sessionId: string) => void) => () => void;
+  };
+  detachedBrowser?: {
+    detach?: (placement: DetachedBrowserPlacement) => Promise<void>;
+    focus?: () => Promise<boolean>;
+    restore?: () => Promise<boolean>;
+    getPlacement?: () => Promise<DetachedBrowserPlacement | null>;
+    rendererReady?: (sessionId: string) => Promise<boolean>;
+    sessionEnded?: (sessionId: string) => Promise<boolean>;
+    onPlacementChange?: (
+      handler: (placement: DetachedBrowserPlacement | null) => void,
+    ) => () => void;
   };
 }
 

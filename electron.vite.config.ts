@@ -29,7 +29,10 @@ export default defineConfig({
     build: {
       outDir: 'dist-electron/preload',
       rollupOptions: {
-        input: resolve(__dirname, 'electron/preload.ts'),
+        input: {
+          preload: resolve(__dirname, 'electron/preload.ts'),
+          'detached-browser-preload': resolve(__dirname, 'electron/detached-browser-preload.ts'),
+        },
         output: {
           format: 'cjs',
           entryFileNames: '[name].cjs',
