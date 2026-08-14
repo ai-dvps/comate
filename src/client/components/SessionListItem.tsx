@@ -35,6 +35,7 @@ export interface SessionListItemProps {
   isStreaming: boolean
   backgroundTaskCount: number
   pendingCount: number
+  pendingKind?: 'approval' | 'question'
   unread: boolean
   preview: string
   editingSessionId: string | null
@@ -56,6 +57,7 @@ export default function SessionListItem({
   isStreaming,
   backgroundTaskCount,
   pendingCount,
+  pendingKind,
   unread,
   preview,
   editingSessionId,
@@ -157,6 +159,11 @@ export default function SessionListItem({
           </div>
           <p className="text-[11px] text-text-tertiary truncate mt-0.5">{preview}</p>
           <div className="flex items-center gap-1.5 mt-1">
+            {pendingCount > 0 && pendingKind && (
+              <span className="px-1 py-0.5 text-[9px] bg-warning/15 text-warning rounded font-medium">
+                {pendingKind === 'approval' ? 'Approval' : 'Question'}
+              </span>
+            )}
             {session.isDraft && (
               <span className="px-1 py-0.5 text-[9px] bg-warning/20 text-warning rounded">
                 {t('draft')}
