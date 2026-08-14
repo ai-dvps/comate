@@ -47,4 +47,12 @@ describe('deriveResponsiveShell', () => {
       leftPreferredExpanded: false,
     })).toEqual({ leftExpanded: false, rightExpanded: true })
   })
+
+  it('allows a user to temporarily reopen an auto-collapsed region', () => {
+    expect(deriveResponsiveShell({
+      ...base,
+      viewportWidth: 700,
+      forceLeftExpanded: true,
+    })).toEqual({ leftExpanded: true, rightExpanded: false })
+  })
 })

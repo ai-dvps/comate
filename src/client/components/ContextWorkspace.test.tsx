@@ -1,7 +1,13 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { I18nextProvider } from 'react-i18next'
+import i18n from '../i18n'
 import ContextWorkspace from './ContextWorkspace'
 import { useContextTabStore } from '../stores/context-tab-store'
+
+function renderWorkspace(ui: React.ReactElement) {
+  return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>)
+}
 
 vi.mock('./FileExplorer', () => ({
   default: ({ onFilePreview, onFileClick }: {
@@ -20,7 +26,9 @@ vi.mock('./CodeMirrorFileViewer', () => ({
   default: ({ tab }: { tab: { path: string } }) => <div data-testid="file-viewer">{tab.path}</div>,
 }))
 vi.mock('./CodeMirrorDiffViewer', () => ({
-  default: ({ tab }: { tab: { path: string } }) => <div data-testid="diff-viewer">{tab.path}</div>,
+  default: ({ tab, width }: { tab: { path: string }; width: number }) => (
+    <div data-testid="diff-viewer" data-width={width}>{tab.path}</div>
+  ),
 }))
 vi.mock('./browser/BrowserPane', () => ({
   default: ({ workspaceId, surfaceVisible }: { workspaceId: string; surfaceVisible: boolean }) => (
@@ -46,7 +54,7 @@ describe('ContextWorkspace', () => {
 
   it('renders File content left and its collapsible tree on the internal right', () => {
     useContextTabStore.getState().openFileWorkspace('ws-1')
-    render(
+    renderWorkspace(
       <ContextWorkspace
         width={600}
         isCollapsed={false}
@@ -67,7 +75,7 @@ describe('ContextWorkspace', () => {
 
   it('keeps Browser panes mounted but only exposes the active Session surface', () => {
     useContextTabStore.getState().openBrowser('session-a', 'ws-1')
-    render(
+    renderWorkspace(
       <ContextWorkspace
         width={600}
         isCollapsed={false}
@@ -78,5 +86,28 @@ describe('ContextWorkspace', () => {
 
     expect(screen.getByTestId('browser-ws-1')).toHaveAttribute('data-visible', 'true')
     expect(screen.getByTestId('browser-ws-2')).toHaveAttribute('data-visible', 'false')
+  })
+
+  it('passes the primary content width to the Diff viewer', async () => {
+    global.fetch = vi.fn(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({ original: 'before', modified: 'after' }),
+    })) as unknown as typeof global.fetch
+    await useContextTabStore.getState().openDiff('ws-1', {
+      path: 'changed.ts',
+      indexStatus: ' ',
+      workingTreeStatus: 'M',
+    })
+
+    renderWorkspace(
+      <ContextWorkspace
+        width={600}
+        isCollapsed={false}
+        onWidthChange={vi.fn()}
+        workspaceId="ws-1"
+      />,
+    )
+
+    expect(screen.getByTestId('diff-viewer')).toHaveAttribute('data-width', '340')
   })
 })

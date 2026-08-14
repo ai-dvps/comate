@@ -1,6 +1,12 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { I18nextProvider } from 'react-i18next'
+import i18n from '../i18n'
 import AgentCommandCenter from './AgentCommandCenter'
+
+function renderCommandCenter(ui: React.ReactElement) {
+  return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>)
+}
 
 const workspaceState = {
   workspaces: [
@@ -57,7 +63,7 @@ describe('AgentCommandCenter', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('shows Workspace groups, Session supervision state, and footer controls', () => {
-    render(
+    renderCommandCenter(
       <AgentCommandCenter
         width={288}
         onWidthChange={vi.fn()}
@@ -79,7 +85,7 @@ describe('AgentCommandCenter', () => {
   })
 
   it('finds and opens a defined Workspace that is not already open', () => {
-    render(
+    renderCommandCenter(
       <AgentCommandCenter
         width={288}
         onWidthChange={vi.fn()}

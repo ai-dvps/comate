@@ -8,6 +8,8 @@ interface ResponsiveShellInput {
   rightWidth: number
   leftPreferredExpanded: boolean
   rightPreferredExpanded: boolean
+  forceLeftExpanded?: boolean
+  forceRightExpanded?: boolean
   minConversationWidth?: number
 }
 
@@ -22,6 +24,8 @@ export function deriveResponsiveShell({
   rightWidth,
   leftPreferredExpanded,
   rightPreferredExpanded,
+  forceLeftExpanded = false,
+  forceRightExpanded = false,
   minConversationWidth = MIN_CONVERSATION_WIDTH,
 }: ResponsiveShellInput): ResponsiveShellState {
   const leftExpanded = leftPreferredExpanded
@@ -30,14 +34,23 @@ export function deriveResponsiveShell({
   const preferredRightWidth = rightPreferredExpanded ? rightWidth : 0
 
   if (viewportWidth >= minConversationWidth + preferredLeftWidth + preferredRightWidth) {
-    return { leftExpanded, rightExpanded }
+    return {
+      leftExpanded: leftExpanded || forceLeftExpanded,
+      rightExpanded: rightExpanded || forceRightExpanded,
+    }
   }
 
   if (viewportWidth >= minConversationWidth + preferredLeftWidth) {
-    return { leftExpanded, rightExpanded: false }
+    return {
+      leftExpanded: leftExpanded || forceLeftExpanded,
+      rightExpanded: forceRightExpanded,
+    }
   }
 
-  return { leftExpanded: false, rightExpanded: false }
+  return {
+    leftExpanded: forceLeftExpanded,
+    rightExpanded: forceRightExpanded,
+  }
 }
 
 function readViewportWidth(): number {

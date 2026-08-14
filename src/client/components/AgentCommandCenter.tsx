@@ -21,6 +21,7 @@ import { getSessionDisplayName } from '../lib/session-filter'
 import { useChatStore, type ChatSession } from '../stores/chat-store'
 import { useChannelStatuses } from '../hooks/use-channel-statuses'
 import { useTheme } from '../hooks/use-theme'
+import { useTranslation } from 'react-i18next'
 import { cn } from './ui/utils'
 
 type CommandFilter = 'all' | 'needs-user' | 'running' | 'wip'
@@ -59,6 +60,7 @@ export default function AgentCommandCenter({
   onActivateWork,
   activeDestination = 'work',
 }: AgentCommandCenterProps) {
+  const { t } = useTranslation('common')
   const workspaces = useWorkspaceStore((state) => state.workspaces)
   const openWorkspaceIds = useWorkspaceStore((state) => state.openWorkspaceIds)
   const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId)
@@ -142,15 +144,15 @@ export default function AgentCommandCenter({
   }
 
   const navigation = [
-    { id: 'todos' as const, label: 'Todos', icon: CheckSquare, action: onOpenTodos },
-    { id: 'analytics' as const, label: 'Analytics', icon: BarChart3, action: onOpenAnalytics },
-    { id: 'capabilities' as const, label: 'Plugins / Skills', icon: Puzzle, action: onOpenCapabilities },
-    { id: 'settings' as const, label: 'Settings', icon: Settings, action: onOpenSettings },
+    { id: 'todos' as const, label: t('header.todos'), icon: CheckSquare, action: onOpenTodos },
+    { id: 'analytics' as const, label: t('header.analytics'), icon: BarChart3, action: onOpenAnalytics },
+    { id: 'capabilities' as const, label: t('shell.capabilities'), icon: Puzzle, action: onOpenCapabilities },
+    { id: 'settings' as const, label: t('header.settings'), icon: Settings, action: onOpenSettings },
   ]
 
   return (
     <aside
-      aria-label="Agent Command Center"
+      aria-label={t('shell.commandCenter')}
       className="relative flex h-full flex-shrink-0 flex-col overflow-hidden border-r border-border bg-chrome transition-[width] duration-200 ease-out motion-reduce:transition-none"
       style={{ width }}
     >
@@ -162,12 +164,12 @@ export default function AgentCommandCenter({
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              aria-label="Search workspaces and sessions"
-              placeholder="Search workspaces and sessions"
+              aria-label={t('shell.search')}
+              placeholder={t('shell.search')}
               className="h-8 w-full rounded-md border border-border bg-bg pl-8 pr-2 text-xs text-text-primary outline-none placeholder:text-text-tertiary focus:border-accent focus:ring-1 focus:ring-accent"
             />
           </div>
-          <div className="grid grid-cols-4 gap-1" aria-label="Management destinations">
+          <div className="grid grid-cols-4 gap-1" aria-label={t('shell.managementDestinations')}>
             {navigation.map(({ id, label, icon: Icon, action }) => (
               <button
                 key={id}
@@ -189,23 +191,23 @@ export default function AgentCommandCenter({
         </div>
 
         <div className="flex items-center gap-2 px-3 py-2">
-          <span className="flex-1 text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Workspaces</span>
+          <span className="flex-1 text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">{t('shell.workspaces')}</span>
           <select
             value={filter}
             onChange={(event) => setFilter(event.target.value as CommandFilter)}
-            aria-label="Filter sessions"
+            aria-label={t('shell.filterSessions')}
             className="h-6 rounded border border-border bg-bg px-1 text-[10px] text-text-secondary outline-none focus:border-accent"
           >
-            <option value="all">All</option>
-            <option value="needs-user">Needs user</option>
-            <option value="running">Running</option>
-            <option value="wip">WIP</option>
+            <option value="all">{t('shell.filters.all')}</option>
+            <option value="needs-user">{t('shell.filters.needsUser')}</option>
+            <option value="running">{t('shell.filters.running')}</option>
+            <option value="wip">{t('shell.filters.wip')}</option>
           </select>
           <button
             type="button"
             onClick={onCreateWorkspace}
             className="flex h-6 w-6 items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-            aria-label="New workspace"
+            aria-label={t('shell.newWorkspace')}
           >
             <Plus className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
@@ -222,7 +224,7 @@ export default function AgentCommandCenter({
             >
               <Folder className="h-3.5 w-3.5 text-text-tertiary" aria-hidden="true" />
               <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
-              <span className="text-[9px] uppercase text-text-tertiary">Open</span>
+              <span className="text-[9px] uppercase text-text-tertiary">{t('shell.open')}</span>
             </button>
           ))}
 
@@ -312,9 +314,9 @@ export default function AgentCommandCenter({
                         >
                           <span className="relative flex h-5 w-5 flex-shrink-0 items-center justify-center">
                             {session.source === 'scheduled'
-                              ? <Clock3 className="h-3.5 w-3.5 text-text-tertiary" aria-label="Scheduled" />
+                              ? <Clock3 className="h-3.5 w-3.5 text-text-tertiary" aria-label={t('shell.scheduled')} />
                               : session.source === 'wecom' || session.source === 'feishu'
-                                ? <Bot className="h-3.5 w-3.5 text-text-tertiary" aria-label="Bot session" />
+                                ? <Bot className="h-3.5 w-3.5 text-text-tertiary" aria-label={t('shell.botSession')} />
                                 : <Sparkles className="h-3.5 w-3.5 text-text-tertiary" aria-hidden="true" />}
                             {(isStreaming[session.id] || sessionActivity[session.id]?.active) ? (
                               <span className="absolute bottom-0 right-0 h-1.5 w-1.5 rounded-full bg-accent ring-1 ring-chrome" title="Running" />
@@ -327,7 +329,7 @@ export default function AgentCommandCenter({
                             <span className="mt-0.5 flex items-center gap-1 text-[9px] text-text-tertiary">
                               {status?.pendingKind ? (
                                 <span className="rounded bg-warning/15 px-1 font-medium text-warning">
-                                  {status.pendingKind === 'approval' ? 'Approval' : 'Question'}
+                                  {status.pendingKind === 'approval' ? t('shell.approval') : t('shell.question')}
                                 </span>
                               ) : null}
                               {session.isWip ? <span className="rounded bg-purple-500/15 px-1 text-purple-400">WIP</span> : null}
@@ -339,7 +341,7 @@ export default function AgentCommandCenter({
                       )
                     })}
                     {visibleSessions.length === 0 ? (
-                      <div className="px-2 py-2 text-[10px] text-text-tertiary">No matching sessions</div>
+                      <div className="px-2 py-2 text-[10px] text-text-tertiary">{t('shell.noMatchingSessions')}</div>
                     ) : null}
                   </div>
                 ) : null}
@@ -354,7 +356,7 @@ export default function AgentCommandCenter({
           type="button"
           onClick={toggleTheme}
           className="flex h-8 w-8 items-center justify-center rounded-md text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-          aria-label="Toggle theme"
+          aria-label={t('shell.toggleTheme')}
         >
           {theme === 'dark'
             ? <Sun className="h-4 w-4" aria-hidden="true" />
@@ -363,10 +365,10 @@ export default function AgentCommandCenter({
         <button
           type="button"
           className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-xs text-text-secondary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-          aria-label="User account"
+          aria-label={t('shell.userAccount')}
         >
           <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent/15 text-[9px] font-semibold text-accent">D</span>
-          <span className="truncate">Developer</span>
+          <span className="truncate">{t('shell.developer')}</span>
           <CircleUserRound className="ml-auto h-3.5 w-3.5 text-text-tertiary" aria-hidden="true" />
         </button>
       </footer>

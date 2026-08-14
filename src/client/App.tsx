@@ -195,30 +195,87 @@ function App() {
   } = useRightPanelWidth()
 
   const viewportWidth = useViewportWidth()
+  const [forceLeftExpanded, setForceLeftExpanded] = useState(false)
+  const [forceRightExpanded, setForceRightExpanded] = useState(false)
   const responsiveShell = deriveResponsiveShell({
     viewportWidth,
     leftWidth: sidebarExpandedWidth,
     rightWidth: rightPanelExpandedWidth,
     leftPreferredExpanded: !isSidebarCollapsed,
     rightPreferredExpanded: !isRightPanelCollapsed,
+    forceLeftExpanded,
+    forceRightExpanded,
   })
   const isLeftEffectivelyCollapsed = !responsiveShell.leftExpanded
   const isRightEffectivelyCollapsed = !responsiveShell.rightExpanded
   const effectiveSidebarWidth = responsiveShell.leftExpanded ? sidebarExpandedWidth : 0
   const effectiveRightPanelWidth = responsiveShell.rightExpanded ? rightPanelExpandedWidth : 0
 
-  useSidebarKeyboardShortcut(toggleSidebarCollapse)
+  useEffect(() => {
+    setForceLeftExpanded(false)
+    setForceRightExpanded(false)
+  }, [viewportWidth])
+
+  const handleToggleLeft = useCallback(() => {
+    if (forceLeftExpanded) {
+      setForceLeftExpanded(false)
+      return
+    }
+    if (isLeftEffectivelyCollapsed) {
+      setForceLeftExpanded(true)
+      if (isSidebarCollapsed) toggleSidebarCollapse()
+      return
+    }
+    toggleSidebarCollapse()
+  }, [
+    forceLeftExpanded,
+    isLeftEffectivelyCollapsed,
+    isSidebarCollapsed,
+    toggleSidebarCollapse,
+  ])
+
+  const handleToggleRight = useCallback(() => {
+    if (forceRightExpanded) {
+      setForceRightExpanded(false)
+      return
+    }
+    if (isRightEffectivelyCollapsed) {
+      setForceRightExpanded(true)
+      if (isRightPanelCollapsed) toggleRightPanelCollapse()
+      return
+    }
+    toggleRightPanelCollapse()
+  }, [
+    forceRightExpanded,
+    isRightEffectivelyCollapsed,
+    isRightPanelCollapsed,
+    toggleRightPanelCollapse,
+  ])
+
+  const ensureRightExpanded = useCallback(() => {
+    if (!isRightEffectivelyCollapsed) return
+    setForceRightExpanded(true)
+    if (isRightPanelCollapsed) toggleRightPanelCollapse()
+  }, [isRightEffectivelyCollapsed, isRightPanelCollapsed, toggleRightPanelCollapse])
+
+  const ensureLeftExpanded = useCallback(() => {
+    if (!isLeftEffectivelyCollapsed) return
+    setForceLeftExpanded(true)
+    if (isSidebarCollapsed) toggleSidebarCollapse()
+  }, [isLeftEffectivelyCollapsed, isSidebarCollapsed, toggleSidebarCollapse])
+
+  useSidebarKeyboardShortcut(handleToggleLeft)
 
   const handleFileClick = useCallback(async (path: string, name: string) => {
     if (!activeWorkspaceId) return
 
     try {
       await useContextTabStore.getState().openFile(activeWorkspaceId, path, name)
-      if (isRightPanelCollapsed) toggleRightPanelCollapse()
+      ensureRightExpanded()
     } catch (err) {
       console.error('Failed to open file:', err)
     }
-  }, [activeWorkspaceId, isRightPanelCollapsed, toggleRightPanelCollapse])
+  }, [activeWorkspaceId, ensureRightExpanded])
 
   useEffect(() => {
     useContextTabStore
@@ -252,13 +309,13 @@ function App() {
     return state.sessions[activeWorkspaceId]?.find((session) => session.id === activeWorkspaceSessionId)
   })
   const managementTitle = activePanel === 'settings'
-    ? 'Settings'
+    ? t('header.settings')
     : activePanel === 'analytics'
-      ? 'Analytics'
+      ? t('header.analytics')
       : activePanel === 'todos'
-        ? 'Todos'
+        ? t('header.todos')
         : activePanel === 'capabilities'
-          ? 'Plugins / Skills'
+          ? t('shell.capabilities')
           : undefined
   const activeBrowserOpen = useBrowserPaneStore((state) =>
     selectSessionOpen(state, activeWorkspaceSessionId),
@@ -281,15 +338,14 @@ function App() {
       useContextTabStore
         .getState()
         .openBrowser(activeWorkspaceSessionId, activeWorkspaceId)
-      if (isRightPanelCollapsed) toggleRightPanelCollapse()
+      ensureRightExpanded()
     }
     previousBrowserOpen.current = activeBrowserOpen
   }, [
     activeBrowserOpen,
     activeWorkspaceId,
     activeWorkspaceSessionId,
-    isRightPanelCollapsed,
-    toggleRightPanelCollapse,
+    ensureRightExpanded,
   ])
 
   if (claudeCheck.checking) {
@@ -356,8 +412,8 @@ function App() {
           onAddTab={() => {
             setShowContextMenu((open) => !open)
           }}
-          onToggleLeft={toggleSidebarCollapse}
-          onToggleRight={toggleRightPanelCollapse}
+          onToggleLeft={handleToggleLeft}
+          onToggleRight={handleToggleRight}
           isMac={isMac}
           isWindows={isWin}
         />
@@ -376,12 +432,12 @@ function App() {
               role="menuitem"
               onClick={() => {
                 useContextTabStore.getState().openFileWorkspace(activeWorkspaceId)
-                if (isRightPanelCollapsed) toggleRightPanelCollapse()
+                ensureRightExpanded()
                 setShowContextMenu(false)
               }}
               className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover hover:text-text-primary"
             >
-              <File className="h-4 w-4" aria-hidden="true" /> File
+              <File className="h-4 w-4" aria-hidden="true" /> {t('shell.files')}
             </button>
             <button
               type="button"
@@ -391,24 +447,24 @@ function App() {
                 if (!activeWorkspaceSessionId) return
                 useContextTabStore.getState().openBrowser(activeWorkspaceSessionId, activeWorkspaceId)
                 useBrowserPaneStore.getState().setPaneOpen(activeWorkspaceSessionId, true)
-                if (isRightPanelCollapsed) toggleRightPanelCollapse()
+                ensureRightExpanded()
                 setShowContextMenu(false)
               }}
               className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <Globe2 className="h-4 w-4" aria-hidden="true" /> Browser
+              <Globe2 className="h-4 w-4" aria-hidden="true" /> {t('shell.browser')}
             </button>
             <button
               type="button"
               role="menuitem"
               onClick={() => {
                 useContextTabStore.getState().openChangesWorkspace(activeWorkspaceId)
-                if (isRightPanelCollapsed) toggleRightPanelCollapse()
+                ensureRightExpanded()
                 setShowContextMenu(false)
               }}
               className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover hover:text-text-primary"
             >
-              <GitCompare className="h-4 w-4" aria-hidden="true" /> Changes
+              <GitCompare className="h-4 w-4" aria-hidden="true" /> {t('shell.changes')}
             </button>
           </div>
         ) : null}
@@ -459,7 +515,13 @@ function App() {
           </div>
         )}
 
-        {!isLeftEffectivelyCollapsed && (
+        <div
+          id="agent-command-center-region"
+          className="flex h-full flex-shrink-0 overflow-hidden transition-[width] duration-200 ease-out motion-reduce:transition-none"
+          style={{ width: effectiveSidebarWidth }}
+          aria-hidden={isLeftEffectivelyCollapsed}
+          {...(isLeftEffectivelyCollapsed ? { inert: '' } : {})}
+        >
           <AgentCommandCenter
             width={sidebarExpandedWidth}
             onWidthChange={setSidebarWidth}
@@ -479,19 +541,18 @@ function App() {
                     ? 'capabilities'
                     : 'work'}
           />
-        )}
+        </div>
 
-        {activePanel ? (
-          <ManagementWorkspace
-            destination={activePanel}
-            workspaceId={activeWorkspaceId ?? undefined}
-            onClose={closePanel}
-            settingsCloseRequestToken={settingsCloseRequestToken}
-            onSettingsCloseCancelled={() => setPendingPanel(undefined)}
-          />
-        ) : (
-          <>
-            {/* Main Area — keep all open workspace panels mounted */}
+        <div className="relative min-w-0 flex-1 overflow-hidden">
+          <div
+            className={cn(
+              'absolute inset-0 flex',
+              activePanel && 'invisible pointer-events-none',
+            )}
+            aria-hidden={activePanel ? true : undefined}
+            {...(activePanel ? { inert: '' } : {})}
+          >
+            {/* Keep all open workspace panels mounted across management navigation. */}
             <main className="flex-1 flex flex-col overflow-hidden relative">
               {activeWorkspace ? (
                 openWorkspaceIds.map((wsId) => (
@@ -507,9 +568,9 @@ function App() {
                     <ChatPanel
                       workspaceId={wsId}
                       isSidebarCollapsed={isLeftEffectivelyCollapsed}
-                      onToggleSidebarCollapse={toggleSidebarCollapse}
+                      onToggleSidebarCollapse={handleToggleLeft}
                       isRightPanelCollapsed={isRightEffectivelyCollapsed}
-                      onToggleRightPanelCollapse={toggleRightPanelCollapse}
+                      onToggleRightPanelCollapse={handleToggleRight}
                     />
                   </div>
                 ))
@@ -519,7 +580,7 @@ function App() {
                   onCreateWorkspace={() => setShowCreateModal(true)}
                   onSelectWorkspace={(id) => openWorkspace(id)}
                   onBrowseWorkspaces={() => {
-                    if (isSidebarCollapsed) toggleSidebarCollapse()
+                    ensureLeftExpanded()
                   }}
                 />
               )}
@@ -528,14 +589,26 @@ function App() {
             {activeWorkspaceId && (
               <ContextWorkspace
                 width={rightPanelExpandedWidth}
-                isCollapsed={isRightEffectivelyCollapsed}
+                isCollapsed={isRightEffectivelyCollapsed || activePanel !== null}
                 onWidthChange={setRightPanelWidth}
                 workspaceId={activeWorkspaceId}
                 workspacePath={activeWorkspace?.folderPath}
               />
             )}
-          </>
-        )}
+          </div>
+
+          {activePanel ? (
+            <div className="absolute inset-0 flex">
+              <ManagementWorkspace
+                destination={activePanel}
+                workspaceId={activeWorkspaceId ?? undefined}
+                onClose={closePanel}
+                settingsCloseRequestToken={settingsCloseRequestToken}
+                onSettingsCloseCancelled={() => setPendingPanel(undefined)}
+              />
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {showCreateModal && (
