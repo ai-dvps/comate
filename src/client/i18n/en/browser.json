@@ -48,6 +48,7 @@
     "cancel": "Cancel",
     "popout": "Pop out",
     "closePopout": "Back to panel",
+    "restoreToPanel": "Back to panel",
     "clickToDrive": "Click the view to control it",
     "captureReleased": "Input capture released",
     "rememberSite": "Remember this site",
@@ -62,6 +63,9 @@
   },
   "popout": {
     "title": "Browser — floating window"
+  },
+  "detached": {
+    "title": "Browser"
   },
   "a11y": {
     "stateAnnouncement": "Browser control state: {{state}}",
