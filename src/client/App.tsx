@@ -26,6 +26,7 @@ import { useWorkspaceStore } from './stores/workspace-store'
 import { useProviderStore } from './stores/provider-store'
 import { useChatStore } from './stores/chat-store'
 import { useRightPanelStore } from './stores/right-panel-store'
+import { useContextTabStore } from './stores/context-tab-store'
 import { useBrowserPaneStore } from './stores/browser-pane-store'
 import { useTheme } from './hooks/use-theme'
 import { useAppSettings } from './hooks/use-app-settings'
@@ -193,6 +194,12 @@ function App() {
   useEffect(() => {
     useRightPanelStore.getState().clearTabs()
   }, [activeWorkspaceId])
+
+  useEffect(() => {
+    useContextTabStore
+      .getState()
+      .setContext(activeWorkspaceId, activeWorkspaceSessionId ?? null)
+  }, [activeWorkspaceId, activeWorkspaceSessionId])
 
   useEffect(() => {
     if (!activeWorkspaceId || !activeWorkspaceSessionId) return
