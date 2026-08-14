@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { cn } from './ui/utils'
 
+export type PanelPresentation = 'modal' | 'embedded'
+
 interface ModalPanelProps {
   open: boolean
   onClose: () => void
   children: ReactNode
   className?: string
   ignoreBackdropClick?: boolean
-  presentation?: 'modal' | 'embedded'
+  presentation?: PanelPresentation
 }
 
 const EXIT_DURATION = 220

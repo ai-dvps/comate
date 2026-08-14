@@ -18,7 +18,7 @@ import { BarChart3, RefreshCw, X } from 'lucide-react'
 import { AnalyticsEmptyState, GlobalStatsView, WorkspaceSelector, WorkspaceStatsView } from './analytics/index.js'
 import { useAnalyticsStore } from '../stores/analytics-store.js'
 import { useWorkspaceStore } from '../stores/workspace-store.js'
-import ModalPanel from './ModalPanel.js'
+import ModalPanel, { type PanelPresentation } from './ModalPanel.js'
 
 const TAB_STORAGE_KEY = 'comate.analytics.activeTab'
 type AnalyticsTab = 'global' | 'workspace'
@@ -26,7 +26,7 @@ type AnalyticsTab = 'global' | 'workspace'
 interface AnalyticsPanelProps {
   isOpen: boolean
   onClose: () => void
-  presentation?: 'modal' | 'embedded'
+  presentation?: PanelPresentation
 }
 
 function readInitialTab(): AnalyticsTab {

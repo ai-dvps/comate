@@ -35,7 +35,7 @@ import {
   type SkillScene,
 } from '../stores/skills-store'
 import SkillInstallModal from './SkillInstallModal'
-import ModalPanel from './ModalPanel'
+import ModalPanel, { type PanelPresentation } from './ModalPanel'
 import ExpertPackagesView from './skills/ExpertPackagesView'
 import EnterpriseZoneView from './skills/EnterpriseZoneView'
 import SkillProviderFilter from './skills/SkillProviderFilter'
@@ -45,7 +45,7 @@ interface SkillsPageProps {
   workspaceId: string
   isOpen: boolean
   onClose: () => void
-  presentation?: 'modal' | 'embedded'
+  presentation?: PanelPresentation
 }
 
 type SkillTab = 'installed' | 'search' | 'expert-packages' | 'enterprise-zone'

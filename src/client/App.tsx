@@ -487,6 +487,7 @@ function App() {
             workspaceId={activeWorkspaceId ?? undefined}
             onClose={closePanel}
             settingsCloseRequestToken={settingsCloseRequestToken}
+            onSettingsCloseCancelled={() => setPendingPanel(undefined)}
           />
         ) : (
           <>

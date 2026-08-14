@@ -14,6 +14,7 @@ interface ManagementWorkspaceProps {
   workspaceId?: string
   onClose: () => void
   settingsCloseRequestToken?: number
+  onSettingsCloseCancelled?: () => void
 }
 
 export default function ManagementWorkspace({
@@ -21,6 +22,7 @@ export default function ManagementWorkspace({
   workspaceId,
   onClose,
   settingsCloseRequestToken,
+  onSettingsCloseCancelled,
 }: ManagementWorkspaceProps) {
   const [capabilityType, setCapabilityType] = useState<'plugins' | 'skills'>('plugins')
 
@@ -52,30 +54,24 @@ export default function ManagementWorkspace({
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-hidden">
-        <TodosPanel isOpen={destination === 'todos'} onClose={onClose} presentation="embedded" />
-        <AnalyticsPanel isOpen={destination === 'analytics'} onClose={onClose} presentation="embedded" />
-        <SettingsPanel
-          isOpen={destination === 'settings'}
-          onClose={onClose}
-          presentation="embedded"
-          closeRequestToken={settingsCloseRequestToken}
-        />
-        {workspaceId ? (
-          <>
-            <PluginSettingsPage
-              workspaceId={workspaceId}
-              isOpen={destination === 'capabilities' && capabilityType === 'plugins'}
-              onClose={onClose}
-              presentation="embedded"
-            />
-            <SkillsPage
-              workspaceId={workspaceId}
-              isOpen={destination === 'capabilities' && capabilityType === 'skills'}
-              onClose={onClose}
-              presentation="embedded"
-            />
-          </>
-        ) : destination === 'capabilities' ? (
+        {destination === 'todos' ? <TodosPanel isOpen onClose={onClose} presentation="embedded" /> : null}
+        {destination === 'analytics' ? <AnalyticsPanel isOpen onClose={onClose} presentation="embedded" /> : null}
+        {destination === 'settings' ? (
+          <SettingsPanel
+            isOpen
+            onClose={onClose}
+            presentation="embedded"
+            closeRequestToken={settingsCloseRequestToken}
+            onCloseCancelled={onSettingsCloseCancelled}
+          />
+        ) : null}
+        {destination === 'capabilities' && workspaceId && capabilityType === 'plugins' ? (
+          <PluginSettingsPage workspaceId={workspaceId} isOpen onClose={onClose} presentation="embedded" />
+        ) : null}
+        {destination === 'capabilities' && workspaceId && capabilityType === 'skills' ? (
+          <SkillsPage workspaceId={workspaceId} isOpen onClose={onClose} presentation="embedded" />
+        ) : null}
+        {destination === 'capabilities' && !workspaceId ? (
           <div className="flex h-full items-center justify-center text-sm text-text-tertiary">
             Open a workspace to manage its plugins and skills.
           </div>
