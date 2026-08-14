@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { act, render, cleanup, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, cleanup, waitFor } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import App from '../App'
 import i18n from '../i18n'
@@ -11,17 +11,24 @@ import { isWindowMaximized, onWindowMaximizedChange } from '../lib/desktop-api'
 // mock it instead of the old per-package `@tauri-apps/*` modules.
 vi.mock('../lib/desktop-api')
 
-vi.mock('../components/Sidebar', () => ({ default: () => <div data-testid="sidebar" /> }))
-vi.mock('../components/WorkspaceTabs', () => ({ default: () => <div data-testid="workspace-tabs" /> }))
-vi.mock('../components/WorkspaceSwitcher', () => ({ default: () => <div data-testid="workspace-switcher" /> }))
 vi.mock('../components/WorkspaceEmptyState', () => ({ default: () => <div data-testid="workspace-empty-state" /> }))
 vi.mock('../components/ChatPanel', () => ({ default: () => <div data-testid="chat-panel" /> }))
 vi.mock('../components/SettingsPanel', () => ({ default: () => <div data-testid="settings-panel" /> }))
 vi.mock('../components/AnalyticsPanel', () => ({ default: () => <div data-testid="analytics-panel" /> }))
-vi.mock('../components/ContextWorkspace', () => ({ default: () => <div data-testid="context-workspace" /> }))
-vi.mock('../components/HeaderToolbar', () => ({ default: () => <div data-testid="header-toolbar" /> }))
+vi.mock('../components/ContextWorkspace', () => ({
+  default: ({ isCollapsed }: { isCollapsed: boolean }) => (
+    <div data-testid="context-workspace" data-collapsed={isCollapsed} />
+  ),
+}))
 vi.mock('../components/CustomTitlebar', () => ({ default: () => <div data-testid="custom-titlebar" /> }))
-vi.mock('../components/AgentCommandCenter', () => ({ default: () => <div data-testid="agent-command-center" /> }))
+vi.mock('../components/AgentCommandCenter', () => ({
+  default: ({ onOpenTodos }: { onOpenTodos: () => void }) => (
+    <div data-testid="agent-command-center"><button onClick={onOpenTodos}>Open Todos</button></div>
+  ),
+}))
+vi.mock('../components/ManagementWorkspace', () => ({
+  default: () => <div data-testid="management-workspace" />,
+}))
 vi.mock('../components/CreateWorkspaceModal', () => ({ default: () => <div data-testid="create-workspace-modal" /> }))
 vi.mock('../components/ToastContainer', () => ({ default: () => <div data-testid="toast-container" /> }))
 vi.mock('../components/UpdateNotification', () => ({ default: () => <div data-testid="update-notification" /> }))
@@ -238,5 +245,19 @@ describe('App layout', () => {
     expect(queryByTestId('context-workspace')).toBeInTheDocument()
     expect(queryByTestId('file-panel')).not.toBeInTheDocument()
     expect(queryByTestId('git-diff-panel')).not.toBeInTheDocument()
+  })
+
+  it('keeps Session work mounted and hides Browser content during management navigation', async () => {
+    mockWorkspaceStore.activeWorkspaceId = 'ws1'
+    mockWorkspaceStore.openWorkspaceIds = ['ws1']
+    mockWorkspaceStore.workspaces = [{ id: 'ws1', name: 'Test', folderPath: '/tmp' }]
+
+    renderWithI18n(<App />)
+    await waitFor(() => expect(document.querySelector('[data-testid="chat-panel"]')).toBeInTheDocument())
+    fireEvent.click(document.querySelector('button') as HTMLButtonElement)
+
+    expect(document.querySelector('[data-testid="management-workspace"]')).toBeInTheDocument()
+    expect(document.querySelector('[data-testid="chat-panel"]')).toBeInTheDocument()
+    expect(document.querySelector('[data-testid="context-workspace"]')).toHaveAttribute('data-collapsed', 'true')
   })
 })

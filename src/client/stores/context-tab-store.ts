@@ -121,6 +121,11 @@ const EMPTY_DATA: ContextTabData = {
 
 const abortControllers = new Map<string, AbortController>()
 
+function translatedName(key: string, fallback: string): string {
+  const value = i18next.t(key, { defaultValue: fallback })
+  return typeof value === 'string' && value ? value : fallback
+}
+
 function selectionKey(workspaceId: string | null, sessionId: string | null): string {
   return `${workspaceId ?? ''}::${sessionId ?? ''}`
 }
@@ -161,12 +166,19 @@ function selectActive(data: ContextTabData, workspaceId: string, id: string): Co
   })
 }
 
-function fileRequestKey(workspaceId: string, path: string): string {
-  return `file:${workspaceId}:${path}`
+function fileRequestKey(workspaceId: string, path: string, preview: boolean): string {
+  return preview ? `file-preview:${workspaceId}` : `file:${workspaceId}:${path}`
 }
 
-function diffRequestKey(workspaceId: string, path: string, staged: boolean): string {
-  return `changes:${workspaceId}:${path}:${staged ? 's' : 'w'}`
+function diffRequestKey(
+  workspaceId: string,
+  path: string,
+  staged: boolean,
+  preview: boolean,
+): string {
+  return preview
+    ? `changes-preview:${workspaceId}`
+    : `changes:${workspaceId}:${path}:${staged ? 's' : 'w'}`
 }
 
 function abortRequest(key: string): void {
@@ -224,7 +236,7 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
       return
     }
 
-    const key = fileRequestKey(workspaceId, path)
+    const key = fileRequestKey(workspaceId, path, preview)
     abortRequest(key)
     const controller = new AbortController()
     abortControllers.set(key, controller)
@@ -303,7 +315,7 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
       return
     }
 
-    const key = diffRequestKey(workspaceId, item.path, staged)
+    const key = diffRequestKey(workspaceId, item.path, staged, preview)
     abortRequest(key)
     const controller = new AbortController()
     abortControllers.set(key, controller)
@@ -365,7 +377,13 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
       const current = state.sessionTabs[sessionId]
       const tabs = current?.tabs.some((tab) => tab.id === id)
         ? current.tabs
-        : [{ type: 'browser' as const, id, sessionId, workspaceId, name: 'Browser' }]
+        : [{
+            type: 'browser' as const,
+            id,
+            sessionId,
+            workspaceId,
+            name: translatedName('common:shell.browser', 'Browser'),
+          }]
       const next = {
         ...state,
         sessionTabs: {
@@ -391,7 +409,7 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
         id: 'file:preview',
         workspaceId,
         path: '',
-        name: 'Files',
+        name: translatedName('common:shell.files', 'Files'),
         content: '',
         isBinary: false,
         preview: true,
@@ -415,7 +433,7 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
         id: 'changes:preview',
         workspaceId,
         path: '',
-        name: 'Changes',
+        name: translatedName('common:shell.changes', 'Changes'),
         statusCode: '',
         staged: false,
         original: '',

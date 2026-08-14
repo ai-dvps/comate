@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Blocks, Sparkles } from 'lucide-react'
 import AnalyticsPanel from './AnalyticsPanel'
 import PluginSettingsPage from './PluginSettingsPage'
@@ -24,6 +25,7 @@ export default function ManagementWorkspace({
   settingsCloseRequestToken,
   onSettingsCloseCancelled,
 }: ManagementWorkspaceProps) {
+  const { t } = useTranslation('common')
   const [capabilityType, setCapabilityType] = useState<'plugins' | 'skills'>('plugins')
 
   return (
@@ -38,7 +40,7 @@ export default function ManagementWorkspace({
               capabilityType === 'plugins' ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary',
             )}
           >
-            <Blocks className="h-3.5 w-3.5" aria-hidden="true" /> Plugins
+            <Blocks className="h-3.5 w-3.5" aria-hidden="true" /> {t('shell.plugins')}
           </button>
           <button
             type="button"
@@ -48,7 +50,7 @@ export default function ManagementWorkspace({
               capabilityType === 'skills' ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary',
             )}
           >
-            <Sparkles className="h-3.5 w-3.5" aria-hidden="true" /> Skills
+            <Sparkles className="h-3.5 w-3.5" aria-hidden="true" /> {t('shell.skills')}
           </button>
         </div>
       ) : null}
@@ -73,7 +75,7 @@ export default function ManagementWorkspace({
         ) : null}
         {destination === 'capabilities' && !workspaceId ? (
           <div className="flex h-full items-center justify-center text-sm text-text-tertiary">
-            Open a workspace to manage its plugins and skills.
+            {t('shell.capabilitiesNeedWorkspace')}
           </div>
         ) : null}
       </div>

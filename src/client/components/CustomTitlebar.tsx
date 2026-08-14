@@ -1,4 +1,5 @@
-import type { CSSProperties } from 'react'
+import { useEffect, useRef, type CSSProperties } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   File,
   GitCompare,
@@ -58,8 +59,33 @@ export default function CustomTitlebar({
   isMac = false,
   isWindows = false,
 }: CustomTitlebarProps) {
+  const { t } = useTranslation('common')
   const leftSegmentWidth = leftCollapsed ? 48 : leftWidth
   const contextSegmentWidth = rightCollapsed ? 44 : rightWidth
+  const leftToggleRef = useRef<HTMLButtonElement>(null)
+  const rightToggleRef = useRef<HTMLButtonElement>(null)
+  const previousCollapse = useRef({ left: leftCollapsed, right: rightCollapsed })
+
+  useEffect(() => {
+    const activeElement = document.activeElement
+    if (
+      leftCollapsed
+      && !previousCollapse.current.left
+      && activeElement
+      && document.getElementById('agent-command-center-region')?.contains(activeElement)
+    ) {
+      leftToggleRef.current?.focus()
+    }
+    if (
+      rightCollapsed
+      && !previousCollapse.current.right
+      && activeElement
+      && document.getElementById('context-workspace-region')?.contains(activeElement)
+    ) {
+      rightToggleRef.current?.focus()
+    }
+    previousCollapse.current = { left: leftCollapsed, right: rightCollapsed }
+  }, [leftCollapsed, rightCollapsed])
 
   return (
     <header
@@ -73,6 +99,7 @@ export default function CustomTitlebar({
       >
         {isMac ? <div data-tauri-drag-region className="w-[72px] self-stretch" /> : null}
         <button
+          ref={leftToggleRef}
           type="button"
           data-testid="titlebar-interactive"
           style={interactiveStyle}
@@ -81,7 +108,7 @@ export default function CustomTitlebar({
             'm-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-text-tertiary',
             'hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
           )}
-          aria-label={leftCollapsed ? 'Expand command center' : 'Collapse command center'}
+          aria-label={leftCollapsed ? t('shell.expandCommandCenter') : t('shell.collapseCommandCenter')}
           aria-expanded={!leftCollapsed}
         >
           {leftCollapsed
@@ -120,12 +147,13 @@ export default function CustomTitlebar({
         ) : rightCollapsed ? (
           <div className="flex flex-1 items-center justify-center">
             <button
+              ref={rightToggleRef}
               type="button"
               data-testid="titlebar-interactive"
               style={interactiveStyle}
               onClick={onToggleRight}
               className="flex h-8 w-8 items-center justify-center rounded-md text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              aria-label="Expand context panel"
+              aria-label={t('shell.expandContext')}
               aria-expanded="false"
             >
               <PanelRightOpen className="h-4 w-4" aria-hidden="true" />
@@ -135,7 +163,7 @@ export default function CustomTitlebar({
           <>
             <div
               role="tablist"
-              aria-label="Context tabs"
+              aria-label={t('shell.contextTabs')}
               className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2 scrollbar-hide"
               data-testid="titlebar-interactive"
               style={interactiveStyle}
@@ -166,7 +194,7 @@ export default function CustomTitlebar({
                         onCloseTab(tab.id)
                       }}
                       className="rounded p-0.5 opacity-0 hover:bg-surface-hover group-hover:opacity-100 focus:opacity-100"
-                      aria-label={`Close ${tab.name}`}
+                      aria-label={t('shell.closeTab', { name: tab.name })}
                     >
                       <X className="h-3 w-3" aria-hidden="true" />
                     </button>
@@ -175,12 +203,13 @@ export default function CustomTitlebar({
               })}
             </div>
             <button
+              ref={rightToggleRef}
               type="button"
               data-testid="titlebar-interactive"
               style={interactiveStyle}
               onClick={onAddTab}
               className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              aria-label="Add context tab"
+              aria-label={t('shell.addContextTab')}
             >
               <Plus className="h-4 w-4" aria-hidden="true" />
             </button>
@@ -190,7 +219,7 @@ export default function CustomTitlebar({
               style={interactiveStyle}
               onClick={onToggleRight}
               className="mr-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              aria-label="Collapse context panel"
+              aria-label={t('shell.collapseContext')}
               aria-expanded="true"
             >
               <PanelRightClose className="h-4 w-4" aria-hidden="true" />

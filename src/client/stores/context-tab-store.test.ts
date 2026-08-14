@@ -71,6 +71,66 @@ describe('context-tab-store', () => {
     expect(global.fetch).toHaveBeenCalledTimes(2)
   })
 
+  it('ignores a stale File preview that resolves after a newer path', async () => {
+    const resolvers = new Map<string, (value: unknown) => void>()
+    global.fetch = vi.fn((url) => new Promise((resolve) => {
+      resolvers.set(String(url), resolve)
+    })) as unknown as typeof global.fetch
+    const store = useContextTabStore.getState()
+    store.setContext('ws-1', 'session-a')
+
+    const first = store.openFile('ws-1', 'first.ts', 'first.ts', { preview: true })
+    const second = store.openFile('ws-1', 'second.ts', 'second.ts', { preview: true })
+    resolvers.get('/api/workspaces/ws-1/files/content?path=second.ts')?.({
+      ok: true,
+      json: () => Promise.resolve({ content: 'second', isBinary: false }),
+    })
+    await second
+    resolvers.get('/api/workspaces/ws-1/files/content?path=first.ts')?.({
+      ok: true,
+      json: () => Promise.resolve({ content: 'first', isBinary: false }),
+    })
+    await first
+
+    expect(useContextTabStore.getState().openTabs).toMatchObject([
+      { type: 'file', path: 'second.ts', content: 'second' },
+    ])
+  })
+
+  it('ignores a stale Changes preview that resolves after a newer path', async () => {
+    const resolvers = new Map<string, (value: unknown) => void>()
+    global.fetch = vi.fn((url) => new Promise((resolve) => {
+      resolvers.set(String(url), resolve)
+    })) as unknown as typeof global.fetch
+    const store = useContextTabStore.getState()
+    store.setContext('ws-1', 'session-a')
+
+    const first = store.openDiff('ws-1', {
+      path: 'first.ts',
+      indexStatus: ' ',
+      workingTreeStatus: 'M',
+    }, false, { preview: true })
+    const second = store.openDiff('ws-1', {
+      path: 'second.ts',
+      indexStatus: ' ',
+      workingTreeStatus: 'M',
+    }, false, { preview: true })
+    resolvers.get('/api/workspaces/ws-1/git-changes/compare?path=second.ts&staged=false')?.({
+      ok: true,
+      json: () => Promise.resolve({ original: 'old second', modified: 'new second' }),
+    })
+    await second
+    resolvers.get('/api/workspaces/ws-1/git-changes/compare?path=first.ts&staged=false')?.({
+      ok: true,
+      json: () => Promise.resolve({ original: 'old first', modified: 'new first' }),
+    })
+    await first
+
+    expect(useContextTabStore.getState().openTabs).toMatchObject([
+      { type: 'changes', path: 'second.ts', modified: 'new second' },
+    ])
+  })
+
   it('deduplicates a Session Browser tab', () => {
     const store = useContextTabStore.getState()
     store.setContext('ws-1', 'session-a')

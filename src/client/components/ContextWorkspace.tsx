@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { File, GitCompare, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { useContextTabStore } from '../stores/context-tab-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
@@ -29,6 +30,7 @@ export default function ContextWorkspace({
   workspaceId,
   workspacePath,
 }: ContextWorkspaceProps) {
+  const { t } = useTranslation('common')
   const openTabs = useContextTabStore((state) => state.openTabs)
   const activeTabId = useContextTabStore((state) => state.activeTabId)
   const openWorkspaceIds = useWorkspaceStore((state) => state.openWorkspaceIds)
@@ -42,6 +44,7 @@ export default function ContextWorkspace({
   const navigatorCollapsed = activeTab ? navigatorCollapsedByTab[activeTab.id] === true : false
   const showNavigator = hasNavigator && !navigatorCollapsed && !isCollapsed
   const showBrowser = activeTab?.type === 'browser'
+  const primaryWidth = Math.max(0, width - (showNavigator ? navigatorWidth : 0))
 
   const endDrag = useCallback(() => {
     if (!dragRef.current) return
@@ -108,7 +111,7 @@ export default function ContextWorkspace({
     if (!activeTab) {
       return (
         <div className="flex h-full items-center justify-center px-6 text-center text-xs text-text-tertiary">
-          Use + in the titlebar to open a File, Browser, or Changes tab.
+          {t('shell.emptyContext')}
         </div>
       )
     }
@@ -118,7 +121,7 @@ export default function ContextWorkspace({
       ) : (
         <div className="flex h-full flex-col items-center justify-center gap-2 text-text-tertiary">
           <File className="h-7 w-7" aria-hidden="true" />
-          <span className="text-xs">Select a file from the tree</span>
+          <span className="text-xs">{t('shell.selectFile')}</span>
         </div>
       )
     }
@@ -127,18 +130,25 @@ export default function ContextWorkspace({
         return (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-text-tertiary">
             <GitCompare className="h-7 w-7" aria-hidden="true" />
-            <span className="text-xs">Select a changed file to review</span>
+            <span className="text-xs">{t('shell.selectChange')}</span>
           </div>
         )
       }
       const diffTab = { ...activeTab, type: 'diff' as const }
-      return <CodeMirrorDiffViewer tab={diffTab} workspacePath={workspacePath} />
+      return (
+        <CodeMirrorDiffViewer
+          tab={diffTab}
+          workspacePath={workspacePath}
+          width={primaryWidth}
+        />
+      )
     }
     return null
   }
 
   return (
     <aside
+      id="context-workspace-region"
       data-testid="context-workspace"
       className={cn(
         'relative flex h-full flex-shrink-0 flex-col overflow-hidden border-l border-border bg-work',
@@ -175,7 +185,7 @@ export default function ContextWorkspace({
               type="button"
               onClick={toggleNavigator}
               className="absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-md border border-border bg-surface text-text-tertiary shadow-sm hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              aria-label="Expand internal navigator"
+              aria-label={t('shell.expandNavigator')}
             >
               <PanelRightOpen className="h-4 w-4" aria-hidden="true" />
             </button>
@@ -192,13 +202,13 @@ export default function ContextWorkspace({
         >
           <div className="flex h-9 flex-shrink-0 items-center border-b border-border/70 px-2">
             <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-text-secondary">
-              {activeTab?.type === 'changes' ? 'Changed files' : 'Files'}
+              {activeTab?.type === 'changes' ? t('shell.changedFiles') : t('shell.files')}
             </span>
             <button
               type="button"
               onClick={toggleNavigator}
               className="flex h-7 w-7 items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              aria-label="Collapse internal navigator"
+              aria-label={t('shell.collapseNavigator')}
             >
               <PanelRightClose className="h-4 w-4" aria-hidden="true" />
             </button>
@@ -218,7 +228,7 @@ export default function ContextWorkspace({
           {showNavigator ? (
             <div
               role="separator"
-              aria-label="Resize internal navigator"
+              aria-label={t('shell.resizeNavigator')}
               className="absolute bottom-0 left-0 top-0 z-10 w-1 cursor-col-resize hover:bg-accent/50"
               onMouseDown={handleNavigatorResize}
             />
@@ -230,7 +240,7 @@ export default function ContextWorkspace({
         <div
           data-testid="context-workspace-resize-handle"
           role="separator"
-          aria-label="Resize context panel"
+          aria-label={t('shell.resizeContext')}
           className="absolute bottom-0 left-0 top-0 z-20 w-1 cursor-col-resize hover:bg-accent/50"
           onMouseDown={handlePanelResize}
         />
