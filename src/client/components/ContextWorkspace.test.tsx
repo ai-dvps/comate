@@ -65,12 +65,26 @@ describe('ContextWorkspace', () => {
     )
 
     expect(screen.getByTestId('context-primary')).toBeInTheDocument()
+    expect(screen.getByTestId('context-workspace')).toHaveClass('border-l')
     expect(screen.getByTestId('context-navigator')).toBeInTheDocument()
     expect(screen.getByTestId('file-explorer')).toBeInTheDocument()
     expect(screen.getByTestId('git-changes-panel')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Collapse internal navigator' }))
     expect(screen.queryByTestId('context-navigator')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Expand internal navigator' })).toBeInTheDocument()
+  })
+
+  it('removes the outer divider when the context workspace is collapsed', () => {
+    renderWorkspace(
+      <ContextWorkspace
+        width={600}
+        isCollapsed
+        onWidthChange={vi.fn()}
+        workspaceId="ws-1"
+      />,
+    )
+
+    expect(screen.getByTestId('context-workspace')).not.toHaveClass('border-l')
   })
 
   it('keeps Browser panes mounted but only exposes the active Session surface', () => {

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { act, fireEvent, render, cleanup, waitFor } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
@@ -20,7 +21,22 @@ vi.mock('../components/ContextWorkspace', () => ({
     <div data-testid="context-workspace" data-collapsed={isCollapsed} />
   ),
 }))
-vi.mock('../components/CustomTitlebar', () => ({ default: () => <div data-testid="custom-titlebar" /> }))
+vi.mock('../components/CustomTitlebar', () => ({
+  default: ({
+    contextAvailable,
+    onAddTab,
+    onToggleRight,
+  }: {
+    contextAvailable: boolean
+    onAddTab: () => void
+    onToggleRight: () => void
+  }) => (
+    <div data-testid="custom-titlebar" data-context-available={contextAvailable}>
+      <button type="button" onClick={onAddTab}>Add context tab</button>
+      <button type="button" onClick={onToggleRight}>Toggle right panel</button>
+    </div>
+  ),
+}))
 vi.mock('../components/AgentCommandCenter', () => ({
   default: ({ onOpenTodos }: { onOpenTodos: () => void }) => (
     <div data-testid="agent-command-center"><button onClick={onOpenTodos}>Open Todos</button></div>
@@ -38,16 +54,19 @@ vi.mock('../components/tool-renderers/ToolRendererContext', () => ({
 }))
 
 vi.mock('../hooks/use-theme', () => ({ useTheme: () => {} }))
-vi.mock('../hooks/use-app-settings', () => ({
-  useAppSettings: () => ({
-    uiFontSize: 14,
-    autoCheckUpdates: false,
-    setLastUpdateCheckAt: vi.fn(),
-    chatFontSize: 12,
-    displayMode: 'linear',
-    useModifierToSubmit: false,
-  }),
-}))
+vi.mock('../hooks/use-app-settings', () => {
+  const setLastUpdateCheckAt = vi.fn()
+  return {
+    useAppSettings: () => ({
+      uiFontSize: 14,
+      autoCheckUpdates: false,
+      setLastUpdateCheckAt,
+      chatFontSize: 12,
+      displayMode: 'linear',
+      useModifierToSubmit: false,
+    }),
+  }
+})
 vi.mock('../lib/use-badge-sync', () => ({ useBadgeSync: () => {} }))
 vi.mock('../lib/use-notification-sounds', () => ({ useNotificationSounds: () => {} }))
 vi.mock('../hooks/use-sidebar-width', () => ({
@@ -59,14 +78,18 @@ vi.mock('../hooks/use-sidebar-width', () => ({
     toggleCollapse: vi.fn(),
   }),
 }))
+let rightPanelInitiallyCollapsed = false
 vi.mock('../hooks/use-right-panel-width', () => ({
-  useRightPanelWidth: () => ({
-    width: 640,
-    setWidth: vi.fn(),
-    isCollapsed: false,
-    toggleCollapse: vi.fn(),
-    expandedWidth: 640,
-  }),
+  useRightPanelWidth: () => {
+    const [isCollapsed, setIsCollapsed] = useState(rightPanelInitiallyCollapsed)
+    return {
+      width: isCollapsed ? 0 : 640,
+      setWidth: vi.fn(),
+      isCollapsed,
+      toggleCollapse: () => setIsCollapsed((collapsed) => !collapsed),
+      expandedWidth: 640,
+    }
+  },
 }))
 vi.mock('../hooks/use-sidebar-keyboard-shortcut', () => ({
   useSidebarKeyboardShortcut: () => {},
@@ -122,6 +145,7 @@ const mockContextTabStore = {
   setContext: vi.fn(),
   selectTab: vi.fn(),
   closeTab: vi.fn(),
+  openFileWorkspace: vi.fn(),
 }
 
 vi.mock('../stores/context-tab-store', () => ({
@@ -158,6 +182,8 @@ describe('App layout', () => {
     mockWorkspaceStore.activeWorkspaceId = null
     mockWorkspaceStore.openWorkspaceIds = []
     mockWorkspaceStore.workspaces = []
+    rightPanelInitiallyCollapsed = false
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
     vi.mocked(isWindows).mockResolvedValue(false)
     vi.mocked(isWindowMaximized).mockResolvedValue(false)
     vi.mocked(onWindowMaximizedChange).mockReturnValue(() => {})
@@ -169,6 +195,13 @@ describe('App layout', () => {
     const root = container.firstElementChild
     expect(root).toHaveClass('overflow-hidden')
     expect(root).not.toHaveClass('overflow-x-hidden')
+  })
+
+  it('marks context controls unavailable on the Welcome screen', async () => {
+    const { findByTestId } = renderWithI18n(<App />)
+
+    await findByTestId('workspace-empty-state')
+    expect(await findByTestId('custom-titlebar')).toHaveAttribute('data-context-available', 'false')
   })
 
   it('shows the Windows top frame only while the window is restored', async () => {
@@ -241,10 +274,29 @@ describe('App layout', () => {
     await findByTestId('chat-panel')
 
     expect(queryByTestId('custom-titlebar')).toBeInTheDocument()
+    expect(queryByTestId('custom-titlebar')).toHaveAttribute('data-context-available', 'true')
     expect(queryByTestId('agent-command-center')).toBeInTheDocument()
     expect(queryByTestId('context-workspace')).toBeInTheDocument()
     expect(queryByTestId('file-panel')).not.toBeInTheDocument()
     expect(queryByTestId('git-diff-panel')).not.toBeInTheDocument()
+  })
+
+  it('collapses an auto-expanded right panel on the first click when no Session is open', async () => {
+    rightPanelInitiallyCollapsed = true
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1800 })
+    mockWorkspaceStore.activeWorkspaceId = 'ws1'
+    mockWorkspaceStore.openWorkspaceIds = ['ws1']
+    mockWorkspaceStore.workspaces = [{ id: 'ws1', name: 'Test', folderPath: '/tmp' }]
+
+    const { findByTestId, getByRole, getByTestId } = renderWithI18n(<App />)
+    expect(await findByTestId('context-workspace')).toHaveAttribute('data-collapsed', 'true')
+
+    fireEvent.click(getByRole('button', { name: 'Add context tab' }))
+    fireEvent.click(getByRole('menuitem', { name: 'Files' }))
+    await waitFor(() => expect(getByTestId('context-workspace')).toHaveAttribute('data-collapsed', 'false'))
+
+    fireEvent.click(getByRole('button', { name: 'Toggle right panel' }))
+    await waitFor(() => expect(getByTestId('context-workspace')).toHaveAttribute('data-collapsed', 'true'))
   })
 
   it('keeps Session work mounted and hides Browser content during management navigation', async () => {
@@ -254,10 +306,17 @@ describe('App layout', () => {
 
     renderWithI18n(<App />)
     await waitFor(() => expect(document.querySelector('[data-testid="chat-panel"]')).toBeInTheDocument())
-    fireEvent.click(document.querySelector('button') as HTMLButtonElement)
+    const sessionWorkspace = document.querySelector('[data-testid="chat-panel"]')?.parentElement
+
+    expect(sessionWorkspace).toHaveClass('visible')
+    expect(sessionWorkspace).not.toHaveAttribute('aria-hidden', 'true')
+    fireEvent.click(document.querySelector('[data-testid="agent-command-center"] button') as HTMLButtonElement)
 
     expect(document.querySelector('[data-testid="management-workspace"]')).toBeInTheDocument()
     expect(document.querySelector('[data-testid="chat-panel"]')).toBeInTheDocument()
+    expect(sessionWorkspace).toHaveClass('invisible', 'pointer-events-none')
+    expect(sessionWorkspace).toHaveAttribute('aria-hidden', 'true')
+    expect(sessionWorkspace).toHaveAttribute('inert')
     expect(document.querySelector('[data-testid="context-workspace"]')).toHaveAttribute('data-collapsed', 'true')
   })
 })

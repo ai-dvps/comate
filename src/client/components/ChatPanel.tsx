@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { LoaderCircle, PanelLeft, PanelLeftOpen, PanelRight, PanelRightOpen } from 'lucide-react'
+import { LoaderCircle } from 'lucide-react'
 import { useChatStore } from '../stores/chat-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
-import { useProviderStore } from '../stores/provider-store'
 import { useMessageSearch } from '../hooks/useMessageSearch'
 import { useAppSettings } from '../hooks/use-app-settings'
 import ChatEmptyState from './ChatEmptyState'
@@ -23,20 +22,10 @@ const EMPTY_ARRAY: [] = []
 
 interface ChatPanelProps {
   workspaceId: string
-  isSidebarCollapsed?: boolean
-  onToggleSidebarCollapse?: () => void
-  isRightPanelCollapsed?: boolean
-  onToggleRightPanelCollapse?: () => void
 }
 
-export default function ChatPanel({
-  workspaceId,
-  isSidebarCollapsed = false,
-  onToggleSidebarCollapse,
-  isRightPanelCollapsed = false,
-  onToggleRightPanelCollapse,
-}: ChatPanelProps) {
-  const { t } = useTranslation(['chat', 'common'])
+export default function ChatPanel({ workspaceId }: ChatPanelProps) {
+  const { t } = useTranslation('chat')
   const sessions = useChatStore((s) => s.sessions[workspaceId] ?? EMPTY_ARRAY)
   const activeSessionId = useChatStore((s) => s.activeSessionIds[workspaceId])
   const isStreaming = useChatStore((s) => s.isStreaming[activeSessionId || ''])
@@ -65,10 +54,6 @@ export default function ChatPanel({
     : (workspace?.settings?.wecomBotName as string) || ''
   const botIcon = activeSessionIsFeishu ? '/feishu-icon.svg' : '/wecom-icon.svg'
 
-  const providers = useProviderStore((s) => s.providers)
-  const activeProvider = providers.find((p) => p.id === activeSession?.providerId)
-  const modelName = activeProvider?.model || activeProvider?.name || 'claude-sonnet-4-6'
-
   const [isInterrupting, setIsInterrupting] = useState(false)
   const [resolvingRequestId, setResolvingRequestId] = useState<string | null>(
     null,
@@ -90,32 +75,6 @@ export default function ChatPanel({
   const [isSearchBarOpen, setIsSearchBarOpen] = useState(false)
   const previousFocusRef = useRef<HTMLElement | null>(null)
   const historyLoadAttemptRef = useRef<string | null>(null)
-
-  // Responsive chat header: measure the space available to the title (the region
-  // between the left/right button clusters) and drop the model name when it gets
-  // tight, so the session title can take the full width and ellipsize via truncate.
-  // Observing the title region (not the whole header) automatically accounts for
-  // the widths of the button clusters on both sides. Mirrors the ResizeObserver +
-  // width-threshold pattern used in PromptInput.
-  const titleAreaRef = useRef<HTMLDivElement>(null)
-  const [showModelName, setShowModelName] = useState(true)
-  useEffect(() => {
-    const el = titleAreaRef.current
-    if (!el) return
-    // Keep the model name only while the title region can comfortably fit it
-    // alongside a readable session title; below this the title gets the full width.
-    const MODEL_NAME_MIN_WIDTH = 320
-    const measure = () => {
-      setShowModelName((prev) => {
-        const next = el.offsetWidth >= MODEL_NAME_MIN_WIDTH
-        return next === prev ? prev : next
-      })
-    }
-    const observer = new ResizeObserver(measure)
-    observer.observe(el)
-    measure()
-    return () => observer.disconnect()
-  }, [])
 
   const {
     query: searchQuery,
@@ -401,67 +360,6 @@ export default function ChatPanel({
 
   return (
     <div className="flex flex-col h-full bg-work">
-      {/* Chat Header — 3-part flex so the left/right button clusters stay in flow
-          and the title can never slide under them. The center region's width is
-          observed (titleAreaRef) to drop the model name when space gets tight. */}
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/50 flex-shrink-0 bg-work">
-        {/* Left cluster */}
-        {onToggleSidebarCollapse && (
-          <button
-            className="flex-shrink-0 p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-chrome-hover transition-colors"
-            aria-label={
-              isSidebarCollapsed
-                ? t('common:sidebar.expand')
-                : t('common:sidebar.collapse')
-            }
-            onClick={() => onToggleSidebarCollapse()}
-          >
-            {isSidebarCollapsed ? (
-              <PanelLeftOpen className="w-4 h-4" />
-            ) : (
-              <PanelLeft className="w-4 h-4" />
-            )}
-          </button>
-        )}
-        {/* Center title — flex-1 takes the space between the clusters */}
-        <div
-          ref={titleAreaRef}
-          className="flex-1 flex items-center justify-center gap-2 min-w-0 text-sm"
-        >
-          <span className="min-w-0 font-medium text-text-primary truncate max-w-md">
-            {activeSession?.name || t('noSession')}
-          </span>
-          {/* When the title area is tight the model name drops first so the title
-              can use the full width; it then ellipsizes via min-w-0 + truncate. */}
-          {showModelName && (
-            <>
-              <span className="text-text-tertiary" aria-hidden="true">/</span>
-              <span className="text-text-tertiary">{modelName}</span>
-            </>
-          )}
-        </div>
-        {/* Right cluster */}
-        <div className="flex-shrink-0 flex items-center gap-1">
-          {onToggleRightPanelCollapse && (
-            <button
-              className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
-              aria-label={
-                isRightPanelCollapsed
-                  ? t('common:rightPanel.expand')
-                  : t('common:rightPanel.collapse')
-              }
-              onClick={() => onToggleRightPanelCollapse()}
-            >
-              {isRightPanelCollapsed ? (
-                <PanelRightOpen className="w-4 h-4" />
-              ) : (
-                <PanelRight className="w-4 h-4" />
-              )}
-            </button>
-          )}
-        </div>
-      </div>
-
       {/* Main content row: chat area + optional subagent panel */}
       <div className="flex flex-1 overflow-hidden">
         {/* Messages */}
