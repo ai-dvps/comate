@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { act, fireEvent, render, cleanup, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, cleanup, screen, waitFor } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import App from '../App'
 import i18n from '../i18n'
@@ -38,14 +38,32 @@ vi.mock('../components/CustomTitlebar', () => ({
   ),
 }))
 vi.mock('../components/AgentCommandCenter', () => ({
-  default: ({ onOpenTodos }: { onOpenTodos: () => void }) => (
-    <div data-testid="agent-command-center"><button onClick={onOpenTodos}>Open Todos</button></div>
+  default: ({ onOpenTodos, onNewChat }: { onOpenTodos: () => void; onNewChat: () => void }) => (
+    <div data-testid="agent-command-center">
+      <button onClick={onNewChat}>New chat</button>
+      <button onClick={onOpenTodos}>Open Todos</button>
+    </div>
   ),
 }))
 vi.mock('../components/ManagementWorkspace', () => ({
   default: () => <div data-testid="management-workspace" />,
 }))
-vi.mock('../components/CreateWorkspaceModal', () => ({ default: () => <div data-testid="create-workspace-modal" /> }))
+vi.mock('../components/CreateWorkspaceModal', () => ({
+  default: ({ onCreated }: { onCreated?: (workspace: { id: string; name: string; folderPath: string }) => void }) => (
+    <div data-testid="create-workspace-modal">
+      <button
+        type="button"
+        onClick={() => {
+          const workspace = { id: 'ws-created', name: 'Created', folderPath: '/created' }
+          mockWorkspaceStore.workspaces = [...mockWorkspaceStore.workspaces, workspace]
+          onCreated?.(workspace)
+        }}
+      >
+        Complete workspace creation
+      </button>
+    </div>
+  ),
+}))
 vi.mock('../components/ToastContainer', () => ({ default: () => <div data-testid="toast-container" /> }))
 vi.mock('../components/UpdateNotification', () => ({ default: () => <div data-testid="update-notification" /> }))
 vi.mock('../components/UpdateRestartDialog', () => ({ default: () => <div data-testid="update-restart-dialog" /> }))
@@ -132,6 +150,8 @@ const mockChatStore = {
   sessions: {},
   activeSessionIds: {},
   setActiveSession: vi.fn(),
+  createSession: vi.fn(),
+  sendMessage: vi.fn(),
 }
 
 vi.mock('../stores/chat-store', () => ({
@@ -202,6 +222,109 @@ describe('App layout', () => {
 
     await findByTestId('workspace-empty-state')
     expect(await findByTestId('custom-titlebar')).toHaveAttribute('data-context-available', 'false')
+  })
+
+  it('opens New Chat and creates then sends the first prompt', async () => {
+    mockWorkspaceStore.workspaces = [{ id: 'ws-1', name: 'Comate', folderPath: '/comate' }]
+    mockWorkspaceStore.activeWorkspaceId = 'ws-1'
+    mockWorkspaceStore.openWorkspaceIds = ['ws-1']
+    mockChatStore.createSession.mockResolvedValue({
+      ok: true,
+      session: {
+        id: 'session-new',
+        workspaceId: 'ws-1',
+        name: 'Fix redirects',
+        createdAt: '',
+        updatedAt: '',
+      },
+    })
+
+    renderWithI18n(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New chat' }))
+    fireEvent.change(await screen.findByPlaceholderText('What do you want to build?'), {
+      target: { value: 'Fix redirects' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Start chat' }))
+
+    await waitFor(() => {
+      expect(mockChatStore.createSession).toHaveBeenCalledWith('ws-1', expect.objectContaining({
+        initialPrompt: 'Fix redirects',
+        signal: expect.any(AbortSignal),
+      }))
+      expect(mockChatStore.sendMessage).toHaveBeenCalledWith('ws-1', 'session-new', 'Fix redirects')
+    })
+  })
+
+  it('selects a workspace created from New Chat before submitting', async () => {
+    mockWorkspaceStore.workspaces = [{ id: 'ws-1', name: 'Comate', folderPath: '/comate' }]
+    mockWorkspaceStore.activeWorkspaceId = 'ws-1'
+    mockWorkspaceStore.openWorkspaceIds = ['ws-1']
+    mockChatStore.createSession.mockResolvedValue({
+      ok: true,
+      session: { id: 'session-new', workspaceId: 'ws-created', name: 'Prompt', createdAt: '', updatedAt: '' },
+    })
+
+    renderWithI18n(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New chat' }))
+    fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: '__create_workspace__' } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Complete workspace creation' }))
+
+    await waitFor(() => expect(screen.getByLabelText('Workspace')).toHaveValue('ws-created'))
+    fireEvent.change(screen.getByPlaceholderText('What do you want to build?'), {
+      target: { value: 'Use the new workspace' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Start chat' }))
+
+    await waitFor(() => expect(mockChatStore.createSession).toHaveBeenCalledWith(
+      'ws-created',
+      expect.objectContaining({ initialPrompt: 'Use the new workspace' }),
+    ))
+  })
+
+  it('keeps the New Chat prompt visible after a recoverable creation failure', async () => {
+    mockWorkspaceStore.workspaces = [{ id: 'ws-1', name: 'Comate', folderPath: '/comate' }]
+    mockWorkspaceStore.activeWorkspaceId = 'ws-1'
+    mockWorkspaceStore.openWorkspaceIds = ['ws-1']
+    mockChatStore.createSession.mockResolvedValue({
+      ok: false,
+      reason: 'timeout',
+      error: 'Creating the session timed out. Try again.',
+    })
+
+    renderWithI18n(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New chat' }))
+    const prompt = screen.getByPlaceholderText('What do you want to build?')
+    fireEvent.change(prompt, { target: { value: 'Retry this prompt' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Start chat' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Creating the session timed out. Try again.')
+    expect(prompt).toHaveValue('Retry this prompt')
+    expect(mockChatStore.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('ignores a session response that arrives after leaving New Chat', async () => {
+    mockWorkspaceStore.workspaces = [{ id: 'ws-1', name: 'Comate', folderPath: '/comate' }]
+    mockWorkspaceStore.activeWorkspaceId = 'ws-1'
+    mockWorkspaceStore.openWorkspaceIds = ['ws-1']
+    let resolveCreation: ((result: unknown) => void) | undefined
+    mockChatStore.createSession.mockReturnValue(new Promise((resolve) => {
+      resolveCreation = resolve
+    }))
+
+    renderWithI18n(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New chat' }))
+    fireEvent.change(screen.getByPlaceholderText('What do you want to build?'), {
+      target: { value: 'Do not reopen me' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Start chat' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open Todos' }))
+
+    resolveCreation?.({
+      ok: true,
+      session: { id: 'late', workspaceId: 'ws-1', name: 'Late', createdAt: '', updatedAt: '' },
+    })
+    await waitFor(() => expect(screen.getByTestId('management-workspace')).toBeInTheDocument())
+    expect(mockChatStore.sendMessage).not.toHaveBeenCalled()
   })
 
   it('shows the Windows top frame only while the window is restored', async () => {
@@ -310,7 +433,7 @@ describe('App layout', () => {
 
     expect(sessionWorkspace).toHaveClass('visible')
     expect(sessionWorkspace).not.toHaveAttribute('aria-hidden', 'true')
-    fireEvent.click(document.querySelector('[data-testid="agent-command-center"] button') as HTMLButtonElement)
+    fireEvent.click(screen.getByRole('button', { name: 'Open Todos' }))
 
     expect(document.querySelector('[data-testid="management-workspace"]')).toBeInTheDocument()
     expect(document.querySelector('[data-testid="chat-panel"]')).toBeInTheDocument()

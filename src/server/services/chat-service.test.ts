@@ -5226,6 +5226,15 @@ describe('chat-service backend review fixes (P1/P2)', { concurrency: false }, ()
     assert.strictEqual(reloaded?.customTitle, 'New Title');
   });
 
+  it('marks a draft rename as a user title so backend title updates cannot replace it', async () => {
+    const { workspace, session } = await createFixture('gui', 'opencode');
+
+    const updated = await service.updateSession(session.id, { name: 'My chosen title' }, workspace.id);
+
+    assert.strictEqual(updated?.name, 'My chosen title');
+    assert.strictEqual(updated?.customTitle, 'My chosen title');
+  });
+
   it('opencode rename without a backend session id fails closed (P1)', async () => {
     const { workspace, session } = await createFixture('gui', 'opencode');
     workspaceStore.clearDraftFlag(session.id);

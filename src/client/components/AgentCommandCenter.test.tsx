@@ -105,11 +105,13 @@ describe('AgentCommandCenter', () => {
   })
 
   it('shows Workspace groups, Session supervision state, and footer controls', () => {
+    const onNewChat = vi.fn()
     renderCommandCenter(
       <AgentCommandCenter
         width={288}
         onWidthChange={vi.fn()}
         onCreateWorkspace={vi.fn()}
+        onNewChat={onNewChat}
         onOpenTodos={vi.fn()}
         onOpenAnalytics={vi.fn()}
         onOpenSettings={vi.fn()}
@@ -118,6 +120,11 @@ describe('AgentCommandCenter', () => {
     )
 
     expect(screen.getByRole('complementary', { name: 'Agent Command Center' })).toBeInTheDocument()
+    const newChatButton = screen.getByRole('button', { name: 'New chat' })
+    const todosButton = screen.getByRole('button', { name: 'Todos' })
+    expect(newChatButton.compareDocumentPosition(todosButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    fireEvent.click(newChatButton)
+    expect(onNewChat).toHaveBeenCalledTimes(1)
     expect(screen.getByText('Comate')).toBeInTheDocument()
     expect(screen.getByText('Needs approval')).toBeInTheDocument()
     expect(screen.getByText('Approval')).toBeInTheDocument()
@@ -364,7 +371,7 @@ describe('AgentCommandCenter', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: 'Create' }))
 
-    expect(chatState.createSession).toHaveBeenCalledWith('ws-1', 'Release planning')
+    expect(chatState.createSession).toHaveBeenCalledWith('ws-1', { name: 'Release planning' })
   })
 
   it('restores the Session context menu and renames a Session', () => {

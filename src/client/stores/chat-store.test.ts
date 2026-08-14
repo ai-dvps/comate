@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, vi } from 'vitest'
+import { describe, it, beforeEach, afterEach, vi } from 'vitest'
 import type { Mock } from 'vitest'
 import assert from 'node:assert'
 import {
@@ -10,6 +10,7 @@ import {
   getLastEventId,
   clearLastEventId,
   clearAllSessionSubscriptions,
+  CREATE_SESSION_TIMEOUT_MS,
   deriveInFlightBrowserToolIds,
   type SseSetter,
   mergeSessionStatusEntry,
@@ -21,6 +22,11 @@ import type { WsEventMessage } from '@server/websocket/types'
 
 beforeEach(() => {
   useChatStore.setState({ historyLoadState: {} })
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
 })
 
 describe('session status polling', () => {
@@ -40,6 +46,85 @@ describe('session status polling', () => {
       ),
       undefined,
     )
+  })
+})
+
+describe('session title updates', () => {
+  it('applies an OpenCode title only while the user has not set a custom title', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    useChatStore.setState({
+      sessions: {
+        'ws-1': [
+          { id: 'auto', workspaceId: 'ws-1', name: 'Fallback', createdAt: '', updatedAt: '' },
+          { id: 'manual', workspaceId: 'ws-1', name: 'Mine', customTitle: 'Mine', createdAt: '', updatedAt: '' },
+        ],
+      },
+    })
+
+    handleSseEvent(set, 'ws-1', 'auto', 'session_title', { title: 'Generated title' })
+    handleSseEvent(set, 'ws-1', 'manual', 'session_title', { title: 'Must not win' })
+
+    const sessions = useChatStore.getState().sessions['ws-1']
+    assert.strictEqual(sessions.find((session) => session.id === 'auto')?.name, 'Generated title')
+    assert.strictEqual(sessions.find((session) => session.id === 'manual')?.name, 'Mine')
+  })
+})
+
+describe('new chat session creation', () => {
+  it('sends the initial prompt for server-side fallback title derivation and returns the session', async () => {
+    const session = { id: 's-new', workspaceId: 'ws-1', name: 'Derived', createdAt: '', updatedAt: '' }
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => ({
+      ok: true,
+      json: async () => session,
+      init,
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      const created = await useChatStore.getState().createSession(
+        'ws-1',
+        { initialPrompt: '/ce-debug Fix redirects' },
+      )
+
+      assert.strictEqual(created.ok && created.session.id, 's-new')
+      assert.deepStrictEqual(JSON.parse(fetchMock.mock.calls[0][1]?.body as string), {
+        prompt: '/ce-debug Fix redirects',
+      })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('returns a structured HTTP failure without retrying the POST', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: false }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await useChatStore.getState().createSession('ws-1', { initialPrompt: 'Try once' })
+
+    assert.deepStrictEqual(result, {
+      ok: false,
+      reason: 'http',
+      error: 'Failed to create session',
+    })
+    assert.strictEqual(fetchMock.mock.calls.length, 1)
+  })
+
+  it('bounds session creation and reports a timeout', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(new DOMException('Aborted', 'AbortError'))
+      })
+    })))
+
+    const pending = useChatStore.getState().createSession('ws-1', { initialPrompt: 'May hang' })
+    await vi.advanceTimersByTimeAsync(CREATE_SESSION_TIMEOUT_MS)
+
+    assert.deepStrictEqual(await pending, {
+      ok: false,
+      reason: 'timeout',
+      error: 'Creating the session timed out. Try again.',
+    })
   })
 })
 

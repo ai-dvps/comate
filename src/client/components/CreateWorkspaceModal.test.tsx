@@ -19,10 +19,10 @@ vi.mock('../stores/workspace-store', () => ({
   useWorkspaceStore: (selector: (store: typeof workspaceStore) => unknown) => selector(workspaceStore),
 }))
 
-function renderModal() {
+function renderModal(onCreated = vi.fn()) {
   return render(
     <I18nextProvider i18n={i18n}>
-      <CreateWorkspaceModal onClose={vi.fn()} />
+      <CreateWorkspaceModal onClose={vi.fn()} onCreated={onCreated} />
     </I18nextProvider>,
   )
 }
@@ -62,5 +62,19 @@ describe('CreateWorkspaceModal', () => {
       expect(screen.getByPlaceholderText('/path/to/project')).toHaveValue('/home/user/my-project')
     })
     expect(screen.getByPlaceholderText('e.g. My Project')).toHaveValue('my-project')
+  })
+
+  it('reports the created workspace to its caller', async () => {
+    const workspace = { id: 'ws-created', name: 'Created', folderPath: '/created' }
+    const onCreated = vi.fn()
+    workspaceStore.createWorkspace.mockResolvedValue(workspace)
+    renderModal(onCreated)
+
+    fireEvent.change(screen.getByPlaceholderText('e.g. My Project'), { target: { value: 'Created' } })
+    fireEvent.change(screen.getByPlaceholderText('/path/to/project'), { target: { value: '/created' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(workspace))
+    expect(workspaceStore.openWorkspace).toHaveBeenCalledWith('ws-created')
   })
 })

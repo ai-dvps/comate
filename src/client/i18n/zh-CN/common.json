@@ -1,4 +1,16 @@
 {
+  "newChat": {
+    "title": "新对话",
+    "description": "输入你的需求，Comate 会自动创建会话并开始处理。",
+    "workspace": "工作区",
+    "promptPlaceholder": "你想要完成什么？",
+    "startChat": "开始对话",
+    "submitHint": "Enter 发送 · Shift+Enter 换行",
+    "createWorkspace": "创建工作区",
+    "createWorkspaceOption": "+ 创建工作区…",
+    "workspaceGateTitle": "先创建一个工作区",
+    "workspaceGateDescription": "Comate 需要通过工作区获取项目上下文、文件和 Git 变更，之后才能开始对话。"
+  },
   "appName": "Claude Code",
   "shell": {
     "commandCenter": "Agent 指挥中心",
@@ -125,6 +137,8 @@
   "connectionError": "连接错误",
   "failedToFetchSessions": "获取会话失败",
   "failedToCreateSession": "创建会话失败",
+  "createSessionTimeout": "创建会话超时，请重试。",
+  "createSessionCancelled": "创建会话已取消。",
   "failedToRenameSession": "重命名会话失败",
   "failedToForkSession": "分叉会话失败",
   "failedToLoadMessages": "加载消息失败",

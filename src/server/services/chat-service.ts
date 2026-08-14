@@ -43,6 +43,7 @@ import { diagLog } from '../utils/diag-logger.js';
 import { normalizeWindowsPath } from '../utils/normalize-windows-path.js';
 import { loadClaudeSettings } from '../utils/claude-settings.js';
 import { buildClaudeEnv, prependEnvPath, getPathEnvKey } from '../utils/sdk-env.js';
+import { deriveFallbackSessionTitle } from '../utils/session-title.js';
 import { pluginSettingsService } from './plugin-settings-service.js';
 import { evaluateToolPermission, getToolPermissionDenialReason, resolveEffectivePolicy } from './tool-permission-policy.js';
 import { createPathPolicyContext, validateToolInput, verifyBotFileToolAccess, canonicalizeBotPath } from './bot-path-policy.js';
@@ -758,7 +759,10 @@ export class ChatService {
 
     if (localSession && localSession.isDraft) {
       const draftInput: Parameters<typeof workspaceStore.updateLocalSession>[1] = {};
-      if (input.name !== undefined) draftInput.name = input.name;
+      if (input.name !== undefined) {
+        draftInput.name = input.name;
+        draftInput.customTitle = input.name;
+      }
       if (input.providerId !== undefined) draftInput.providerId = input.providerId;
       if (input.isArchived !== undefined) draftInput.isArchived = input.isArchived;
       if (input.fastMode !== undefined) draftInput.fastMode = input.fastMode;
@@ -1569,6 +1573,19 @@ export class ChatService {
               env: (options.env ?? process.env) as NodeJS.ProcessEnv,
               onBackendSessionId: (backendSessionId) =>
                 workspaceStore.updateSessionBackendSessionId(sessionId, backendSessionId),
+              onSessionTitle: (title) => {
+                try {
+                  const current = workspaceStore.getLocalSession(sessionId);
+                  const placeholder = `comate-${sessionId.slice(0, 8)}`;
+                  if (!current || current.customTitle || title === placeholder) return;
+                  const normalized = deriveFallbackSessionTitle(title);
+                  if (!normalized || normalized === current.name) return;
+                  workspaceStore.updateLocalSession(sessionId, { name: normalized });
+                  this.runtimes.get(sessionId)?.emitSessionTitle(normalized);
+                } catch (err) {
+                  diagLog(`[ChatService] session ${sessionId} title mirror failed: ${err instanceof Error ? err.message : String(err)}`);
+                }
+              },
             })
           : undefined;
 

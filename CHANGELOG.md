@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **New Chat now starts conversations directly from a workspace** — Choose an existing workspace or create one from the New Chat page, then use the first prompt to create and open a new session immediately.
+
 ### Changed
 
 - **Embedded browsers can now open in an independent desktop window** — The same live browser view moves into a reusable OS window pinned to its originating chat, while the main panel keeps focus and restore controls; closing the window restores the browser to its panel.
