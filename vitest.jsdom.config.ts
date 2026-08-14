@@ -23,6 +23,7 @@ export default defineProject({
       'src/client/stores/bot-store.test.ts',
       'src/client/stores/git-changes-store.test.ts',
       'src/client/stores/right-panel-store.test.ts',
+      'src/client/stores/context-tab-store.test.ts',
       'src/client/stores/provider-usage-store.test.ts',
       'src/client/stores/skills-store.test.ts',
       'src/client/stores/expert-packages-store.test.ts',
