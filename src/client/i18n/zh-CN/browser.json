@@ -48,6 +48,7 @@
     "cancel": "取消",
     "popout": "弹出浮窗",
     "closePopout": "回到面板",
+    "restoreToPanel": "回到面板",
     "clickToDrive": "点击画面开始操控",
     "captureReleased": "已释放键鼠捕获",
     "rememberSite": "记住此站点",
@@ -62,6 +63,9 @@
   },
   "popout": {
     "title": "浏览器 — 浮窗"
+  },
+  "detached": {
+    "title": "浏览器"
   },
   "a11y": {
     "stateAnnouncement": "浏览器控制状态：{{state}}",
