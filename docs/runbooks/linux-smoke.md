@@ -62,6 +62,11 @@ behavioral verification that needs a GUI.
 
 ## 3. AppImage self-update (VM-A)
 
+Before updating, complete the Linux / Wayland section of
+[`detached-browser-window-smoke.md`](./detached-browser-window-smoke.md), including
+main-window minimize isolation, A/B singleton switching, OS-close redock, and
+the no-tray terminal path on VM-B.
+
 - [ ] With the app running X.Y.Z, serve/publish X.Y.(Z+1) (a re-serve of the
       same build under a bumped version is fine). Update check in the client
       discovers it from `latest-linux.yml`.

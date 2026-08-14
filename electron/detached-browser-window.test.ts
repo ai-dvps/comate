@@ -185,4 +185,17 @@ describe('detached browser window controller', () => {
     assert.equal(placements.at(-1), null);
     assert.equal(windows[0]!.calls.includes('destroy'), true);
   });
+
+  it('reuses one window without accumulating ownership across repeated switches', async () => {
+    const { controller, main, windows, hostChanges } = setup();
+    for (let cycle = 0; cycle < 10; cycle += 1) {
+      const next = cycle % 2 === 0 ? A : B;
+      await controller.detach(next);
+      assert.equal(controller.rendererReady(next.sessionId), true);
+      assert.equal(controller.restore(), true);
+      assert.deepEqual(hostChanges.at(-1), { sessionId: next.sessionId, host: main });
+      assert.equal(controller.getPlacement(), null);
+    }
+    assert.equal(windows.length, 1, 'the reusable top-level window must remain a singleton');
+  });
 });

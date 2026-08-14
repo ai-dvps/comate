@@ -25,6 +25,7 @@ test('the Electron distribution build produces both renderer and shell bundles',
 test('the Electron shell builds a dedicated least-privilege detached-browser preload', () => {
   const viteConfig = readFileSync('electron.vite.config.ts', 'utf8');
   const detachedPreload = readFileSync('electron/detached-browser-preload.ts', 'utf8');
+  const mainSource = readFileSync('electron/main.ts', 'utf8');
 
   assert.match(
     viteConfig,
@@ -48,6 +49,17 @@ test('the Electron shell builds a dedicated least-privilege detached-browser pre
       `the detached preload must not expose ${forbiddenCapability}`,
     );
   }
+
+  assert.match(
+    mainSource,
+    /loadUi\([^,\n]+, ['"]detached-browser['"]\)/,
+    'the independent window must route to the minimal renderer mode',
+  );
+  assert.match(
+    mainSource,
+    /preload: join\(__dirname, ['"]\.\.['"], ['"]preload['"], ['"]detached-browser-preload\.cjs['"]\)/,
+    'the independent window must load the dedicated preload bundle',
+  );
 });
 
 test('the Electron development command stops all dev servers when the app quits', () => {
