@@ -263,6 +263,61 @@ describe('browser view manager — creation contract (KTD-10/KTD-16)', () => {
 });
 
 describe('browser view manager — attach, bounds, occlusion (U8, KTD-14)', () => {
+  it('moves the complete view hierarchy between hosts and ignores stale reports', async () => {
+    const { manager, views, host } = setup();
+    const detachedHost = makeFakeHost();
+    await manager.createView({ sessionId: 's1', marker: 'm' });
+    await manager.setViewBounds('s1', RECT);
+    views[0]!.webContents.openHandler!({ url: 'https://accounts.example.com/oauth' });
+    const [page, shield, popup] = views;
+
+    manager.setViewHost('s1', detachedHost as unknown as HostWindowLike);
+    assert.ok(host.removed.includes(page), 'page leaves the former host immediately');
+    assert.ok(host.removed.includes(popup), 'managed popups leave with the page');
+    assert.ok(host.removed.includes(shield), 'input shield leaves with the page');
+    assert.equal(manager.getViewState('s1')?.attached, false, 'waits for the new host rect');
+
+    const detachedRect = { ...RECT, x: 20, width: 720 };
+    assert.equal(
+      await manager.setViewBoundsFromHost(
+        's1',
+        detachedHost as unknown as HostWindowLike,
+        detachedRect,
+      ),
+      true,
+    );
+    assert.deepEqual(detachedHost.added.slice(0, 3), [page, popup, shield]);
+    assert.equal(detachedHost.added.at(-1), shield, 'shield is stacked last');
+    assert.equal(manager.getViewState('s1')?.bounds?.width, 720);
+
+    assert.equal(
+      await manager.setViewBoundsFromHost('s1', host as unknown as HostWindowLike, null),
+      false,
+      'a late cleanup from the former host is rejected',
+    );
+    assert.equal(manager.getViewState('s1')?.visible, true);
+    assert.equal(manager.getViewState('s1')?.bounds?.width, 720);
+  });
+
+  it('scopes modal occlusion to the host that reported it', async () => {
+    const { manager, views, host } = setup();
+    const detachedHost = makeFakeHost();
+    await manager.createView({ sessionId: 's1', marker: 'm' });
+    manager.setViewHost('s1', detachedHost as unknown as HostWindowLike);
+    await manager.setViewBoundsFromHost(
+      's1',
+      detachedHost as unknown as HostWindowLike,
+      RECT,
+    );
+
+    manager.setHostOccluded(host as unknown as HostWindowLike, true);
+    assert.equal(views[0]!.visibleSet.at(-1), true, 'main-window modal cannot hide detached view');
+    manager.setHostOccluded(detachedHost as unknown as HostWindowLike, true);
+    assert.equal(views[0]!.visibleSet.at(-1), false);
+    manager.setHostOccluded(detachedHost as unknown as HostWindowLike, false);
+    assert.equal(views[0]!.visibleSet.at(-1), true);
+  });
+
   it('attaches page + shield to the host window on the first rect report', async () => {
     const { manager, views, host } = setup();
     await manager.createView({ sessionId: 's1', marker: 'm' });
@@ -388,6 +443,7 @@ describe('browser view manager — input gating + Esc (U8, KTD-14)', () => {
   it('user mode passes keystrokes but intercepts Esc back to the panel frame', async () => {
     const { manager, views, host, escapes } = setup();
     await manager.createView({ sessionId: 's1', marker: 'm' });
+    await manager.setViewBounds('s1', RECT);
     manager.setInputMode('s1', 'user');
     let prevented = 0;
     const event = { preventDefault: () => (prevented += 1) };

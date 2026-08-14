@@ -113,10 +113,22 @@ export interface BrowserViewManagerDeps {
 }
 
 export type BrowserViewManager = ControlViewManager & {
+  /** Main-process placement authority: select the window that owns a session. */
+  setViewHost(sessionId: string, host: HostWindowLike | null): void;
+  /** Current live owner, used by the detached-window controller and IPC guard. */
+  getViewHost(sessionId: string): HostWindowLike | null;
+  /** Renderer rect report accepted only when `host` currently owns the session. */
+  setViewBoundsFromHost(
+    sessionId: string,
+    host: HostWindowLike,
+    rect: ViewRect | null,
+  ): Promise<boolean>;
   /** Renderer-driven input gating (KTD-14). */
   setInputMode(sessionId: string, mode: BrowserViewInputMode): void;
   /** Global modal-occlusion flag: hides every browser view while set. */
   setOccluded(occluded: boolean): void;
+  /** Renderer modal occlusion, scoped to views owned by that host. */
+  setHostOccluded(host: HostWindowLike, occluded: boolean): void;
   /**
    * U9: one session exempt from modal occlusion — the usage-login modal hosts
    * its capture session's view INSIDE the modal. Null clears the exemption.
@@ -186,8 +198,14 @@ interface ViewRecord {
  */
 export function createBrowserViewManager(deps: BrowserViewManagerDeps): BrowserViewManager {
   const views = new Map<string, ViewRecord>();
-  /** Last reported panel rect per session — survives view rebuilds. */
+  /** Legacy/control-channel rect per session — survives view rebuilds. */
   const desiredRects = new Map<string, ViewRect | null>();
+  /** Explicit shell-owned host. Absence means the default main-window host. */
+  const viewHosts = new Map<string, HostWindowLike | null>();
+  /** Renderer reports are retained per host so a host switch cannot reuse another window's rect. */
+  const hostRects = new Map<string, Map<HostWindowLike, ViewRect | null>>();
+  /** Modal occlusion belongs to the reporting application window. */
+  const hostOcclusion = new Map<HostWindowLike, boolean>();
   const partitions = new Map<string, ElectronSessionLike>();
   let occluded = false;
   /** U9: session exempt from modal occlusion (modal-hosted capture view). */
@@ -210,9 +228,21 @@ export function createBrowserViewManager(deps: BrowserViewManagerDeps): BrowserV
     return ses;
   };
 
-  const liveHost = (): HostWindowLike | null => {
+  const defaultHost = (): HostWindowLike | null => {
     const host = deps.hostWindow();
     return host && !host.isDestroyed() ? host : null;
+  };
+
+  const hostFor = (sessionId: string): HostWindowLike | null => {
+    const host = viewHosts.has(sessionId) ? viewHosts.get(sessionId) ?? null : defaultHost();
+    return host && !host.isDestroyed() ? host : null;
+  };
+
+  const rectFor = (sessionId: string, host: HostWindowLike | null): ViewRect | null => {
+    if (host && viewHosts.has(sessionId)) {
+      return hostRects.get(sessionId)?.get(host) ?? null;
+    }
+    return desiredRects.get(sessionId) ?? null;
   };
 
   const trackNavigation = (record: ViewRecord, sessionId: string, url: unknown): void => {
@@ -241,7 +271,7 @@ export function createBrowserViewManager(deps: BrowserViewManagerDeps): BrowserV
         // Esc returns focus to the panel frame (keyboard contract parity with
         // the iframe viewer's release-capture path).
         event.preventDefault();
-        liveHost()?.webContents.focus();
+        record.attachedHost?.webContents.focus();
         deps.onEscape?.(sessionId);
       }
     }) as never);
@@ -267,8 +297,38 @@ export function createBrowserViewManager(deps: BrowserViewManagerDeps): BrowserV
     }
   };
 
+  const detachHierarchy = (record: ViewRecord): void => {
+    const host = record.attachedHost;
+    if (!host) return;
+    record.view.setVisible(false);
+    record.shield.setVisible(false);
+    record.visible = false;
+    record.shieldVisible = false;
+    for (const popup of record.popups) popup.view.setVisible(false);
+    for (const view of [record.shield, ...[...record.popups].map((popup) => popup.view), record.view]) {
+      try {
+        host.contentView.removeChildView(view);
+      } catch {
+        // host already gone
+      }
+    }
+    for (const popup of record.popups) popup.attachedHost = null;
+    record.attachedHost = null;
+  };
+
+  const attachHierarchy = (record: ViewRecord, host: HostWindowLike): void => {
+    host.contentView.addChildView(record.view);
+    for (const popup of record.popups) {
+      host.contentView.addChildView(popup.view);
+      popup.attachedHost = host;
+    }
+    // The input gate must always be the final/top-most child.
+    host.contentView.addChildView(record.shield);
+    record.attachedHost = host;
+  };
+
   const openPopup = (record: ViewRecord, sessionId: string, url: string): void => {
-    const host = liveHost();
+    const host = record.attachedHost ?? hostFor(sessionId);
     if (!host) return; // no window — nothing to overlay onto
     if (record.popups.size >= MAX_POPUPS_PER_SESSION) {
       // Refuse past the cap (the window.open handler already denies the
@@ -301,10 +361,12 @@ export function createBrowserViewManager(deps: BrowserViewManagerDeps): BrowserV
       }
       record.popups.delete(popup);
     }) as never);
-    host.contentView.addChildView(popupView);
-    popup.attachedHost = host;
-    popupView.setBounds(record.bounds ?? desiredRects.get(sessionId) ?? DEFAULT_VIEW_RECT);
-    popupView.setVisible(record.visible);
+    if (record.attachedHost === host) {
+      host.contentView.addChildView(popupView);
+      popup.attachedHost = host;
+    }
+    popupView.setBounds(record.bounds ?? rectFor(sessionId, host) ?? DEFAULT_VIEW_RECT);
+    popupView.setVisible(record.visible && popup.attachedHost !== null);
     if (record.shieldVisible) raiseShield(record);
     void popupView.webContents.loadURL(url).catch(() => {
       if (!popupView.webContents.isDestroyed()) popupView.webContents.destroy();
@@ -315,20 +377,18 @@ export function createBrowserViewManager(deps: BrowserViewManagerDeps): BrowserV
   const applyLayout = (sessionId: string): void => {
     const record = views.get(sessionId);
     if (!record) return;
-    const rect = desiredRects.get(sessionId) ?? null;
-    const host = liveHost();
+    const host = hostFor(sessionId);
+    const rect = rectFor(sessionId, host);
+    if (record.attachedHost && record.attachedHost !== host) detachHierarchy(record);
+    const hostIsOccluded = host ? hostOcclusion.get(host) === true : false;
     const shouldShow =
-      (!occluded || sessionId === occlusionExemptSessionId) &&
+      (!occluded && !hostIsOccluded || sessionId === occlusionExemptSessionId) &&
       rect !== null &&
       rect.width > 0 &&
       rect.height > 0 &&
       host !== null;
     if (shouldShow && rect && host) {
-      if (!record.attachedHost) {
-        host.contentView.addChildView(record.view);
-        host.contentView.addChildView(record.shield);
-        record.attachedHost = host;
-      }
+      if (!record.attachedHost) attachHierarchy(record, host);
       record.view.setBounds(rect);
       record.shield.setBounds(rect);
       record.bounds = rect;
@@ -366,16 +426,7 @@ export function createBrowserViewManager(deps: BrowserViewManagerDeps): BrowserV
       if (!popup.view.webContents.isDestroyed()) popup.view.webContents.destroy();
     }
     record.popups.clear();
-    if (record.attachedHost) {
-      for (const view of [record.shield, record.view]) {
-        try {
-          record.attachedHost.contentView.removeChildView(view);
-        } catch {
-          // host already gone
-        }
-      }
-      record.attachedHost = null;
-    }
+    if (record.attachedHost) detachHierarchy(record);
     if (!record.shield.webContents.isDestroyed()) record.shield.webContents.destroy();
     if (!record.view.webContents.isDestroyed()) record.view.webContents.destroy();
   };
@@ -508,7 +559,32 @@ export function createBrowserViewManager(deps: BrowserViewManagerDeps): BrowserV
 
     async setViewBounds(sessionId, rect) {
       desiredRects.set(sessionId, rect);
+      const host = hostFor(sessionId);
+      if (host && viewHosts.has(sessionId)) {
+        const rects = hostRects.get(sessionId) ?? new Map<HostWindowLike, ViewRect | null>();
+        rects.set(host, rect);
+        hostRects.set(sessionId, rects);
+      }
       applyLayout(sessionId);
+    },
+
+    setViewHost(sessionId, host) {
+      viewHosts.set(sessionId, host);
+      applyLayout(sessionId);
+    },
+
+    getViewHost(sessionId) {
+      return hostFor(sessionId);
+    },
+
+    async setViewBoundsFromHost(sessionId, host, rect) {
+      if (hostFor(sessionId) !== host) return false;
+      const rects = hostRects.get(sessionId) ?? new Map<HostWindowLike, ViewRect | null>();
+      rects.set(host, rect);
+      hostRects.set(sessionId, rects);
+      if (!viewHosts.has(sessionId)) desiredRects.set(sessionId, rect);
+      applyLayout(sessionId);
+      return true;
     },
 
     setInputMode(sessionId, mode) {
@@ -518,7 +594,7 @@ export function createBrowserViewManager(deps: BrowserViewManagerDeps): BrowserV
       if (mode === 'agent') {
         // KTD-14: gating also blurs the view so keystrokes stop landing in
         // the page the user can no longer drive.
-        liveHost()?.webContents.focus();
+        record.attachedHost?.webContents.focus();
       }
       applyLayout(sessionId);
     },
@@ -527,6 +603,14 @@ export function createBrowserViewManager(deps: BrowserViewManagerDeps): BrowserV
       if (occluded === next) return;
       occluded = next;
       applyLayoutAll();
+    },
+
+    setHostOccluded(host, next) {
+      if (hostOcclusion.get(host) === next) return;
+      hostOcclusion.set(host, next);
+      for (const sessionId of views.keys()) {
+        if (hostFor(sessionId) === host) applyLayout(sessionId);
+      }
     },
 
     setOcclusionExemption(sessionId) {
