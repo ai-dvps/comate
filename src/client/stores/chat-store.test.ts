@@ -12,6 +12,7 @@ import {
   clearAllSessionSubscriptions,
   deriveInFlightBrowserToolIds,
   type SseSetter,
+  mergeSessionStatusEntry,
 } from './chat-store'
 import { DEFAULT_TIMEOUT, wsClient } from '../lib/websocket-client'
 import { useToastStore } from './toast-store'
@@ -20,6 +21,26 @@ import type { WsEventMessage } from '@server/websocket/types'
 
 beforeEach(() => {
   useChatStore.setState({ historyLoadState: {} })
+})
+
+describe('session status polling', () => {
+  it('preserves and clears the pending interaction discriminator', () => {
+    assert.deepStrictEqual(
+      mergeSessionStatusEntry(undefined, {
+        pendingCount: 1,
+        pendingKind: 'question',
+        isProcessing: true,
+      }),
+      { pendingCount: 1, pendingKind: 'question', isProcessing: true },
+    )
+    assert.strictEqual(
+      mergeSessionStatusEntry(
+        { pendingCount: 1, pendingKind: 'question', isProcessing: true },
+        { pendingCount: 0, isProcessing: false },
+      ),
+      undefined,
+    )
+  })
 })
 
 describe('complete history loading', () => {

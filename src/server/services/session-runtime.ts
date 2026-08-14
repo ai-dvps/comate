@@ -879,13 +879,16 @@ export class SessionRuntime {
 
   getStatus(): {
     pendingCount: number;
+    pendingKind?: 'approval' | 'question';
     isProcessing: boolean;
     workspaceId: string;
     activity: SessionActivitySnapshot;
   } {
     const activity = this.getActivitySnapshot();
+    const pendingKind = this.pendingApprovals.values().next().value?.type;
     return {
       pendingCount: this.pendingApprovals.size,
+      ...(pendingKind !== undefined && { pendingKind }),
       isProcessing: activity.active,
       workspaceId: this.workspaceId,
       activity,

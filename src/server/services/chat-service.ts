@@ -2031,17 +2031,28 @@ export class ChatService {
 
   getSessionsStatus(workspaceId: string): Record<
     string,
-    { pendingCount: number; isProcessing: boolean; activity: SessionActivitySnapshot }
+    {
+      pendingCount: number;
+      pendingKind?: 'approval' | 'question';
+      isProcessing: boolean;
+      activity: SessionActivitySnapshot;
+    }
   > {
     const statuses: Record<
       string,
-      { pendingCount: number; isProcessing: boolean; activity: SessionActivitySnapshot }
+      {
+        pendingCount: number;
+        pendingKind?: 'approval' | 'question';
+        isProcessing: boolean;
+        activity: SessionActivitySnapshot;
+      }
     > = {};
     for (const [sessionId, runtime] of this.runtimes) {
       const status = runtime.getStatus();
       if (status.workspaceId === workspaceId) {
         statuses[sessionId] = {
           pendingCount: status.pendingCount,
+          ...(status.pendingKind !== undefined && { pendingKind: status.pendingKind }),
           isProcessing: status.isProcessing,
           activity: status.activity ?? this.runtimeActivity(runtime),
         };

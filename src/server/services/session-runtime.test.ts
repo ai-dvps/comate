@@ -414,6 +414,32 @@ describe('session-runtime idle state', { concurrency: false }, () => {
     assert.strictEqual(runtime.isProcessingTurn(), true);
   });
 
+  it('reports the mutually exclusive pending interaction kind', () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    const pendingApprovals = (runtime as unknown as {
+      pendingApprovals: Map<string, { type: 'approval' | 'question' }>;
+    }).pendingApprovals;
+
+    pendingApprovals.set('approval-1', { type: 'approval' });
+    assert.deepStrictEqual(
+      { pendingCount: runtime.getStatus().pendingCount, pendingKind: runtime.getStatus().pendingKind },
+      { pendingCount: 1, pendingKind: 'approval' },
+    );
+
+    pendingApprovals.clear();
+    pendingApprovals.set('question-1', { type: 'question' });
+    assert.deepStrictEqual(
+      { pendingCount: runtime.getStatus().pendingCount, pendingKind: runtime.getStatus().pendingKind },
+      { pendingCount: 1, pendingKind: 'question' },
+    );
+
+    pendingApprovals.clear();
+    assert.deepStrictEqual(
+      { pendingCount: runtime.getStatus().pendingCount, pendingKind: runtime.getStatus().pendingKind },
+      { pendingCount: 0, pendingKind: undefined },
+    );
+  });
+
   it('runtime is not processing after both indicators clear', () => {
     runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
     (runtime as unknown as { currentMessageStartId?: string }).currentMessageStartId = 'msg-1';

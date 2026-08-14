@@ -79,6 +79,7 @@ export interface StatusPayload {
 export interface StatusResult {
   statuses: Record<string, {
     pendingCount: number
+    pendingKind?: 'approval' | 'question'
     isProcessing?: boolean
     activity: SessionActivitySnapshot
   }>

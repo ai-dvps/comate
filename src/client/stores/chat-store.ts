@@ -25,6 +25,29 @@ import { BROWSER_TOOL_PREFIX } from '@server/services/browser-tool-names'
 
 export type { ChatMessage, MessagePart, MessageRole, SubagentMessage, SubagentPart, SubagentState } from '../types/message'
 
+export type PendingInteractionKind = 'approval' | 'question'
+
+export interface SessionStatusEntry {
+  pendingCount: number
+  pendingKind?: PendingInteractionKind
+  isProcessing?: boolean
+}
+
+export function mergeSessionStatusEntry(
+  previous: SessionStatusEntry | undefined,
+  incoming: SessionStatusEntry,
+): SessionStatusEntry | undefined {
+  if (incoming.pendingCount === 0 && !incoming.isProcessing) return undefined
+  const pendingKind = incoming.pendingKind ?? (
+    incoming.pendingCount > 0 ? previous?.pendingKind : undefined
+  )
+  return {
+    pendingCount: incoming.pendingCount,
+    ...(pendingKind !== undefined && { pendingKind }),
+    ...(incoming.isProcessing !== undefined && { isProcessing: incoming.isProcessing }),
+  }
+}
+
 const sessionSubscriptions = new Map<string, { close: () => void; timer?: ReturnType<typeof setTimeout>; workspaceId: string }>()
 const lastEventId = new Map<string, string>()
 const workspacePollIntervals = new Map<string, ReturnType<typeof setInterval>>()
@@ -214,6 +237,7 @@ function startBackgroundPolling(
         const result = data as {
           statuses?: Record<string, {
             pendingCount: number
+            pendingKind?: PendingInteractionKind
             isProcessing?: boolean
             activity: SessionActivitySnapshot
           }>
@@ -242,7 +266,7 @@ function startBackgroundPolling(
             if (st.pendingCount === 0 && !st.isProcessing) {
               delete next[sid]
             } else {
-              next[sid] = { pendingCount: st.pendingCount, isProcessing: st.isProcessing }
+              next[sid] = mergeSessionStatusEntry(next[sid], st)!
             }
             if (st.pendingCount > 0 && prevPending === 0) {
               nextLastActivityAt[sid] = Date.now()
@@ -396,7 +420,7 @@ export interface ChatState {
   pendingSend: Record<string, { workspaceId: string; content: string } | undefined>
   drafts: Record<string, string>
   subagents: Record<string, SubagentState[]>
-  sessionStatus: Record<string, { pendingCount: number; isProcessing?: boolean }>
+  sessionStatus: Record<string, SessionStatusEntry>
   sessionActivity: Record<string, SessionActivitySnapshot>
   unreadCompletions: Record<string, boolean>
   lastActivityAt: Record<string, number>
