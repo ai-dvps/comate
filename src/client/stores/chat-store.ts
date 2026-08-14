@@ -305,6 +305,18 @@ function startBackgroundPolling(
 
 export type ApprovalMode = 'auto' | 'readonly' | 'manual'
 
+export interface CreateSessionOptions {
+  name?: string
+  approvalMode?: ApprovalMode
+  providerId?: string
+  initialPrompt?: string
+  signal?: AbortSignal
+}
+
+export type CreateSessionResult =
+  | { ok: true; session: ChatSession }
+  | { ok: false; reason: 'cancelled' | 'timeout' | 'http' | 'network'; error: string }
+
 export interface ChatSession {
   id: string
   workspaceId: string
@@ -441,7 +453,7 @@ export interface ChatState {
   fetchSessions: (workspaceId: string) => Promise<{ ok: boolean; error?: string }>
   touchDomCache: (workspaceId: string, sessionId: string) => string | null
   getDomCache: (workspaceId: string) => string[]
-  createSession: (workspaceId: string, name: string, approvalMode?: ApprovalMode, providerId?: string) => Promise<void>
+  createSession: (workspaceId: string, options: CreateSessionOptions) => Promise<CreateSessionResult>
   forkSession: (workspaceId: string, sessionId: string) => Promise<{ ok: boolean; error?: string }>
   addSession: (workspaceId: string, session: ChatSession) => void
   renameSession: (workspaceId: string, sessionId: string, name: string) => Promise<void>
@@ -634,6 +646,7 @@ export function sanitizeSubagents(raw: unknown): SubagentState[] {
 
 const WORKFLOW_POLL_INTERVAL_MS = 2000
 const WORKFLOW_FETCH_TIMEOUT_MS = 10000
+export const CREATE_SESSION_TIMEOUT_MS = 15000
 
 function getWorkflowPollKey(sessionId: string, runId: string): string {
   return `${sessionId}:${runId}`
@@ -2457,6 +2470,20 @@ export function handleSseEvent(
       void fetchWorkflowOnce(workspaceId, sessionId, runId, set)
       return
     }
+    case 'session_title': {
+      const title = typeof data.title === 'string' ? data.title.trim() : ''
+      if (!title) return
+      set((state) => {
+        const workspaceSessions = state.sessions[workspaceId] || []
+        const index = workspaceSessions.findIndex((session) => session.id === sessionId)
+        const session = workspaceSessions[index]
+        if (!session || session.customTitle || session.name === title) return state
+        const nextSessions = [...workspaceSessions]
+        nextSessions[index] = { ...session, name: title }
+        return { sessions: { ...state.sessions, [workspaceId]: nextSessions } }
+      })
+      return
+    }
     case 'heartbeat':
       return
     case 'system_init':
@@ -2685,18 +2712,50 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  createSession: async (workspaceId: string, name: string, approvalMode?: ApprovalMode, providerId?: string) => {
+  createSession: async (workspaceId: string, options: CreateSessionOptions) => {
+    const abortController = new AbortController()
+    let timedOut = false
+    const abortFromCaller = () => abortController.abort()
+    if (options.signal?.aborted) {
+      abortController.abort()
+    } else {
+      options.signal?.addEventListener('abort', abortFromCaller, { once: true })
+    }
+    const timeoutId = setTimeout(() => {
+      timedOut = true
+      abortController.abort()
+    }, CREATE_SESSION_TIMEOUT_MS)
+
     try {
-      const body: Record<string, unknown> = { name }
-      if (approvalMode) body.approvalMode = approvalMode
-      if (providerId) body.providerId = providerId
+      const body: Record<string, unknown> = {}
+      if (options.name?.trim()) body.name = options.name.trim()
+      if (options.initialPrompt?.trim()) body.prompt = options.initialPrompt.trim()
+      if (options.approvalMode) body.approvalMode = options.approvalMode
+      if (options.providerId) body.providerId = options.providerId
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: abortController.signal,
       })
-      if (!res.ok) throw new Error(i18next.t('common:failedToCreateSession', 'Failed to create session'))
+      if (!res.ok) {
+        return {
+          ok: false,
+          reason: 'http',
+          error: i18next.t('common:failedToCreateSession', 'Failed to create session'),
+        }
+      }
       const session: ChatSession = await res.json()
+      if (abortController.signal.aborted) {
+        return {
+          ok: false,
+          reason: timedOut ? 'timeout' : 'cancelled',
+          error: i18next.t(
+            timedOut ? 'common:createSessionTimeout' : 'common:createSessionCancelled',
+            timedOut ? 'Creating the session timed out. Try again.' : 'Session creation was cancelled.',
+          ),
+        }
+      }
       const { nextCache, evicted } = computeDomCacheUpdate(get(), workspaceId, session.id)
       set((state) => {
         const nextUnread = { ...state.unreadCompletions }
@@ -2715,8 +2774,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (evicted) {
         evictCachedSession(set, workspaceId, evicted)
       }
+      return { ok: true, session }
     } catch (err) {
+      if (abortController.signal.aborted) {
+        return {
+          ok: false,
+          reason: timedOut ? 'timeout' : 'cancelled',
+          error: i18next.t(
+            timedOut ? 'common:createSessionTimeout' : 'common:createSessionCancelled',
+            timedOut ? 'Creating the session timed out. Try again.' : 'Session creation was cancelled.',
+          ),
+        }
+      }
       console.error('Failed to create session:', err)
+      return {
+        ok: false,
+        reason: 'network',
+        error: i18next.t('common:networkError', 'Network error'),
+      }
+    } finally {
+      clearTimeout(timeoutId)
+      options.signal?.removeEventListener('abort', abortFromCaller)
     }
   },
 

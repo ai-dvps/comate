@@ -11,6 +11,7 @@ import { getLoopbackAuth } from '../services/security/loopback-auth.js';
 import type { BotUser } from '../models/bot-user.js';
 import { loadWorkflowState, listWorkflowRunIds } from '../services/workflow-loader.js';
 import { validateQuestionAnswers } from '../utils/question-answer-validation.js';
+import { deriveFallbackSessionTitle } from '../utils/session-title.js';
 
 const router = Router({ mergeParams: true });
 const WORKFLOW_ID_RE = /^[a-zA-Z0-9_-]+$/;
@@ -44,10 +45,12 @@ router.get('/sessions', async (req, res) => {
 router.post('/sessions', async (req, res) => {
   try {
     const workspaceId = (req.params as { id: string }).id;
-    const { name, approvalMode, providerId } = req.body;
+    const { name, prompt, approvalMode, providerId } = req.body;
 
-    if (!name || typeof name !== 'string') {
-      res.status(400).json({ error: 'name is required' });
+    const hasName = typeof name === 'string' && name.trim() !== '';
+    const hasPrompt = typeof prompt === 'string' && prompt.trim() !== '';
+    if (!hasName && !hasPrompt) {
+      res.status(400).json({ error: 'name or prompt is required' });
       return;
     }
 
@@ -56,7 +59,13 @@ router.post('/sessions', async (req, res) => {
       return;
     }
 
-    const session = await chatService.createSession({ workspaceId, name, approvalMode, providerId });
+    const session = await chatService.createSession({
+      workspaceId,
+      name: hasName ? name.trim() : deriveFallbackSessionTitle(prompt as string),
+      approvalMode,
+      providerId,
+      source: 'gui',
+    });
     res.status(201).json(session);
   } catch (error) {
     console.error('Failed to create session:', error);

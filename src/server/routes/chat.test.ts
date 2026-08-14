@@ -19,6 +19,40 @@ function createMockRes() {
   };
 }
 
+describe('chat route new chat creation', { concurrency: false }, () => {
+  beforeEach(() => {
+    workspaceStore.resetData();
+  });
+
+  async function importCreateSessionHandler() {
+    const mod = await import('./chat.js');
+    const router = mod.default;
+    const layers = (router as unknown as { stack: Array<{ route?: { methods: Record<string, boolean>; path: string; stack: Array<{ handle: (req: unknown, res: unknown) => Promise<void> }> } }> }).stack;
+    for (const layer of layers) {
+      if (layer.route?.path === '/sessions' && layer.route.methods.post) {
+        return layer.route.stack[layer.route.stack.length - 1].handle;
+      }
+    }
+    throw new Error('POST /sessions handler not found');
+  }
+
+  it('derives the initial session title from the first prompt', async () => {
+    const handler = await importCreateSessionHandler();
+    const res = createMockRes();
+
+    await handler({
+      params: { id: 'ws-1' },
+      body: { prompt: '/ce-debug 修复登录重定向。继续检查 token。' },
+    }, res);
+
+    assert.strictEqual(res.statusCode, 201);
+    const session = res.jsonBody as { name: string; source?: string; customTitle?: string };
+    assert.strictEqual(session.name, '修复登录重定向');
+    assert.strictEqual(session.source, 'gui');
+    assert.strictEqual(session.customTitle, undefined);
+  });
+});
+
 describe('chat route Feishu user info', { concurrency: false }, () => {
   beforeEach(() => {
     workspaceStore.resetData();

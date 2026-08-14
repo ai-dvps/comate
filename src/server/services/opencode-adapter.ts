@@ -62,6 +62,8 @@ export interface OpencodeAdapterDeps {
   env: NodeJS.ProcessEnv;
   /** Called with the remote session id after creation so it can be persisted. */
   onBackendSessionId?: (backendSessionId: string) => void;
+  /** Mirrors OpenCode's asynchronously generated title back into Comate. */
+  onSessionTitle?: (title: string) => void;
 }
 
 
@@ -76,6 +78,10 @@ const QUESTION_ASKED_EVENTS = new Set(['question.asked']);
 function toAnthropicBaseUrl(baseUrl: string): string {
   const trimmed = baseUrl.replace(/\/+$/, '');
   return /\/v\d+$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
+}
+
+function isOpencodeDefaultTitle(title: string): boolean {
+  return /^(?:New session|Child session) - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(title);
 }
 
 export function buildServeConfig(provider: Provider, modelID: string): Record<string, unknown> {
@@ -125,7 +131,13 @@ function extractPromptText(message: SDKUserMessage): string {
 }
 
 /** Unit-test surface for the adapter's pure translation helpers. */
-export const __testables = { buildServeConfig, buildSessionMcpConfig, toAnthropicBaseUrl, extractPromptText };
+export const __testables = {
+  buildServeConfig,
+  buildSessionMcpConfig,
+  toAnthropicBaseUrl,
+  extractPromptText,
+  isOpencodeDefaultTitle,
+};
 
 export class OpencodeBackendDriver implements BackendDriver {
   readonly backendId = 'opencode' as const;
@@ -246,7 +258,9 @@ export class OpencodeBackendDriver implements BackendDriver {
       const created = (await (
         await opencodeFetch(this.instance, '/session', {
           method: 'POST',
-          body: JSON.stringify({ title: `comate-${this.deps.comateSessionId.slice(0, 8)}` }),
+          // Let OpenCode assign its recognized default title. Its first-prompt
+          // title agent only runs while the session still has that default.
+          body: JSON.stringify({}),
         })
       ).json()) as { id: string };
       this.backendSessionId = created.id;
@@ -326,6 +340,22 @@ export class OpencodeBackendDriver implements BackendDriver {
 
     const eventSessionId = String(properties.sessionID ?? '');
     if (eventSessionId && eventSessionId !== sessionId) return;
+
+    if (event.type === 'session.updated') {
+      const info = properties.info as { id?: string; title?: string } | undefined;
+      if ((!info?.id || info.id === sessionId) && typeof info?.title === 'string' && info.title.trim()) {
+        const title = info.title.trim();
+        if (!isOpencodeDefaultTitle(title)) {
+          try {
+            this.deps.onSessionTitle?.(title);
+          } catch (err) {
+            // Title mirroring is best-effort metadata. Never let a storage or
+            // observer failure tear down the agent's event subscription.
+            diagLog(`[OpencodeBackendDriver] session title observer failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+      }
+    }
 
     if (event.type === 'session.idle' || event.type === 'session.error') {
       diagLog(`[OpencodeBackendDriver] ${event.type} session=${eventSessionId || '(none)'} ${JSON.stringify(properties).slice(0, 200)}`);

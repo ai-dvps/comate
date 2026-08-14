@@ -1,4 +1,16 @@
 {
+  "newChat": {
+    "title": "New chat",
+    "description": "Start with a prompt and Comate will create the session for you.",
+    "workspace": "Workspace",
+    "promptPlaceholder": "What do you want to build?",
+    "startChat": "Start chat",
+    "submitHint": "Enter to send · Shift+Enter for a new line",
+    "createWorkspace": "Create workspace",
+    "createWorkspaceOption": "+ Create workspace…",
+    "workspaceGateTitle": "Create a workspace to start chatting",
+    "workspaceGateDescription": "Comate needs a workspace to provide project context, files, and Git changes for your conversation."
+  },
   "appName": "Claude Code",
   "shell": {
     "commandCenter": "Agent Command Center",
@@ -125,6 +137,8 @@
   "connectionError": "Connection error",
   "failedToFetchSessions": "Failed to fetch sessions",
   "failedToCreateSession": "Failed to create session",
+  "createSessionTimeout": "Creating the session timed out. Try again.",
+  "createSessionCancelled": "Session creation was cancelled.",
   "failedToRenameSession": "Failed to rename session",
   "failedToForkSession": "Failed to fork session",
   "failedToLoadMessages": "Failed to load messages",

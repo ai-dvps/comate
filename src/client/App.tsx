@@ -15,6 +15,7 @@ import ContextWorkspace from './components/ContextWorkspace'
 import UsageLoginModal from './components/UsageLoginModal'
 import CustomTitlebar from './components/CustomTitlebar'
 import AgentCommandCenter from './components/AgentCommandCenter'
+import NewChatPage from './components/NewChatPage'
 import CreateWorkspaceModal from './components/CreateWorkspaceModal'
 import ToastContainer from './components/ToastContainer'
 import { useWorkspaceStore } from './stores/workspace-store'
@@ -38,7 +39,7 @@ import {
   watchDetachedBrowserPlacement,
 } from './lib/detached-browser-api'
 
-type AppPanel = ManagementDestination
+type AppDestination = ManagementDestination | 'new-chat' | null
 
 function App() {
   const { t } = useTranslation('common')
@@ -57,23 +58,39 @@ function App() {
     activeWorkspaceId ? s.activeSessionIds[activeWorkspaceId] : undefined
   )
   const setActiveSession = useChatStore((s) => s.setActiveSession)
-  const [activePanel, setActivePanel] = useState<AppPanel | null>(null)
-  const [pendingPanel, setPendingPanel] = useState<AppPanel | null | undefined>(undefined)
+  const createSession = useChatStore((s) => s.createSession)
+  const sendMessage = useChatStore((s) => s.sendMessage)
+  const [activeDestination, setActiveDestination] = useState<AppDestination>(null)
+  const [pendingDestination, setPendingDestination] = useState<AppDestination | undefined>(undefined)
+  const [newChatSubmitting, setNewChatSubmitting] = useState(false)
+  const [newChatError, setNewChatError] = useState<string | null>(null)
+  const [newChatWorkspaceId, setNewChatWorkspaceId] = useState<string | null>(null)
+  const newChatRequestGenerationRef = useRef(0)
+  const newChatAbortControllerRef = useRef<AbortController | null>(null)
+  const activePanel = activeDestination !== null && activeDestination !== 'new-chat'
+    ? activeDestination
+    : null
+  const newChatOpen = activeDestination === 'new-chat'
   const [settingsCloseRequestToken, setSettingsCloseRequestToken] = useState(0)
-  const requestDestination = useCallback((panel: AppPanel | null) => {
-    if (activePanel === 'settings' && panel !== 'settings') {
-      setPendingPanel(panel)
+  const requestDestination = useCallback((destination: AppDestination) => {
+    if (activeDestination === 'settings' && destination !== 'settings') {
+      setPendingDestination(destination)
       setSettingsCloseRequestToken((token) => token + 1)
       return false
     }
-    setActivePanel(panel)
+    setActiveDestination(destination)
     return true
-  }, [activePanel])
-  const openPanel = useCallback((panel: AppPanel) => requestDestination(panel), [requestDestination])
+  }, [activeDestination])
+  const openPanel = useCallback((panel: ManagementDestination) => requestDestination(panel), [requestDestination])
   const closePanel = useCallback(() => {
-    setActivePanel(pendingPanel === undefined ? null : pendingPanel)
-    setPendingPanel(undefined)
-  }, [pendingPanel])
+    setActiveDestination(pendingDestination ?? null)
+    setPendingDestination(undefined)
+  }, [pendingDestination])
+  const openNewChat = useCallback(() => {
+    setNewChatError(null)
+    setNewChatWorkspaceId(null)
+    requestDestination('new-chat')
+  }, [requestDestination])
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showContextMenu, setShowContextMenu] = useState(false)
   const [isMac, setIsMac] = useState(false)
@@ -311,15 +328,63 @@ function App() {
     if (!activeWorkspaceId || !activeWorkspaceSessionId) return undefined
     return state.sessions[activeWorkspaceId]?.find((session) => session.id === activeWorkspaceSessionId)
   })
-  const managementTitle = activePanel === 'settings'
-    ? t('header.settings')
-    : activePanel === 'analytics'
-      ? t('header.analytics')
-      : activePanel === 'todos'
-        ? t('header.todos')
-        : activePanel === 'capabilities'
-          ? t('shell.capabilities')
-          : undefined
+  const lastSessionWorkspaceIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (activeWorkspaceId && activeWorkspaceSessionId) {
+      lastSessionWorkspaceIdRef.current = activeWorkspaceId
+    }
+  }, [activeWorkspaceId, activeWorkspaceSessionId])
+
+  const handleStartNewChat = useCallback(async (workspaceId: string, prompt: string) => {
+    if (newChatSubmitting) return
+    const generation = newChatRequestGenerationRef.current + 1
+    newChatRequestGenerationRef.current = generation
+    newChatAbortControllerRef.current?.abort()
+    const abortController = new AbortController()
+    newChatAbortControllerRef.current = abortController
+    setNewChatError(null)
+    setNewChatSubmitting(true)
+    try {
+      void openWorkspace(workspaceId)
+      const result = await createSession(workspaceId, {
+        initialPrompt: prompt,
+        signal: abortController.signal,
+      })
+      if (
+        generation !== newChatRequestGenerationRef.current
+        || abortController.signal.aborted
+      ) return
+      if (!result.ok) {
+        if (result.reason !== 'cancelled') setNewChatError(result.error)
+        return
+      }
+      setActiveDestination(null)
+      sendMessage(workspaceId, result.session.id, prompt)
+    } finally {
+      if (generation === newChatRequestGenerationRef.current) {
+        newChatAbortControllerRef.current = null
+        setNewChatSubmitting(false)
+      }
+    }
+  }, [createSession, newChatSubmitting, openWorkspace, sendMessage])
+
+  useEffect(() => {
+    if (newChatOpen) return
+    newChatRequestGenerationRef.current += 1
+    newChatAbortControllerRef.current?.abort()
+    newChatAbortControllerRef.current = null
+    setNewChatSubmitting(false)
+    setNewChatError(null)
+  }, [newChatOpen])
+
+  const destinationTitles: Record<Exclude<AppDestination, null>, string> = {
+    'new-chat': t('newChat.title'),
+    settings: t('header.settings'),
+    analytics: t('header.analytics'),
+    todos: t('header.todos'),
+    capabilities: t('shell.capabilities'),
+  }
+  const managementTitle = activeDestination ? destinationTitles[activeDestination] : undefined
   const activeBrowserOpen = useBrowserPaneStore((state) =>
     selectSessionOpen(state, activeWorkspaceSessionId),
   )
@@ -405,7 +470,7 @@ function App() {
           rightWidth={effectiveRightPanelWidth}
           leftCollapsed={isLeftEffectivelyCollapsed}
           rightCollapsed={isRightEffectivelyCollapsed}
-          contextAvailable={activeWorkspaceId !== null}
+          contextAvailable={activeWorkspaceId !== null && !newChatOpen}
           workspaceName={activeWorkspace?.name}
           sessionName={activeSession?.name}
           managementTitle={managementTitle}
@@ -531,20 +596,13 @@ function App() {
             width={sidebarExpandedWidth}
             onWidthChange={setSidebarWidth}
             onCreateWorkspace={() => setShowCreateModal(true)}
+            onNewChat={openNewChat}
             onOpenTodos={() => openPanel('todos')}
             onOpenAnalytics={() => openPanel('analytics')}
             onOpenSettings={() => openPanel('settings')}
             onOpenCapabilities={() => openPanel('capabilities')}
             onActivateWork={() => requestDestination(null)}
-            activeDestination={activePanel === 'todos'
-              ? 'todos'
-              : activePanel === 'analytics'
-                ? 'analytics'
-                : activePanel === 'settings'
-                  ? 'settings'
-                  : activePanel === 'capabilities'
-                    ? 'capabilities'
-                    : 'work'}
+            activeDestination={activeDestination ?? 'work'}
           />
         </div>
 
@@ -552,10 +610,10 @@ function App() {
           <div
             className={cn(
               'absolute inset-0 flex',
-              activePanel && 'invisible pointer-events-none',
+              (activePanel || newChatOpen) && 'invisible pointer-events-none',
             )}
-            aria-hidden={activePanel ? true : undefined}
-            {...(activePanel ? { inert: '' } : {})}
+            aria-hidden={activePanel || newChatOpen ? true : undefined}
+            {...(activePanel || newChatOpen ? { inert: '' } : {})}
           >
             {/* Keep all open workspace panels mounted across management navigation. */}
             <main className="flex-1 flex flex-col overflow-hidden relative">
@@ -592,13 +650,27 @@ function App() {
             {activeWorkspaceId && (
               <ContextWorkspace
                 width={rightPanelExpandedWidth}
-                isCollapsed={isRightEffectivelyCollapsed || activePanel !== null}
+                isCollapsed={isRightEffectivelyCollapsed || activePanel !== null || newChatOpen}
                 onWidthChange={setRightPanelWidth}
                 workspaceId={activeWorkspaceId}
                 workspacePath={activeWorkspace?.folderPath}
               />
             )}
           </div>
+
+          {newChatOpen ? (
+            <div className="absolute inset-0 flex">
+              <NewChatPage
+                workspaces={workspaces}
+                defaultWorkspaceId={lastSessionWorkspaceIdRef.current}
+                selectedWorkspaceId={newChatWorkspaceId}
+                onCreateWorkspace={() => setShowCreateModal(true)}
+                onSubmit={handleStartNewChat}
+                isSubmitting={newChatSubmitting}
+                error={newChatError}
+              />
+            </div>
+          ) : null}
 
           {activePanel ? (
             <div className="absolute inset-0 flex">
@@ -607,7 +679,9 @@ function App() {
                 workspaceId={activeWorkspaceId ?? undefined}
                 onClose={closePanel}
                 settingsCloseRequestToken={settingsCloseRequestToken}
-                onSettingsCloseCancelled={() => setPendingPanel(undefined)}
+                onSettingsCloseCancelled={() => {
+                  setPendingDestination(undefined)
+                }}
               />
             </div>
           ) : null}
@@ -617,6 +691,9 @@ function App() {
       {showCreateModal && (
         <CreateWorkspaceModal
           onClose={() => setShowCreateModal(false)}
+          onCreated={(workspace) => {
+            if (newChatOpen) setNewChatWorkspaceId(workspace.id)
+          }}
         />
       )}
 

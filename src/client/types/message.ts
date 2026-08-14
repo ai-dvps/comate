@@ -236,6 +236,7 @@ export type SessionActivitySnapshot = {
 
 export type SseEvent =
   | { type: 'system_init'; model: string; tools: string[]; sessionId: string; mcpServers?: { name: string; status: string }[] }
+  | { type: 'session_title'; title: string }
   | { type: 'assistant_start'; messageId: string }
   | { type: 'text_delta'; messageId: string; partIndex: number; text: string }
   | {

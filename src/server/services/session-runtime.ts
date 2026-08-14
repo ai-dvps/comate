@@ -895,6 +895,11 @@ export class SessionRuntime {
     };
   }
 
+  emitSessionTitle(title: string): void {
+    if (this.closed) return;
+    this.emitter.emitEvent({ type: 'session_title', title });
+  }
+
   async getContextUsage(): Promise<SDKControlGetContextUsageResponse> {
     return this.query.getContextUsage();
   }

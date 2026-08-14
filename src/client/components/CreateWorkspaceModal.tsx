@@ -3,12 +3,14 @@ import { useTranslation } from 'react-i18next'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { isDesktop, openDirectoryDialog } from '../lib/desktop-api'
 import { X, Plus, FolderOpen } from 'lucide-react'
+import type { Workspace } from '../stores/workspace-store'
 
 interface CreateWorkspaceModalProps {
   onClose: () => void
+  onCreated?: (workspace: Workspace) => void
 }
 
-export default function CreateWorkspaceModal({ onClose }: CreateWorkspaceModalProps) {
+export default function CreateWorkspaceModal({ onClose, onCreated }: CreateWorkspaceModalProps) {
   const { t } = useTranslation('settings')
   const [name, setName] = useState('')
   const [folderPath, setFolderPath] = useState('')
@@ -35,7 +37,8 @@ export default function CreateWorkspaceModal({ onClose }: CreateWorkspaceModalPr
       })
 
       if (workspace) {
-        openWorkspace(workspace.id)
+        void openWorkspace(workspace.id)
+        onCreated?.(workspace)
         onClose()
       } else {
         setError(t('createWorkspace.error'))
@@ -45,7 +48,7 @@ export default function CreateWorkspaceModal({ onClose }: CreateWorkspaceModalPr
     } finally {
       setIsCreating(false)
     }
-  }, [name, folderPath, description, isValid, isCreating, createWorkspace, openWorkspace, onClose, t])
+  }, [name, folderPath, description, isValid, isCreating, createWorkspace, openWorkspace, onClose, onCreated, t])
 
   const handleBrowse = useCallback(async () => {
     if (!isDesktop()) {

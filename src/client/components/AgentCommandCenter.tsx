@@ -14,6 +14,7 @@ import {
   FlaskConical,
   GitBranch,
   Moon,
+  MessageSquarePlus,
   Pencil,
   Plus,
   Puzzle,
@@ -42,12 +43,13 @@ interface AgentCommandCenterProps {
   width: number
   onWidthChange: (width: number) => void
   onCreateWorkspace: () => void
+  onNewChat?: () => void
   onOpenTodos: () => void
   onOpenAnalytics: () => void
   onOpenSettings: () => void
   onOpenCapabilities: () => void
   onActivateWork?: () => boolean
-  activeDestination?: 'work' | 'todos' | 'analytics' | 'settings' | 'capabilities'
+  activeDestination?: 'work' | 'new-chat' | 'todos' | 'analytics' | 'settings' | 'capabilities'
 }
 
 function relativeTime(session: ChatSession): string {
@@ -112,6 +114,7 @@ export default function AgentCommandCenter({
   width,
   onWidthChange,
   onCreateWorkspace,
+  onNewChat = () => {},
   onOpenTodos,
   onOpenAnalytics,
   onOpenSettings,
@@ -275,7 +278,7 @@ export default function AgentCommandCenter({
   const createWorkspaceSession = async (workspaceId: string, fallbackCount: number) => {
     if (!openWorkspaceIds.includes(workspaceId)) await openWorkspace(workspaceId)
     const name = newSessionName.trim() || tc('newSessionDefaultName', { count: fallbackCount })
-    await createSession(workspaceId, name)
+    await createSession(workspaceId, { name })
     setCreatingWorkspaceId(null)
     setNewSessionName('')
   }
@@ -314,6 +317,7 @@ export default function AgentCommandCenter({
   }
 
   const navigation = [
+    { id: 'new-chat' as const, label: t('newChat.title'), icon: MessageSquarePlus, action: onNewChat },
     { id: 'todos' as const, label: t('header.todos'), icon: CheckSquare, action: onOpenTodos },
     { id: 'capabilities' as const, label: t('shell.capabilities'), icon: Puzzle, action: onOpenCapabilities },
   ]

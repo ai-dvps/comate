@@ -143,3 +143,61 @@ describe('OpencodeBackendDriver model preprocessing', () => {
     query.close();
   });
 });
+
+describe('OpencodeBackendDriver session titles', () => {
+  it('forwards title updates for its backend session', async () => {
+    const { OpencodeBackendDriver } = await import('./opencode-adapter.js');
+    const received: string[] = [];
+    const driver = new OpencodeBackendDriver({
+      directory: '/tmp',
+      comateSessionId: 's',
+      backendSessionId: 'oc-1',
+      provider: makeProvider(),
+      env: {},
+      onSessionTitle: (title) => received.push(title),
+    });
+
+    (driver as unknown as { routeEvent: (event: unknown, options: Options, sessionId: string) => void })
+      .routeEvent({
+        type: 'session.updated',
+        properties: { sessionID: 'oc-1', info: { id: 'oc-1', title: 'New session - 2026-08-15T00:00:00.000Z' } },
+      }, {} as Options, 'oc-1');
+    (driver as unknown as { routeEvent: (event: unknown, options: Options, sessionId: string) => void })
+      .routeEvent({
+        type: 'session.updated',
+        properties: { sessionID: 'oc-1', info: { id: 'oc-1', title: 'Fix login redirect' } },
+      }, {} as Options, 'oc-1');
+
+    assert.deepEqual(received, ['Fix login redirect']);
+  });
+
+  it('keeps routing title events when the observer throws', async () => {
+    const { OpencodeBackendDriver } = await import('./opencode-adapter.js');
+    const received: string[] = [];
+    const driver = new OpencodeBackendDriver({
+      directory: '/tmp',
+      comateSessionId: 's',
+      backendSessionId: 'oc-1',
+      provider: makeProvider(),
+      env: {},
+      onSessionTitle: (title) => {
+        received.push(title);
+        if (received.length === 1) throw new Error('storage unavailable');
+      },
+    });
+    const routeEvent = (event: unknown) =>
+      (driver as unknown as { routeEvent: (event: unknown, options: Options, sessionId: string) => void })
+        .routeEvent(event, {} as Options, 'oc-1');
+
+    assert.doesNotThrow(() => routeEvent({
+      type: 'session.updated',
+      properties: { sessionID: 'oc-1', info: { id: 'oc-1', title: 'First generated title' } },
+    }));
+    assert.doesNotThrow(() => routeEvent({
+      type: 'session.updated',
+      properties: { sessionID: 'oc-1', info: { id: 'oc-1', title: 'Second generated title' } },
+    }));
+
+    assert.deepEqual(received, ['First generated title', 'Second generated title']);
+  });
+});
