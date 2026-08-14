@@ -7,7 +7,7 @@ import { cn } from './ui/utils'
 import TodoDetail from './todos/TodoDetail'
 import TodoRow from './todos/TodoRow'
 import GitHubConnect from './todos/GitHubConnect'
-import ModalPanel from './ModalPanel'
+import ModalPanel, { type PanelPresentation } from './ModalPanel'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 
 export type SmartView = 'inbox' | 'today' | 'upcoming' | 'all'
@@ -16,7 +16,7 @@ export type GroupBy = 'none' | 'workspace' | 'repo' | 'origin'
 interface TodosPanelProps {
   isOpen: boolean
   onClose: () => void
-  presentation?: 'modal' | 'embedded'
+  presentation?: PanelPresentation
 }
 
 const VIEWS: { id: SmartView; labelKey: string }[] = [

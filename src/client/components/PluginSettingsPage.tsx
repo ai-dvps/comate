@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { usePluginStore } from '../stores/plugin-store'
 import PluginMarketplaceTab from './PluginMarketplaceTab'
-import ModalPanel from './ModalPanel'
+import ModalPanel, { type PanelPresentation } from './ModalPanel'
 import {
   X,
   Store,
@@ -26,7 +26,7 @@ interface PluginSettingsPageProps {
   workspaceId: string
   isOpen: boolean
   onClose: () => void
-  presentation?: 'modal' | 'embedded'
+  presentation?: PanelPresentation
 }
 
 type PluginTab = 'installed' | 'marketplace'

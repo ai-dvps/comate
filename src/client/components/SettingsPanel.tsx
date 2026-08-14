@@ -26,7 +26,7 @@ import BackendSection from './BackendSection'
 import DeleteWorkspaceDialog from './DeleteWorkspaceDialog'
 import BotManagementPage, { type BotManagementPageHandle } from './BotManagementPage'
 import UnsavedChangesDialog from './UnsavedChangesDialog'
-import ModalPanel from './ModalPanel'
+import ModalPanel, { type PanelPresentation } from './ModalPanel'
 
 /**
  * Embedded browser "allow insecure certificates" toggle. App-global (not
@@ -147,8 +147,9 @@ function TodoNightWindowSetting() {
 interface SettingsPanelProps {
   isOpen: boolean
   onClose: () => void
-  presentation?: 'modal' | 'embedded'
+  presentation?: PanelPresentation
   closeRequestToken?: number
+  onCloseCancelled?: () => void
 }
 
 type SettingsTab = 'general' | 'appearance' | 'workspace' | 'backend' | 'providers' | 'bots'
@@ -189,6 +190,7 @@ export default function SettingsPanel({
   onClose,
   presentation,
   closeRequestToken = 0,
+  onCloseCancelled,
 }: SettingsPanelProps) {
   const { t } = useTranslation('settings')
   const workspaces = useWorkspaceStore((s) => s.workspaces)
@@ -363,6 +365,7 @@ export default function SettingsPanel({
         if (showUnsavedDialog) {
           setShowUnsavedDialog(false)
           setPendingClose(false)
+          onCloseCancelled?.()
         } else {
           handleClose()
         }
@@ -370,7 +373,7 @@ export default function SettingsPanel({
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [handleClose, showUnsavedDialog])
+  }, [handleClose, onCloseCancelled, showUnsavedDialog])
 
   const saveAppSettings = useCallback(() => {
     setReopenLastWorkspace(appReopen)
@@ -721,6 +724,7 @@ export default function SettingsPanel({
         onKeepEditing={() => {
           setShowUnsavedDialog(false)
           setPendingClose(false)
+          onCloseCancelled?.()
         }}
         isSaving={isSaving}
       />
