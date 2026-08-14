@@ -87,6 +87,32 @@ describe('SessionListItem', () => {
     expect(screen.queryByText('Readonly')).toBeNull()
   })
 
+  it('renders one mutually exclusive pending interaction label', () => {
+    const { rerender } = renderWithI18n(
+      <SessionListItem
+        session={makeSession()}
+        {...baseProps}
+        pendingCount={1}
+        pendingKind="approval"
+      />,
+    )
+    expect(screen.getByText('Approval')).toBeInTheDocument()
+    expect(screen.queryByText('Question')).not.toBeInTheDocument()
+
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <SessionListItem
+          session={makeSession()}
+          {...baseProps}
+          pendingCount={1}
+          pendingKind="question"
+        />
+      </I18nextProvider>,
+    )
+    expect(screen.getByText('Question')).toBeInTheDocument()
+    expect(screen.queryByText('Approval')).not.toBeInTheDocument()
+  })
+
   describe('bot icon active/inactive distinction', () => {
     it('renders the WeCom icon at full color when active', () => {
       renderWithI18n(

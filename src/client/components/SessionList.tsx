@@ -335,6 +335,7 @@ export default function SessionList({ workspaceId, onOpenPlugins, onOpenSkills }
               isStreaming={!!isStreaming[session.id]}
               backgroundTaskCount={sessionActivity[session.id]?.backgroundTasks.length ?? 0}
               pendingCount={sessionStatus[session.id]?.pendingCount ?? 0}
+              pendingKind={sessionStatus[session.id]?.pendingKind}
               unread={!!unreadCompletions[session.id]}
               preview={getPreview(session.id)}
               editingSessionId={editingSessionId}

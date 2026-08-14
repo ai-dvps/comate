@@ -2,12 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { isWindowMaximized, onWindowMaximizedChange, showWindow } from './lib/desktop-api'
 import { AlertCircle, X } from 'lucide-react'
-import Sidebar from './components/Sidebar'
 import { useSidebarWidth } from './hooks/use-sidebar-width'
 import { useRightPanelWidth } from './hooks/use-right-panel-width'
 import { useSidebarKeyboardShortcut } from './hooks/use-sidebar-keyboard-shortcut'
-import WorkspaceTabs from './components/WorkspaceTabs'
-import WorkspaceSwitcher from './components/WorkspaceSwitcher'
 import WorkspaceEmptyState from './components/WorkspaceEmptyState'
 import ChatPanel from './components/ChatPanel'
 import SettingsPanel from './components/SettingsPanel'
@@ -19,7 +16,8 @@ import { initNotificationClickHandler } from './lib/notifications'
 import { openSessionDirect } from './lib/session-jump'
 import RightPanel from './components/RightPanel'
 import UsageLoginModal from './components/UsageLoginModal'
-import HeaderToolbar from './components/HeaderToolbar'
+import CustomTitlebar from './components/CustomTitlebar'
+import AgentCommandCenter from './components/AgentCommandCenter'
 import CreateWorkspaceModal from './components/CreateWorkspaceModal'
 import ToastContainer from './components/ToastContainer'
 import { useWorkspaceStore } from './stores/workspace-store'
@@ -67,7 +65,6 @@ function App() {
   const openPanel = useCallback((panel: AppPanel) => setActivePanel(panel), [])
   const closePanel = useCallback(() => setActivePanel(null), [])
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const [isWorkspaceSwitcherOpen, setIsWorkspaceSwitcherOpen] = useState(false)
   const [isMac, setIsMac] = useState(false)
   const [isWin, setIsWin] = useState(false)
   const [windowMaximized, setWindowMaximized] = useState(false)
@@ -227,6 +224,22 @@ function App() {
     toggleCollapse: toggleRightPanelCollapse,
   } = useRightPanelWidth()
 
+  const contextTabs = useContextTabStore((state) => state.openTabs)
+  const activeContextTabId = useContextTabStore((state) => state.activeTabId)
+  const activeSession = useChatStore((state) => {
+    if (!activeWorkspaceId || !activeWorkspaceSessionId) return undefined
+    return state.sessions[activeWorkspaceId]?.find((session) => session.id === activeWorkspaceSessionId)
+  })
+  const managementTitle = activePanel === 'settings'
+    ? 'Settings'
+    : activePanel === 'analytics'
+      ? 'Analytics'
+      : activePanel === 'todos'
+        ? 'Todos'
+        : activePanel === 'plugins' || activePanel === 'skills'
+          ? 'Plugins / Skills'
+          : undefined
+
   if (claudeCheck.checking) {
     return (
       <div className="h-screen flex items-center justify-center bg-work text-text-primary">
@@ -276,31 +289,26 @@ function App() {
         style={{ fontSize: uiFontSize }}
         {...(isWin && !windowMaximized ? { 'data-windows-restored-frame': '' } : {})}
       >
-        {/* Top Bar */}
-        <header className="flex items-center h-11 flex-shrink-0 relative z-30 bg-chrome shadow-[0_1px_2px_0_rgba(0,0,0,0.06)]">
-        <div className={`flex items-center gap-3 pr-4 ${isMac ? 'pl-20' : 'pl-4'} min-w-0`}>
-          <div data-tauri-drag-region className="w-4 self-stretch select-none flex-shrink-0" />
-          <div className="flex-shrink-0">
-            <WorkspaceSwitcher
-              open={isWorkspaceSwitcherOpen}
-              onOpenChange={setIsWorkspaceSwitcherOpen}
-            />
-          </div>
-          <div className="min-w-0">
-            <WorkspaceTabs />
-          </div>
-        </div>
-        <div data-tauri-drag-region className="flex-1 self-stretch select-none" />
-        <div className={`flex items-center flex-shrink-0 pl-4 ${isWin ? 'pr-[138px]' : 'pr-4'}`}>
-          <HeaderToolbar
-            popupOpen={activePanel !== null || showCreateModal}
-            onCreateWorkspace={() => setShowCreateModal(true)}
-            onOpenSettings={() => openPanel('settings')}
-            onOpenAnalytics={() => openPanel('analytics')}
-            onOpenTodos={() => openPanel('todos')}
-          />
-        </div>
-      </header>
+        <CustomTitlebar
+          leftWidth={sidebarWidth}
+          rightWidth={rightPanelWidth}
+          leftCollapsed={isSidebarCollapsed}
+          rightCollapsed={isRightPanelCollapsed}
+          workspaceName={activeWorkspace?.name}
+          sessionName={activeSession?.name}
+          managementTitle={managementTitle}
+          tabs={contextTabs}
+          activeTabId={activeContextTabId}
+          onSelectTab={(id) => useContextTabStore.getState().selectTab(id)}
+          onCloseTab={(id) => useContextTabStore.getState().closeTab(id)}
+          onAddTab={() => {
+            if (isRightPanelCollapsed) toggleRightPanelCollapse()
+          }}
+          onToggleLeft={toggleSidebarCollapse}
+          onToggleRight={toggleRightPanelCollapse}
+          isMac={isMac}
+          isWindows={isWin}
+        />
 
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden relative">
@@ -348,13 +356,26 @@ function App() {
           </div>
         )}
 
-        <Sidebar
-          width={sidebarWidth}
-          onWidthChange={setSidebarWidth}
-          isCollapsed={isSidebarCollapsed}
-          onOpenPlugins={() => openPanel('plugins')}
-          onOpenSkills={() => openPanel('skills')}
-        />
+        {!isSidebarCollapsed && (
+          <AgentCommandCenter
+            width={sidebarWidth}
+            onWidthChange={setSidebarWidth}
+            onCreateWorkspace={() => setShowCreateModal(true)}
+            onOpenTodos={() => openPanel('todos')}
+            onOpenAnalytics={() => openPanel('analytics')}
+            onOpenSettings={() => openPanel('settings')}
+            onOpenCapabilities={() => openPanel('plugins')}
+            activeDestination={activePanel === 'todos'
+              ? 'todos'
+              : activePanel === 'analytics'
+                ? 'analytics'
+                : activePanel === 'settings'
+                  ? 'settings'
+                  : activePanel === 'plugins' || activePanel === 'skills'
+                    ? 'capabilities'
+                    : 'work'}
+          />
+        )}
 
         {/* Main Area — keep all open workspace panels mounted */}
         <main className="flex-1 flex flex-col overflow-hidden relative">
@@ -383,7 +404,9 @@ function App() {
               workspaces={workspaces}
               onCreateWorkspace={() => setShowCreateModal(true)}
               onSelectWorkspace={(id) => openWorkspace(id)}
-              onBrowseWorkspaces={() => setIsWorkspaceSwitcherOpen(true)}
+              onBrowseWorkspaces={() => {
+                if (isSidebarCollapsed) toggleSidebarCollapse()
+              }}
             />
           )}
         </main>

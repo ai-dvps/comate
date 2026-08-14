@@ -20,6 +20,8 @@ vi.mock('../components/SettingsPanel', () => ({ default: () => <div data-testid=
 vi.mock('../components/AnalyticsPanel', () => ({ default: () => <div data-testid="analytics-panel" /> }))
 vi.mock('../components/RightPanel', () => ({ default: () => <div data-testid="right-panel" /> }))
 vi.mock('../components/HeaderToolbar', () => ({ default: () => <div data-testid="header-toolbar" /> }))
+vi.mock('../components/CustomTitlebar', () => ({ default: () => <div data-testid="custom-titlebar" /> }))
+vi.mock('../components/AgentCommandCenter', () => ({ default: () => <div data-testid="agent-command-center" /> }))
 vi.mock('../components/CreateWorkspaceModal', () => ({ default: () => <div data-testid="create-workspace-modal" /> }))
 vi.mock('../components/ToastContainer', () => ({ default: () => <div data-testid="toast-container" /> }))
 vi.mock('../components/UpdateNotification', () => ({ default: () => <div data-testid="update-notification" /> }))
@@ -96,6 +98,7 @@ vi.mock('../stores/provider-store', () => ({
 }))
 
 const mockChatStore = {
+  sessions: {},
   activeSessionIds: {},
   setActiveSession: vi.fn(),
 }
@@ -103,6 +106,21 @@ const mockChatStore = {
 vi.mock('../stores/chat-store', () => ({
   useChatStore: (selector?: (s: typeof mockChatStore) => unknown) =>
     selector ? selector(mockChatStore) : mockChatStore,
+}))
+
+const mockContextTabStore = {
+  openTabs: [],
+  activeTabId: null,
+  setContext: vi.fn(),
+  selectTab: vi.fn(),
+  closeTab: vi.fn(),
+}
+
+vi.mock('../stores/context-tab-store', () => ({
+  useContextTabStore: Object.assign(
+    (selector: (state: typeof mockContextTabStore) => unknown) => selector(mockContextTabStore),
+    { getState: () => mockContextTabStore },
+  ),
 }))
 
 vi.mock('../lib/platform', () => ({
@@ -214,6 +232,8 @@ describe('App layout', () => {
     const { findByTestId, queryByTestId } = renderWithI18n(<App />)
     await findByTestId('chat-panel')
 
+    expect(queryByTestId('custom-titlebar')).toBeInTheDocument()
+    expect(queryByTestId('agent-command-center')).toBeInTheDocument()
     expect(queryByTestId('right-panel')).toBeInTheDocument()
     expect(queryByTestId('file-panel')).not.toBeInTheDocument()
     expect(queryByTestId('git-diff-panel')).not.toBeInTheDocument()
