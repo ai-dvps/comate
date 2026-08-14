@@ -33,10 +33,10 @@ import {
   type SessionBrowserState,
 } from '../../../stores/browser-pane-store'
 
-function renderBar(onPopout?: () => void) {
+function renderBar(onDetach?: () => void) {
   return render(
     <I18nextProvider i18n={i18n}>
-      <BrowserStateBar sessionId="sess-1" {...(onPopout ? { onPopout } : {})} />
+      <BrowserStateBar sessionId="sess-1" {...(onDetach ? { onDetach } : {})} />
     </I18nextProvider>,
   )
 }
@@ -59,7 +59,7 @@ describe('BrowserStateBar', () => {
       openBySession: { 'sess-1': true },
       width: 480,
       hasOpened: true,
-      popoutOpen: false,
+      detachedPlacement: null,
       activeWorkspaceId: 'ws1',
       activeSessionId: 'sess-1',
       sessions: {},
@@ -211,27 +211,27 @@ describe('BrowserStateBar', () => {
     expect(projection).not.toHaveTextContent('target')
   })
 
-  // Popout entry (U8/U9: native shell + live control state only).
+  // Independent-window entry (native shell + live control state only).
 
-  it('shows the popout button for a live control state in the native shell', () => {
+  it('shows the independent-window button for a live control state in the native shell', () => {
     setSession({ controlState: 'agent_in_control', port: 4001 })
-    const onPopout = vi.fn()
-    renderBar(onPopout)
-    fireEvent.click(screen.getByTestId('browser-popout-button'))
-    expect(onPopout).toHaveBeenCalledTimes(1)
+    const onDetach = vi.fn()
+    renderBar(onDetach)
+    fireEvent.click(screen.getByTestId('browser-detach-button'))
+    expect(onDetach).toHaveBeenCalledTimes(1)
   })
 
-  it('hides the popout button when the control state is not live', () => {
+  it('hides the independent-window button when the control state is not live', () => {
     setSession({ controlState: 'none' })
     renderBar(vi.fn())
-    expect(screen.queryByTestId('browser-popout-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('browser-detach-button')).not.toBeInTheDocument()
   })
 
-  it('hides the popout button outside the Electron shell even when live', () => {
+  it('hides the independent-window button outside the Electron shell even when live', () => {
     bridgeMock.isNativeBrowserView.mockReturnValue(false)
     setSession({ controlState: 'agent_in_control', port: 4001 })
     renderBar(vi.fn())
-    expect(screen.queryByTestId('browser-popout-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('browser-detach-button')).not.toBeInTheDocument()
   })
 
   // Keyboard reachability.

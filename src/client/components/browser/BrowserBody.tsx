@@ -15,12 +15,11 @@ import { cn } from '../ui/utils'
 import { FOCUS_CLASSES } from './focus-classes'
 
 /**
- * BrowserBody — the pane/popout body derivation shared by both surfaces:
+ * BrowserBody — the browser body shared by the embedded and independent windows:
  *
  *   session_lost           → crash copy (manual retry lives in the state bar)
- *   live + here            → the native view host (React renders only the
+ *   live                   → the native view host (React renders only the
  *                            backdrop; the shell's WebContentsView paints on top)
- *   live + !here           → placeholder (the view lives in the other surface)
  *   startPhase             → F5 determinate progress (percent + cancel)
  *   otherwise              → the pure explanatory empty state (no primary CTA)
  *
@@ -33,15 +32,14 @@ import { FOCUS_CLASSES } from './focus-classes'
 export interface BrowserBodyProps {
   workspaceId: string
   sessionId: string
-  /** False while the other surface (popout) hosts the viewer. */
-  viewerHere: boolean
   /** False while this surface is keep-alive mounted but off screen. */
   surfaceVisible?: boolean
+  focusOnMount?: boolean
 }
 
 const EMPTY_SESSION = EMPTY_SESSION_BROWSER_STATE
 
-export default function BrowserBody({ workspaceId, sessionId, viewerHere, surfaceVisible = true }: BrowserBodyProps) {
+export default function BrowserBody({ workspaceId, sessionId, surfaceVisible = true, focusOnMount = false }: BrowserBodyProps) {
   const { t } = useTranslation('browser')
   const session = useBrowserPaneStore((s) => s.sessions[sessionId] ?? EMPTY_SESSION)
   const hasInFlightBrowserTool = useChatStore((s) =>
@@ -80,22 +78,12 @@ export default function BrowserBody({ workspaceId, sessionId, viewerHere, surfac
 
   // A live control state means the shell holds the view.
   if (isLiveControlState(session.controlState)) {
-    if (!viewerHere) {
-      return (
-        <div
-          data-testid="browser-popout-placeholder"
-          className="flex flex-col items-center justify-center h-full gap-3 px-6 text-center"
-        >
-          <Globe className="w-8 h-8 text-text-tertiary" aria-hidden="true" />
-          <p className="text-xs text-text-secondary">{t('pane.popoutPlaceholder')}</p>
-        </div>
-      )
-    }
     return (
       <NativeBrowserView
         sessionId={sessionId}
         controlState={session.controlState}
         surfaceVisible={surfaceVisible}
+        focusOnMount={focusOnMount}
       />
     )
   }

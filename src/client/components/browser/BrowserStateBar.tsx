@@ -29,20 +29,20 @@ import { FOCUS_CLASSES } from './focus-classes'
  *   session_lost      → crash copy            + [Retry] (next tool call also
  *                       rebuilds automatically)
  *
- * The same component backs the pane and the popout — both entries drive the
+ * The same component backs the pane and the independent window — both drive the
  * one store state machine. State migrations are announced via aria-live.
  */
 
 export interface BrowserStateBarProps {
   sessionId: string
-  /** When provided, the popout button is shown (pane entry only). */
-  onPopout?: () => void
+  /** When provided, the independent-window button is shown (pane entry only). */
+  onDetach?: () => void
 }
 
 /** Stable default for sessions with no state yet (selector identity). */
 const EMPTY_SESSION = EMPTY_SESSION_BROWSER_STATE
 
-export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBarProps) {
+export default function BrowserStateBar({ sessionId, onDetach }: BrowserStateBarProps) {
   const { t } = useTranslation('browser')
   const session = useBrowserPaneStore((s) => s.sessions[sessionId] ?? EMPTY_SESSION)
   const takeover = useBrowserPaneStore((s) => s.takeover)
@@ -286,12 +286,12 @@ export default function BrowserStateBar({ sessionId, onPopout }: BrowserStateBar
             </button>
           )}
 
-          {onPopout && isLiveControlState(state) && isNativeBrowserView() && (
+          {onDetach && isLiveControlState(state) && isNativeBrowserView() && (
             <button
               type="button"
-              data-testid="browser-popout-button"
-              onClick={onPopout}
-              aria-label={t('action.popout')}
+              data-testid="browser-detach-button"
+              onClick={onDetach}
+              aria-label={t('action.openIndependentWindow')}
               className={cn(
                 'p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors',
                 FOCUS_CLASSES,
