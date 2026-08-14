@@ -37,6 +37,12 @@ import {
   type BrowserViewManager,
 } from './browser-view-manager';
 import {
+  createDetachedBrowserWindowController,
+  type DetachedBrowserPlacement,
+  type DetachedBrowserWindowController,
+  type DetachedBrowserWindowLike,
+} from './detached-browser-window';
+import {
   buildSidecarEnv,
   resolveResourceDir,
   resolveSidecarBinaryPath,
@@ -173,6 +179,7 @@ const logger: ShellLogger = isPrimaryInstance
 // ---------------------------------------------------------------------------
 
 let mainWindow: BrowserWindow | null = null;
+let detachedBrowserController: DetachedBrowserWindowController | null = null;
 let sidecar: SidecarHandle | null = null;
 let trayHandle: TrayHandle | null = null;
 let trayPoller: TrayStatusPoller | null = null;
@@ -312,13 +319,13 @@ function showFatalError(message: string): void {
   void mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
 }
 
-function loadUi(win: BrowserWindow): void {
+function loadUi(win: BrowserWindow, mode?: 'detached-browser'): Promise<void> {
+  const query = mode ? `?window=${mode}` : '';
   if (isPackagedRuntime) {
-    void win.loadURL(`${UI_SCHEME}://localhost/index.html`);
-    return;
+    return win.loadURL(`${UI_SCHEME}://localhost/index.html${query}`);
   }
-  const devUrl = 'http://localhost:5173';
-  void win.loadURL(devUrl).catch(() => {
+  const devUrl = `http://localhost:5173/${query}`;
+  const initialLoad = win.loadURL(devUrl).catch(() => {
     // did-fail-load below retries while the Vite dev server is still booting.
   });
   win.webContents.on('did-fail-load', (_event, _errorCode, _description, validatedURL) => {
@@ -329,6 +336,7 @@ function loadUi(win: BrowserWindow): void {
       }
     }, 500);
   });
+  return initialLoad;
 }
 
 /** Window/tray icon: staged at resources root packaged, build/ in dev. */
@@ -363,6 +371,68 @@ function isMainWindowMaximized(): boolean {
     !mainWindow.isDestroyed() &&
     (mainWindow.isMaximized() || mainWindow.isFullScreen()),
   );
+}
+
+function hardenTrustedUiWindow(win: BrowserWindow): void {
+  // These windows expose privileged preload capabilities. Their main frames
+  // must stay on the bundled UI origin, and renderer-created windows are
+  // denied so a remote document can never inherit the preload.
+  const isAllowedUiUrl = (url: string): boolean => {
+    if (url.startsWith(`${UI_SCHEME}://localhost`)) return true;
+    return !isPackagedRuntime && url.startsWith('http://localhost:5173');
+  };
+  win.webContents.on('will-navigate', (event, url) => {
+    if (isAllowedUiUrl(url)) return;
+    event.preventDefault();
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      void shell.openExternal(url);
+    }
+  });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      void shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+}
+
+function createDetachedBrowserWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    title: 'Browser',
+    width: 960,
+    height: 720,
+    minWidth: 640,
+    minHeight: 480,
+    show: false,
+    icon: nativeImage.createFromPath(shellIconPath()),
+    webPreferences: {
+      // U3 replaces this with the dedicated least-privilege preload.
+      preload: join(__dirname, '..', 'preload', 'preload.cjs'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+    },
+  });
+  hardenTrustedUiWindow(win);
+  return win;
+}
+
+function publishDetachedPlacement(placement: DetachedBrowserPlacement | null): void {
+  for (const win of [mainWindow, detachedBrowserController?.getWindow() ?? null]) {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('comate:detached-browser-placement-changed', placement);
+    }
+  }
+}
+
+function setupDetachedBrowserController(): void {
+  detachedBrowserController = createDetachedBrowserWindowController({
+    createWindow: () => createDetachedBrowserWindow() as unknown as DetachedBrowserWindowLike,
+    mainWindow: () => mainWindow as never,
+    setViewHost: (sessionId, host) => viewManager?.setViewHost(sessionId, host),
+    loadWindow: (win) => loadUi(win as unknown as BrowserWindow, 'detached-browser'),
+    publishPlacement: publishDetachedPlacement,
+  });
 }
 
 function createMainWindow(): BrowserWindow {
@@ -403,30 +473,7 @@ function createMainWindow(): BrowserWindow {
     win.on('leave-full-screen', publishMaximizedState);
   }
 
-  // Trust boundary: this window's preload exposes the sidecar desktop token
-  // (comate:get-api-info), so the main frame must never navigate away from
-  // the app UI origins — a remote document would own the bridge. Pin to
-  // app.comate://localhost (plus the Vite dev origin in dev) and push
-  // everything else to the system browser. Popups are deny-by-default
-  // (mirrors the browser-view-manager policy): a default-allowed
-  // window.open child would inherit the privileged preload.
-  const isAllowedUiUrl = (url: string): boolean => {
-    if (url.startsWith(`${UI_SCHEME}://localhost`)) return true;
-    return !isPackagedRuntime && url.startsWith('http://localhost:5173');
-  };
-  win.webContents.on('will-navigate', (event, url) => {
-    if (isAllowedUiUrl(url)) return;
-    event.preventDefault();
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      void shell.openExternal(url);
-    }
-  });
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      void shell.openExternal(url);
-    }
-    return { action: 'deny' };
-  });
+  hardenTrustedUiWindow(win);
 
   // Close-to-tray: hide instead of closing, unless an explicit quit path
   // (tray Quit / Cmd+Q / update install) armed isQuitting first. U10: with
@@ -441,6 +488,9 @@ function createMainWindow(): BrowserWindow {
       initiateQuit('window-destroyed');
       return;
     }
+    // The tray represents a hidden single-window application state. Redock
+    // before hiding so reopening never leaves an orphan auxiliary window.
+    detachedBrowserController?.restore();
     win.hide();
     if (process.platform === 'darwin' && badgeCount === 0) {
       app.setActivationPolicy('accessory');
@@ -451,7 +501,7 @@ function createMainWindow(): BrowserWindow {
     if (mainWindow === win) mainWindow = null;
   });
 
-  loadUi(win);
+  void loadUi(win);
   return win;
 }
 
@@ -715,9 +765,7 @@ async function setupControlChannel(): Promise<void> {
     hostWindow: () => mainWindow as never,
     partitionsDir: () => join(app.getPath('userData'), 'Partitions'),
     onEscape: (sessionId) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('comate:browser-view-escape', sessionId);
-      }
+      viewManager?.getViewHost(sessionId)?.webContents.send('comate:browser-view-escape', sessionId);
     },
     logger,
   });
@@ -805,6 +853,7 @@ function startSidecar(): void {
 async function performShutdown(): Promise<void> {
   if (isShuttingDown) return;
   isShuttingDown = true;
+  detachedBrowserController?.closeForQuit();
   trayPoller?.stop();
   // U5: ANY quit carrying a downloaded update (electron-updater's implicit
   // autoInstallOnAppQuit on tray-quit / Cmd+Q, not just the explicit relaunch
@@ -901,6 +950,7 @@ void debugPortConfigured.then(() => {
       shellControlPort = null;
       shellControlToken = null;
     }
+    setupDetachedBrowserController();
     startSidecar();
   });
 });
