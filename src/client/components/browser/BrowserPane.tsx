@@ -12,12 +12,12 @@ import {
 } from '../../lib/detached-browser-api'
 
 /**
- * BrowserPane — the browser viewer content rendered inside RightPanel.
+ * BrowserPane — the browser viewer content rendered inside ContextWorkspace.
  *
- * The parent (RightPanel) controls sizing and visibility. This component
+ * The parent controls sizing and visibility. This component
  * only renders the state bar and viewer body, filling its container.
  *
- * Keep-alive: RightPanel renders BrowserPane instances for all open workspaces
+ * Keep-alive: ContextWorkspace renders BrowserPane instances for all open workspaces
  * and only shows the active one, so the native view surface is never
  * unmounted on workspace switches or panel collapse/expand.
  */

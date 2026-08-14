@@ -10,10 +10,10 @@ import { getPathDisplayInfo } from '../lib/path-utils'
 import { isMarkdown } from '../lib/file-helpers'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { fontSizeValue } from '../lib/font-size'
-import type { FileTab } from '../stores/right-panel-store'
+import type { FileContextTab } from '../stores/context-tab-store'
 
 interface CodeMirrorFileViewerProps {
-  tab: FileTab
+  tab: FileContextTab
   workspacePath?: string
 }
 

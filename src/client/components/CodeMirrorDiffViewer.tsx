@@ -17,12 +17,12 @@ import { getStatusBadgeClass } from '../lib/git-status-helpers'
 import { useTheme } from '../hooks/use-theme'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { fontSizeValue } from '../lib/font-size'
-import type { DiffTab } from '../stores/right-panel-store'
+import type { DiffViewerTab } from '../stores/context-tab-store'
 
 const MIN_SIDE_BY_SIDE_WIDTH = 360
 
 interface CodeMirrorDiffViewerProps {
-  tab: DiffTab
+  tab: DiffViewerTab
   workspacePath?: string
   width?: number
 }

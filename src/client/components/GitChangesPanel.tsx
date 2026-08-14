@@ -159,7 +159,7 @@ export default function GitChangesPanel({ onPreviewDiff, onOpenDiff }: GitChange
   const [highlightedPath, setHighlightedPath] = useState<string | null>(null)
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set())
 
-  // Subscription lifecycle lives here. RightPanel keeps this component mounted
+  // Subscription lifecycle lives here. ContextWorkspace keeps this component mounted
   // (CSS-toggling visibility) for the whole time the right panel is expanded,
   // so switching the inner Files/Git-Changes tab no longer tears down and
   // recreates the watcher (and its .gitignore crawl) on every toggle.

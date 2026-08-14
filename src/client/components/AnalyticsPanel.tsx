@@ -26,6 +26,7 @@ type AnalyticsTab = 'global' | 'workspace'
 interface AnalyticsPanelProps {
   isOpen: boolean
   onClose: () => void
+  presentation?: 'modal' | 'embedded'
 }
 
 function readInitialTab(): AnalyticsTab {
@@ -38,7 +39,7 @@ function readInitialTab(): AnalyticsTab {
   return 'global'
 }
 
-export default function AnalyticsPanel({ isOpen, onClose }: AnalyticsPanelProps) {
+export default function AnalyticsPanel({ isOpen, onClose, presentation }: AnalyticsPanelProps) {
   const { t } = useTranslation('analytics')
 
   const workspaces = useWorkspaceStore((s) => s.workspaces)
@@ -101,7 +102,7 @@ export default function AnalyticsPanel({ isOpen, onClose }: AnalyticsPanelProps)
     : null
 
   return (
-    <ModalPanel open={isOpen} onClose={onClose}>
+    <ModalPanel open={isOpen} onClose={onClose} presentation={presentation}>
       {/* Card */}
       <div className="relative w-full h-full flex flex-col overflow-hidden">
         {/* Header */}

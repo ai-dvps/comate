@@ -147,6 +147,8 @@ function TodoNightWindowSetting() {
 interface SettingsPanelProps {
   isOpen: boolean
   onClose: () => void
+  presentation?: 'modal' | 'embedded'
+  closeRequestToken?: number
 }
 
 type SettingsTab = 'general' | 'appearance' | 'workspace' | 'backend' | 'providers' | 'bots'
@@ -182,7 +184,12 @@ function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
   }
 }
 
-export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
+export default function SettingsPanel({
+  isOpen,
+  onClose,
+  presentation,
+  closeRequestToken = 0,
+}: SettingsPanelProps) {
   const { t } = useTranslation('settings')
   const workspaces = useWorkspaceStore((s) => s.workspaces)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
@@ -342,6 +349,13 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
       onClose()
     }
   }, [isDirty, onClose])
+
+  const previousCloseRequestToken = useRef(closeRequestToken)
+  useEffect(() => {
+    if (closeRequestToken === previousCloseRequestToken.current) return
+    previousCloseRequestToken.current = closeRequestToken
+    handleClose()
+  }, [closeRequestToken, handleClose])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -559,7 +573,12 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
 
   return (
     <>
-    <ModalPanel open={isOpen} onClose={handleClose} ignoreBackdropClick={showUnsavedDialog}>
+    <ModalPanel
+      open={isOpen}
+      onClose={handleClose}
+      ignoreBackdropClick={showUnsavedDialog}
+      presentation={presentation}
+    >
       {/* Card */}
       <div className="relative w-full h-full flex flex-col overflow-hidden">
         {/* Header */}

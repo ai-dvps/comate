@@ -16,6 +16,7 @@ export type GroupBy = 'none' | 'workspace' | 'repo' | 'origin'
 interface TodosPanelProps {
   isOpen: boolean
   onClose: () => void
+  presentation?: 'modal' | 'embedded'
 }
 
 const VIEWS: { id: SmartView; labelKey: string }[] = [
@@ -46,7 +47,7 @@ function isTextInput(target: EventTarget | null): boolean {
   )
 }
 
-export default function TodosPanel({ isOpen, onClose }: TodosPanelProps) {
+export default function TodosPanel({ isOpen, onClose, presentation }: TodosPanelProps) {
   const { t } = useTranslation('todos')
   const {
     todos,
@@ -191,7 +192,7 @@ export default function TodosPanel({ isOpen, onClose }: TodosPanelProps) {
   const selected = todos.find((todo) => todo.id === selectedId) ?? null
 
   return (
-    <ModalPanel open={isOpen} onClose={onClose}>
+    <ModalPanel open={isOpen} onClose={onClose} presentation={presentation}>
       {/* Card */}
       <div className="relative w-full h-full flex flex-col overflow-hidden">
         {/* Header */}

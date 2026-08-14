@@ -7,6 +7,7 @@ interface ModalPanelProps {
   children: ReactNode
   className?: string
   ignoreBackdropClick?: boolean
+  presentation?: 'modal' | 'embedded'
 }
 
 const EXIT_DURATION = 220
@@ -24,6 +25,7 @@ export default function ModalPanel({
   children,
   className,
   ignoreBackdropClick = false,
+  presentation = 'modal',
 }: ModalPanelProps) {
   const [mounted, setMounted] = useState(false)
   const [visible, setVisible] = useState(false)
@@ -36,6 +38,7 @@ export default function ModalPanel({
 
   // Mount/unmount with enter/exit animation so the panel can animate in and out.
   useEffect(() => {
+    if (presentation === 'embedded') return
     if (open) {
       setDirection('enter')
       setMounted(true)
@@ -52,12 +55,12 @@ export default function ModalPanel({
       const timer = setTimeout(() => setMounted(false), EXIT_DURATION)
       return () => clearTimeout(timer)
     }
-  }, [open])
+  }, [open, presentation])
 
   // Close on Escape unless focus is inside a text input, so panels can implement
   // their own input-specific Escape behavior (e.g. clearing search).
   useEffect(() => {
-    if (!open) return
+    if (!open || presentation === 'embedded') return
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !isTextInput(e.target)) {
         e.stopPropagation()
@@ -66,7 +69,16 @@ export default function ModalPanel({
     }
     document.addEventListener('keydown', handleKeyDown, true)
     return () => document.removeEventListener('keydown', handleKeyDown, true)
-  }, [open])
+  }, [open, presentation])
+
+  if (presentation === 'embedded') {
+    if (!open) return null
+    return (
+      <section className={cn('h-full min-h-0 w-full overflow-hidden bg-surface', className)}>
+        {children}
+      </section>
+    )
+  }
 
   if (!mounted) return null
 
