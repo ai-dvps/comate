@@ -128,7 +128,6 @@ export default function DetachedBrowserWindowApp() {
           <BrowserBody
             workspaceId={placement.workspaceId}
             sessionId={placement.sessionId}
-            viewerHere
           />
         )}
       </div>

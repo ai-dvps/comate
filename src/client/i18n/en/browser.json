@@ -7,7 +7,9 @@
     "needsYou": "Browser needs you",
     "emptyTitle": "No browser in this session",
     "emptyDetail": "This session has no browser yet. One opens automatically when Claude works on a web task.",
-    "popoutPlaceholder": "The browser view is open in the floating window.",
+    "detachedTitle": "Browser is open in another window",
+    "detachedDetail": "{{title}} stays attached to this chat until you return it to the panel.",
+    "untitledSession": "Browser session",
     "needsDesktopTitle": "The browser view needs the desktop app",
     "needsDesktopDetail": "The in-app browser view is only available in the Comate desktop app. Browser tools may still run against an external CDP endpoint, but nothing can be displayed here."
   },
@@ -46,8 +48,8 @@
     "continue": "Continue",
     "retry": "Retry",
     "cancel": "Cancel",
-    "popout": "Pop out",
-    "closePopout": "Back to panel",
+    "openIndependentWindow": "Open in independent window",
+    "focusWindow": "Focus window",
     "restoreToPanel": "Back to panel",
     "clickToDrive": "Click the view to control it",
     "captureReleased": "Input capture released",
@@ -60,9 +62,6 @@
     "recheckOutcome": "Recheck",
     "abandonTracking": "Abandon tracking",
     "acknowledgeDuplicateRisk": "Acknowledge duplicate risk"
-  },
-  "popout": {
-    "title": "Browser — floating window"
   },
   "detached": {
     "title": "Browser"

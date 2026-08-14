@@ -29,6 +29,12 @@ const bridgeMock = vi.hoisted(() => ({
   setBrowserViewInputMode: vi.fn(),
 }))
 
+const detachedBrowserMock = vi.hoisted(() => ({
+  detach: vi.fn(() => Promise.resolve()),
+  focus: vi.fn(() => Promise.resolve(true)),
+  restore: vi.fn(() => Promise.resolve(true)),
+}))
+
 vi.mock('../../../lib/websocket-client.js', () => ({
   wsClient: wsClientMock,
   DEFAULT_TIMEOUT: 30000,
@@ -70,6 +76,12 @@ vi.mock('../../../lib/browser-view-bridge', async () => {
     onBrowserViewOcclusionChange: vi.fn(() => () => {}),
   }
 })
+
+vi.mock('../../../lib/detached-browser-api', () => ({
+  detachBrowserWindow: detachedBrowserMock.detach,
+  focusDetachedBrowserWindow: detachedBrowserMock.focus,
+  restoreDetachedBrowser: detachedBrowserMock.restore,
+}))
 
 import BrowserPane from '../BrowserPane'
 import {
@@ -130,12 +142,17 @@ describe('BrowserPane', () => {
       openBySession: {},
       width: 480,
       hasOpened: false,
-      popoutOpen: false,
+      detachedPlacement: null,
       activeWorkspaceId: 'ws1',
       activeSessionId: 'sess-1',
       sessions: {},
     })
     setChatState()
+    useChatStore.setState({
+      sessions: {
+        ws1: [{ id: 'sess-1', workspaceId: 'ws1', name: 'Research chat', createdAt: '', updatedAt: '' }],
+      },
+    })
     global.fetch = vi.fn(() =>
       Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) } as unknown as Response),
     )
@@ -169,8 +186,8 @@ describe('BrowserPane', () => {
     const degraded = screen.getByTestId('browser-needs-desktop')
     expect(degraded).toHaveTextContent('The browser view needs the desktop app')
     expect(screen.queryByTestId('browser-viewer-native')).not.toBeInTheDocument()
-    // No shell → no popout entry either.
-    expect(screen.queryByTestId('browser-popout-button')).not.toBeInTheDocument()
+    // No shell → no independent-window entry either.
+    expect(screen.queryByTestId('browser-detach-button')).not.toBeInTheDocument()
   })
 
   it('does not render anything when the workspace has no active session', () => {
@@ -231,16 +248,42 @@ describe('BrowserPane', () => {
     expect(lost).toHaveTextContent('rebuilds it automatically')
   })
 
-  it('opens the popout from the state bar and swaps the pane body for a placeholder', () => {
+  it('opens an independent window and mirrors its authoritative placement as a full placeholder', async () => {
     setPane({ hasOpened: true })
     setSession({ controlState: 'agent_in_control', port: 4001 })
     renderPane()
     expect(screen.getByTestId('browser-viewer-native')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('browser-popout-button'))
-    expect(useBrowserPaneStore.getState().popoutOpen).toBe(true)
-    expect(screen.getByTestId('browser-popout-placeholder')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('browser-detach-button'))
+    expect(detachedBrowserMock.detach).toHaveBeenCalledWith({
+      workspaceId: 'ws1',
+      sessionId: 'sess-1',
+      title: 'Research chat',
+    })
+
+    setPane({
+      detachedPlacement: { workspaceId: 'ws1', sessionId: 'sess-1', title: 'Research chat' },
+    })
+    const placeholder = screen.getByTestId('browser-detached-placeholder')
+    expect(placeholder).toHaveTextContent('Research chat')
+    expect(placeholder).toHaveTextContent('another window')
     expect(screen.queryByTestId('browser-viewer-native')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('browser-detached-focus'))
+    fireEvent.click(screen.getByTestId('browser-detached-restore'))
+    expect(detachedBrowserMock.focus).toHaveBeenCalledOnce()
+    expect(detachedBrowserMock.restore).toHaveBeenCalledOnce()
+  })
+
+  it('does not treat another chat as detached', () => {
+    setPane({
+      hasOpened: true,
+      detachedPlacement: { workspaceId: 'ws1', sessionId: 'sess-2', title: 'Other chat' },
+    })
+    setSession({ controlState: 'agent_in_control', port: 4001 })
+    renderPane()
+    expect(screen.getByTestId('browser-viewer-native')).toBeInTheDocument()
+    expect(screen.queryByTestId('browser-detached-placeholder')).not.toBeInTheDocument()
   })
 
   it('sends content-free activity pings on pane interaction while the user drives', () => {

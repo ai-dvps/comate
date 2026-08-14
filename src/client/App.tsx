@@ -18,7 +18,6 @@ import SkillsPage from './components/SkillsPage'
 import { initNotificationClickHandler } from './lib/notifications'
 import { openSessionDirect } from './lib/session-jump'
 import RightPanel from './components/RightPanel'
-import BrowserPopout from './components/browser/BrowserPopout'
 import UsageLoginModal from './components/UsageLoginModal'
 import HeaderToolbar from './components/HeaderToolbar'
 import CreateWorkspaceModal from './components/CreateWorkspaceModal'
@@ -40,6 +39,10 @@ import UpdateRestartDialog from './components/UpdateRestartDialog'
 import SandboxDegradedBanner from './components/SandboxDegradedBanner'
 import { ToolRendererProvider } from './components/tool-renderers/ToolRendererContext'
 import { useMigrationNotice } from './hooks/use-migration-notice'
+import {
+  getDetachedBrowserPlacement,
+  onDetachedBrowserPlacementChange,
+} from './lib/detached-browser-api'
 
 type AppPanel = 'settings' | 'analytics' | 'todos' | 'plugins' | 'skills'
 
@@ -205,6 +208,23 @@ function App() {
       .getState()
       .setActiveSession(activeWorkspaceId ?? null, activeWorkspaceSessionId ?? null)
   }, [activeWorkspaceId, activeWorkspaceSessionId])
+
+  useEffect(() => {
+    let disposed = false
+    let placementEventReceived = false
+    const setPlacement = useBrowserPaneStore.getState().setDetachedPlacement
+    const unsubscribe = onDetachedBrowserPlacementChange((placement) => {
+      placementEventReceived = true
+      if (!disposed) setPlacement(placement)
+    })
+    void getDetachedBrowserPlacement().then((placement) => {
+      if (!disposed && !placementEventReceived) setPlacement(placement)
+    })
+    return () => {
+      disposed = true
+      unsubscribe()
+    }
+  }, [])
 
   const {
     width: rightPanelWidth,
@@ -415,8 +435,6 @@ function App() {
       )}
 
       <UpdateRestartDialog onForceShowWindow={handleForceShowWindow} />
-
-      <BrowserPopout />
 
       <UsageLoginModal />
 

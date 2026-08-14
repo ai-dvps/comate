@@ -57,7 +57,7 @@ function resetPaneStore() {
     openBySession: {},
     width: 480,
     hasOpened: false,
-    popoutOpen: false,
+    detachedPlacement: null,
     activeWorkspaceId: null,
     activeSessionId: null,
     sessions: {},

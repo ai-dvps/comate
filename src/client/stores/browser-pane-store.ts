@@ -3,6 +3,7 @@ import type { WsEventMessage } from '@server/websocket/types'
 import { wsClient } from '../lib/websocket-client.js'
 import { onBrowserViewOcclusionChange } from '../lib/browser-view-bridge'
 import type { ChatState } from './chat-store'
+import type { DetachedBrowserPlacement } from '../lib/desktop-api'
 
 /**
  * browser-pane-store — client half of the chat-side browser panel: pane
@@ -83,13 +84,13 @@ export interface BrowserPaneState {
   /**
    * Per-session expand/collapse state (展开/收起 is independent per session):
    * keyed by sessionId, defaulting to collapsed (false) for unknown sessions.
-   * Width/hasOpened/popoutOpen stay global — only the open flag is per-session.
+   * Width/hasOpened stay global — only the open flag is per-session.
    */
   openBySession: Record<string, boolean>
   width: number
   /** Keep-alive gate: the iframe only mounts after the first open. */
   hasOpened: boolean
-  popoutOpen: boolean
+  detachedPlacement: DetachedBrowserPlacement | null
   activeWorkspaceId: string | null
   activeSessionId: string | null
   sessions: Record<string, SessionBrowserState>
@@ -103,7 +104,7 @@ export interface BrowserPaneState {
   togglePane: (sessionId: string) => void
   setPaneOpen: (sessionId: string, open: boolean) => void
   setWidth: (width: number) => void
-  setPopoutOpen: (open: boolean) => void
+  setDetachedPlacement: (placement: DetachedBrowserPlacement | null) => void
   setActiveSession: (workspaceId: string | null, sessionId: string | null) => void
 
   takeover: (sessionId: string) => Promise<void>
@@ -340,7 +341,7 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
     openBySession: persistedOpenBySessionAtBoot,
     width: readPersistedWidth(),
     hasOpened: Object.values(persistedOpenBySessionAtBoot).some((v) => v),
-    popoutOpen: false,
+    detachedPlacement: null,
     activeWorkspaceId: null,
     activeSessionId: null,
     sessions: {},
@@ -366,9 +367,14 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
       writePersistedWidth(clamped)
     },
 
-    setPopoutOpen: (open: boolean) => {
-      if (get().popoutOpen === open) return
-      set(open ? { popoutOpen: true, hasOpened: true } : { popoutOpen: false })
+    setDetachedPlacement: (placement) => {
+      const current = get().detachedPlacement
+      if (
+        current?.workspaceId === placement?.workspaceId
+        && current?.sessionId === placement?.sessionId
+        && current?.title === placement?.title
+      ) return
+      set({ detachedPlacement: placement ? { ...placement } : null })
     },
 
     setActiveSession: (workspaceId: string | null, sessionId: string | null) => {

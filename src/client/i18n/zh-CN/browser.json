@@ -7,7 +7,9 @@
     "needsYou": "浏览器需要你接管",
     "emptyTitle": "此会话还没有浏览器",
     "emptyDetail": "让 Claude 处理网页任务时会自动打开浏览器。",
-    "popoutPlaceholder": "浏览器画面已在浮窗中打开。",
+    "detachedTitle": "浏览器已在另一个窗口中打开",
+    "detachedDetail": "“{{title}}”会继续绑定此会话，直到你将它放回面板。",
+    "untitledSession": "浏览器会话",
     "needsDesktopTitle": "浏览器画面需要桌面端应用",
     "needsDesktopDetail": "应用内浏览器画面仅在 Comate 桌面端可用。浏览器工具仍可通过外部 CDP 端点运行，但此处无法显示画面。"
   },
@@ -46,8 +48,8 @@
     "continue": "继续",
     "retry": "重试",
     "cancel": "取消",
-    "popout": "弹出浮窗",
-    "closePopout": "回到面板",
+    "openIndependentWindow": "在独立窗口中打开",
+    "focusWindow": "聚焦窗口",
     "restoreToPanel": "回到面板",
     "clickToDrive": "点击画面开始操控",
     "captureReleased": "已释放键鼠捕获",
@@ -60,9 +62,6 @@
     "recheckOutcome": "重新检查",
     "abandonTracking": "放弃跟踪",
     "acknowledgeDuplicateRisk": "确认重复发布风险"
-  },
-  "popout": {
-    "title": "浏览器 — 浮窗"
   },
   "detached": {
     "title": "浏览器"
