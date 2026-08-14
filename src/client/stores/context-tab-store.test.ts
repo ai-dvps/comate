@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useContextTabStore } from './context-tab-store'
+import { useBrowserPaneStore } from './browser-pane-store'
 
 function resetStore() {
   useContextTabStore.getState().reset()
@@ -78,6 +79,31 @@ describe('context-tab-store', () => {
 
     expect(useContextTabStore.getState().openTabs).toHaveLength(1)
     expect(useContextTabStore.getState().activeTabId).toBe('browser:session-a')
+  })
+
+  it('terminates only an explicitly closed Browser tab', () => {
+    const close = vi.fn(() => Promise.resolve())
+    useBrowserPaneStore.setState({ close })
+    const store = useContextTabStore.getState()
+    store.setContext('ws-1', 'session-a')
+    store.openBrowser('session-a', 'ws-1')
+    store.closeTab('browser:session-a')
+
+    expect(close).toHaveBeenCalledWith('session-a')
+    expect(useContextTabStore.getState().openTabs).toEqual([])
+  })
+
+  it('creates one empty File or Changes workspace tab from the add menu', () => {
+    const store = useContextTabStore.getState()
+    store.setContext('ws-1', 'session-a')
+    store.openFileWorkspace('ws-1')
+    store.openFileWorkspace('ws-1')
+    store.openChangesWorkspace('ws-1')
+
+    expect(useContextTabStore.getState().openTabs).toMatchObject([
+      { type: 'file', id: 'file:preview', name: 'Files', path: '' },
+      { type: 'changes', id: 'changes:preview', name: 'Changes', path: '' },
+    ])
   })
 
   it('selects the nearest projected tab after closing the active tab', async () => {

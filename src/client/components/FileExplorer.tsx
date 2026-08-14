@@ -19,6 +19,7 @@ interface TreeNodeProps {
   workspaceId: string
   selectedPath?: string
   onSelectPath?: (path: string) => void
+  onFilePreview?: (path: string, name: string) => void
   onFileOpen: (path: string, name: string) => void
   onContextMenu?: (e: React.MouseEvent, nodePath: string, nodeType: 'file' | 'folder') => void
   level: number
@@ -30,6 +31,7 @@ function TreeNode({
   workspaceId,
   selectedPath,
   onSelectPath,
+  onFilePreview,
   onFileOpen,
   onContextMenu,
   level,
@@ -95,6 +97,7 @@ function TreeNode({
                   workspaceId={workspaceId}
                   selectedPath={selectedPath}
                   onSelectPath={onSelectPath}
+                  onFilePreview={onFilePreview}
                   onFileOpen={onFileOpen}
                   onContextMenu={onContextMenu}
                   level={level + 1}
@@ -115,7 +118,10 @@ function TreeNode({
         'flex items-center gap-1.5 py-1 px-2 rounded-lg cursor-pointer text-xs',
         isSelected ? 'bg-accent/10 text-text-primary' : 'hover:bg-surface-hover text-text-secondary',
       )}
-      onClick={() => onSelectPath?.(nodePath)}
+      onClick={() => {
+        onSelectPath?.(nodePath)
+        onFilePreview?.(nodePath, node.name)
+      }}
       onDoubleClick={() => onFileOpen(nodePath, node.name)}
       onContextMenu={(e) => onContextMenu?.(e, nodePath, 'file')}
       style={{ paddingLeft: `${level * 12 + 8}px` }}
@@ -130,6 +136,7 @@ function TreeNode({
 interface FileExplorerProps {
   selectedPath?: string
   onSelectPath?: (path: string) => void
+  onFilePreview?: (path: string, name: string) => void
   onFileClick: (path: string, name: string) => void
 }
 
@@ -143,7 +150,7 @@ function getRevealLabel(): string {
   return 'contextMenu.revealInFinder'
 }
 
-export default function FileExplorer({ selectedPath, onSelectPath, onFileClick }: FileExplorerProps) {
+export default function FileExplorer({ selectedPath, onSelectPath, onFilePreview, onFileClick }: FileExplorerProps) {
   const { t } = useTranslation('common')
   const { activeWorkspaceId, workspaces } = useWorkspaceStore()
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
@@ -320,7 +327,10 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFileClick }
                     'flex items-center gap-2 px-3 py-1.5 rounded-lg cursor-pointer text-xs',
                     isSelected ? 'bg-accent/10 text-text-primary' : 'hover:bg-surface-hover text-text-secondary',
                   )}
-                  onClick={() => onSelectPath?.(entry.path)}
+                  onClick={() => {
+                    onSelectPath?.(entry.path)
+                    onFilePreview?.(entry.path, basename)
+                  }}
                   onDoubleClick={() => onFileClick(entry.path, basename)}
                   onContextMenu={(e) => handleContextMenu(e, entry.path, 'file')}
                 >
@@ -349,6 +359,7 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFileClick }
                 workspaceId={activeWorkspaceId}
                 selectedPath={selectedPath}
                 onSelectPath={onSelectPath}
+                onFilePreview={onFilePreview}
                 onFileOpen={onFileClick}
                 onContextMenu={handleContextMenu}
                 level={0}

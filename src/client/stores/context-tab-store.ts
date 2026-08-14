@@ -3,6 +3,7 @@ import i18next from 'i18next'
 import { basename } from '../lib/path-utils'
 import { isUntrackedFile } from '../lib/git-status-helpers'
 import type { GitStatusItem } from './git-changes-store'
+import { useBrowserPaneStore } from './browser-pane-store'
 
 export interface FileContextTab {
   type: 'file'
@@ -98,6 +99,8 @@ export interface ContextTabState extends ContextTabData {
     options?: OpenOptions,
   ) => Promise<void>
   openBrowser: (sessionId: string, workspaceId: string) => void
+  openFileWorkspace: (workspaceId: string) => void
+  openChangesWorkspace: (workspaceId: string) => void
   closeTab: (id: string) => void
   selectTab: (id: string) => void
   clearWorkspace: (workspaceId: string) => void
@@ -375,6 +378,60 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
     })
   },
 
+  openFileWorkspace: (workspaceId) => {
+    if (!workspaceId) return
+    set((state) => {
+      const collection = cloneWorkspaceCollection(state, workspaceId)
+      const existing = collection.tabs.find((tab) => tab.type === 'file')
+      if (existing) return selectActive(state, workspaceId, existing.id)
+      const tab: FileContextTab = {
+        type: 'file',
+        id: 'file:preview',
+        workspaceId,
+        path: '',
+        name: 'Files',
+        content: '',
+        isBinary: false,
+        preview: true,
+      }
+      collection.tabs.push(tab)
+      return selectActive({
+        ...state,
+        workspaceTabs: { ...state.workspaceTabs, [workspaceId]: collection },
+      }, workspaceId, tab.id)
+    })
+  },
+
+  openChangesWorkspace: (workspaceId) => {
+    if (!workspaceId) return
+    set((state) => {
+      const collection = cloneWorkspaceCollection(state, workspaceId)
+      const existing = collection.tabs.find((tab) => tab.type === 'changes')
+      if (existing) return selectActive(state, workspaceId, existing.id)
+      const tab: ChangesContextTab = {
+        type: 'changes',
+        id: 'changes:preview',
+        workspaceId,
+        path: '',
+        name: 'Changes',
+        statusCode: '',
+        staged: false,
+        original: '',
+        modified: '',
+        isBinary: false,
+        truncated: false,
+        isDeleted: false,
+        isUntracked: false,
+        preview: true,
+      }
+      collection.tabs.push(tab)
+      return selectActive({
+        ...state,
+        workspaceTabs: { ...state.workspaceTabs, [workspaceId]: collection },
+      }, workspaceId, tab.id)
+    })
+  },
+
   closeTab: (id) => {
     set((state) => {
       const index = state.openTabs.findIndex((tab) => tab.id === id)
@@ -382,6 +439,7 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
       const target = state.openTabs[index]
       let next: ContextTabData = state
       if (target.type === 'browser') {
+        void useBrowserPaneStore.getState().close(target.sessionId)
         const collection = state.sessionTabs[target.sessionId]
         next = {
           ...state,

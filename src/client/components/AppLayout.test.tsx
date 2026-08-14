@@ -18,7 +18,7 @@ vi.mock('../components/WorkspaceEmptyState', () => ({ default: () => <div data-t
 vi.mock('../components/ChatPanel', () => ({ default: () => <div data-testid="chat-panel" /> }))
 vi.mock('../components/SettingsPanel', () => ({ default: () => <div data-testid="settings-panel" /> }))
 vi.mock('../components/AnalyticsPanel', () => ({ default: () => <div data-testid="analytics-panel" /> }))
-vi.mock('../components/RightPanel', () => ({ default: () => <div data-testid="right-panel" /> }))
+vi.mock('../components/ContextWorkspace', () => ({ default: () => <div data-testid="context-workspace" /> }))
 vi.mock('../components/HeaderToolbar', () => ({ default: () => <div data-testid="header-toolbar" /> }))
 vi.mock('../components/CustomTitlebar', () => ({ default: () => <div data-testid="custom-titlebar" /> }))
 vi.mock('../components/AgentCommandCenter', () => ({ default: () => <div data-testid="agent-command-center" /> }))
@@ -46,6 +46,7 @@ vi.mock('../lib/use-notification-sounds', () => ({ useNotificationSounds: () => 
 vi.mock('../hooks/use-sidebar-width', () => ({
   useSidebarWidth: () => ({
     width: 240,
+    expandedWidth: 240,
     setWidth: vi.fn(),
     isCollapsed: false,
     toggleCollapse: vi.fn(),
@@ -224,7 +225,7 @@ describe('App layout', () => {
     expect(root).not.toHaveAttribute('data-windows-restored-frame')
   })
 
-  it('renders RightPanel and not legacy FilePanel/GitDiffPanel when a workspace is active', async () => {
+  it('renders the typed ContextWorkspace and not legacy panels when a workspace is active', async () => {
     mockWorkspaceStore.activeWorkspaceId = 'ws1'
     mockWorkspaceStore.openWorkspaceIds = ['ws1']
     mockWorkspaceStore.workspaces = [{ id: 'ws1', name: 'Test', folderPath: '/tmp' }]
@@ -234,7 +235,7 @@ describe('App layout', () => {
 
     expect(queryByTestId('custom-titlebar')).toBeInTheDocument()
     expect(queryByTestId('agent-command-center')).toBeInTheDocument()
-    expect(queryByTestId('right-panel')).toBeInTheDocument()
+    expect(queryByTestId('context-workspace')).toBeInTheDocument()
     expect(queryByTestId('file-panel')).not.toBeInTheDocument()
     expect(queryByTestId('git-diff-panel')).not.toBeInTheDocument()
   })

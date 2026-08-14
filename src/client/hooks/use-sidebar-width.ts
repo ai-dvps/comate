@@ -91,6 +91,7 @@ export function useSidebarWidth() {
 
   return {
     width: isCollapsed ? COLLAPSED_WIDTH : expandedWidth,
+    expandedWidth,
     setWidth,
     isCollapsed,
     toggleCollapse,

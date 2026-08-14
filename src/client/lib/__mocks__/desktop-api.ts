@@ -15,6 +15,7 @@ export const initDesktopApi = vi.fn();
 export const showWindow = vi.fn(() => Promise.resolve());
 export const isWindowMaximized = vi.fn(() => Promise.resolve(false));
 export const onWindowMaximizedChange = vi.fn(() => () => {});
+export const syncTitleBarOverlay = vi.fn();
 export const updateBadgeState = vi.fn(() => Promise.resolve());
 export const revealInFileManager = vi.fn(() => Promise.resolve());
 export const openExternal = vi.fn(() => Promise.resolve());
