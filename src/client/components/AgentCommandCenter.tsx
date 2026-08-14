@@ -33,6 +33,7 @@ interface AgentCommandCenterProps {
   onOpenAnalytics: () => void
   onOpenSettings: () => void
   onOpenCapabilities: () => void
+  onActivateWork?: () => boolean
   activeDestination?: 'work' | 'todos' | 'analytics' | 'settings' | 'capabilities'
 }
 
@@ -55,6 +56,7 @@ export default function AgentCommandCenter({
   onOpenAnalytics,
   onOpenSettings,
   onOpenCapabilities,
+  onActivateWork,
   activeDestination = 'work',
 }: AgentCommandCenterProps) {
   const workspaces = useWorkspaceStore((state) => state.workspaces)
@@ -134,6 +136,7 @@ export default function AgentCommandCenter({
   }
 
   const activateSession = (workspaceId: string, sessionId: string) => {
+    if (onActivateWork && !onActivateWork()) return
     if (activeWorkspaceId !== workspaceId) setActiveWorkspace(workspaceId)
     setActiveSession(workspaceId, sessionId)
   }

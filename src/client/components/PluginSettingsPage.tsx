@@ -26,11 +26,12 @@ interface PluginSettingsPageProps {
   workspaceId: string
   isOpen: boolean
   onClose: () => void
+  presentation?: 'modal' | 'embedded'
 }
 
 type PluginTab = 'installed' | 'marketplace'
 
-export default function PluginSettingsPage({ workspaceId, isOpen, onClose }: PluginSettingsPageProps) {
+export default function PluginSettingsPage({ workspaceId, isOpen, onClose, presentation }: PluginSettingsPageProps) {
   const { t } = useTranslation('settings')
   const [activeTab, setActiveTab] = useState<PluginTab>('installed')
   const [expandedPlugin, setExpandedPlugin] = useState<string | null>(null)
@@ -136,7 +137,7 @@ export default function PluginSettingsPage({ workspaceId, isOpen, onClose }: Plu
   }
 
   return (
-    <ModalPanel open={isOpen} onClose={onClose}>
+    <ModalPanel open={isOpen} onClose={onClose} presentation={presentation}>
       <div className="relative w-full h-full flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50 bg-surface">

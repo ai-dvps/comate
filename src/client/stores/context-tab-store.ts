@@ -35,6 +35,8 @@ export interface ChangesContextTab {
   error?: string
 }
 
+export type DiffViewerTab = Omit<ChangesContextTab, 'type'> & { type: 'diff' }
+
 export interface BrowserContextTab {
   type: 'browser'
   id: string

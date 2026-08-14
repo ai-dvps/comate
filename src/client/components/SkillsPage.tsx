@@ -45,6 +45,7 @@ interface SkillsPageProps {
   workspaceId: string
   isOpen: boolean
   onClose: () => void
+  presentation?: 'modal' | 'embedded'
 }
 
 type SkillTab = 'installed' | 'search' | 'expert-packages' | 'enterprise-zone'
@@ -68,7 +69,7 @@ const SEARCH_VIEW_MODE_KEY = 'comate.skills.search-view-mode'
  *   - Legacy symlinked skills show a "symlinked (legacy)" tag and refuse
  *     Update via the store's update-error channel (Design #6).
  */
-export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageProps) {
+export default function SkillsPage({ workspaceId, isOpen, onClose, presentation }: SkillsPageProps) {
   const { t } = useTranslation('settings')
   const [activeTab, setActiveTab] = useState<SkillTab>('installed')
   const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null)
@@ -368,7 +369,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose }: SkillsPageP
 
   return (
     <>
-    <ModalPanel open={isOpen} onClose={onClose}>
+    <ModalPanel open={isOpen} onClose={onClose} presentation={presentation}>
       <div className="relative w-full h-full flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-border/50 bg-surface">

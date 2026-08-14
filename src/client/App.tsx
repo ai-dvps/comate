@@ -8,11 +8,7 @@ import { deriveResponsiveShell, useViewportWidth } from './hooks/use-responsive-
 import { useSidebarKeyboardShortcut } from './hooks/use-sidebar-keyboard-shortcut'
 import WorkspaceEmptyState from './components/WorkspaceEmptyState'
 import ChatPanel from './components/ChatPanel'
-import SettingsPanel from './components/SettingsPanel'
-import AnalyticsPanel from './components/AnalyticsPanel'
-import TodosPanel from './components/TodosPanel'
-import PluginSettingsPage from './components/PluginSettingsPage'
-import SkillsPage from './components/SkillsPage'
+import ManagementWorkspace, { type ManagementDestination } from './components/ManagementWorkspace'
 import { initNotificationClickHandler } from './lib/notifications'
 import { openSessionDirect } from './lib/session-jump'
 import ContextWorkspace from './components/ContextWorkspace'
@@ -42,7 +38,7 @@ import {
   watchDetachedBrowserPlacement,
 } from './lib/detached-browser-api'
 
-type AppPanel = 'settings' | 'analytics' | 'todos' | 'plugins' | 'skills'
+type AppPanel = ManagementDestination
 
 function App() {
   const { t } = useTranslation('common')
@@ -62,8 +58,22 @@ function App() {
   )
   const setActiveSession = useChatStore((s) => s.setActiveSession)
   const [activePanel, setActivePanel] = useState<AppPanel | null>(null)
-  const openPanel = useCallback((panel: AppPanel) => setActivePanel(panel), [])
-  const closePanel = useCallback(() => setActivePanel(null), [])
+  const [pendingPanel, setPendingPanel] = useState<AppPanel | null | undefined>(undefined)
+  const [settingsCloseRequestToken, setSettingsCloseRequestToken] = useState(0)
+  const requestDestination = useCallback((panel: AppPanel | null) => {
+    if (activePanel === 'settings' && panel !== 'settings') {
+      setPendingPanel(panel)
+      setSettingsCloseRequestToken((token) => token + 1)
+      return false
+    }
+    setActivePanel(panel)
+    return true
+  }, [activePanel])
+  const openPanel = useCallback((panel: AppPanel) => requestDestination(panel), [requestDestination])
+  const closePanel = useCallback(() => {
+    setActivePanel(pendingPanel === undefined ? null : pendingPanel)
+    setPendingPanel(undefined)
+  }, [pendingPanel])
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showContextMenu, setShowContextMenu] = useState(false)
   const [isMac, setIsMac] = useState(false)
@@ -247,7 +257,7 @@ function App() {
       ? 'Analytics'
       : activePanel === 'todos'
         ? 'Todos'
-        : activePanel === 'plugins' || activePanel === 'skills'
+        : activePanel === 'capabilities'
           ? 'Plugins / Skills'
           : undefined
   const activeBrowserOpen = useBrowserPaneStore((state) =>
@@ -457,85 +467,75 @@ function App() {
             onOpenTodos={() => openPanel('todos')}
             onOpenAnalytics={() => openPanel('analytics')}
             onOpenSettings={() => openPanel('settings')}
-            onOpenCapabilities={() => openPanel('plugins')}
+            onOpenCapabilities={() => openPanel('capabilities')}
+            onActivateWork={() => requestDestination(null)}
             activeDestination={activePanel === 'todos'
               ? 'todos'
               : activePanel === 'analytics'
                 ? 'analytics'
                 : activePanel === 'settings'
                   ? 'settings'
-                  : activePanel === 'plugins' || activePanel === 'skills'
+                  : activePanel === 'capabilities'
                     ? 'capabilities'
                     : 'work'}
           />
         )}
 
-        {/* Main Area — keep all open workspace panels mounted */}
-        <main className="flex-1 flex flex-col overflow-hidden relative">
-          {activeWorkspace ? (
-            openWorkspaceIds.map((wsId) => (
-              <div
-                key={wsId}
-                className={cn(
-                  'absolute inset-0 flex flex-col',
-                  wsId === activeWorkspaceId ? 'visible' : 'invisible pointer-events-none'
-                )}
-                aria-hidden={wsId !== activeWorkspaceId}
-                {...(wsId !== activeWorkspaceId ? { inert: '' } : {})}
-              >
-                <ChatPanel
-                  workspaceId={wsId}
-                  isSidebarCollapsed={isLeftEffectivelyCollapsed}
-                  onToggleSidebarCollapse={toggleSidebarCollapse}
-                  isRightPanelCollapsed={isRightEffectivelyCollapsed}
-                  onToggleRightPanelCollapse={toggleRightPanelCollapse}
-                />
-              </div>
-            ))
-          ) : (
-            <WorkspaceEmptyState
-              workspaces={workspaces}
-              onCreateWorkspace={() => setShowCreateModal(true)}
-              onSelectWorkspace={(id) => openWorkspace(id)}
-              onBrowseWorkspaces={() => {
-                if (isSidebarCollapsed) toggleSidebarCollapse()
-              }}
-            />
-          )}
-        </main>
-
-        {activeWorkspaceId && (
-          <ContextWorkspace
-            width={rightPanelExpandedWidth}
-            isCollapsed={isRightEffectivelyCollapsed}
-            onWidthChange={setRightPanelWidth}
-            workspaceId={activeWorkspaceId}
-            workspacePath={activeWorkspace?.folderPath}
+        {activePanel ? (
+          <ManagementWorkspace
+            destination={activePanel}
+            workspaceId={activeWorkspaceId ?? undefined}
+            onClose={closePanel}
+            settingsCloseRequestToken={settingsCloseRequestToken}
           />
+        ) : (
+          <>
+            {/* Main Area — keep all open workspace panels mounted */}
+            <main className="flex-1 flex flex-col overflow-hidden relative">
+              {activeWorkspace ? (
+                openWorkspaceIds.map((wsId) => (
+                  <div
+                    key={wsId}
+                    className={cn(
+                      'absolute inset-0 flex flex-col',
+                      wsId === activeWorkspaceId ? 'visible' : 'invisible pointer-events-none'
+                    )}
+                    aria-hidden={wsId !== activeWorkspaceId}
+                    {...(wsId !== activeWorkspaceId ? { inert: '' } : {})}
+                  >
+                    <ChatPanel
+                      workspaceId={wsId}
+                      isSidebarCollapsed={isLeftEffectivelyCollapsed}
+                      onToggleSidebarCollapse={toggleSidebarCollapse}
+                      isRightPanelCollapsed={isRightEffectivelyCollapsed}
+                      onToggleRightPanelCollapse={toggleRightPanelCollapse}
+                    />
+                  </div>
+                ))
+              ) : (
+                <WorkspaceEmptyState
+                  workspaces={workspaces}
+                  onCreateWorkspace={() => setShowCreateModal(true)}
+                  onSelectWorkspace={(id) => openWorkspace(id)}
+                  onBrowseWorkspaces={() => {
+                    if (isSidebarCollapsed) toggleSidebarCollapse()
+                  }}
+                />
+              )}
+            </main>
+
+            {activeWorkspaceId && (
+              <ContextWorkspace
+                width={rightPanelExpandedWidth}
+                isCollapsed={isRightEffectivelyCollapsed}
+                onWidthChange={setRightPanelWidth}
+                workspaceId={activeWorkspaceId}
+                workspacePath={activeWorkspace?.folderPath}
+              />
+            )}
+          </>
         )}
       </div>
-
-      <SettingsPanel isOpen={activePanel === 'settings'} onClose={closePanel} />
-
-      <AnalyticsPanel isOpen={activePanel === 'analytics'} onClose={closePanel} />
-
-      <TodosPanel isOpen={activePanel === 'todos'} onClose={closePanel} />
-
-      {activeWorkspaceId && (
-        <PluginSettingsPage
-          workspaceId={activeWorkspaceId}
-          isOpen={activePanel === 'plugins'}
-          onClose={closePanel}
-        />
-      )}
-
-      {activeWorkspaceId && (
-        <SkillsPage
-          workspaceId={activeWorkspaceId}
-          isOpen={activePanel === 'skills'}
-          onClose={closePanel}
-        />
-      )}
 
       {showCreateModal && (
         <CreateWorkspaceModal
