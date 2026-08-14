@@ -18,6 +18,7 @@ describe('CustomTitlebar', () => {
         rightWidth={520}
         leftCollapsed={false}
         rightCollapsed={false}
+        contextAvailable
         workspaceName="Comate"
         sessionName="Agent shell"
         tabs={[{
@@ -39,7 +40,12 @@ describe('CustomTitlebar', () => {
       />,
     )
 
+    expect(screen.getByTestId('custom-titlebar')).not.toHaveClass('border-b')
     expect(screen.getByTestId('titlebar-command-center')).toHaveStyle({ width: '288px' })
+    expect(screen.getByTestId('titlebar-command-center')).toHaveClass('border-r')
+    expect(screen.getByTestId('titlebar-command-center')).not.toHaveClass('border-b')
+    expect(screen.getByTestId('titlebar-conversation')).toHaveClass('border-b')
+    expect(screen.getByTestId('titlebar-context')).toHaveClass('border-b')
     expect(screen.getByTestId('titlebar-context')).toHaveStyle({ width: '520px' })
     expect(screen.getByText('Comate')).toBeInTheDocument()
     expect(screen.getByText('Agent shell')).toBeInTheDocument()
@@ -59,6 +65,7 @@ describe('CustomTitlebar', () => {
         rightWidth={520}
         leftCollapsed={false}
         rightCollapsed={false}
+        contextAvailable
         managementTitle="Settings"
         tabs={[]}
         activeTabId={null}
@@ -74,6 +81,51 @@ describe('CustomTitlebar', () => {
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
   })
 
+  it('keeps the macOS left toggle clear of the traffic lights when collapsed', () => {
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={0}
+        rightWidth={520}
+        leftCollapsed
+        rightCollapsed={false}
+        contextAvailable
+        tabs={[]}
+        activeTabId={null}
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onToggleLeft={vi.fn()}
+        onToggleRight={vi.fn()}
+        isMac
+      />,
+    )
+
+    expect(screen.getByTestId('titlebar-command-center')).toHaveStyle({ width: '112px' })
+    expect(screen.getByTestId('titlebar-command-center')).not.toHaveClass('border-r')
+    expect(screen.getByTestId('titlebar-macos-traffic-lights')).toHaveClass('flex-shrink-0')
+  })
+
+  it('removes the right divider while the context panel is collapsed', () => {
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={288}
+        rightWidth={0}
+        leftCollapsed={false}
+        rightCollapsed
+        contextAvailable
+        tabs={[]}
+        activeTabId={null}
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onToggleLeft={vi.fn()}
+        onToggleRight={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByTestId('titlebar-context')).not.toHaveClass('border-l')
+  })
+
   it('moves focus to the visible expand control when a region collapses', () => {
     const leftRegion = document.createElement('div')
     leftRegion.id = 'agent-command-center-region'
@@ -87,6 +139,7 @@ describe('CustomTitlebar', () => {
       rightWidth: 520,
       leftCollapsed: false,
       rightCollapsed: false,
+      contextAvailable: true,
       tabs: [],
       activeTabId: null,
       onSelectTab: vi.fn(),
@@ -100,5 +153,54 @@ describe('CustomTitlebar', () => {
 
     expect(screen.getByRole('button', { name: 'Expand command center' })).toHaveFocus()
     leftRegion.remove()
+  })
+
+  it('removes context controls and their layout space when no workspace is open', () => {
+    const onToggleRight = vi.fn()
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={288}
+        rightWidth={520}
+        leftCollapsed={false}
+        rightCollapsed={false}
+        contextAvailable={false}
+        tabs={[]}
+        activeTabId={null}
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onToggleLeft={vi.fn()}
+        onToggleRight={onToggleRight}
+      />,
+    )
+
+    expect(screen.getByTestId('titlebar-context')).toHaveStyle({ width: '0px' })
+    expect(screen.queryByRole('button', { name: 'Collapse context panel' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Expand context panel' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Add context tab' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+    expect(onToggleRight).not.toHaveBeenCalled()
+  })
+
+  it('preserves only the Windows window-control clearance on the Welcome screen', () => {
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={288}
+        rightWidth={520}
+        leftCollapsed={false}
+        rightCollapsed={false}
+        contextAvailable={false}
+        tabs={[]}
+        activeTabId={null}
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onToggleLeft={vi.fn()}
+        onToggleRight={vi.fn()}
+        isWindows
+      />,
+    )
+
+    expect(screen.getByTestId('titlebar-context')).toHaveStyle({ width: '138px' })
   })
 })

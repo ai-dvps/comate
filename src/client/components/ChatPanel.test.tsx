@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import React from 'react'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import ChatPanel from './ChatPanel'
 import i18n from '../i18n'
@@ -38,11 +38,6 @@ vi.mock('../stores/chat-store', () => ({
 vi.mock('../stores/workspace-store', () => ({
   useWorkspaceStore: (selector: (state: { workspaces: { id: string; name: string }[] }) => unknown) =>
     selector({ workspaces: [{ id: 'ws1', name: 'Test Workspace' }] }),
-}))
-
-vi.mock('../stores/provider-store', () => ({
-  useProviderStore: (selector: (state: { providers: [] }) => unknown) =>
-    selector({ providers: [] }),
 }))
 
 vi.mock('../hooks/useMessageSearch', () => ({
@@ -270,81 +265,16 @@ describe('ChatPanel', () => {
     expect(screen.queryByTestId('task-panel')).not.toBeInTheDocument()
   })
 
-  it('renders the sidebar toggle in the header when a callback is provided', () => {
+  it('does not render a redundant message header above the conversation', () => {
     mockChatStore.activeSessionIds = { ws1: 's1' }
     mockChatStore.domCache = { ws1: ['s1'] }
     mockChatStore.messages = { s1: [] }
 
-    renderWithI18n(
-      <ChatPanel
-        workspaceId="ws1"
-        isSidebarCollapsed={false}
-        onToggleSidebarCollapse={vi.fn()}
-      />,
-    )
-
-    expect(
-      screen.getByRole('button', { name: 'Collapse sidebar' }),
-    ).toBeInTheDocument()
-  })
-
-  it('uses the expand label when the sidebar is collapsed', () => {
-    mockChatStore.activeSessionIds = { ws1: 's1' }
-    mockChatStore.domCache = { ws1: ['s1'] }
-    mockChatStore.messages = { s1: [] }
-
-    renderWithI18n(
-      <ChatPanel
-        workspaceId="ws1"
-        isSidebarCollapsed={true}
-        onToggleSidebarCollapse={vi.fn()}
-      />,
-    )
-
-    expect(
-      screen.getByRole('button', { name: 'Expand sidebar' }),
-    ).toBeInTheDocument()
-  })
-
-  it('calls onToggleSidebarCollapse when the header toggle is clicked', () => {
-    mockChatStore.activeSessionIds = { ws1: 's1' }
-    mockChatStore.domCache = { ws1: ['s1'] }
-    mockChatStore.messages = { s1: [] }
-
-    const onToggle = vi.fn()
-    renderWithI18n(
-      <ChatPanel
-        workspaceId="ws1"
-        isSidebarCollapsed={false}
-        onToggleSidebarCollapse={onToggle}
-      />,
-    )
-
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }))
-
-    expect(onToggle).toHaveBeenCalledTimes(1)
-  })
-})
-
-describe('ChatPanel header responsive model name', () => {
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  it('shows the model name when the title area is wide enough', () => {
-    // providers are mocked to [], so the model name falls back to the default.
-    // The threshold is measured on the title region (space between the button
-    // clusters), so stubbing offsetWidth drives the show/hide branch directly.
-    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(600)
     renderWithI18n(<ChatPanel workspaceId="ws1" />)
 
-    expect(screen.getByText('claude-sonnet-4-6')).toBeInTheDocument()
-  })
-
-  it('hides the model name when the title area is narrow so the title can expand', () => {
-    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(200)
-    renderWithI18n(<ChatPanel workspaceId="ws1" />)
-
+    expect(screen.queryByText('No session')).not.toBeInTheDocument()
     expect(screen.queryByText('claude-sonnet-4-6')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Collapse sidebar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Collapse context panel' })).not.toBeInTheDocument()
   })
 })

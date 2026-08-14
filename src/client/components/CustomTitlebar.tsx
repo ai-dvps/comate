@@ -19,6 +19,7 @@ interface CustomTitlebarProps {
   rightWidth: number
   leftCollapsed: boolean
   rightCollapsed: boolean
+  contextAvailable: boolean
   workspaceName?: string
   sessionName?: string
   managementTitle?: string
@@ -34,6 +35,9 @@ interface CustomTitlebarProps {
 }
 
 const interactiveStyle = { WebkitAppRegion: 'no-drag' } as CSSProperties
+const COLLAPSED_LEFT_WIDTH = 48
+const MACOS_TRAFFIC_LIGHTS_WIDTH = 72
+const LEFT_TOGGLE_SLOT_WIDTH = 40
 
 function TabIcon({ tab }: { tab: ContextTab }) {
   if (tab.type === 'browser') return <Globe2 className="h-3.5 w-3.5" aria-hidden="true" />
@@ -46,6 +50,7 @@ export default function CustomTitlebar({
   rightWidth,
   leftCollapsed,
   rightCollapsed,
+  contextAvailable,
   workspaceName,
   sessionName,
   managementTitle,
@@ -60,8 +65,12 @@ export default function CustomTitlebar({
   isWindows = false,
 }: CustomTitlebarProps) {
   const { t } = useTranslation('common')
-  const leftSegmentWidth = leftCollapsed ? 48 : leftWidth
-  const contextSegmentWidth = rightCollapsed ? 44 : rightWidth
+  const leftSegmentWidth = leftCollapsed
+    ? isMac
+      ? MACOS_TRAFFIC_LIGHTS_WIDTH + LEFT_TOGGLE_SLOT_WIDTH
+      : COLLAPSED_LEFT_WIDTH
+    : leftWidth
+  const contextSegmentWidth = contextAvailable ? (rightCollapsed ? 44 : rightWidth) : 0
   const leftToggleRef = useRef<HTMLButtonElement>(null)
   const rightToggleRef = useRef<HTMLButtonElement>(null)
   const previousCollapse = useRef({ left: leftCollapsed, right: rightCollapsed })
@@ -89,15 +98,24 @@ export default function CustomTitlebar({
 
   return (
     <header
-      className="relative z-30 flex h-11 flex-shrink-0 items-stretch border-b border-border bg-chrome"
+      className="relative z-30 flex h-11 flex-shrink-0 items-stretch bg-chrome"
       data-testid="custom-titlebar"
     >
       <div
         data-testid="titlebar-command-center"
-        className="flex flex-shrink-0 items-center border-r border-border/70 transition-[width] duration-200 ease-out motion-reduce:transition-none"
+        className={cn(
+          'flex flex-shrink-0 items-center transition-[width] duration-200 ease-out motion-reduce:transition-none',
+          !leftCollapsed && 'border-r border-border/70',
+        )}
         style={{ width: leftSegmentWidth }}
       >
-        {isMac ? <div data-tauri-drag-region className="w-[72px] self-stretch" /> : null}
+        {isMac ? (
+          <div
+            data-tauri-drag-region
+            data-testid="titlebar-macos-traffic-lights"
+            className="w-[72px] flex-shrink-0 self-stretch"
+          />
+        ) : null}
         <button
           ref={leftToggleRef}
           type="button"
@@ -118,7 +136,10 @@ export default function CustomTitlebar({
         <div data-tauri-drag-region className="min-w-0 flex-1 self-stretch" />
       </div>
 
-      <div className="flex min-w-0 flex-1 items-center px-3">
+      <div
+        data-testid="titlebar-conversation"
+        className="flex min-w-0 flex-1 items-center border-b border-border px-3"
+      >
         <div data-tauri-drag-region className="min-w-0 flex-1 self-stretch" />
         <div className="pointer-events-none min-w-0 max-w-[70%] text-center">
           {managementTitle ? (
@@ -137,12 +158,15 @@ export default function CustomTitlebar({
       <div
         data-testid="titlebar-context"
         className={cn(
-          'flex flex-shrink-0 items-center border-l border-border/70 transition-[width] duration-200 ease-out motion-reduce:transition-none',
+          'flex flex-shrink-0 items-center border-b border-border transition-[width] duration-200 ease-out motion-reduce:transition-none',
+          contextAvailable && !rightCollapsed && 'border-l border-border/70',
           isWindows && 'pr-[138px]',
         )}
         style={{ width: contextSegmentWidth + (isWindows ? 138 : 0) }}
       >
-        {managementTitle ? (
+        {!contextAvailable ? (
+          <div data-tauri-drag-region className="flex-1 self-stretch" />
+        ) : managementTitle ? (
           <div data-tauri-drag-region className="flex-1 self-stretch" />
         ) : rightCollapsed ? (
           <div className="flex flex-1 items-center justify-center">

@@ -235,8 +235,10 @@ function App() {
   ])
 
   const handleToggleRight = useCallback(() => {
+    if (!activeWorkspaceId) return
     if (forceRightExpanded) {
       setForceRightExpanded(false)
+      if (!isRightPanelCollapsed) toggleRightPanelCollapse()
       return
     }
     if (isRightEffectivelyCollapsed) {
@@ -246,6 +248,7 @@ function App() {
     }
     toggleRightPanelCollapse()
   }, [
+    activeWorkspaceId,
     forceRightExpanded,
     isRightEffectivelyCollapsed,
     isRightPanelCollapsed,
@@ -402,6 +405,7 @@ function App() {
           rightWidth={effectiveRightPanelWidth}
           leftCollapsed={isLeftEffectivelyCollapsed}
           rightCollapsed={isRightEffectivelyCollapsed}
+          contextAvailable={activeWorkspaceId !== null}
           workspaceName={activeWorkspace?.name}
           sessionName={activeSession?.name}
           managementTitle={managementTitle}
@@ -410,6 +414,7 @@ function App() {
           onSelectTab={(id) => useContextTabStore.getState().selectTab(id)}
           onCloseTab={(id) => useContextTabStore.getState().closeTab(id)}
           onAddTab={() => {
+            if (!activeWorkspaceId) return
             setShowContextMenu((open) => !open)
           }}
           onToggleLeft={handleToggleLeft}
@@ -560,17 +565,15 @@ function App() {
                     key={wsId}
                     className={cn(
                       'absolute inset-0 flex flex-col',
-                      wsId === activeWorkspaceId ? 'visible' : 'invisible pointer-events-none'
+                      wsId === activeWorkspaceId && activePanel === null
+                        ? 'visible'
+                        : 'invisible pointer-events-none'
                     )}
-                    aria-hidden={wsId !== activeWorkspaceId}
-                    {...(wsId !== activeWorkspaceId ? { inert: '' } : {})}
+                    aria-hidden={wsId !== activeWorkspaceId || activePanel !== null}
+                    {...(wsId !== activeWorkspaceId || activePanel !== null ? { inert: '' } : {})}
                   >
                     <ChatPanel
                       workspaceId={wsId}
-                      isSidebarCollapsed={isLeftEffectivelyCollapsed}
-                      onToggleSidebarCollapse={handleToggleLeft}
-                      isRightPanelCollapsed={isRightEffectivelyCollapsed}
-                      onToggleRightPanelCollapse={handleToggleRight}
                     />
                   </div>
                 ))

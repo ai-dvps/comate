@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useId } from 'react'
 
 interface ConfirmDialogProps {
   isOpen: boolean
@@ -19,6 +19,8 @@ export default function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const titleId = useId()
+
   useEffect(() => {
     if (!isOpen) return
 
@@ -41,6 +43,7 @@ export default function ConfirmDialog({
     <div
       role="dialog"
       aria-modal="true"
+      aria-labelledby={titleId}
       data-modal-overlay=""
       className="fixed top-11 inset-x-0 bottom-0 z-50 flex items-start justify-center pt-16"
     >
@@ -48,7 +51,7 @@ export default function ConfirmDialog({
       <div className="relative bg-surface border border-border rounded-xl shadow-2xl w-full max-w-md flex flex-col">
         {/* Header */}
         <div className="px-5 py-4 border-b border-border/50 flex-shrink-0">
-          <h2 className="text-sm font-medium text-text-primary">{title}</h2>
+          <h2 id={titleId} className="text-sm font-medium text-text-primary">{title}</h2>
         </div>
 
         {/* Message */}

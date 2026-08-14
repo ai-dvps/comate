@@ -151,8 +151,9 @@ export default function ContextWorkspace({
       id="context-workspace-region"
       data-testid="context-workspace"
       className={cn(
-        'relative flex h-full flex-shrink-0 flex-col overflow-hidden border-l border-border bg-work',
+        'relative flex h-full flex-shrink-0 flex-col overflow-hidden bg-work',
         'transition-[width] duration-200 ease-out motion-reduce:transition-none',
+        !isCollapsed && 'border-l border-border',
         isDragging && 'transition-none',
       )}
       style={{ width: isCollapsed ? 0 : width }}

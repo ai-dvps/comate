@@ -1,30 +1,42 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Archive,
+  ArchiveRestore,
   BarChart3,
-  Bot,
   CheckSquare,
   ChevronDown,
   ChevronRight,
   CircleUserRound,
   Clock3,
+  Copy,
   Folder,
+  FolderOpen,
+  FlaskConical,
+  GitBranch,
   Moon,
+  Pencil,
   Plus,
   Puzzle,
   Search,
   Settings,
   Sparkles,
   Sun,
+  Trash2,
+  X,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { getSessionDisplayName } from '../lib/session-filter'
 import { useChatStore, type ChatSession } from '../stores/chat-store'
-import { useChannelStatuses } from '../hooks/use-channel-statuses'
+import {
+  CHANNEL_STATUS_CLASS,
+  CHANNEL_STATUS_DOT,
+  useChannelStatuses,
+  type ChannelStatus,
+} from '../hooks/use-channel-statuses'
 import { useTheme } from '../hooks/use-theme'
 import { useTranslation } from 'react-i18next'
 import { cn } from './ui/utils'
-
-type CommandFilter = 'all' | 'needs-user' | 'running' | 'wip'
+import ConfirmDialog from './ConfirmDialog'
 
 interface AgentCommandCenterProps {
   width: number
@@ -49,6 +61,53 @@ function relativeTime(session: ChatSession): string {
   return `${Math.floor(hours / 24)}d`
 }
 
+function startSessionNameScroll(row: HTMLElement) {
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+  const viewport = row.querySelector<HTMLElement>('[data-session-name-viewport]')
+  const content = row.querySelector<HTMLElement>('[data-session-name-content]')
+  if (!viewport || !content) return
+  const distance = Math.max(0, content.scrollWidth - viewport.clientWidth)
+  if (distance === 0) return
+  content.style.transitionDuration = `${Math.max(900, (distance / 40) * 1000)}ms`
+  content.style.transitionTimingFunction = 'linear'
+  content.style.transform = `translateX(-${distance}px)`
+}
+
+function resetSessionNameScroll(row: HTMLElement) {
+  const content = row.querySelector<HTMLElement>('[data-session-name-content]')
+  if (!content) return
+  content.style.transitionDuration = '180ms'
+  content.style.transitionTimingFunction = 'ease-out'
+  content.style.transform = 'translateX(0px)'
+}
+
+function BotConnectionStatus({
+  channel,
+  status,
+}: {
+  channel: 'WeCom' | 'Feishu'
+  status: ChannelStatus
+}) {
+  const label = `${channel} bot ${status.replace('_', ' ')}`
+  const iconSrc = channel === 'WeCom' ? '/wecom-icon.svg' : '/feishu-icon.svg'
+  return (
+    <span
+      className={cn('relative flex h-5 w-5 items-center justify-center', CHANNEL_STATUS_CLASS[status])}
+      aria-label={label}
+      title={label}
+    >
+      <img src={iconSrc} alt="" className="h-3.5 w-3.5 object-contain" aria-hidden="true" />
+      <span
+        className={cn(
+          'absolute bottom-0 right-0 h-1.5 w-1.5 rounded-full ring-1 ring-chrome',
+          CHANNEL_STATUS_DOT[status],
+        )}
+        aria-hidden="true"
+      />
+    </span>
+  )
+}
+
 export default function AgentCommandCenter({
   width,
   onWidthChange,
@@ -61,6 +120,7 @@ export default function AgentCommandCenter({
   activeDestination = 'work',
 }: AgentCommandCenterProps) {
   const { t } = useTranslation('common')
+  const { t: tc } = useTranslation('chat')
   const workspaces = useWorkspaceStore((state) => state.workspaces)
   const openWorkspaceIds = useWorkspaceStore((state) => state.openWorkspaceIds)
   const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId)
@@ -72,23 +132,68 @@ export default function AgentCommandCenter({
   const sessionActivity = useChatStore((state) => state.sessionActivity)
   const isStreaming = useChatStore((state) => state.isStreaming)
   const unreadCompletions = useChatStore((state) => state.unreadCompletions)
+  const lastActivityAt = useChatStore((state) => state.lastActivityAt)
   const setActiveSession = useChatStore((state) => state.setActiveSession)
   const createSession = useChatStore((state) => state.createSession)
-  const wecomStatuses = useChannelStatuses(openWorkspaceIds, '/bot/status')
-  const feishuStatuses = useChannelStatuses(openWorkspaceIds, '/feishu/status')
+  const renameSession = useChatStore((state) => state.renameSession)
+  const deleteSession = useChatStore((state) => state.deleteSession)
+  const forkSession = useChatStore((state) => state.forkSession)
+  const toggleSessionWip = useChatStore((state) => state.toggleSessionWip)
+  const toggleSessionArchive = useChatStore((state) => state.toggleSessionArchive)
+  const fetchSessions = useChatStore((state) => state.fetchSessions)
+  const workspaceIds = useMemo(
+    () => workspaces.map((workspace) => workspace.id),
+    [workspaces],
+  )
+  const wecomStatuses = useChannelStatuses(workspaceIds, '/bot/status')
+  const feishuStatuses = useChannelStatuses(workspaceIds, '/feishu/status')
   const { theme, toggleTheme } = useTheme()
   const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState<CommandFilter>('all')
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(openWorkspaceIds))
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [expanded, setExpanded] = useState<Set<string>>(
+    () => new Set(workspaces.map((workspace) => workspace.id)),
+  )
+  const [visibleSessionCounts, setVisibleSessionCounts] = useState<Record<string, number>>({})
+  const [creatingWorkspaceId, setCreatingWorkspaceId] = useState<string | null>(null)
+  const [newSessionName, setNewSessionName] = useState('')
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
+  const [editingSessionName, setEditingSessionName] = useState('')
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    workspaceId: string
+    sessionId: string
+  } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{
+    workspaceId: string
+    session: ChatSession
+  } | null>(null)
   const dragRef = useRef<{ move: (event: MouseEvent) => void; up: () => void } | null>(null)
+  const requestedSessionsRef = useRef(new Set<string>())
+  const searchButtonRef = useRef<HTMLButtonElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const userButtonRef = useRef<HTMLButtonElement>(null)
+  const userMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     setExpanded((current) => {
       const next = new Set(current)
-      openWorkspaceIds.forEach((id) => next.add(id))
+      workspaces.forEach((workspace) => next.add(workspace.id))
       return next
     })
-  }, [openWorkspaceIds])
+  }, [workspaces])
+
+  useEffect(() => {
+    for (const workspace of workspaces) {
+      if (
+        Object.prototype.hasOwnProperty.call(sessions, workspace.id)
+        || requestedSessionsRef.current.has(workspace.id)
+      ) continue
+      requestedSessionsRef.current.add(workspace.id)
+      void fetchSessions(workspace.id)
+    }
+  }, [fetchSessions, sessions, workspaces])
 
   const endDrag = useCallback(() => {
     if (!dragRef.current) return
@@ -100,6 +205,44 @@ export default function AgentCommandCenter({
   }, [])
 
   useEffect(() => endDrag, [endDrag])
+
+  useEffect(() => {
+    if (searchOpen) searchInputRef.current?.focus()
+  }, [searchOpen])
+
+  useEffect(() => {
+    if (!contextMenu) return
+    const close = () => setContextMenu(null)
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close()
+    }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [contextMenu])
+
+  useEffect(() => {
+    if (!userMenuOpen) return
+    const closeOnPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (userButtonRef.current?.contains(target) || userMenuRef.current?.contains(target)) return
+      setUserMenuOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setUserMenuOpen(false)
+      userButtonRef.current?.focus()
+    }
+    document.addEventListener('mousedown', closeOnPointerDown)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeOnPointerDown)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [userMenuOpen])
 
   const handleResizeStart = useCallback((event: React.MouseEvent) => {
     event.preventDefault()
@@ -115,94 +258,117 @@ export default function AgentCommandCenter({
   }, [endDrag, onWidthChange, width])
 
   const normalizedQuery = query.trim().toLowerCase()
-  const openWorkspaces = useMemo(
-    () => openWorkspaceIds.flatMap((id) => {
-      const workspace = workspaces.find((item) => item.id === id)
-      return workspace ? [workspace] : []
-    }),
-    [openWorkspaceIds, workspaces],
-  )
-  const unopenedMatches = useMemo(
-    () => normalizedQuery
-      ? workspaces.filter((workspace) => !openWorkspaceIds.includes(workspace.id)
-        && workspace.name.toLowerCase().includes(normalizedQuery))
-      : [],
-    [normalizedQuery, openWorkspaceIds, workspaces],
-  )
 
-  const matchesFilter = (session: ChatSession): boolean => {
-    if (filter === 'needs-user') return (sessionStatus[session.id]?.pendingCount ?? 0) > 0
-    if (filter === 'running') return Boolean(isStreaming[session.id] || sessionActivity[session.id]?.active)
-    if (filter === 'wip') return session.isWip === true
-    return true
+  const closeSearch = () => {
+    setSearchOpen(false)
+    setQuery('')
+    searchButtonRef.current?.focus()
   }
 
-  const activateSession = (workspaceId: string, sessionId: string) => {
+  const activateSession = async (workspaceId: string, sessionId: string) => {
     if (onActivateWork && !onActivateWork()) return
-    if (activeWorkspaceId !== workspaceId) setActiveWorkspace(workspaceId)
+    if (!openWorkspaceIds.includes(workspaceId)) await openWorkspace(workspaceId)
+    else if (activeWorkspaceId !== workspaceId) setActiveWorkspace(workspaceId)
     setActiveSession(workspaceId, sessionId)
+  }
+
+  const createWorkspaceSession = async (workspaceId: string, fallbackCount: number) => {
+    if (!openWorkspaceIds.includes(workspaceId)) await openWorkspace(workspaceId)
+    const name = newSessionName.trim() || tc('newSessionDefaultName', { count: fallbackCount })
+    await createSession(workspaceId, name)
+    setCreatingWorkspaceId(null)
+    setNewSessionName('')
+  }
+
+  const startRename = (session: ChatSession) => {
+    setEditingSessionId(session.id)
+    setEditingSessionName(getSessionDisplayName(session))
+    setContextMenu(null)
+  }
+
+  const cancelRename = () => {
+    setEditingSessionId(null)
+    setEditingSessionName('')
+  }
+
+  const commitRename = async (workspaceId: string, sessionId: string) => {
+    const name = editingSessionName.trim()
+    if (name) await renameSession(workspaceId, sessionId, name)
+    cancelRename()
+  }
+
+  const copySessionId = async (sessionId: string) => {
+    try {
+      await navigator.clipboard.writeText(sessionId)
+    } catch (error) {
+      console.error('Failed to copy session ID', error)
+    }
+    setContextMenu(null)
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    const { workspaceId, session } = deleteTarget
+    setDeleteTarget(null)
+    await deleteSession(workspaceId, session.id)
   }
 
   const navigation = [
     { id: 'todos' as const, label: t('header.todos'), icon: CheckSquare, action: onOpenTodos },
-    { id: 'analytics' as const, label: t('header.analytics'), icon: BarChart3, action: onOpenAnalytics },
     { id: 'capabilities' as const, label: t('shell.capabilities'), icon: Puzzle, action: onOpenCapabilities },
-    { id: 'settings' as const, label: t('header.settings'), icon: Settings, action: onOpenSettings },
   ]
+  const userDestinationActive = activeDestination === 'analytics' || activeDestination === 'settings'
 
   return (
     <aside
       aria-label={t('shell.commandCenter')}
-      className="relative flex h-full flex-shrink-0 flex-col overflow-hidden border-r border-border bg-chrome transition-[width] duration-200 ease-out motion-reduce:transition-none"
+      className={cn(
+        'relative flex h-full flex-shrink-0 flex-col overflow-hidden bg-chrome transition-[width] duration-200 ease-out motion-reduce:transition-none',
+        width > 0 && 'border-r border-border',
+      )}
       style={{ width }}
     >
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="space-y-2 border-b border-border/70 p-2.5">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-tertiary" aria-hidden="true" />
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              aria-label={t('shell.search')}
-              placeholder={t('shell.search')}
-              className="h-8 w-full rounded-md border border-border bg-bg pl-8 pr-2 text-xs text-text-primary outline-none placeholder:text-text-tertiary focus:border-accent focus:ring-1 focus:ring-accent"
-            />
-          </div>
-          <div className="grid grid-cols-4 gap-1" aria-label={t('shell.managementDestinations')}>
-            {navigation.map(({ id, label, icon: Icon, action }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={action}
-                aria-label={label}
-                aria-current={activeDestination === id ? 'page' : undefined}
-                className={cn(
-                  'flex h-8 items-center justify-center rounded-md text-text-tertiary transition-colors',
-                  'hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
-                  activeDestination === id && 'bg-surface-active text-text-primary',
-                )}
-                title={label}
-              >
-                <Icon className="h-4 w-4" aria-hidden="true" />
-              </button>
-            ))}
-          </div>
-        </div>
+        <nav className="flex flex-col gap-0.5 px-2 pb-0 pt-2" aria-label={t('shell.managementDestinations')}>
+          {navigation.map(({ id, label, icon: Icon, action }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={action}
+              aria-label={label}
+              aria-current={activeDestination === id ? 'page' : undefined}
+              className={cn(
+                'flex h-8 w-full items-center justify-start gap-2 rounded-md px-2 text-text-tertiary transition-colors',
+                'hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                activeDestination === id && 'bg-surface-active text-text-primary',
+              )}
+            >
+              <Icon className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+              <span className="truncate text-xs font-medium">{label}</span>
+            </button>
+          ))}
+        </nav>
 
-        <div className="flex items-center gap-2 px-3 py-2">
+        <div className="flex items-center gap-2 px-3 pb-2 pt-3">
           <span className="flex-1 text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">{t('shell.workspaces')}</span>
-          <select
-            value={filter}
-            onChange={(event) => setFilter(event.target.value as CommandFilter)}
-            aria-label={t('shell.filterSessions')}
-            className="h-6 rounded border border-border bg-bg px-1 text-[10px] text-text-secondary outline-none focus:border-accent"
+          <button
+            ref={searchButtonRef}
+            type="button"
+            onClick={() => {
+              if (searchOpen) closeSearch()
+              else setSearchOpen(true)
+            }}
+            className={cn(
+              'flex h-6 w-6 items-center justify-center rounded text-text-tertiary transition-colors',
+              'hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+              searchOpen && 'bg-surface-active text-text-primary',
+            )}
+            aria-label={t('shell.search')}
+            aria-expanded={searchOpen}
+            aria-controls="command-center-search"
           >
-            <option value="all">{t('shell.filters.all')}</option>
-            <option value="needs-user">{t('shell.filters.needsUser')}</option>
-            <option value="running">{t('shell.filters.running')}</option>
-            <option value="wip">{t('shell.filters.wip')}</option>
-          </select>
+            <Search className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
           <button
             type="button"
             onClick={onCreateWorkspace}
@@ -213,30 +379,68 @@ export default function AgentCommandCenter({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
-          {unopenedMatches.map((workspace) => (
-            <button
-              key={workspace.id}
-              type="button"
-              onClick={() => void openWorkspace(workspace.id)}
-              aria-label={`Open ${workspace.name}`}
-              className="mb-1 flex w-full items-center gap-2 rounded-md border border-dashed border-border px-2.5 py-2 text-left text-xs text-text-secondary hover:border-accent/50 hover:bg-surface-hover"
-            >
-              <Folder className="h-3.5 w-3.5 text-text-tertiary" aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
-              <span className="text-[9px] uppercase text-text-tertiary">{t('shell.open')}</span>
-            </button>
-          ))}
+        <div
+          id="command-center-search"
+          aria-hidden={!searchOpen}
+          className={cn(
+            'grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none',
+            searchOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0',
+          )}
+        >
+          <div className="min-h-0 overflow-hidden">
+            <div className="px-2 pb-2">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-tertiary" aria-hidden="true" />
+                <input
+                  ref={searchInputRef}
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') closeSearch()
+                  }}
+                  aria-label={t('shell.search')}
+                  placeholder={t('shell.search')}
+                  disabled={!searchOpen}
+                  className="h-8 w-full rounded-md border border-border bg-bg pl-8 pr-8 text-xs text-text-primary outline-none placeholder:text-text-tertiary focus:border-accent focus:ring-1 focus:ring-accent"
+                />
+                <button
+                  type="button"
+                  onClick={closeSearch}
+                  disabled={!searchOpen}
+                  aria-label={t('shell.closeSearch')}
+                  className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
 
-          {openWorkspaces.map((workspace) => {
+        <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
+          {workspaces.map((workspace) => {
             const workspaceSessions = sessions[workspace.id] ?? []
-            const visibleSessions = workspaceSessions.filter((session) => {
-              const queryMatch = !normalizedQuery
+            const matchingSessions = workspaceSessions
+              .filter((session) => !normalizedQuery
                 || getSessionDisplayName(session).toLowerCase().includes(normalizedQuery)
-                || workspace.name.toLowerCase().includes(normalizedQuery)
-              return queryMatch && matchesFilter(session)
-            })
+                || workspace.name.toLowerCase().includes(normalizedQuery))
+              .sort((left, right) => {
+                const leftActivity = lastActivityAt[left.id]
+                  ?? left.lastModified
+                  ?? Date.parse(left.updatedAt)
+                const rightActivity = lastActivityAt[right.id]
+                  ?? right.lastModified
+                  ?? Date.parse(right.updatedAt)
+                return rightActivity - leftActivity
+              })
+            const visibleCount = visibleSessionCounts[workspace.id] ?? 5
+            const visibleSessions = matchingSessions.slice(0, visibleCount)
+            const hasMoreSessions = visibleSessions.length < matchingSessions.length
             const isExpanded = expanded.has(workspace.id)
+            const isWorkspaceActive = activeWorkspaceId === workspace.id
+              && !activeSessionIds[workspace.id]
+            const WorkspaceFolderIcon = isExpanded ? FolderOpen : Folder
             const needsUser = workspaceSessions.filter(
               (session) => (sessionStatus[session.id]?.pendingCount ?? 0) > 0,
             ).length
@@ -251,7 +455,7 @@ export default function AgentCommandCenter({
                 <div
                   className={cn(
                     'group flex h-9 items-center gap-1 rounded-md px-1.5',
-                    activeWorkspaceId === workspace.id ? 'bg-surface-active' : 'hover:bg-surface-hover',
+                    isWorkspaceActive ? 'bg-surface-active' : 'hover:bg-surface-hover',
                   )}
                 >
                   <button
@@ -272,20 +476,27 @@ export default function AgentCommandCenter({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setActiveWorkspace(workspace.id)}
+                    onClick={() => void openWorkspace(workspace.id)}
                     className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs font-medium text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                   >
-                    <Folder className="h-3.5 w-3.5 flex-shrink-0 text-accent" aria-hidden="true" />
+                    <WorkspaceFolderIcon
+                      className="h-3.5 w-3.5 flex-shrink-0 text-accent"
+                      aria-hidden="true"
+                    />
                     <span className="truncate">{workspace.name}</span>
                   </button>
-                  {wecomStatus ? <span className={cn('h-1.5 w-1.5 rounded-full', wecomStatus === 'connected' ? 'bg-success' : 'bg-text-tertiary')} title={`WeCom ${wecomStatus}`} /> : null}
-                  {feishuStatus ? <span className={cn('h-1.5 w-1.5 rounded-full', feishuStatus === 'connected' ? 'bg-success' : 'bg-text-tertiary')} title={`Feishu ${feishuStatus}`} /> : null}
+                  {wecomStatus ? <BotConnectionStatus channel="WeCom" status={wecomStatus} /> : null}
+                  {feishuStatus ? <BotConnectionStatus channel="Feishu" status={feishuStatus} /> : null}
                   {needsUser > 0 ? <span className="rounded bg-warning/15 px-1 text-[9px] font-medium text-warning" title="Needs user">{needsUser}</span> : null}
                   {running > 0 ? <span className="text-[9px] tabular-nums text-accent" title="Running">{running}</span> : null}
                   {unread > 0 ? <span className="text-[9px] tabular-nums text-text-secondary" title="Completed unread">{unread}</span> : null}
                   <button
                     type="button"
-                    onClick={() => void createSession(workspace.id, `New session ${workspaceSessions.length + 1}`)}
+                    onClick={() => {
+                      setExpanded((current) => new Set(current).add(workspace.id))
+                      setCreatingWorkspaceId(workspace.id)
+                      setNewSessionName('')
+                    }}
                     className="flex h-6 w-6 items-center justify-center rounded text-text-tertiary opacity-0 hover:bg-surface-hover hover:text-text-primary group-hover:opacity-100 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-accent"
                     aria-label={`New session in ${workspace.name}`}
                   >
@@ -294,52 +505,171 @@ export default function AgentCommandCenter({
                 </div>
 
                 {isExpanded ? (
-                  <div className="ml-3 border-l border-border/70 pl-1.5">
+                  <div className="ml-3 pl-1.5">
+                    {creatingWorkspaceId === workspace.id ? (
+                      <div className="mb-1 rounded-md border border-border bg-bg p-2">
+                        <input
+                          autoFocus
+                          value={newSessionName}
+                          onChange={(event) => setNewSessionName(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault()
+                              void createWorkspaceSession(workspace.id, workspaceSessions.length + 1)
+                            } else if (event.key === 'Escape') {
+                              setCreatingWorkspaceId(null)
+                              setNewSessionName('')
+                            }
+                          }}
+                          aria-label={tc('sessionNamePlaceholder')}
+                          placeholder={tc('sessionNamePlaceholder')}
+                          className="h-7 w-full rounded border border-border bg-surface px-2 text-[11px] text-text-primary outline-none placeholder:text-text-tertiary focus:border-accent"
+                        />
+                        <div className="mt-1.5 flex justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCreatingWorkspaceId(null)
+                              setNewSessionName('')
+                            }}
+                            className="rounded px-2 py-1 text-[10px] text-text-tertiary hover:bg-surface-hover hover:text-text-primary"
+                          >
+                            {tc('cancel')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void createWorkspaceSession(workspace.id, workspaceSessions.length + 1)}
+                            className="rounded bg-accent px-2 py-1 text-[10px] font-medium text-white hover:bg-accent/90"
+                          >
+                            {tc('create')}
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                     {visibleSessions.map((session) => {
                       const status = sessionStatus[session.id]
                       const activityCount = sessionActivity[session.id]?.backgroundTasks.length ?? 0
                       const isActive = activeWorkspaceId === workspace.id
                         && activeSessionIds[workspace.id] === session.id
                       return (
-                        <button
+                        <div
                           key={session.id}
-                          type="button"
-                          onClick={() => activateSession(workspace.id, session.id)}
+                          onMouseEnter={(event) => startSessionNameScroll(event.currentTarget)}
+                          onMouseLeave={(event) => resetSessionNameScroll(event.currentTarget)}
+                          onFocus={(event) => startSessionNameScroll(event.currentTarget)}
+                          onBlur={(event) => resetSessionNameScroll(event.currentTarget)}
+                          onContextMenu={(event) => {
+                            event.preventDefault()
+                            setContextMenu({
+                              x: event.clientX,
+                              y: event.clientY,
+                              workspaceId: workspace.id,
+                              sessionId: session.id,
+                            })
+                          }}
                           className={cn(
-                            'group/session flex min-h-10 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors',
+                            'group/session relative flex min-h-9 w-full items-center rounded-md transition-colors',
                             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
                             isActive ? 'bg-surface-active' : 'hover:bg-surface-hover',
                           )}
-                          aria-current={isActive ? 'true' : undefined}
                         >
-                          <span className="relative flex h-5 w-5 flex-shrink-0 items-center justify-center">
+                          <button
+                            type="button"
+                            onClick={() => void activateSession(workspace.id, session.id)}
+                            className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                            aria-current={isActive ? 'true' : undefined}
+                          >
+                            <span className="relative flex h-5 w-5 flex-shrink-0 items-center justify-center">
                             {session.source === 'scheduled'
                               ? <Clock3 className="h-3.5 w-3.5 text-text-tertiary" aria-label={t('shell.scheduled')} />
                               : session.source === 'wecom' || session.source === 'feishu'
-                                ? <Bot className="h-3.5 w-3.5 text-text-tertiary" aria-label={t('shell.botSession')} />
+                                ? (
+                                    <img
+                                      src={session.source === 'wecom' ? '/wecom-icon.svg' : '/feishu-icon.svg'}
+                                      alt={session.source === 'wecom' ? 'WeCom' : 'Feishu'}
+                                      className="h-3.5 w-3.5 object-contain"
+                                    />
+                                  )
                                 : <Sparkles className="h-3.5 w-3.5 text-text-tertiary" aria-hidden="true" />}
                             {(isStreaming[session.id] || sessionActivity[session.id]?.active) ? (
                               <span className="absolute bottom-0 right-0 h-1.5 w-1.5 rounded-full bg-accent ring-1 ring-chrome" title="Running" />
                             ) : null}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className={cn('block truncate text-[11px]', isActive ? 'font-medium text-text-primary' : 'text-text-secondary')}>
-                              {getSessionDisplayName(session)}
                             </span>
-                            <span className="mt-0.5 flex items-center gap-1 text-[9px] text-text-tertiary">
+                            <span
+                              data-testid={`session-line-${session.id}`}
+                              className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden text-[9px] text-text-tertiary"
+                            >
+                              <span
+                                data-testid={`session-name-${session.id}`}
+                                data-session-name-viewport=""
+                                title={getSessionDisplayName(session)}
+                                className="min-w-0 flex-1 overflow-hidden"
+                              >
+                                <span
+                                  data-session-name-content=""
+                                  className={cn(
+                                    'block w-max max-w-none whitespace-nowrap text-[11px] transition-transform motion-reduce:transition-none',
+                                    isActive ? 'font-medium text-text-primary' : 'text-text-secondary',
+                                  )}
+                                >
+                                  {getSessionDisplayName(session)}
+                                </span>
+                              </span>
                               {status?.pendingKind ? (
-                                <span className="rounded bg-warning/15 px-1 font-medium text-warning">
+                                <span className="flex-shrink-0 whitespace-nowrap rounded bg-warning/15 px-1 font-medium text-warning">
                                   {status.pendingKind === 'approval' ? t('shell.approval') : t('shell.question')}
                                 </span>
                               ) : null}
-                              {session.isWip ? <span className="rounded bg-purple-500/15 px-1 text-purple-400">WIP</span> : null}
-                              {activityCount > 0 ? <span>{activityCount} active</span> : null}
-                              <span className="ml-auto tabular-nums">{relativeTime(session)}</span>
+                              {session.isDraft ? <span className="flex-shrink-0 whitespace-nowrap rounded bg-surface-active px-1">{tc('draft')}</span> : null}
+                              {session.isWip ? <span className="flex-shrink-0 whitespace-nowrap rounded bg-purple-500/15 px-1 text-purple-400">WIP</span> : null}
+                              {activityCount > 0 ? <span className="flex-shrink-0 whitespace-nowrap">{activityCount} active</span> : null}
+                              <span className="flex-shrink-0 whitespace-nowrap tabular-nums">{relativeTime(session)}</span>
                             </span>
-                          </span>
-                        </button>
+                          </button>
+                          {editingSessionId === session.id ? (
+                            <input
+                              autoFocus
+                              value={editingSessionName}
+                              onChange={(event) => setEditingSessionName(event.target.value)}
+                              onBlur={cancelRename}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                  event.preventDefault()
+                                  void commitRename(workspace.id, session.id)
+                                } else if (event.key === 'Escape') {
+                                  cancelRename()
+                                }
+                              }}
+                              aria-label={tc('renameSession')}
+                              className="absolute inset-y-1 left-8 right-1 z-10 rounded border border-accent bg-bg px-1.5 text-[11px] text-text-primary outline-none"
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startRename(session)}
+                              aria-label={tc('renameSession')}
+                              title={`${tc('renameSession')}: ${getSessionDisplayName(session)}`}
+                              className="mr-1 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-text-tertiary opacity-0 hover:bg-surface-hover hover:text-text-primary group-hover/session:opacity-100 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-accent"
+                            >
+                              <Pencil className="h-3 w-3" aria-hidden="true" />
+                            </button>
+                          )}
+                        </div>
                       )
                     })}
+                    {hasMoreSessions ? (
+                      <button
+                        type="button"
+                        onClick={() => setVisibleSessionCounts((current) => ({
+                          ...current,
+                          [workspace.id]: visibleCount + 5,
+                        }))}
+                        className="flex h-8 w-full items-center justify-start rounded-md px-2 text-[10px] font-medium text-accent hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                        aria-label={t('shell.showMoreSessionsInWorkspace', { workspace: workspace.name })}
+                      >
+                        {t('shell.showMore')}
+                      </button>
+                    ) : null}
                     {visibleSessions.length === 0 ? (
                       <div className="px-2 py-2 text-[10px] text-text-tertiary">{t('shell.noMatchingSessions')}</div>
                     ) : null}
@@ -363,15 +693,133 @@ export default function AgentCommandCenter({
             : <Moon className="h-4 w-4" aria-hidden="true" />}
         </button>
         <button
+          ref={userButtonRef}
           type="button"
-          className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-xs text-text-secondary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          onClick={() => setUserMenuOpen((open) => !open)}
+          className={cn(
+            'flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-xs text-text-secondary',
+            'hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+            userDestinationActive && 'bg-surface-active text-text-primary',
+          )}
           aria-label={t('shell.userAccount')}
+          aria-haspopup="menu"
+          aria-expanded={userMenuOpen}
         >
           <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent/15 text-[9px] font-semibold text-accent">D</span>
           <span className="truncate">{t('shell.developer')}</span>
           <CircleUserRound className="ml-auto h-3.5 w-3.5 text-text-tertiary" aria-hidden="true" />
         </button>
       </footer>
+
+      {userMenuOpen ? (
+        <div
+          ref={userMenuRef}
+          role="menu"
+          aria-label={t('shell.userAccount')}
+          className="absolute bottom-12 left-2 right-2 z-30 overflow-hidden rounded-md border border-border bg-surface py-1 shadow-xl"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            aria-current={activeDestination === 'analytics' ? 'page' : undefined}
+            onClick={() => {
+              setUserMenuOpen(false)
+              onOpenAnalytics()
+            }}
+            className={cn(
+              'flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-text-secondary',
+              'hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:bg-surface-hover',
+              activeDestination === 'analytics' && 'bg-surface-active text-text-primary',
+            )}
+          >
+            <BarChart3 className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('header.analytics')}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            aria-current={activeDestination === 'settings' ? 'page' : undefined}
+            onClick={() => {
+              setUserMenuOpen(false)
+              onOpenSettings()
+            }}
+            className={cn(
+              'flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-text-secondary',
+              'hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:bg-surface-hover',
+              activeDestination === 'settings' && 'bg-surface-active text-text-primary',
+            )}
+          >
+            <Settings className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('header.settings')}
+          </button>
+        </div>
+      ) : null}
+
+      {contextMenu ? (() => {
+        const session = sessions[contextMenu.workspaceId]?.find(
+          (candidate) => candidate.id === contextMenu.sessionId,
+        )
+        if (!session) return null
+        const menuItemClass = 'flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:bg-surface-hover'
+        return (
+          <div
+            role="menu"
+            className="fixed z-50 min-w-44 overflow-hidden rounded-md border border-border bg-surface py-1 shadow-xl"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <button type="button" role="menuitem" className={menuItemClass} onClick={() => startRename(session)}>
+              <Pencil className="h-3.5 w-3.5" aria-hidden="true" />{tc('renameSession')}
+            </button>
+            <button type="button" role="menuitem" className={menuItemClass} onClick={() => {
+              void toggleSessionWip(contextMenu.workspaceId, session.id, !session.isWip)
+              setContextMenu(null)
+            }}>
+              <FlaskConical className="h-3.5 w-3.5" aria-hidden="true" />
+              {session.isWip ? tc('clearWip') : tc('markAsWip')}
+            </button>
+            <button type="button" role="menuitem" className={menuItemClass} onClick={() => {
+              void toggleSessionArchive(contextMenu.workspaceId, session.id, !session.isArchived)
+              setContextMenu(null)
+            }}>
+              {session.isArchived
+                ? <ArchiveRestore className="h-3.5 w-3.5" aria-hidden="true" />
+                : <Archive className="h-3.5 w-3.5" aria-hidden="true" />}
+              {session.isArchived ? tc('unarchive') : tc('archive')}
+            </button>
+            {session.isDraft ? (
+              <button type="button" role="menuitem" className={cn(menuItemClass, 'text-destructive hover:text-destructive')} onClick={() => {
+                setDeleteTarget({ workspaceId: contextMenu.workspaceId, session })
+                setContextMenu(null)
+              }}>
+                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />{tc('deleteSession')}
+              </button>
+            ) : null}
+            <div className="my-1 border-t border-border" />
+            <button type="button" role="menuitem" className={menuItemClass} onClick={() => void copySessionId(session.id)}>
+              <Copy className="h-3.5 w-3.5" aria-hidden="true" />{tc('copySessionId')}
+            </button>
+            <button type="button" role="menuitem" className={menuItemClass} onClick={() => {
+              setContextMenu(null)
+              void forkSession(contextMenu.workspaceId, session.id)
+            }}>
+              <GitBranch className="h-3.5 w-3.5" aria-hidden="true" />{tc('forkSession')}
+            </button>
+          </div>
+        )
+      })() : null}
+
+      <ConfirmDialog
+        isOpen={deleteTarget !== null}
+        title={tc('deleteSessionConfirmTitle')}
+        message={tc('deleteSessionConfirmMessage', {
+          name: deleteTarget ? getSessionDisplayName(deleteTarget.session) : '',
+        })}
+        confirmLabel={tc('deleteSessionConfirm')}
+        cancelLabel={tc('deleteSessionCancel')}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setDeleteTarget(null)}
+      />
 
       <div
         data-testid="command-center-resize-handle"
