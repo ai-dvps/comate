@@ -22,6 +22,9 @@ The set of runtime dependencies vendored alongside the Vendored Steel build prod
 
 ## Browser API automation
 
+### 独立浏览器窗口 (detached browser window)
+内嵌浏览器从聊天右侧面板移出的 OS 级窗口。它固定归属于弹出时的聊天会话，主窗口保留原尺寸占位；关闭窗口只把同一浏览器画面移回原面板，不关闭浏览器会话。
+
 ### 受控激活 (controlled activation)
 内嵌浏览器对无法证明无外部副作用的页面控件执行一次点击或等价激活的流程。它以来源页、文档、元素身份和动作摘要为批准边界；批准后必须重新校验，且一次批准最多派发一次动作。
 
