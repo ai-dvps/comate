@@ -51,8 +51,8 @@ const rightPanelMock = vi.hoisted(() => ({
   openDiff: vi.fn(() => Promise.resolve()),
 }))
 
-vi.mock('../stores/right-panel-store', () => ({
-  useRightPanelStore: { getState: () => ({ openDiff: rightPanelMock.openDiff }) },
+vi.mock('../stores/context-tab-store', () => ({
+  useContextTabStore: { getState: () => ({ openDiff: rightPanelMock.openDiff }) },
 }))
 
 vi.mock('../stores/workspace-store', () => ({

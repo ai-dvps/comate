@@ -21,7 +21,7 @@ import {
 } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useGitChangesStore, useGitChanges, type GitStatusItem } from '../stores/git-changes-store'
-import { useRightPanelStore } from '../stores/right-panel-store'
+import { useContextTabStore } from '../stores/context-tab-store'
 import { cn } from './ui/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { isUntrackedFile, getStatusBadgeClass } from '../lib/git-status-helpers'
@@ -139,7 +139,12 @@ function getVisibleNodePaths(nodes: TreeNode[], expanded: Set<string>): string[]
   return result
 }
 
-export default function GitChangesPanel() {
+interface GitChangesPanelProps {
+  onPreviewDiff?: (file: GitStatusItem, staged: boolean) => void
+  onOpenDiff?: (file: GitStatusItem, staged: boolean) => void
+}
+
+export default function GitChangesPanel({ onPreviewDiff, onOpenDiff }: GitChangesPanelProps = {}) {
   const { t } = useTranslation('common')
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const { setPanelVisible, setActiveWorkspaceId, refresh, setViewMode } =
@@ -209,14 +214,35 @@ export default function GitChangesPanel() {
       // can't be diffed as a single file: reading the path throws EISDIR on the
       // server. Skip it rather than firing a request that 500s silently.
       if (file.path.endsWith('/')) return
-      useRightPanelStore
+      if (onOpenDiff) {
+        onOpenDiff(file, staged)
+        return
+      }
+      useContextTabStore
         .getState()
         .openDiff(activeWorkspaceId, file, staged)
         .catch((err) => {
           console.error('[GitChangesPanel] failed to open diff:', err)
         })
     },
-    [activeWorkspaceId],
+    [activeWorkspaceId, onOpenDiff],
+  )
+
+  const handlePreviewFile = useCallback(
+    (file: GitStatusItem, staged: boolean) => {
+      if (!activeWorkspaceId || file.path.endsWith('/')) return
+      if (onPreviewDiff) {
+        onPreviewDiff(file, staged)
+        return
+      }
+      useContextTabStore
+        .getState()
+        .openDiff(activeWorkspaceId, file, staged, { preview: true })
+        .catch((err) => {
+          console.error('[GitChangesPanel] failed to preview diff:', err)
+        })
+    },
+    [activeWorkspaceId, onPreviewDiff],
   )
 
   const handleSelect = useCallback((path: string) => {
@@ -401,6 +427,7 @@ export default function GitChangesPanel() {
                     highlightedPath={highlightedPath}
                     onToggleExpand={handleToggleExpand}
                     onSelect={handleSelect}
+                    onPreview={handlePreviewFile}
                     onOpen={handleOpenFile}
                   />
                 ))
@@ -416,6 +443,7 @@ export default function GitChangesPanel() {
                       path={file.path}
                       isHighlighted={highlightedPath === file.path}
                       onSelect={() => handleSelect(file.path)}
+                      onPreview={() => handlePreviewFile(file, side.staged)}
                       onOpen={() => handleOpenFile(file, side.staged)}
                     />
                   )),
@@ -446,6 +474,7 @@ export default function GitChangesPanel() {
                     highlightedPath={highlightedPath}
                     onToggleExpand={handleToggleExpand}
                     onSelect={handleSelect}
+                    onPreview={handlePreviewFile}
                     onOpen={handleOpenFile}
                   />
                 ))
@@ -467,6 +496,7 @@ export default function GitChangesPanel() {
                       path={file.path}
                       isHighlighted={highlightedPath === file.path}
                       onSelect={() => handleSelect(file.path)}
+                      onPreview={() => handlePreviewFile(file, false)}
                       onOpen={() => handleOpenFile(file, false)}
                     />
                   ),
@@ -501,6 +531,7 @@ interface FileRowProps {
   showFileIcon?: boolean
   isHighlighted: boolean
   onSelect: () => void
+  onPreview?: () => void
   onOpen: () => void
 }
 
@@ -515,6 +546,7 @@ function FileRow({
   showFileIcon,
   isHighlighted,
   onSelect,
+  onPreview,
   onOpen,
 }: FileRowProps) {
   const { t } = useTranslation('common')
@@ -530,7 +562,10 @@ function FileRow({
         isHighlighted ? 'bg-accent/10 text-text-primary' : 'hover:bg-surface-hover text-text-secondary',
       )}
       style={level !== undefined ? { paddingLeft: `${24 + level * 12}px` } : undefined}
-      onClick={onSelect}
+      onClick={() => {
+        onSelect()
+        onPreview?.()
+      }}
       onDoubleClick={onOpen}
     >
       <span
@@ -568,6 +603,7 @@ interface TreeNodeViewProps {
   highlightedPath: string | null
   onToggleExpand: (path: string) => void
   onSelect: (path: string) => void
+  onPreview: (file: GitStatusItem, staged: boolean) => void
   onOpen: (file: GitStatusItem, staged: boolean) => void
 }
 
@@ -578,6 +614,7 @@ function TreeNodeView({
   highlightedPath,
   onToggleExpand,
   onSelect,
+  onPreview,
   onOpen,
 }: TreeNodeViewProps) {
   const { t } = useTranslation('common')
@@ -653,6 +690,7 @@ function TreeNodeView({
                   highlightedPath={highlightedPath}
                   onToggleExpand={onToggleExpand}
                   onSelect={onSelect}
+                  onPreview={onPreview}
                   onOpen={onOpen}
                 />
               ))
@@ -680,6 +718,7 @@ function TreeNodeView({
           showFileIcon
           isHighlighted={isHighlighted}
           onSelect={() => onSelect(node.path)}
+          onPreview={() => onPreview(file, side.staged)}
           onOpen={() => onOpen(file, side.staged)}
         />
       ))}

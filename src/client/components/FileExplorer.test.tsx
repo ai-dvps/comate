@@ -130,6 +130,23 @@ describe('FileExplorer', () => {
     expect(screen.getByText('README.md').parentElement).toHaveClass('text-text-primary')
   })
 
+  it('previews a file on single click', async () => {
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ nodes: [{ name: 'README.md', type: 'file' }] }),
+      }),
+    ) as unknown as typeof global.fetch
+
+    const onFilePreview = vi.fn()
+    renderWithI18n(
+      <FileExplorer onFilePreview={onFilePreview} onFileClick={vi.fn()} />,
+    )
+    await waitFor(() => expect(screen.getByText('README.md')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('README.md'))
+    expect(onFilePreview).toHaveBeenCalledWith('README.md', 'README.md')
+  })
+
   it('opens a file on double click', async () => {
     global.fetch = vi.fn(() =>
       Promise.resolve({
