@@ -494,6 +494,7 @@ describe('chat-service idle-close', { concurrency: false }, () => {
       ...createMockRuntime(),
       getStatus: () => ({
         pendingCount: 2,
+        pendingKind: 'question' as const,
         isProcessing: true,
         workspaceId: 'ws-1',
         activity: {
@@ -509,6 +510,7 @@ describe('chat-service idle-close', { concurrency: false }, () => {
     assert.deepStrictEqual(service.getSessionsStatus('ws-1'), {
       s1: {
         pendingCount: 2,
+        pendingKind: 'question',
         isProcessing: true,
         activity: {
           phase: 'background',

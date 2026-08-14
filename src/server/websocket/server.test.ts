@@ -76,6 +76,7 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
     chatService.getSessionsStatus = () => ({
       'session-a': {
         pendingCount: 1,
+        pendingKind: 'approval',
         isProcessing: true,
         activity: { phase: 'background', active: true, backgroundTasks: [] },
       },
@@ -93,6 +94,7 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
       assert.deepStrictEqual(payload.statuses, {
         'session-a': {
           pendingCount: 1,
+          pendingKind: 'approval',
           isProcessing: true,
           activity: { phase: 'background', active: true, backgroundTasks: [] },
         },
