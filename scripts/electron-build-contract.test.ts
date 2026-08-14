@@ -80,3 +80,28 @@ test('the Electron development command rebuilds the server sidecar and CLIs befo
     'the sidecar build must execute the staged WeCom CLI before launch',
   );
 });
+
+test('the sidecar build re-signs both final macOS staging binaries with a stable identifier', () => {
+  const sidecarBuildSource = readFileSync('scripts/build-sidecar.ts', 'utf8');
+
+  assert.match(
+    sidecarBuildSource,
+    /execFileSync\(\s*['"]codesign['"],[\s\S]*?['"]--force['"][\s\S]*?['"]--sign['"][\s\S]*?['"]-['"][\s\S]*?['"]--identifier['"][\s\S]*?['"]com\.comate\.app\.sidecar['"]/,
+    'macOS sidecars must receive a fresh ad-hoc signature with an identifier that replaces pkg\'s taskgated-rejected identifier',
+  );
+  assert.match(
+    sidecarBuildSource,
+    /execFileSync\(['"]codesign['"],[\s\S]*?['"]--verify['"][\s\S]*?['"]--strict['"][\s\S]*?binaryPath/,
+    'the sidecar build must fail immediately when macOS rejects the refreshed signature',
+  );
+  assert.match(
+    sidecarBuildSource,
+    /copyFileSync\(sourceBinary, destBinary\);[\s\S]*?signMacBinary\(destBinary\)/,
+    'the development sidecar staging path must be signed after copying',
+  );
+  assert.match(
+    sidecarBuildSource,
+    /copyFileSync\(sourceBinary, stagedBinary\);[\s\S]*?signMacBinary\(stagedBinary\)/,
+    'the electron-builder sidecar staging path must be signed after copying',
+  );
+});

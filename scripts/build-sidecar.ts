@@ -69,6 +69,21 @@ function getBinaryName(triple: string): string {
   return `sidecar-node-${triple}${ext}`;
 }
 
+function signMacBinary(binaryPath: string): void {
+  // pkg's generated identifier can pass `codesign --verify` while macOS 26
+  // taskgated still rejects it at exec time. Supplying our own stable
+  // identifier forces codesign to replace that CodeDirectory instead of
+  // reproducing pkg's rejected one.
+  execFileSync(
+    'codesign',
+    ['--force', '--sign', '-', '--identifier', 'com.comate.app.sidecar', binaryPath],
+    { stdio: 'inherit' },
+  );
+  execFileSync('codesign', ['--verify', '--strict', '--verbose=2', binaryPath], {
+    stdio: 'inherit',
+  });
+}
+
 function buildSidecarTriple(triple: string, bundlePath: string) {
   const target = getPkgTarget(triple);
   const binaryName = getBinaryName(triple);
@@ -83,12 +98,13 @@ function buildSidecarTriple(triple: string, bundlePath: string) {
       `--public-packages "*"`,
   );
 
-  console.log('\n--- Copying binary ---');
   const sourceBinary = join(sidecarDir, `sidecar-node-${triple}${triple.includes('windows') ? '.exe' : ''}`);
+  console.log('\n--- Copying binary ---');
   // Dev resolution (electron/sidecar.ts) uses the triple-named binary.
   const destBinary = join(electronSidecarDir, binaryName);
   mkdirSync(electronSidecarDir, { recursive: true });
   copyFileSync(sourceBinary, destBinary);
+  if (triple.includes('apple-darwin')) signMacBinary(destBinary);
   console.log(`Copied to ${destBinary}`);
 
   // Packaged resolution: also stage a copy named by electron-builder's
@@ -102,6 +118,7 @@ function buildSidecarTriple(triple: string, bundlePath: string) {
   );
   mkdirSync(electronSidecarDir, { recursive: true });
   copyFileSync(sourceBinary, stagedBinary);
+  if (triple.includes('apple-darwin')) signMacBinary(stagedBinary);
   console.log(`Staged for electron-builder at ${stagedBinary}`);
 }
 
