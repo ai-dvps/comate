@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import {
   createDetachedBrowserWindowController,
+  parseDetachedBrowserPlacement,
   type DetachedBrowserPlacement,
   type DetachedBrowserWindowLike,
 } from './detached-browser-window';
@@ -106,6 +107,14 @@ function setup() {
 }
 
 describe('detached browser window controller', () => {
+  it('validates placement identity and bounds display metadata', () => {
+    assert.deepEqual(parseDetachedBrowserPlacement(A), A);
+    assert.equal(parseDetachedBrowserPlacement({ ...A, sessionId: '../escape' }), null);
+    assert.equal(parseDetachedBrowserPlacement({ ...A, workspaceId: '' }), null);
+    assert.equal(parseDetachedBrowserPlacement({ ...A, title: 'x'.repeat(201) }), null);
+    assert.equal(parseDetachedBrowserPlacement(null), null);
+  });
+
   it('creates one top-level window and moves the view only after renderer readiness', async () => {
     const { controller, windows, placements, hostChanges, loads } = setup();
     await controller.detach(A);

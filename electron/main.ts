@@ -35,9 +35,11 @@ import {
 import {
   createBrowserViewManager,
   type BrowserViewManager,
+  type HostWindowLike,
 } from './browser-view-manager';
 import {
   createDetachedBrowserWindowController,
+  parseDetachedBrowserPlacement,
   type DetachedBrowserPlacement,
   type DetachedBrowserWindowController,
   type DetachedBrowserWindowLike,
@@ -373,16 +375,17 @@ function isMainWindowMaximized(): boolean {
   );
 }
 
+function isTrustedUiUrl(url: string): boolean {
+  if (url.startsWith(`${UI_SCHEME}://localhost`)) return true;
+  return !isPackagedRuntime && url.startsWith('http://localhost:5173');
+}
+
 function hardenTrustedUiWindow(win: BrowserWindow): void {
   // These windows expose privileged preload capabilities. Their main frames
   // must stay on the bundled UI origin, and renderer-created windows are
   // denied so a remote document can never inherit the preload.
-  const isAllowedUiUrl = (url: string): boolean => {
-    if (url.startsWith(`${UI_SCHEME}://localhost`)) return true;
-    return !isPackagedRuntime && url.startsWith('http://localhost:5173');
-  };
   win.webContents.on('will-navigate', (event, url) => {
-    if (isAllowedUiUrl(url)) return;
+    if (isTrustedUiUrl(url)) return;
     event.preventDefault();
     if (url.startsWith('http://') || url.startsWith('https://')) {
       void shell.openExternal(url);
@@ -406,8 +409,7 @@ function createDetachedBrowserWindow(): BrowserWindow {
     show: false,
     icon: nativeImage.createFromPath(shellIconPath()),
     webPreferences: {
-      // U3 replaces this with the dedicated least-privilege preload.
-      preload: join(__dirname, '..', 'preload', 'preload.cjs'),
+      preload: join(__dirname, '..', 'preload', 'detached-browser-preload.cjs'),
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
@@ -509,6 +511,14 @@ function createMainWindow(): BrowserWindow {
 // IPC bridge (lib.rs commands; preload exposes getApiInfo/showWindow today,
 // U2 wires the rest of the client bridge)
 // ---------------------------------------------------------------------------
+
+function trustedRendererWindow(event: Electron.IpcMainInvokeEvent): BrowserWindow | null {
+  if (!event.senderFrame || !isTrustedUiUrl(event.senderFrame.url)) return null;
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win || win.isDestroyed()) return null;
+  const detached = (detachedBrowserController?.getWindow() ?? null) as BrowserWindow | null;
+  return win === mainWindow || win === detached ? win : null;
+}
 
 function registerIpcHandlers(): void {
   ipcMain.handle('comate:get-api-info', () => apiInfoLatch.wait());
@@ -628,35 +638,75 @@ function registerIpcHandlers(): void {
   // manager applies them to the native WebContentsView. All inputs are
   // validated main-side; the view manager may not exist yet (control channel
   // still starting) — calls are then no-ops and the next rect report wins.
-  ipcMain.handle('comate:browser-view-report-rect', (_event, sessionId: unknown, rect: unknown) => {
+  ipcMain.handle('comate:browser-view-report-rect', (event, sessionId: unknown, rect: unknown) => {
+    const host = trustedRendererWindow(event);
+    if (!host) return;
     if (typeof sessionId !== 'string' || !SESSION_ID_PATTERN.test(sessionId)) return;
     if (rect === null) {
-      void viewManager?.setViewBounds(sessionId, null);
+      void viewManager?.setViewBoundsFromHost(sessionId, host as never, null);
       return;
     }
     const { x, y, width, height } = (rect ?? {}) as Record<string, unknown>;
     if (![x, y, width, height].every((v) => typeof v === 'number' && Number.isFinite(v))) return;
-    void viewManager?.setViewBounds(sessionId, {
+    void viewManager?.setViewBoundsFromHost(sessionId, host as never, {
       x: Math.round(x as number),
       y: Math.round(y as number),
       width: Math.round(width as number),
       height: Math.round(height as number),
     });
   });
-  ipcMain.handle('comate:browser-view-input-mode', (_event, sessionId: unknown, mode: unknown) => {
+  ipcMain.handle('comate:browser-view-input-mode', (event, sessionId: unknown, mode: unknown) => {
+    const host = trustedRendererWindow(event);
+    if (!host) return;
     if (typeof sessionId !== 'string' || !SESSION_ID_PATTERN.test(sessionId)) return;
     if (mode !== 'user' && mode !== 'agent') return;
+    if (viewManager?.getViewHost(sessionId) !== (host as unknown as HostWindowLike)) return;
     viewManager?.setInputMode(sessionId, mode);
   });
-  ipcMain.handle('comate:browser-view-occluded', (_event, occluded: unknown) => {
-    viewManager?.setOccluded(occluded === true);
+  ipcMain.handle('comate:browser-view-occluded', (event, occluded: unknown) => {
+    const host = trustedRendererWindow(event);
+    if (!host) return;
+    viewManager?.setHostOccluded(host as never, occluded === true);
   });
   // U9: the usage-login modal hosts its capture session's view inside the
   // modal — that one view is exempt from modal occlusion (every other view
   // still hides behind the overlay).
-  ipcMain.handle('comate:browser-view-occlusion-exemption', (_event, sessionId: unknown) => {
+  ipcMain.handle('comate:browser-view-occlusion-exemption', (event, sessionId: unknown) => {
+    if (trustedRendererWindow(event) !== mainWindow) return;
     if (sessionId !== null && (typeof sessionId !== 'string' || !SESSION_ID_PATTERN.test(sessionId))) return;
     viewManager?.setOcclusionExemption(sessionId);
+  });
+
+  ipcMain.handle('comate:detached-browser-get-placement', (event) => {
+    if (!trustedRendererWindow(event)) return null;
+    return detachedBrowserController?.getPlacement() ?? null;
+  });
+  ipcMain.handle('comate:detached-browser-detach', async (event, input: unknown) => {
+    if (trustedRendererWindow(event) !== mainWindow) {
+      throw new Error('detached browser: main renderer required');
+    }
+    const placement = parseDetachedBrowserPlacement(input);
+    if (!placement) throw new Error('detached browser: invalid placement');
+    if (!detachedBrowserController) throw new Error('detached browser: controller unavailable');
+    await detachedBrowserController.detach(placement);
+  });
+  ipcMain.handle('comate:detached-browser-focus', (event) => {
+    if (trustedRendererWindow(event) !== mainWindow) return false;
+    return detachedBrowserController?.focus() ?? false;
+  });
+  ipcMain.handle('comate:detached-browser-restore', (event) => {
+    if (!trustedRendererWindow(event)) return false;
+    return detachedBrowserController?.restore() ?? false;
+  });
+  ipcMain.handle('comate:detached-browser-renderer-ready', (event, sessionId: unknown) => {
+    if (trustedRendererWindow(event) !== detachedBrowserController?.getWindow()) return false;
+    if (typeof sessionId !== 'string' || !SESSION_ID_PATTERN.test(sessionId)) return false;
+    return detachedBrowserController?.rendererReady(sessionId) ?? false;
+  });
+  ipcMain.handle('comate:detached-browser-session-ended', (event, sessionId: unknown) => {
+    if (trustedRendererWindow(event) !== detachedBrowserController?.getWindow()) return false;
+    if (typeof sessionId !== 'string' || !SESSION_ID_PATTERN.test(sessionId)) return false;
+    return detachedBrowserController?.browserSessionEnded(sessionId) ?? false;
   });
 }
 

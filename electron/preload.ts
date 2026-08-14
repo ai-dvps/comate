@@ -28,6 +28,12 @@ export interface BrowserViewRect {
   height: number;
 }
 
+export interface DetachedBrowserPlacement {
+  workspaceId: string;
+  sessionId: string;
+  title: string;
+}
+
 /**
  * Renderer→main notification click relay. The main process re-emits
  * 'comate:notification-action' on the webContents when a notification is
@@ -155,6 +161,31 @@ const api = {
       ipcRenderer.on('comate:browser-view-escape', listener);
       return () => {
         ipcRenderer.removeListener('comate:browser-view-escape', listener);
+      };
+    },
+  },
+
+  detachedBrowser: {
+    detach: (placement: DetachedBrowserPlacement): Promise<void> =>
+      ipcRenderer.invoke('comate:detached-browser-detach', placement),
+    focus: (): Promise<boolean> => ipcRenderer.invoke('comate:detached-browser-focus'),
+    restore: (): Promise<boolean> => ipcRenderer.invoke('comate:detached-browser-restore'),
+    getPlacement: (): Promise<DetachedBrowserPlacement | null> =>
+      ipcRenderer.invoke('comate:detached-browser-get-placement'),
+    rendererReady: (sessionId: string): Promise<boolean> =>
+      ipcRenderer.invoke('comate:detached-browser-renderer-ready', sessionId),
+    sessionEnded: (sessionId: string): Promise<boolean> =>
+      ipcRenderer.invoke('comate:detached-browser-session-ended', sessionId),
+    onPlacementChange: (
+      handler: (placement: DetachedBrowserPlacement | null) => void,
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        placement: DetachedBrowserPlacement | null,
+      ): void => handler(placement);
+      ipcRenderer.on('comate:detached-browser-placement-changed', listener);
+      return () => {
+        ipcRenderer.removeListener('comate:detached-browser-placement-changed', listener);
       };
     },
   },

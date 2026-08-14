@@ -22,6 +22,34 @@ test('the Electron distribution build produces both renderer and shell bundles',
   );
 });
 
+test('the Electron shell builds a dedicated least-privilege detached-browser preload', () => {
+  const viteConfig = readFileSync('electron.vite.config.ts', 'utf8');
+  const detachedPreload = readFileSync('electron/detached-browser-preload.ts', 'utf8');
+
+  assert.match(
+    viteConfig,
+    /['"]detached-browser-preload['"]:\s*resolve\(__dirname, ['"]electron\/detached-browser-preload\.ts['"]\)/,
+    'the detached browser must have its own preload output',
+  );
+
+  for (const forbiddenCapability of [
+    'updater',
+    'fileManager',
+    'showOpenDialog',
+    'notification',
+    'setBadge',
+    'mainWindow',
+    'detachedBrowser: {\n    detach',
+    'detachedBrowser: {\n    focus',
+  ]) {
+    assert.doesNotMatch(
+      detachedPreload,
+      new RegExp(forbiddenCapability),
+      `the detached preload must not expose ${forbiddenCapability}`,
+    );
+  }
+});
+
 test('the Electron development command stops all dev servers when the app quits', () => {
   const packageJson = JSON.parse(readFileSync('package.json', 'utf8')) as PackageJson;
   const devCommand = packageJson.scripts?.['dev:electron'] ?? '';
