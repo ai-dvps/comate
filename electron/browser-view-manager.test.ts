@@ -299,6 +299,39 @@ describe('browser view manager — attach, bounds, occlusion (U8, KTD-14)', () =
     assert.equal(manager.getViewState('s1')?.bounds?.width, 720);
   });
 
+  it('waits for a fresh renderer rect every time ownership changes hosts', async () => {
+    const { manager, host } = setup();
+    const detachedHost = makeFakeHost();
+    await manager.createView({ sessionId: 's1', marker: 'm' });
+    await manager.setViewBounds('s1', RECT);
+
+    manager.setViewHost('s1', detachedHost as unknown as HostWindowLike);
+    await manager.setViewBoundsFromHost(
+      's1',
+      detachedHost as unknown as HostWindowLike,
+      { ...RECT, width: 720 },
+    );
+    assert.equal(manager.getViewState('s1')?.attached, true);
+
+    manager.setViewHost('s1', host as unknown as HostWindowLike);
+    assert.equal(manager.getViewState('s1')?.attached, false);
+    await manager.setViewBoundsFromHost('s1', host as unknown as HostWindowLike, RECT);
+    assert.equal(manager.getViewState('s1')?.attached, true);
+
+    manager.setViewHost('s1', detachedHost as unknown as HostWindowLike);
+    assert.equal(
+      manager.getViewState('s1')?.attached,
+      false,
+      'the previous detached-window rect cannot be reused',
+    );
+    manager.setViewHost('s1', host as unknown as HostWindowLike);
+    assert.equal(
+      manager.getViewState('s1')?.attached,
+      false,
+      'the previous main-window rect cannot be reused while its pane is inactive',
+    );
+  });
+
   it('scopes modal occlusion to the host that reported it', async () => {
     const { manager, views, host } = setup();
     const detachedHost = makeFakeHost();

@@ -84,6 +84,7 @@ export function createDetachedBrowserWindowController(
   let window: DetachedBrowserWindowLike | null = null;
   let placement: DetachedBrowserPlacement | null = null;
   let programmaticClose = false;
+  let initialLoad: Promise<void> | null = null;
 
   const publish = (next: DetachedBrowserPlacement | null): void => {
     placement = next ? { ...next } : null;
@@ -159,18 +160,23 @@ export function createDetachedBrowserWindowController(
         deps.formatTitle?.(next) ?? `Browser — ${next.title}`,
       );
       publish(next);
-      if (!target.created) return;
-
-      try {
-        await deps.loadWindow(target.window);
-      } catch (error) {
-        if (samePlacement(placement, next)) publish(null);
-        if (!target.window.isDestroyed()) {
-          programmaticClose = true;
-          target.window.destroy();
-        }
-        throw error;
+      if (target.created) {
+        const loadingWindow = target.window;
+        const load = deps.loadWindow(loadingWindow).catch((error) => {
+          if (window === loadingWindow) {
+            if (placement) publish(null);
+            if (!loadingWindow.isDestroyed()) {
+              programmaticClose = true;
+              loadingWindow.destroy();
+            }
+          }
+          throw error;
+        }).finally(() => {
+          if (initialLoad === load) initialLoad = null;
+        });
+        initialLoad = load;
       }
+      await initialLoad;
     },
 
     rendererReady(sessionId) {

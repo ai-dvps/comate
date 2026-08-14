@@ -569,7 +569,13 @@ export function createBrowserViewManager(deps: BrowserViewManagerDeps): BrowserV
     },
 
     setViewHost(sessionId, host) {
+      const previousHost = hostFor(sessionId);
       viewHosts.set(sessionId, host);
+      if (host && host !== previousHost) {
+        const rects = hostRects.get(sessionId) ?? new Map<HostWindowLike, ViewRect | null>();
+        rects.set(host, null);
+        hostRects.set(sessionId, rects);
+      }
       applyLayout(sessionId);
     },
 

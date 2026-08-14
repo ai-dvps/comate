@@ -86,7 +86,7 @@ const B: DetachedBrowserPlacement = {
   title: 'Build chat',
 };
 
-function setup() {
+function setup(options: { loadWindow?: (window: DetachedBrowserWindowLike) => Promise<void> } = {}) {
   const main = makeHost();
   const windows: ReturnType<typeof makeWindow>[] = [];
   const placements: Array<DetachedBrowserPlacement | null> = [];
@@ -100,7 +100,10 @@ function setup() {
     },
     mainWindow: () => main,
     setViewHost: (sessionId, host) => hostChanges.push({ sessionId, host }),
-    loadWindow: async (win) => { loads.push(win); },
+    loadWindow: async (win) => {
+      loads.push(win);
+      await options.loadWindow?.(win);
+    },
     publishPlacement: (placement) => placements.push(placement),
   });
   return { controller, main, windows, placements, hostChanges, loads };
@@ -143,6 +146,25 @@ describe('detached browser window controller', () => {
     assert.equal(controller.rendererReady('session-a'), false, 'stale child readiness is ignored');
     assert.equal(controller.rendererReady('session-b'), true);
     assert.deepEqual(hostChanges.at(-1), { sessionId: 'session-b', host: windows[0] });
+  });
+
+  it('fails every overlapping detach when the shared initial window load fails', async () => {
+    let rejectLoad!: (error: Error) => void;
+    const loadPending = new Promise<void>((_resolve, reject) => {
+      rejectLoad = reject;
+    });
+    const { controller, windows, placements } = setup({ loadWindow: () => loadPending });
+
+    const first = controller.detach(A);
+    const second = controller.detach(B);
+    const firstRejected = assert.rejects(first, /load failed/);
+    const secondRejected = assert.rejects(second, /load failed/);
+    rejectLoad(new Error('load failed'));
+
+    await Promise.all([firstRejected, secondRejected]);
+    assert.equal(controller.getPlacement(), null);
+    assert.equal(windows[0]!.calls.includes('destroy'), true);
+    assert.equal(placements.at(-1), null);
   });
 
   it('user-close redocks and hides without changing the active main window', async () => {
