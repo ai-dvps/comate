@@ -65,6 +65,7 @@ import {
   type UpdaterController,
 } from './updater';
 import { resolvePackagedRuntime, shouldEnableUpdater } from './runtime-mode';
+import { isTrustedUiUrl as matchesTrustedUiUrl } from './trusted-ui-url';
 
 // ---------------------------------------------------------------------------
 // Early, pre-ready setup (order matters: these must run before 'ready')
@@ -376,8 +377,10 @@ function isMainWindowMaximized(): boolean {
 }
 
 function isTrustedUiUrl(url: string): boolean {
-  if (url.startsWith(`${UI_SCHEME}://localhost`)) return true;
-  return !isPackagedRuntime && url.startsWith('http://localhost:5173');
+  return matchesTrustedUiUrl(url, {
+    uiScheme: UI_SCHEME,
+    isPackaged: isPackagedRuntime,
+  });
 }
 
 function hardenTrustedUiWindow(win: BrowserWindow): void {
