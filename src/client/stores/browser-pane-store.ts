@@ -4,6 +4,7 @@ import { wsClient } from '../lib/websocket-client.js'
 import { onBrowserViewOcclusionChange } from '../lib/browser-view-bridge'
 import type { ChatState } from './chat-store'
 import type { DetachedBrowserPlacement } from '../lib/desktop-api'
+import { detachedBrowserPlacementsEqual } from '../lib/detached-browser-api'
 
 /**
  * browser-pane-store — client half of the chat-side browser panel: pane
@@ -369,11 +370,7 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
 
     setDetachedPlacement: (placement) => {
       const current = get().detachedPlacement
-      if (
-        current?.workspaceId === placement?.workspaceId
-        && current?.sessionId === placement?.sessionId
-        && current?.title === placement?.title
-      ) return
+      if (detachedBrowserPlacementsEqual(current, placement)) return
       set({ detachedPlacement: placement ? { ...placement } : null })
     },
 

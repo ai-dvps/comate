@@ -8,6 +8,7 @@ import {
   notifyDetachedBrowserSessionEnded,
   onDetachedBrowserPlacementChange,
   restoreDetachedBrowser,
+  watchDetachedBrowserPlacement,
 } from './detached-browser-api'
 
 type MutableWindow = Window & { comate?: Partial<ComateBridge> }
@@ -22,7 +23,7 @@ const detachedBrowser = {
   detach: vi.fn(() => Promise.resolve()),
   focus: vi.fn(() => Promise.resolve(true)),
   restore: vi.fn(() => Promise.resolve(true)),
-  getPlacement: vi.fn(() => Promise.resolve(A)),
+  getPlacement: vi.fn<() => Promise<DetachedBrowserPlacement | null>>(() => Promise.resolve(A)),
   rendererReady: vi.fn(() => Promise.resolve(true)),
   sessionEnded: vi.fn(() => Promise.resolve(true)),
   onPlacementChange: vi.fn<(handler: (placement: DetachedBrowserPlacement | null) => void) => () => void>(),
@@ -70,5 +71,28 @@ describe('detached browser desktop API', () => {
     await expect(focusDetachedBrowserWindow()).resolves.toBe(false)
     await expect(restoreDetachedBrowser()).resolves.toBe(false)
     expect(() => onDetachedBrowserPlacementChange(() => {})).not.toThrow()
+  })
+
+  it('does not let a late snapshot overwrite a newer placement event', async () => {
+    let resolveSnapshot: ((placement: DetachedBrowserPlacement | null) => void) | undefined
+    detachedBrowser.getPlacement.mockReturnValueOnce(new Promise<DetachedBrowserPlacement | null>((resolve) => {
+      resolveSnapshot = resolve
+    }))
+    let listener: ((placement: DetachedBrowserPlacement | null) => void) | undefined
+    const unsubscribe = vi.fn()
+    detachedBrowser.onPlacementChange.mockImplementationOnce((handler) => {
+      listener = handler
+      return unsubscribe
+    })
+    const seen: Array<DetachedBrowserPlacement | null> = []
+    const stop = watchDetachedBrowserPlacement((placement) => seen.push(placement))
+
+    listener?.(null)
+    resolveSnapshot?.(A)
+    await Promise.resolve()
+
+    expect(seen).toEqual([null])
+    stop()
+    expect(unsubscribe).toHaveBeenCalledOnce()
   })
 })

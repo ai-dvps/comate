@@ -32,3 +32,31 @@ export function onDetachedBrowserPlacementChange(
 ): () => void {
   return getDesktopBridge()?.detachedBrowser?.onPlacementChange?.(handler) ?? (() => {})
 }
+
+export function detachedBrowserPlacementsEqual(
+  left: DetachedBrowserPlacement | null,
+  right: DetachedBrowserPlacement | null,
+): boolean {
+  return left?.workspaceId === right?.workspaceId
+    && left?.sessionId === right?.sessionId
+    && left?.title === right?.title
+}
+
+/** Subscribe before reading the snapshot so a concurrent move cannot be overwritten by stale state. */
+export function watchDetachedBrowserPlacement(
+  handler: (placement: DetachedBrowserPlacement | null) => void,
+): () => void {
+  let disposed = false
+  let placementEventReceived = false
+  const unsubscribe = onDetachedBrowserPlacementChange((placement) => {
+    placementEventReceived = true
+    if (!disposed) handler(placement)
+  })
+  void getDetachedBrowserPlacement().then((placement) => {
+    if (!disposed && !placementEventReceived) handler(placement)
+  })
+  return () => {
+    disposed = true
+    unsubscribe()
+  }
+}

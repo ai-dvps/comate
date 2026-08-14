@@ -34,17 +34,26 @@ export interface NativeBrowserViewProps {
   /** False while this surface is kept alive but not on screen (workspace/tab switch). */
   surfaceVisible: boolean
   focusOnMount?: boolean
+  onFocusOnMount?: () => void
 }
 
-export function NativeBrowserView({ sessionId, controlState, surfaceVisible, focusOnMount = false }: NativeBrowserViewProps) {
+export function NativeBrowserView({
+  sessionId,
+  controlState,
+  surfaceVisible,
+  focusOnMount = false,
+  onFocusOnMount,
+}: NativeBrowserViewProps) {
   const { t } = useTranslation('browser')
   const recordActivity = useBrowserPaneStore((s) => s.recordActivity)
   const [announcement, setAnnouncement] = useState('')
   const rootRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
-    if (focusOnMount) rootRef.current?.focus()
-  }, [focusOnMount])
+    if (!focusOnMount) return
+    rootRef.current?.focus()
+    onFocusOnMount?.()
+  }, [focusOnMount, onFocusOnMount])
 
   // KTD-14 input gating: the control state maps 1:1 onto the shell's mode.
   useEffect(() => {

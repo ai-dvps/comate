@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PanelRightClose } from 'lucide-react'
 import BrowserBody from './BrowserBody'
@@ -7,26 +7,17 @@ import { FOCUS_CLASSES } from './focus-classes'
 import { cn } from '../ui/utils'
 import { useTheme } from '../../hooks/use-theme'
 import {
-  getDetachedBrowserPlacement,
+  detachedBrowserPlacementsEqual,
   markDetachedBrowserRendererReady,
   notifyDetachedBrowserSessionEnded,
-  onDetachedBrowserPlacementChange,
   restoreDetachedBrowser,
+  watchDetachedBrowserPlacement,
 } from '../../lib/detached-browser-api'
 import type { DetachedBrowserPlacement } from '../../lib/desktop-api'
 import {
   EMPTY_SESSION_BROWSER_STATE,
   useBrowserPaneStore,
 } from '../../stores/browser-pane-store'
-
-function samePlacement(
-  left: DetachedBrowserPlacement | null,
-  right: DetachedBrowserPlacement | null,
-): boolean {
-  return left?.workspaceId === right?.workspaceId
-    && left?.sessionId === right?.sessionId
-    && left?.title === right?.title
-}
 
 /** Minimal renderer used only by the independent OS browser window. */
 export default function DetachedBrowserWindowApp() {
@@ -39,25 +30,11 @@ export default function DetachedBrowserWindowApp() {
     placement ? state.sessions[placement.sessionId] ?? EMPTY_SESSION_BROWSER_STATE : EMPTY_SESSION_BROWSER_STATE,
   )
 
-  const applyPlacement = useCallback((next: DetachedBrowserPlacement | null) => {
-    setPlacement((current) => samePlacement(current, next) ? current : next)
-  }, [])
-
   useEffect(() => {
-    let disposed = false
-    let placementEventReceived = false
-    const unsubscribe = onDetachedBrowserPlacementChange((next) => {
-      placementEventReceived = true
-      if (!disposed) applyPlacement(next)
+    return watchDetachedBrowserPlacement((next) => {
+      setPlacement((current) => detachedBrowserPlacementsEqual(current, next) ? current : next)
     })
-    void getDetachedBrowserPlacement().then((snapshot) => {
-      if (!disposed && !placementEventReceived) applyPlacement(snapshot)
-    })
-    return () => {
-      disposed = true
-      unsubscribe()
-    }
-  }, [applyPlacement])
+  }, [])
 
   useEffect(() => {
     if (!placement) {

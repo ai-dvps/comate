@@ -81,6 +81,12 @@ vi.mock('../../../lib/detached-browser-api', () => ({
   detachBrowserWindow: detachedBrowserMock.detach,
   focusDetachedBrowserWindow: detachedBrowserMock.focus,
   restoreDetachedBrowser: detachedBrowserMock.restore,
+  detachedBrowserPlacementsEqual: (
+    left: { workspaceId: string; sessionId: string; title: string } | null,
+    right: { workspaceId: string; sessionId: string; title: string } | null,
+  ) => left?.workspaceId === right?.workspaceId
+    && left?.sessionId === right?.sessionId
+    && left?.title === right?.title,
 }))
 
 import BrowserPane from '../BrowserPane'
@@ -273,6 +279,9 @@ describe('BrowserPane', () => {
     fireEvent.click(screen.getByTestId('browser-detached-restore'))
     expect(detachedBrowserMock.focus).toHaveBeenCalledOnce()
     expect(detachedBrowserMock.restore).toHaveBeenCalledOnce()
+
+    setPane({ detachedPlacement: null })
+    expect(document.activeElement).toBe(screen.getByTestId('browser-viewer-native'))
   })
 
   it('does not treat another chat as detached', () => {
@@ -284,6 +293,20 @@ describe('BrowserPane', () => {
     renderPane()
     expect(screen.getByTestId('browser-viewer-native')).toBeInTheDocument()
     expect(screen.queryByTestId('browser-detached-placeholder')).not.toBeInTheDocument()
+  })
+
+  it('does not steal focus when the OS close control redocks the browser', () => {
+    setPane({
+      hasOpened: true,
+      detachedPlacement: { workspaceId: 'ws1', sessionId: 'sess-1', title: 'Research chat' },
+    })
+    setSession({ controlState: 'agent_in_control', port: 4001 })
+    renderPane()
+    screen.getByTestId('browser-detached-focus').focus()
+
+    setPane({ detachedPlacement: null })
+
+    expect(document.activeElement).not.toBe(screen.getByTestId('browser-viewer-native'))
   })
 
   it('sends content-free activity pings on pane interaction while the user drives', () => {
