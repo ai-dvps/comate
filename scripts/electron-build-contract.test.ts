@@ -3,8 +3,28 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 interface PackageJson {
+  engines?: Record<string, string>;
   scripts?: Record<string, string>;
 }
+
+test('the repository and sidecar build share the Node 22 runtime contract', () => {
+  const packageJson = JSON.parse(readFileSync('package.json', 'utf8')) as PackageJson;
+  const nvmVersion = readFileSync('.nvmrc', 'utf8').trim();
+  const sidecarBuildSource = readFileSync('scripts/build-sidecar.ts', 'utf8');
+
+  assert.equal(nvmVersion, '22', '.nvmrc must select the release sidecar Node major');
+  assert.equal(packageJson.engines?.node, '>=22 <23', 'package engines must reject other majors');
+  assert.match(
+    sidecarBuildSource,
+    /assertSupportedSidecarBuildNode\(\);[\s\S]*?if \(existsSync\(sidecarDir\)\)/,
+    'the sidecar build must reject unsupported Node versions before cleaning build output',
+  );
+  assert.doesNotMatch(
+    sidecarBuildSource,
+    /getPkgTarget/,
+    'every packaged sidecar and CLI must use the pinned Node target helper',
+  );
+});
 
 test('the Electron distribution build produces both renderer and shell bundles', () => {
   const packageJson = JSON.parse(readFileSync('package.json', 'utf8')) as PackageJson;

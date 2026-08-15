@@ -5,6 +5,9 @@
   "author": "ai-dvps",
   "type": "module",
   "main": "dist-electron/main/main.cjs",
+  "engines": {
+    "node": ">=22 <23"
+  },
   "workspaces": [
     "packages/*"
   ],
@@ -31,7 +34,7 @@
     "test:electron-cdp:required": "tsx scripts/test-electron-cdp.ts --required",
     "test:browser-acceptance:deterministic": "tsx --test src/server/services/__tests__/browser-task-trace.test.ts src/server/services/browser-mcp-http.test.ts scripts/evaluate-browser-task.test.ts scripts/fixtures/dynamic-publishing-task-fixture.test.ts scripts/browser-production-neutrality.test.ts",
     "test:server": "npm run build:contracts && tsx scripts/test-server.ts",
-    "test:scripts": "tsx --test scripts/electron-build-contract.test.ts scripts/patch-electron-dev-name.test.ts scripts/verify-packaged-renderer.test.ts scripts/build-bridge-manifest.test.ts scripts/test-server.test.ts scripts/lib/process-cleanup.test.ts scripts/evaluate-browser-task.test.ts scripts/fixtures/dynamic-publishing-task-fixture.test.ts scripts/browser-production-neutrality.test.ts",
+    "test:scripts": "tsx --test scripts/electron-build-contract.test.ts scripts/patch-electron-dev-name.test.ts scripts/verify-packaged-renderer.test.ts scripts/build-bridge-manifest.test.ts scripts/test-server.test.ts scripts/lib/process-cleanup.test.ts scripts/lib/sidecar-node-version.test.ts scripts/evaluate-browser-task.test.ts scripts/fixtures/dynamic-publishing-task-fixture.test.ts scripts/browser-production-neutrality.test.ts",
     "test:packages": "npm run build:cli && npm test -w packages/comate-api-contracts -w packages/comate-cli -w packages/wecom-cli",
     "typecheck": "npm run build:contracts && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "check": "npm run lint && npm run typecheck && npm test",

@@ -19,6 +19,10 @@ import {
   assertNoNonAsciiPaths,
 } from '../src/server/utils/native-artifact-audit.js';
 import { parseBundleBackends, resolveHostTriple } from './lib/host-config.js';
+import {
+  assertSupportedSidecarBuildNode,
+  getSidecarPkgTarget,
+} from './lib/sidecar-node-version.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -38,30 +42,6 @@ const electronSidecarDir = join(rootDir, 'build', 'sidecar');
 function run(cmd: string, opts?: { cwd?: string; env?: NodeJS.ProcessEnv }) {
   console.log(`> ${cmd}`);
   execSync(cmd, { stdio: 'inherit', cwd: opts?.cwd || rootDir, env: { ...process.env, ...opts?.env } });
-}
-
-function getNodeMajor(): string {
-  return process.version.split('.')[0].replace('v', '');
-}
-
-function getPkgTarget(triple: string): string {
-  const nodeMajor = getNodeMajor();
-  if (triple.includes('aarch64-apple-darwin')) {
-    return `node${nodeMajor}-darwin-arm64`;
-  }
-  if (triple.includes('x86_64-apple-darwin')) {
-    return `node${nodeMajor}-darwin-x64`;
-  }
-  if (triple.includes('x86_64-pc-windows-msvc')) {
-    return `node${nodeMajor}-win-x64`;
-  }
-  if (triple.includes('x86_64-unknown-linux-gnu')) {
-    return `node${nodeMajor}-linux-x64`;
-  }
-  if (triple.includes('aarch64-unknown-linux-gnu')) {
-    return `node${nodeMajor}-linux-arm64`;
-  }
-  throw new Error(`Unsupported target triple: ${triple}`);
 }
 
 function getBinaryName(triple: string): string {
@@ -85,7 +65,7 @@ function signMacBinary(binaryPath: string): void {
 }
 
 function buildSidecarTriple(triple: string, bundlePath: string) {
-  const target = getPkgTarget(triple);
+  const target = getSidecarPkgTarget(triple);
   const binaryName = getBinaryName(triple);
 
   console.log(`\n--- Packaging with pkg for ${triple} ---`);
@@ -123,6 +103,11 @@ function buildSidecarTriple(triple: string, bundlePath: string) {
 }
 
 async function build() {
+  // The pkg runtime and better-sqlite3 ABI must share one supported Node major.
+  // Fail before cleaning or producing build output when the local toolchain
+  // differs from the Node 22 runtime used by release CI.
+  assertSupportedSidecarBuildNode();
+
   // 1. Clean and prepare directories
   if (existsSync(sidecarDir)) {
     rmSync(sidecarDir, { recursive: true });
@@ -324,7 +309,7 @@ async function build() {
     const commandDir = join(wecomCliDir, triple);
     mkdirSync(commandDir, { recursive: true });
     const command = join(commandDir, triple.includes('windows') ? 'wecom.exe' : 'wecom');
-    run(`npx pkg ${wecomBundle} --targets ${getPkgTarget(triple)} --output ${command} --no-bytecode --public`);
+    run(`npx pkg ${wecomBundle} --targets ${getSidecarPkgTarget(triple)} --output ${command} --no-bytecode --public`);
     if (!isFile(command)) throw new Error(`native WeCom CLI missing after pkg (${command})`);
   }
   const wecomCommand = join(wecomCliDir, hostTriple, platform === 'win32' ? 'wecom.exe' : 'wecom');
@@ -356,7 +341,7 @@ async function build() {
     const commandDir = join(comateCliDir, triple);
     mkdirSync(commandDir, { recursive: true });
     const command = join(commandDir, triple.includes('windows') ? 'comate.exe' : 'comate');
-    run(`npx pkg ${comateBundle} --targets ${getPkgTarget(triple)} --output ${command} --no-bytecode --public`);
+    run(`npx pkg ${comateBundle} --targets ${getSidecarPkgTarget(triple)} --output ${command} --no-bytecode --public`);
     if (!isFile(command)) throw new Error(`native Comate CLI missing after pkg (${command})`);
   }
   const comateCommand = join(
@@ -433,9 +418,9 @@ async function build() {
   copyFileSync(nativeModuleSource, nativeModuleDest);
   console.log(`Copied to ${nativeModuleDest}`);
 
-  // ABI guard (KTD-1, U3): the pkg sidecar targets `node${getNodeMajor()}` —
-  // derived from this same process — so the staged .node must load under the
-  // current Node. node_modules can silently hold a foreign-ABI prebuild (an
+  // ABI guard (KTD-1, U3): the pkg sidecar and this build process are both
+  // pinned to Node 22, so the staged .node must load under the current Node.
+  // node_modules can silently hold a foreign-ABI prebuild (an
   // npm install under a different Node major, or an Electron-ABI rebuild
   // flow); without this probe the defect only surfaces in the packaged app as
   // ERR_DLOPEN_FAILED at the first database open.
