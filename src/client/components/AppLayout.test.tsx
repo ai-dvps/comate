@@ -307,6 +307,24 @@ describe('App layout', () => {
     })
   })
 
+  it('keeps the active session mounted but hidden while New Chat is open', async () => {
+    mockWorkspaceStore.workspaces = [{ id: 'ws-1', name: 'Comate', folderPath: '/comate' }]
+    mockWorkspaceStore.activeWorkspaceId = 'ws-1'
+    mockWorkspaceStore.openWorkspaceIds = ['ws-1']
+
+    renderWithI18n(<App />)
+    const chatPanel = await screen.findByTestId('chat-panel')
+    const sessionWorkspace = chatPanel.parentElement
+
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+
+    expect(screen.getByTestId('new-chat-page')).toBeInTheDocument()
+    expect(chatPanel).toBeInTheDocument()
+    expect(sessionWorkspace).toHaveClass('invisible', 'pointer-events-none')
+    expect(sessionWorkspace).toHaveAttribute('aria-hidden', 'true')
+    expect(sessionWorkspace).toHaveAttribute('inert')
+  })
+
   it('creates a session when submitting directly from the default New Chat screen', async () => {
     mockWorkspaceStore.workspaces = [{ id: 'ws-1', name: 'Comate', folderPath: '/comate' }]
     mockWorkspaceStore.openWorkspace.mockImplementation(() => {
