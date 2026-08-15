@@ -2191,6 +2191,8 @@ export class SqliteStore {
     source?: 'gui' | 'wecom' | 'feishu' | 'scheduled',
     customTitle?: string,
     botId?: string,
+    backend?: string,
+    fastMode = false,
   ): ChatSession {
     const now = new Date().toISOString();
     const mode = approvalMode ?? 'manual';
@@ -2201,16 +2203,18 @@ export class SqliteStore {
       isDraft: true,
       source,
       approvalMode: mode as ChatSession['approvalMode'],
-      fastMode: false,
+      providerId,
+      backend,
+      fastMode,
       botId,
       createdAt: now,
       updatedAt: now,
       customTitle,
     };
     this.db.prepare(`
-      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, fast_mode, provider_id, bot_id, created_at, updated_at, custom_title)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(session.id, session.workspaceId, session.name, 1, 0, 0, source ?? null, mode, 0, providerId ?? null, botId ?? null, session.createdAt, session.updatedAt, customTitle ?? null);
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, fast_mode, provider_id, bot_id, created_at, updated_at, custom_title, backend)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(session.id, session.workspaceId, session.name, 1, 0, 0, source ?? null, mode, fastMode ? 1 : 0, providerId ?? null, botId ?? null, session.createdAt, session.updatedAt, customTitle ?? null, backend ?? null);
     return session;
   }
 

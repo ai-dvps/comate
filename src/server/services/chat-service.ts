@@ -677,6 +677,8 @@ export class ChatService {
       input.source,
       input.customTitle,
       input.botId,
+      input.backend,
+      input.fastMode,
     );
   }
 

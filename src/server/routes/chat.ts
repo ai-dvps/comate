@@ -45,7 +45,7 @@ router.get('/sessions', async (req, res) => {
 router.post('/sessions', async (req, res) => {
   try {
     const workspaceId = (req.params as { id: string }).id;
-    const { name, prompt, approvalMode, providerId } = req.body;
+    const { name, prompt, approvalMode, providerId, backend, fastMode } = req.body;
 
     const hasName = typeof name === 'string' && name.trim() !== '';
     const hasPrompt = typeof prompt === 'string' && prompt.trim() !== '';
@@ -58,12 +58,22 @@ router.post('/sessions', async (req, res) => {
       res.status(400).json({ error: 'approvalMode must be one of: auto, readonly, manual' });
       return;
     }
+    if (backend !== undefined && !['claude', 'opencode'].includes(backend)) {
+      res.status(400).json({ error: 'backend must be one of: claude, opencode' });
+      return;
+    }
+    if (fastMode !== undefined && typeof fastMode !== 'boolean') {
+      res.status(400).json({ error: 'fastMode must be a boolean' });
+      return;
+    }
 
     const session = await chatService.createSession({
       workspaceId,
       name: hasName ? name.trim() : deriveFallbackSessionTitle(prompt as string),
       approvalMode,
       providerId,
+      backend,
+      fastMode,
       source: 'gui',
     });
     res.status(201).json(session);

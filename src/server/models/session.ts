@@ -36,6 +36,8 @@ export interface CreateSessionInput {
   name: string;
   approvalMode?: ApprovalMode;
   providerId?: string;
+  backend?: string;
+  fastMode?: boolean;
   source?: 'gui' | 'wecom' | 'feishu' | 'scheduled';
   customTitle?: string;
   /** Bot that created this session, if any. */

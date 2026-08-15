@@ -309,6 +309,8 @@ export interface CreateSessionOptions {
   name?: string
   approvalMode?: ApprovalMode
   providerId?: string
+  backend?: string
+  fastMode?: boolean
   initialPrompt?: string
   signal?: AbortSignal
 }
@@ -2732,6 +2734,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (options.initialPrompt?.trim()) body.prompt = options.initialPrompt.trim()
       if (options.approvalMode) body.approvalMode = options.approvalMode
       if (options.providerId) body.providerId = options.providerId
+      if (options.backend) body.backend = options.backend
+      if (options.fastMode !== undefined) body.fastMode = options.fastMode
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

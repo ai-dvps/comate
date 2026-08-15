@@ -102,8 +102,16 @@ vi.mock('../stores/chat-store', () => ({
   useChatStore: chatStoreMock.useChatStore,
 }))
 
+const workspaceAwareControlsMock = vi.hoisted(() => ({
+  commandWorkspaceIds: [] as string[],
+  fileWorkspaceIds: [] as string[],
+  providerWorkspaceIds: [] as string[],
+}))
+
 vi.mock('../stores/commands-store', () => ({
-  useCommands: () => ({
+  useCommands: (workspaceId: string) => {
+    workspaceAwareControlsMock.commandWorkspaceIds.push(workspaceId)
+    return {
     commands: [
       { name: 'commit', description: 'Commit changes', argumentHint: '<message>' },
       { name: 'compact', description: 'Compact session' },
@@ -115,7 +123,8 @@ vi.mock('../stores/commands-store', () => ({
     partialReason: undefined,
     fetch: vi.fn(),
     refresh: vi.fn(),
-  }),
+    }
+  },
 }))
 
 const filesMock = vi.hoisted(() => ({
@@ -128,7 +137,10 @@ const filesMock = vi.hoisted(() => ({
 }))
 
 vi.mock('../stores/files-store', () => ({
-  useFiles: () => filesMock,
+  useFiles: (workspaceId: string) => {
+    workspaceAwareControlsMock.fileWorkspaceIds.push(workspaceId)
+    return filesMock
+  },
 }))
 
 const appSettingsMock = vi.hoisted(() => ({
@@ -144,13 +156,18 @@ vi.mock('../hooks/use-app-settings', () => ({
 }))
 
 vi.mock('./ProviderSelector', () => ({
-  default: ({ disabled }: { disabled?: boolean; hideNameBelowSm?: boolean }) => (
-    <div
-      data-testid="provider-selector"
-      data-disabled={disabled ? 'true' : 'false'}
-      style={toolbarControlMock.forceWideControls ? { minWidth: '160px' } : undefined}
-    />
-  ),
+  default: ({ workspaceId, disabled, mode }: { workspaceId: string; disabled?: boolean; hideNameBelowSm?: boolean; mode?: string }) => {
+    workspaceAwareControlsMock.providerWorkspaceIds.push(workspaceId)
+    return (
+      <div
+        data-testid="provider-selector"
+        data-disabled={disabled ? 'true' : 'false'}
+        data-mode={mode ?? 'session'}
+        data-workspace-id={workspaceId}
+        style={toolbarControlMock.forceWideControls ? { minWidth: '160px' } : undefined}
+      />
+    )
+  },
 }))
 
 vi.mock('./ApprovalModeToggle', () => ({
@@ -184,6 +201,9 @@ describe('PromptInput browser', () => {
     chatStoreMock.getState().sessionActivity = {}
     filesMock.results = []
     filesMock.truncated = false
+    workspaceAwareControlsMock.commandWorkspaceIds = []
+    workspaceAwareControlsMock.fileWorkspaceIds = []
+    workspaceAwareControlsMock.providerWorkspaceIds = []
     appSettingsMock.useModifierToSubmit = false
     toolbarControlMock.forceWideControls = false
     if (!Element.prototype.scrollIntoView) {
@@ -335,6 +355,167 @@ describe('PromptInput browser', () => {
     expect(card).toContainElement(historyButton)
     expect(card).toContainElement(sendButton)
     expect(skillsButton.compareDocumentPosition(sendButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('uses the same composer for New Chat with workspace-aware controls and preserves its draft after send', async () => {
+    const onSend = vi.fn()
+    renderWithI18n(
+      <PromptInput
+        workspaceId={DEFAULT_PROPS.workspaceId}
+        mode="new-chat"
+        backendId={null}
+        onBackendChange={vi.fn()}
+        providerId={null}
+        onProviderChange={vi.fn()}
+        fastMode={false}
+        onFastModeChange={vi.fn()}
+        approvalMode="manual"
+        onApprovalModeChange={vi.fn()}
+        onSend={onSend}
+      />,
+    )
+
+    await editableLocator().fill('Start from this prompt')
+    await page.getByTitle('Send').click()
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('Start from this prompt'))
+    expect(editableElement().textContent).toBe('Start from this prompt')
+    expect(screen.getByRole('button', { name: /Skills/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /Files/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /History/i })).toBeDisabled()
+    expect(screen.getByTestId('provider-selector')).toHaveAttribute('data-mode', 'new-chat')
+    expect(screen.getByTitle('Agent')).toBeInTheDocument()
+    expect(screen.getByTestId('fast-mode-toggle')).toBeInTheDocument()
+    expect(screen.getByTestId('approval-mode-toggle')).toBeInTheDocument()
+    expect(inputCardElement()).not.toHaveClass('border', 'shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)]')
+  })
+
+  it('clears only the private New Chat draft when its composer unmounts', async () => {
+    const newChat = renderWithI18n(
+      <PromptInput
+        workspaceId="ws-1"
+        mode="new-chat"
+        backendId={null}
+        onBackendChange={vi.fn()}
+        providerId={null}
+        onProviderChange={vi.fn()}
+        fastMode={false}
+        onFastModeChange={vi.fn()}
+        approvalMode="manual"
+        onApprovalModeChange={vi.fn()}
+        onSend={vi.fn()}
+      />,
+    )
+
+    await editableLocator().fill('Temporary new chat draft')
+    expect(Object.values(chatStoreMock.getState().drafts)).toContain('Temporary new chat draft')
+    newChat.unmount()
+    expect(Object.values(chatStoreMock.getState().drafts)).not.toContain('Temporary new chat draft')
+
+    chatStoreMock.getState().drafts[DEFAULT_PROPS.sessionId] = 'Existing session draft'
+    const session = renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    expect(inputCardElement()).toHaveClass('border', 'shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)]')
+    session.unmount()
+    expect(chatStoreMock.getState().drafts[DEFAULT_PROPS.sessionId]).toBe('Existing session draft')
+  })
+
+  it('rebinds Skills, Files, and Provider controls when the New Chat workspace changes', async () => {
+    function WorkspaceHarness() {
+      const [workspaceId, setWorkspaceId] = React.useState('ws-1')
+      return (
+        <>
+          <button type="button" onClick={() => setWorkspaceId('ws-2')}>Switch workspace</button>
+          <PromptInput
+            workspaceId={workspaceId}
+            mode="new-chat"
+            backendId={null}
+            onBackendChange={vi.fn()}
+            providerId={null}
+            onProviderChange={vi.fn()}
+            fastMode={false}
+            onFastModeChange={vi.fn()}
+            approvalMode="manual"
+            onApprovalModeChange={vi.fn()}
+            onSend={vi.fn()}
+          />
+        </>
+      )
+    }
+
+    renderWithI18n(<WorkspaceHarness />)
+
+    expect(workspaceAwareControlsMock.commandWorkspaceIds.at(-1)).toBe('ws-1')
+    expect(workspaceAwareControlsMock.fileWorkspaceIds.at(-1)).toBe('ws-1')
+    expect(workspaceAwareControlsMock.providerWorkspaceIds.at(-1)).toBe('ws-1')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Switch workspace' }))
+
+    await waitFor(() => {
+      expect(workspaceAwareControlsMock.commandWorkspaceIds.at(-1)).toBe('ws-2')
+      expect(workspaceAwareControlsMock.fileWorkspaceIds.at(-1)).toBe('ws-2')
+      expect(workspaceAwareControlsMock.providerWorkspaceIds.at(-1)).toBe('ws-2')
+    })
+    expect(screen.getByTestId('provider-selector')).toHaveAttribute('data-workspace-id', 'ws-2')
+  })
+
+  it('uses the shared toolbar breakpoints in New Chat at compact composer widths', async () => {
+    appSettingsMock.useModifierToSubmit = true
+    renderWithI18n(
+      <div style={{ width: '469px' }}>
+        <PromptInput
+          workspaceId="ws-1"
+          mode="new-chat"
+          backendId={null}
+          onBackendChange={vi.fn()}
+          providerId={null}
+          onProviderChange={vi.fn()}
+          fastMode={false}
+          onFastModeChange={vi.fn()}
+          approvalMode="manual"
+          onApprovalModeChange={vi.fn()}
+          onSend={vi.fn()}
+        />
+      </div>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Skills/i })).toHaveClass('hidden')
+      expect(screen.getByRole('button', { name: /Files/i })).toHaveClass('hidden')
+      expect(screen.getByTestId('provider-selector')).toBeInTheDocument()
+      expect(screen.getByTitle('Agent')).toBeInTheDocument()
+      expect(screen.getByTestId('fast-mode-toggle')).toBeInTheDocument()
+      expect(screen.getByTestId('approval-mode-toggle')).toBeInTheDocument()
+      expect(screen.getByTitle('Send')).toBeInTheDocument()
+      expect(screen.queryByText(/(Cmd|Ctrl)\+Enter/)).not.toBeInTheDocument()
+    })
+  })
+
+  it('hides the submit shortcut before New Chat toolbar controls can overlap', async () => {
+    appSettingsMock.useModifierToSubmit = true
+    renderWithI18n(
+      <div style={{ width: '698px' }}>
+        <PromptInput
+          workspaceId="ws-1"
+          mode="new-chat"
+          backendId={null}
+          onBackendChange={vi.fn()}
+          providerId={null}
+          onProviderChange={vi.fn()}
+          fastMode={false}
+          onFastModeChange={vi.fn()}
+          approvalMode="manual"
+          onApprovalModeChange={vi.fn()}
+          onSend={vi.fn()}
+        />
+      </div>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Skills/i })).not.toHaveClass('hidden')
+      expect(screen.getByRole('button', { name: /Files/i })).not.toHaveClass('hidden')
+      expect(screen.getByTestId('provider-selector')).toBeInTheDocument()
+      expect(screen.queryByText(/(Cmd|Ctrl)\+Enter/)).not.toBeInTheDocument()
+    })
   })
 
   it('shows placeholder when empty and hides it on focus', async () => {

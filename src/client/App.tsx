@@ -6,7 +6,6 @@ import { useSidebarWidth } from './hooks/use-sidebar-width'
 import { useRightPanelWidth } from './hooks/use-right-panel-width'
 import { deriveResponsiveShell, useViewportWidth } from './hooks/use-responsive-shell'
 import { useSidebarKeyboardShortcut } from './hooks/use-sidebar-keyboard-shortcut'
-import WorkspaceEmptyState from './components/WorkspaceEmptyState'
 import ChatPanel from './components/ChatPanel'
 import ManagementWorkspace, { type ManagementDestination } from './components/ManagementWorkspace'
 import { initNotificationClickHandler } from './lib/notifications'
@@ -20,7 +19,8 @@ import CreateWorkspaceModal from './components/CreateWorkspaceModal'
 import ToastContainer from './components/ToastContainer'
 import { useWorkspaceStore } from './stores/workspace-store'
 import { useProviderStore } from './stores/provider-store'
-import { useChatStore } from './stores/chat-store'
+import { useChatStore, type ApprovalMode } from './stores/chat-store'
+import type { BackendId } from './stores/backend-store'
 import { useContextTabStore } from './stores/context-tab-store'
 import { selectSessionOpen, useBrowserPaneStore } from './stores/browser-pane-store'
 import { useTheme } from './hooks/use-theme'
@@ -71,6 +71,7 @@ function App() {
     ? activeDestination
     : null
   const newChatOpen = activeDestination === 'new-chat'
+  const newChatVisible = newChatOpen || (!activeWorkspace && activePanel === null)
   const [settingsCloseRequestToken, setSettingsCloseRequestToken] = useState(0)
   const requestDestination = useCallback((destination: AppDestination) => {
     if (activeDestination === 'settings' && destination !== 'settings') {
@@ -278,12 +279,6 @@ function App() {
     if (isRightPanelCollapsed) toggleRightPanelCollapse()
   }, [isRightEffectivelyCollapsed, isRightPanelCollapsed, toggleRightPanelCollapse])
 
-  const ensureLeftExpanded = useCallback(() => {
-    if (!isLeftEffectivelyCollapsed) return
-    setForceLeftExpanded(true)
-    if (isSidebarCollapsed) toggleSidebarCollapse()
-  }, [isLeftEffectivelyCollapsed, isSidebarCollapsed, toggleSidebarCollapse])
-
   useSidebarKeyboardShortcut(handleToggleLeft)
 
   const handleFileClick = useCallback(async (path: string, name: string) => {
@@ -335,7 +330,16 @@ function App() {
     }
   }, [activeWorkspaceId, activeWorkspaceSessionId])
 
-  const handleStartNewChat = useCallback(async (workspaceId: string, prompt: string) => {
+  const handleStartNewChat = useCallback(async (
+    workspaceId: string,
+    prompt: string,
+    options: {
+      backend?: BackendId
+      providerId?: string
+      fastMode: boolean
+      approvalMode: ApprovalMode
+    },
+  ) => {
     if (newChatSubmitting) return
     const generation = newChatRequestGenerationRef.current + 1
     newChatRequestGenerationRef.current = generation
@@ -345,9 +349,17 @@ function App() {
     setNewChatError(null)
     setNewChatSubmitting(true)
     try {
+      // Keep the implicit default New Chat surface mounted while activating the
+      // selected workspace. Otherwise activation makes newChatVisible false and
+      // the cleanup effect aborts this request before the session is created.
+      setActiveDestination('new-chat')
       void openWorkspace(workspaceId)
       const result = await createSession(workspaceId, {
         initialPrompt: prompt,
+        backend: options.backend,
+        providerId: options.providerId,
+        fastMode: options.fastMode,
+        approvalMode: options.approvalMode,
         signal: abortController.signal,
       })
       if (
@@ -369,13 +381,13 @@ function App() {
   }, [createSession, newChatSubmitting, openWorkspace, sendMessage])
 
   useEffect(() => {
-    if (newChatOpen) return
+    if (newChatVisible) return
     newChatRequestGenerationRef.current += 1
     newChatAbortControllerRef.current?.abort()
     newChatAbortControllerRef.current = null
     setNewChatSubmitting(false)
     setNewChatError(null)
-  }, [newChatOpen])
+  }, [newChatVisible])
 
   const destinationTitles: Record<Exclude<AppDestination, null>, string> = {
     'new-chat': t('newChat.title'),
@@ -384,7 +396,11 @@ function App() {
     todos: t('header.todos'),
     capabilities: t('shell.capabilities'),
   }
-  const managementTitle = activeDestination ? destinationTitles[activeDestination] : undefined
+  const managementTitle = activeDestination
+    ? destinationTitles[activeDestination]
+    : newChatVisible
+      ? destinationTitles['new-chat']
+      : undefined
   const activeBrowserOpen = useBrowserPaneStore((state) =>
     selectSessionOpen(state, activeWorkspaceSessionId),
   )
@@ -470,7 +486,7 @@ function App() {
           rightWidth={effectiveRightPanelWidth}
           leftCollapsed={isLeftEffectivelyCollapsed}
           rightCollapsed={isRightEffectivelyCollapsed}
-          contextAvailable={activeWorkspaceId !== null && !newChatOpen}
+          contextAvailable={activeWorkspaceId !== null && !newChatVisible}
           workspaceName={activeWorkspace?.name}
           sessionName={activeSession?.name}
           managementTitle={managementTitle}
@@ -602,7 +618,7 @@ function App() {
             onOpenSettings={() => openPanel('settings')}
             onOpenCapabilities={() => openPanel('capabilities')}
             onActivateWork={() => requestDestination(null)}
-            activeDestination={activeDestination ?? 'work'}
+            activeDestination={newChatVisible ? 'new-chat' : activeDestination ?? 'work'}
           />
         </div>
 
@@ -610,10 +626,10 @@ function App() {
           <div
             className={cn(
               'absolute inset-0 flex',
-              (activePanel || newChatOpen) && 'invisible pointer-events-none',
+              (activePanel || newChatVisible) && 'invisible pointer-events-none',
             )}
-            aria-hidden={activePanel || newChatOpen ? true : undefined}
-            {...(activePanel || newChatOpen ? { inert: '' } : {})}
+            aria-hidden={activePanel || newChatVisible ? true : undefined}
+            {...(activePanel || newChatVisible ? { inert: '' } : {})}
           >
             {/* Keep all open workspace panels mounted across management navigation. */}
             <main className="flex-1 flex flex-col overflow-hidden relative">
@@ -635,22 +651,13 @@ function App() {
                     />
                   </div>
                 ))
-              ) : (
-                <WorkspaceEmptyState
-                  workspaces={workspaces}
-                  onCreateWorkspace={() => setShowCreateModal(true)}
-                  onSelectWorkspace={(id) => openWorkspace(id)}
-                  onBrowseWorkspaces={() => {
-                    ensureLeftExpanded()
-                  }}
-                />
-              )}
+              ) : null}
             </main>
 
             {activeWorkspaceId && (
               <ContextWorkspace
                 width={rightPanelExpandedWidth}
-                isCollapsed={isRightEffectivelyCollapsed || activePanel !== null || newChatOpen}
+                isCollapsed={isRightEffectivelyCollapsed || activePanel !== null || newChatVisible}
                 onWidthChange={setRightPanelWidth}
                 workspaceId={activeWorkspaceId}
                 workspacePath={activeWorkspace?.folderPath}
@@ -658,12 +665,13 @@ function App() {
             )}
           </div>
 
-          {newChatOpen ? (
+          {newChatVisible ? (
             <div className="absolute inset-0 flex">
               <NewChatPage
                 workspaces={workspaces}
                 defaultWorkspaceId={lastSessionWorkspaceIdRef.current}
                 selectedWorkspaceId={newChatWorkspaceId}
+                onWorkspaceChange={setNewChatWorkspaceId}
                 onCreateWorkspace={() => setShowCreateModal(true)}
                 onSubmit={handleStartNewChat}
                 isSubmitting={newChatSubmitting}
@@ -692,7 +700,7 @@ function App() {
         <CreateWorkspaceModal
           onClose={() => setShowCreateModal(false)}
           onCreated={(workspace) => {
-            if (newChatOpen) setNewChatWorkspaceId(workspace.id)
+            if (newChatVisible) setNewChatWorkspaceId(workspace.id)
           }}
         />
       )}

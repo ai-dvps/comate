@@ -5,17 +5,33 @@ import { useChatStore } from '../stores/chat-store'
 import { useProviderStore } from '../stores/provider-store'
 import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
 
-interface FastModeToggleProps {
+interface FastModeToggleCommonProps {
   workspaceId: string
-  sessionId: string
   disabled?: boolean
 }
 
-export default function FastModeToggle({ workspaceId, sessionId, disabled = false }: FastModeToggleProps) {
+interface SessionFastModeToggleProps extends FastModeToggleCommonProps {
+  mode?: 'session'
+  sessionId: string
+}
+
+interface NewChatFastModeToggleProps extends FastModeToggleCommonProps {
+  mode: 'new-chat'
+  providerId: string | null
+  fastMode: boolean
+  onFastModeChange: (fastMode: boolean) => void
+}
+
+type FastModeToggleProps = SessionFastModeToggleProps | NewChatFastModeToggleProps
+
+export default function FastModeToggle(props: FastModeToggleProps) {
+  const { workspaceId, disabled = false } = props
+  const isNewChat = props.mode === 'new-chat'
+  const sessionId = isNewChat ? null : props.sessionId
   const { t } = useTranslation('chat')
 
   const session = useChatStore((s) =>
-    s.sessions[workspaceId]?.find((ses) => ses.id === sessionId),
+    sessionId ? s.sessions[workspaceId]?.find((ses) => ses.id === sessionId) : undefined,
   )
   const setSessionFastMode = useChatStore((s) => s.setSessionFastMode)
 
@@ -29,19 +45,23 @@ export default function FastModeToggle({ workspaceId, sessionId, disabled = fals
     }
   }, [fetchProviders, providers.length])
 
-  const currentProviderId = session?.providerId
+  const currentProviderId = isNewChat ? props.providerId : session?.providerId
   const currentProvider = providers.find((p) => p.id === currentProviderId)
   const activeProvider = currentProvider ?? defaultProvider
 
   // Default to enabled when no provider has loaded yet; the actual capability
   // gate is applied once provider data arrives.
   const supportsFastMode = activeProvider?.supportsFastMode !== false
-  const isFastMode = session?.fastMode === true
+  const isFastMode = isNewChat ? props.fastMode : session?.fastMode === true
   const isDisabled = disabled || !supportsFastMode
 
   const handleToggle = () => {
     if (isDisabled) return
-    setSessionFastMode(workspaceId, sessionId, !isFastMode)
+    if (isNewChat) {
+      props.onFastModeChange(!isFastMode)
+    } else {
+      setSessionFastMode(workspaceId, props.sessionId, !isFastMode)
+    }
   }
 
   const tooltipText = supportsFastMode

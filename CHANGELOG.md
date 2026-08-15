@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **New Chat now starts conversations directly from a workspace** — Choose an existing workspace or create one from the New Chat page, then use the first prompt to create and open a new session immediately.
+- **New Chat now starts conversations directly from a workspace** — Choose an existing workspace or create one from the integrated composer header, use the same Skills, Files, and Provider controls as an active chat, then submit the first prompt to create and open the session immediately.
 
 ### Changed
 
