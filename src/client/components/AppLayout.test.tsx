@@ -12,8 +12,43 @@ import { isWindowMaximized, onWindowMaximizedChange } from '../lib/desktop-api'
 // mock it instead of the old per-package `@tauri-apps/*` modules.
 vi.mock('../lib/desktop-api')
 
-vi.mock('../components/WorkspaceEmptyState', () => ({ default: () => <div data-testid="workspace-empty-state" /> }))
 vi.mock('../components/ChatPanel', () => ({ default: () => <div data-testid="chat-panel" /> }))
+vi.mock('../components/PromptInput', () => ({
+  default: function MockPromptInput({
+    onSend,
+    onBackendChange,
+    onProviderChange,
+    fastMode,
+    onFastModeChange,
+    onApprovalModeChange,
+    disabled,
+  }: {
+    onSend: (content: string) => void
+    onBackendChange?: (backendId: 'claude' | 'opencode') => void
+    onProviderChange?: (providerId: string | null) => void
+    fastMode?: boolean
+    onFastModeChange?: (fastMode: boolean) => void
+    onApprovalModeChange?: (approvalMode: 'auto' | 'readonly' | 'manual') => void
+    disabled?: boolean
+  }) {
+    const [value, setValue] = useState('')
+    return (
+      <div data-testid="prompt-input">
+        <textarea
+          aria-label="Prompt"
+          value={value}
+          disabled={disabled}
+          onChange={(event) => setValue(event.target.value)}
+        />
+        <button type="button" onClick={() => onBackendChange?.('opencode')}>Choose agent</button>
+        <button type="button" onClick={() => onProviderChange?.('provider-2')}>Choose provider</button>
+        <button type="button" onClick={() => onFastModeChange?.(!fastMode)}>Toggle fast</button>
+        <button type="button" onClick={() => onApprovalModeChange?.('auto')}>Choose permission</button>
+        <button type="button" disabled={disabled || !value.trim()} onClick={() => onSend(value.trim())}>Send</button>
+      </div>
+    )
+  },
+}))
 vi.mock('../components/SettingsPanel', () => ({ default: () => <div data-testid="settings-panel" /> }))
 vi.mock('../components/AnalyticsPanel', () => ({ default: () => <div data-testid="analytics-panel" /> }))
 vi.mock('../components/ContextWorkspace', () => ({
@@ -152,6 +187,7 @@ const mockChatStore = {
   setActiveSession: vi.fn(),
   createSession: vi.fn(),
   sendMessage: vi.fn(),
+  setDraft: vi.fn(),
 }
 
 vi.mock('../stores/chat-store', () => ({
@@ -199,6 +235,7 @@ describe('App layout', () => {
   beforeEach(() => {
     cleanup()
     vi.clearAllMocks()
+    mockWorkspaceStore.openWorkspace.mockReset()
     mockWorkspaceStore.activeWorkspaceId = null
     mockWorkspaceStore.openWorkspaceIds = []
     mockWorkspaceStore.workspaces = []
@@ -211,17 +248,24 @@ describe('App layout', () => {
 
   it('clips the root container vertically to prevent the whole page from scrolling', async () => {
     const { container, findByTestId } = renderWithI18n(<App />)
-    await findByTestId('workspace-empty-state')
+    await findByTestId('new-chat-workspace-gate')
     const root = container.firstElementChild
     expect(root).toHaveClass('overflow-hidden')
     expect(root).not.toHaveClass('overflow-x-hidden')
   })
 
-  it('marks context controls unavailable on the Welcome screen', async () => {
+  it('marks context controls unavailable on the default New Chat screen', async () => {
     const { findByTestId } = renderWithI18n(<App />)
 
-    await findByTestId('workspace-empty-state')
+    await findByTestId('new-chat-workspace-gate')
     expect(await findByTestId('custom-titlebar')).toHaveAttribute('data-context-available', 'false')
+  })
+
+  it('uses New Chat as the default screen instead of the legacy Welcome screen', async () => {
+    renderWithI18n(<App />)
+
+    expect(await screen.findByTestId('new-chat-workspace-gate')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-empty-state')).not.toBeInTheDocument()
   })
 
   it('opens New Chat and creates then sends the first prompt', async () => {
@@ -241,18 +285,65 @@ describe('App layout', () => {
 
     renderWithI18n(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'New chat' }))
-    fireEvent.change(await screen.findByPlaceholderText('What do you want to build?'), {
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Prompt' }), {
       target: { value: 'Fix redirects' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Start chat' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose provider' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose agent' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle fast' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose permission' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
 
     await waitFor(() => {
       expect(mockChatStore.createSession).toHaveBeenCalledWith('ws-1', expect.objectContaining({
         initialPrompt: 'Fix redirects',
+        backend: 'opencode',
+        providerId: 'provider-2',
+        fastMode: true,
+        approvalMode: 'auto',
         signal: expect.any(AbortSignal),
       }))
       expect(mockChatStore.sendMessage).toHaveBeenCalledWith('ws-1', 'session-new', 'Fix redirects')
     })
+  })
+
+  it('creates a session when submitting directly from the default New Chat screen', async () => {
+    mockWorkspaceStore.workspaces = [{ id: 'ws-1', name: 'Comate', folderPath: '/comate' }]
+    mockWorkspaceStore.openWorkspace.mockImplementation(() => {
+      mockWorkspaceStore.activeWorkspaceId = 'ws-1'
+    })
+    let resolveCreation: ((result: {
+      ok: true
+      session: { id: string; workspaceId: string; name: string; createdAt: string; updatedAt: string }
+    }) => void) | undefined
+    mockChatStore.createSession.mockReturnValue(new Promise((resolve) => {
+      resolveCreation = resolve
+    }))
+
+    renderWithI18n(<App />)
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Prompt' }), {
+      target: { value: 'Start from the default screen' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    await waitFor(() => expect(mockChatStore.createSession).toHaveBeenCalled())
+    expect(screen.getByTestId('prompt-input')).toBeInTheDocument()
+
+    resolveCreation?.({
+      ok: true,
+      session: {
+        id: 'session-default',
+        workspaceId: 'ws-1',
+        name: 'Start from the default screen',
+        createdAt: '',
+        updatedAt: '',
+      },
+    })
+    await waitFor(() => expect(mockChatStore.sendMessage).toHaveBeenCalledWith(
+      'ws-1',
+      'session-default',
+      'Start from the default screen',
+    ))
   })
 
   it('selects a workspace created from New Chat before submitting', async () => {
@@ -266,14 +357,15 @@ describe('App layout', () => {
 
     renderWithI18n(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'New chat' }))
-    fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: '__create_workspace__' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }))
+    fireEvent.click(screen.getByRole('button', { name: '+ Create workspace…' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Complete workspace creation' }))
 
-    await waitFor(() => expect(screen.getByLabelText('Workspace')).toHaveValue('ws-created'))
-    fireEvent.change(screen.getByPlaceholderText('What do you want to build?'), {
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Workspace' })).toHaveTextContent('Created'))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
       target: { value: 'Use the new workspace' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Start chat' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
 
     await waitFor(() => expect(mockChatStore.createSession).toHaveBeenCalledWith(
       'ws-created',
@@ -293,9 +385,9 @@ describe('App layout', () => {
 
     renderWithI18n(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'New chat' }))
-    const prompt = screen.getByPlaceholderText('What do you want to build?')
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' })
     fireEvent.change(prompt, { target: { value: 'Retry this prompt' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Start chat' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Creating the session timed out. Try again.')
     expect(prompt).toHaveValue('Retry this prompt')
@@ -313,10 +405,10 @@ describe('App layout', () => {
 
     renderWithI18n(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'New chat' }))
-    fireEvent.change(screen.getByPlaceholderText('What do you want to build?'), {
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
       target: { value: 'Do not reopen me' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Start chat' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     fireEvent.click(screen.getByRole('button', { name: 'Open Todos' }))
 
     resolveCreation?.({
@@ -337,7 +429,7 @@ describe('App layout', () => {
     })
 
     const { container, findByTestId, unmount } = renderWithI18n(<App />)
-    await findByTestId('workspace-empty-state')
+    await findByTestId('new-chat-workspace-gate')
     const root = container.firstElementChild
 
     await waitFor(() => expect(root).toHaveAttribute('data-windows-restored-frame'))
@@ -357,7 +449,7 @@ describe('App layout', () => {
     vi.mocked(isWindowMaximized).mockResolvedValue(true)
 
     const { container, findByTestId } = renderWithI18n(<App />)
-    await findByTestId('workspace-empty-state')
+    await findByTestId('new-chat-workspace-gate')
     const root = container.firstElementChild
 
     await waitFor(() => expect(isWindowMaximized).toHaveBeenCalledTimes(1))
@@ -377,7 +469,7 @@ describe('App layout', () => {
     })
 
     const { container, findByTestId } = renderWithI18n(<App />)
-    await findByTestId('workspace-empty-state')
+    await findByTestId('new-chat-workspace-gate')
     const root = container.firstElementChild
     await waitFor(() => expect(handleMaximizedChange).toBeDefined())
 

@@ -3,11 +3,23 @@ import { useChatStore, type ApprovalMode } from '../stores/chat-store'
 import { Shield, ShieldCheck, ShieldAlert, ChevronDown } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 
-interface ApprovalModeToggleProps {
+interface ApprovalModeToggleCommonProps {
   workspaceId: string
-  sessionId: string
   disabled?: boolean
 }
+
+interface SessionApprovalModeToggleProps extends ApprovalModeToggleCommonProps {
+  mode?: 'session'
+  sessionId: string
+}
+
+interface NewChatApprovalModeToggleProps extends ApprovalModeToggleCommonProps {
+  mode: 'new-chat'
+  approvalMode: ApprovalMode
+  onApprovalModeChange: (approvalMode: ApprovalMode) => void
+}
+
+type ApprovalModeToggleProps = SessionApprovalModeToggleProps | NewChatApprovalModeToggleProps
 
 const MODE_META: Record<
   ApprovalMode,
@@ -46,20 +58,27 @@ const MODE_META: Record<
   },
 }
 
-export default function ApprovalModeToggle({ workspaceId, sessionId, disabled = false }: ApprovalModeToggleProps) {
+export default function ApprovalModeToggle(props: ApprovalModeToggleProps) {
+  const { workspaceId, disabled = false } = props
+  const isNewChat = props.mode === 'new-chat'
+  const sessionId = isNewChat ? null : props.sessionId
   const { t } = useTranslation('chat')
 
   const session = useChatStore((s) =>
-    s.sessions[workspaceId]?.find((ses) => ses.id === sessionId),
+    sessionId ? s.sessions[workspaceId]?.find((ses) => ses.id === sessionId) : undefined,
   )
   const setApprovalMode = useChatStore((s) => s.setSessionApprovalMode)
 
-  const currentMode: ApprovalMode = session?.approvalMode || 'manual'
+  const currentMode: ApprovalMode = isNewChat ? props.approvalMode : session?.approvalMode || 'manual'
   const meta = MODE_META[currentMode]
   const Icon = meta.icon
 
   const handleSelect = (mode: ApprovalMode) => {
-    setApprovalMode(workspaceId, sessionId, mode)
+    if (isNewChat) {
+      props.onApprovalModeChange(mode)
+    } else {
+      setApprovalMode(workspaceId, props.sessionId, mode)
+    }
   }
 
   const modes: ApprovalMode[] = ['manual', 'readonly', 'auto']

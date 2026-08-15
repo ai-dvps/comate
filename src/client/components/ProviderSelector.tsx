@@ -13,12 +13,24 @@ import { ChevronDown, Check, Loader2 } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import { cn } from './ui/utils'
 
-interface ProviderSelectorProps {
+interface ProviderSelectorCommonProps {
   workspaceId: string
-  sessionId: string
   disabled?: boolean
   hideNameBelowSm?: boolean
 }
+
+interface SessionProviderSelectorProps extends ProviderSelectorCommonProps {
+  mode?: 'session'
+  sessionId: string
+}
+
+interface NewChatProviderSelectorProps extends ProviderSelectorCommonProps {
+  mode: 'new-chat'
+  providerId: string | null
+  onProviderChange: (providerId: string | null) => void
+}
+
+type ProviderSelectorProps = SessionProviderSelectorProps | NewChatProviderSelectorProps
 
 function ProviderAvatar({ name, className = '' }: { name: string; className?: string }) {
   const initial = name.charAt(0).toUpperCase()
@@ -89,12 +101,15 @@ function ProviderUsageLine({
   return null
 }
 
-export default function ProviderSelector({ workspaceId, sessionId, disabled = false, hideNameBelowSm = false }: ProviderSelectorProps) {
+export default function ProviderSelector(props: ProviderSelectorProps) {
+  const { workspaceId, disabled = false, hideNameBelowSm = false } = props
+  const isNewChat = props.mode === 'new-chat'
+  const sessionId = isNewChat ? null : props.sessionId
   const { t } = useTranslation('chat')
   const [open, setOpen] = useState(false)
 
   const session = useChatStore((s) =>
-    s.sessions[workspaceId]?.find((ses) => ses.id === sessionId),
+    sessionId ? s.sessions[workspaceId]?.find((ses) => ses.id === sessionId) : undefined,
   )
   const setSessionProvider = useChatStore((s) => s.setSessionProvider)
 
@@ -121,12 +136,16 @@ export default function ProviderSelector({ workspaceId, sessionId, disabled = fa
     }
   }, [open, providers, fetchUsage])
 
-  const currentProviderId = session?.providerId
+  const currentProviderId = isNewChat ? props.providerId : session?.providerId
   const currentProvider = providers.find((p) => p.id === currentProviderId)
-  const isRestarting = useChatStore((s) => s.isRestartingRuntime[sessionId] ?? false)
+  const isRestarting = useChatStore((s) => sessionId ? s.isRestartingRuntime[sessionId] ?? false : false)
 
   const handleSelect = (providerId: string | null) => {
-    setSessionProvider(workspaceId, sessionId, providerId)
+    if (isNewChat) {
+      props.onProviderChange(providerId)
+    } else {
+      void setSessionProvider(workspaceId, props.sessionId, providerId)
+    }
     setOpen(false)
   }
 

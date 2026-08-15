@@ -81,14 +81,22 @@ describe('new chat session creation', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     try {
-      const created = await useChatStore.getState().createSession(
-        'ws-1',
-        { initialPrompt: '/ce-debug Fix redirects' },
-      )
+      const options = {
+        initialPrompt: '/ce-debug Fix redirects',
+        approvalMode: 'auto' as const,
+        providerId: 'provider-2',
+        backend: 'opencode',
+        fastMode: true,
+      }
+      const created = await useChatStore.getState().createSession('ws-1', options)
 
       assert.strictEqual(created.ok && created.session.id, 's-new')
       assert.deepStrictEqual(JSON.parse(fetchMock.mock.calls[0][1]?.body as string), {
         prompt: '/ce-debug Fix redirects',
+        approvalMode: 'auto',
+        providerId: 'provider-2',
+        backend: 'opencode',
+        fastMode: true,
       })
     } finally {
       vi.unstubAllGlobals()

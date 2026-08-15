@@ -128,6 +128,24 @@ describe('FastModeToggle browser', () => {
     expect(chatStoreMock.setSessionFastMode).toHaveBeenCalledWith('ws-1', 'session-1', true)
   })
 
+  it('toggles fast mode locally in New Chat mode', async () => {
+    const onFastModeChange = vi.fn()
+    renderWithI18n(
+      <FastModeToggle
+        mode="new-chat"
+        workspaceId="ws-1"
+        providerId="provider-1"
+        fastMode={false}
+        onFastModeChange={onFastModeChange}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /Fast mode/i }))
+
+    expect(onFastModeChange).toHaveBeenCalledWith(true)
+    expect(chatStoreMock.setSessionFastMode).not.toHaveBeenCalled()
+  })
+
   it('disables the button while streaming', () => {
     renderWithI18n(<FastModeToggle {...DEFAULT_PROPS} disabled />)
     const button = screen.getByRole('button', { name: /Fast mode/i })

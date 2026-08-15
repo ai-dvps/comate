@@ -7,7 +7,7 @@ import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
 import HistoryPicker, { type HistoryPickerHandle } from './HistoryPicker'
 import type { SlashCommandDto } from '../stores/commands-store'
-import { useChatStore } from '../stores/chat-store'
+import { useChatStore, type ApprovalMode } from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { useNgramCompletion } from '../hooks/useNgramCompletion'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
@@ -15,7 +15,7 @@ import ApprovalModeToggle from './ApprovalModeToggle'
 import FastModeToggle from './FastModeToggle'
 import ProviderSelector from './ProviderSelector'
 import BackendSelector from './BackendSelector'
-import { useBackendStore, backendAvailability } from '../stores/backend-store'
+import { useBackendStore, backendAvailability, type BackendId, type BackendInfo } from '../stores/backend-store'
 import PromptGhostText from './PromptGhostText'
 import {
   extractPlainText,
@@ -100,13 +100,17 @@ function getBackgroundTaskStopKey(sessionId: string, taskId: string): string {
   return JSON.stringify([sessionId, taskId])
 }
 
-interface PromptInputProps {
+interface PromptInputCommonProps {
   workspaceId: string
-  sessionId: string
   onSend: (content: string) => void
+  disabled?: boolean
+}
+
+interface SessionPromptInputProps extends PromptInputCommonProps {
+  mode?: 'session'
+  sessionId: string
   onStop: () => void
   onRefresh?: () => void
-  disabled?: boolean
   isStreaming?: boolean
   isInterrupting?: boolean
   hasSession?: boolean
@@ -117,22 +121,39 @@ interface PromptInputProps {
   botUser?: { userId: string; lastSeenAt: string | null } | null
 }
 
-export default function PromptInput({
-  workspaceId,
-  sessionId,
-  onSend,
-  onStop,
-  onRefresh,
-  disabled = false,
-  isStreaming = false,
-  isInterrupting = false,
-  hasSession = false,
-  isBotSession = false,
-  refreshMeta,
-  botName,
-  botIcon,
-  botUser,
-}: PromptInputProps) {
+interface NewChatPromptInputProps extends PromptInputCommonProps {
+  mode: 'new-chat'
+  backendId: BackendId | null
+  onBackendChange: (backendId: BackendId) => void
+  providerId: string | null
+  onProviderChange: (providerId: string | null) => void
+  fastMode: boolean
+  onFastModeChange: (fastMode: boolean) => void
+  approvalMode: ApprovalMode
+  onApprovalModeChange: (approvalMode: ApprovalMode) => void
+}
+
+type PromptInputProps = SessionPromptInputProps | NewChatPromptInputProps
+
+const EMPTY_BACKENDS: BackendInfo[] = []
+const NEW_CHAT_DRAFT_KEY = '__new_chat_draft__'
+
+export default function PromptInput(props: PromptInputProps) {
+  const isNewChat = props.mode === 'new-chat'
+  const workspaceId = props.workspaceId
+  const sessionId = isNewChat ? NEW_CHAT_DRAFT_KEY : props.sessionId
+  const onSend = props.onSend
+  const onStop = isNewChat ? undefined : props.onStop
+  const onRefresh = isNewChat ? undefined : props.onRefresh
+  const disabled = props.disabled ?? false
+  const isStreaming = isNewChat ? false : props.isStreaming ?? false
+  const isInterrupting = isNewChat ? false : props.isInterrupting ?? false
+  const hasSession = isNewChat ? false : props.hasSession ?? false
+  const isBotSession = isNewChat ? false : props.isBotSession ?? false
+  const refreshMeta = isNewChat ? undefined : props.refreshMeta
+  const botName = isNewChat ? undefined : props.botName
+  const botIcon = isNewChat ? undefined : props.botIcon
+  const botUser = isNewChat ? undefined : props.botUser
   const { t } = useTranslation('chat')
   const { useModifierToSubmit } = useAppSettings()
   const input = useChatStore((s) =>
@@ -140,13 +161,18 @@ export default function PromptInput({
   )
   const setDraft = useChatStore((s) => s.setDraft)
   const stopBackgroundTask = useChatStore((s) => s.stopBackgroundTask)
-  const isRestarting = useChatStore((s) => s.isRestartingRuntime[sessionId] ?? false)
-  const activity = useChatStore((s) => s.sessionActivity[sessionId])
+  const isRestarting = useChatStore((s) => isNewChat ? false : s.isRestartingRuntime[sessionId] ?? false)
+  const activity = useChatStore((s) => isNewChat ? undefined : s.sessionActivity[sessionId])
   const backgroundTasks = activity?.backgroundTasks ?? []
   const backgroundTaskCount = backgroundTasks.length
   const isForegroundActive = isStreaming && activity?.phase !== 'background'
   const isComposerLocked = isForegroundActive || isInterrupting
   const { suggest, train } = useNgramCompletion(workspaceId)
+
+  useEffect(() => {
+    if (!isNewChat) return
+    return () => setDraft(NEW_CHAT_DRAFT_KEY, '')
+  }, [isNewChat, setDraft])
 
   const [stopPopoverOpen, setStopPopoverOpen] = useState(false)
   const [stoppingBackgroundTaskIds, setStoppingBackgroundTaskIds] = useState<Set<string>>(
@@ -429,10 +455,12 @@ export default function PromptInput({
 
   const handleSend = () => {
     const trimmed = input.trim()
-    if (!trimmed || disabled || isComposerLocked || isRestarting || !hasSession) return
+    if (!trimmed || disabled || isComposerLocked || isRestarting || (!hasSession && !isNewChat)) return
     onSend(trimmed)
     train(trimmed)
-    resetInput()
+    // New Chat owns the draft until session creation succeeds, so recoverable
+    // creation failures can leave the user's prompt intact for retry.
+    if (!isNewChat) resetInput()
     editableRef.current?.focus()
   }
 
@@ -826,22 +854,24 @@ export default function PromptInput({
     setHistoryPickerOpen(true)
   }
 
-  const sessionBackend = useChatStore((s) =>
-    s.sessions[workspaceId]?.find((ses) => ses.id === sessionId)?.backend,
-  )
-  const backends = useBackendStore((s) => s.backends)
+  const sessionBackend = useChatStore((s) => isNewChat
+    ? undefined
+    : s.sessions[workspaceId]?.find((ses) => ses.id === sessionId)?.backend)
+  const backends = useBackendStore((s) => isNewChat ? EMPTY_BACKENDS : s.backends)
   const fetchBackends = useBackendStore((s) => s.fetchBackends)
   useEffect(() => {
-    if (backends.length === 0) {
+    if (!isNewChat && backends.length === 0) {
       fetchBackends()
     }
-  }, [fetchBackends, backends.length])
+  }, [fetchBackends, backends.length, isNewChat])
   const lockedBackendUnavailable =
-    !!sessionBackend && backendAvailability(backends, sessionBackend)?.status === 'unavailable'
+    !isNewChat && !!sessionBackend && backendAvailability(backends, sessionBackend)?.status === 'unavailable'
 
-  const canSend = input.trim().length > 0 && hasSession && !isComposerLocked && !isRestarting && !disabled && !lockedBackendUnavailable
+  const canSend = input.trim().length > 0 && (hasSession || isNewChat) && !isComposerLocked && !isRestarting && !disabled && !lockedBackendUnavailable
   const canClear = input.length > 0
   const showGhost = !!argumentHint && input === lastInsertedCommand
+  const toolbarVisibility = getToolbarVisibility(contentWidth)
+  const showSubmitHint = contentWidth !== undefined && contentWidth >= 720
   const {
     showSkills,
     showFiles,
@@ -850,7 +880,7 @@ export default function PromptInput({
     showFast,
     showApproval,
     showClear,
-  } = getToolbarVisibility(contentWidth)
+  } = toolbarVisibility
 
   useEffect(() => {
     if (
@@ -885,7 +915,7 @@ export default function PromptInput({
 
   const commandsDisabled = disabled || isComposerLocked || isRestarting
   const filesDisabled = disabled || isComposerLocked || isRestarting || !workspaceId
-  const historyDisabled = disabled || isComposerLocked || isRestarting || !hasSession
+  const historyDisabled = disabled || isComposerLocked || isRestarting || !hasSession || isNewChat
 
   const handleStopBackgroundTask = async (taskId: string) => {
     const stopKey = getBackgroundTaskStopKey(sessionId, taskId)
@@ -939,7 +969,7 @@ export default function PromptInput({
           </button>
           <button
             onClick={() => {
-              onStop()
+              onStop?.()
               setStopPopoverOpen(false)
             }}
             disabled={isInterrupting}
@@ -958,6 +988,19 @@ export default function PromptInput({
       </PopoverContent>
     </Popover>
   ) : null
+
+  const historyButton = (
+    <button
+      type="button"
+      onClick={handleHistoryClick}
+      disabled={historyDisabled}
+      className={showHistory ? 'inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-chrome-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed' : 'hidden'}
+      title={`${t('history')} (${t('historyShortcutHint')})`}
+    >
+      <History className="w-3 h-3" />
+      <span className="hidden sm:inline">{t('history')}</span>
+    </button>
+  )
 
   return (
     <div className={`max-w-3xl mx-auto px-4 ${isBotSession ? 'py-2' : 'py-4'}`}>
@@ -1080,7 +1123,13 @@ export default function PromptInput({
               </div>
             </div>
           )}
-        <div ref={inputCardRef} data-testid="input-card" className="relative bg-work border border-border rounded-xl shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)] focus-within:border-border-hover transition-colors">
+        <div
+          ref={inputCardRef}
+          data-testid="input-card"
+          className={isNewChat
+            ? 'relative bg-work'
+            : 'relative rounded-xl border border-border bg-work shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)] transition-colors focus-within:border-border-hover'}
+        >
           <>
             <div
               className={`grid transition-[grid-template-rows] duration-300 ease-out ${isComposerLocked ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'}`}
@@ -1183,41 +1232,72 @@ export default function PromptInput({
                     </button>
                   }
                 />
-                <HistoryPicker
-                  ref={historyPickerHandleRef}
-                  workspaceId={workspaceId}
-                  open={historyPickerOpen}
-                  onOpenChange={(open) => {
-                    setHistoryPickerOpen(open)
-                  }}
-                  onSelect={handleHistorySelect}
-                  side="top"
-                  align="start"
-                  initialFilter={historyPickerFilter}
-                  contentWidth={contentWidth}
-                  anchor={
-                    <button
-                      type="button"
-                      onClick={handleHistoryClick}
-                      disabled={historyDisabled}
-                      className={showHistory ? 'inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-chrome-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed' : 'hidden'}
-                      title={`${t('history')} (${t('historyShortcutHint')})`}
-                    >
-                      <History className="w-3 h-3" />
-                      <span className="hidden sm:inline">{t('history')}</span>
-                    </button>
-                  }
-                />
+                {isNewChat ? historyButton : (
+                  <HistoryPicker
+                    ref={historyPickerHandleRef}
+                    workspaceId={workspaceId}
+                    open={historyPickerOpen}
+                    onOpenChange={(open) => {
+                      setHistoryPickerOpen(open)
+                    }}
+                    onSelect={handleHistorySelect}
+                    side="top"
+                    align="start"
+                    initialFilter={historyPickerFilter}
+                    contentWidth={contentWidth}
+                    anchor={historyButton}
+                  />
+                )}
               </div>
               <div className="ml-auto flex min-w-0 items-center justify-end gap-1 overflow-hidden">
-                {sessionId && !isBotSession && (
+                {isNewChat ? (
+                  <>
+                    <BackendSelector
+                      mode="new-chat"
+                      workspaceId={workspaceId}
+                      backendId={props.backendId}
+                      onBackendChange={props.onBackendChange}
+                      disabled={disabled}
+                      hideNameBelowSm
+                    />
+                    {showProvider && (
+                      <ProviderSelector
+                        mode="new-chat"
+                        workspaceId={workspaceId}
+                        providerId={props.providerId}
+                        onProviderChange={props.onProviderChange}
+                        disabled={disabled}
+                        hideNameBelowSm
+                      />
+                    )}
+                    {showFast && (
+                      <FastModeToggle
+                        mode="new-chat"
+                        workspaceId={workspaceId}
+                        providerId={props.providerId}
+                        fastMode={props.fastMode}
+                        onFastModeChange={props.onFastModeChange}
+                        disabled={disabled}
+                      />
+                    )}
+                    {showApproval && (
+                      <ApprovalModeToggle
+                        mode="new-chat"
+                        workspaceId={workspaceId}
+                        approvalMode={props.approvalMode}
+                        onApprovalModeChange={props.onApprovalModeChange}
+                        disabled={disabled}
+                      />
+                    )}
+                  </>
+                ) : sessionId && !isBotSession ? (
                   <>
                     <BackendSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} hideNameBelowSm />
                     {showProvider && <ProviderSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} hideNameBelowSm />}
                     {showFast && <FastModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} />}
                     {showApproval && <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} />}
                   </>
-                )}
+                ) : null}
                 {canClear && showClear && (
                   <button
                     onClick={handleClear}
@@ -1228,8 +1308,8 @@ export default function PromptInput({
                     <X className="w-4 h-4" />
                   </button>
                 )}
-                {!isComposerLocked && useModifierToSubmit && (
-                  <span className="text-[10px] text-text-tertiary select-none hidden sm:inline">
+                {!isComposerLocked && useModifierToSubmit && showSubmitHint && (
+                  <span className="text-[10px] text-text-tertiary select-none">
                     {/Mac|iPod|iPhone|iPad/.test(navigator.platform) ? 'Cmd+Enter' : 'Ctrl+Enter'}
                   </span>
                 )}

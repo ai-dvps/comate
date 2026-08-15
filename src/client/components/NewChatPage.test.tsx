@@ -1,9 +1,57 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+import { useState } from 'react'
 import { I18nextProvider } from 'react-i18next'
 import i18n from '../i18n'
 import NewChatPage from './NewChatPage'
 import { chooseDefaultNewChatWorkspace } from './new-chat-workspace'
+
+vi.mock('./PromptInput', () => ({
+  default: ({
+    workspaceId,
+    mode,
+    onSend,
+    backendId,
+    onBackendChange,
+    providerId,
+    onProviderChange,
+    fastMode,
+    onFastModeChange,
+    approvalMode,
+    onApprovalModeChange,
+    disabled,
+  }: {
+    workspaceId: string
+    mode?: string
+    onSend: (content: string) => void
+    backendId?: string | null
+    onBackendChange?: (backendId: 'claude' | 'opencode') => void
+    providerId?: string | null
+    onProviderChange?: (providerId: string | null) => void
+    fastMode?: boolean
+    onFastModeChange?: (fastMode: boolean) => void
+    approvalMode?: 'auto' | 'readonly' | 'manual'
+    onApprovalModeChange?: (approvalMode: 'auto' | 'readonly' | 'manual') => void
+    disabled?: boolean
+  }) => (
+    <div
+      data-testid="prompt-input"
+      data-workspace-id={workspaceId}
+      data-mode={mode}
+      data-backend-id={backendId ?? ''}
+      data-provider-id={providerId ?? ''}
+      data-fast-mode={fastMode ? 'true' : 'false'}
+      data-approval-mode={approvalMode ?? ''}
+    >
+      <textarea aria-label="Prompt" disabled={disabled} />
+      <button type="button" onClick={() => onBackendChange?.('opencode')}>Choose agent</button>
+      <button type="button" onClick={() => onProviderChange?.('provider-2')}>Choose provider</button>
+      <button type="button" onClick={() => onFastModeChange?.(!fastMode)}>Toggle fast</button>
+      <button type="button" onClick={() => onApprovalModeChange?.('auto')}>Choose permission</button>
+      <button type="button" disabled={disabled} onClick={() => onSend('Fix the login redirect loop')}>Send</button>
+    </div>
+  ),
+}))
 
 const workspaces = [
   {
@@ -36,6 +84,7 @@ function renderPage(props: Partial<React.ComponentProps<typeof NewChatPage>> = {
   const defaults: React.ComponentProps<typeof NewChatPage> = {
     workspaces,
     defaultWorkspaceId: 'ws-old',
+    onWorkspaceChange: vi.fn(),
     onCreateWorkspace: vi.fn(),
     onSubmit: vi.fn(async () => {}),
   }
@@ -58,15 +107,78 @@ describe('NewChatPage', () => {
 
   it('submits the prompt with the selected workspace', async () => {
     const onSubmit = vi.fn(async () => {})
-    renderPage({ onSubmit })
+    function ControlledPage() {
+      const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null)
+      return (
+        <NewChatPage
+          workspaces={workspaces}
+          defaultWorkspaceId="ws-old"
+          selectedWorkspaceId={selectedWorkspaceId}
+          onWorkspaceChange={setSelectedWorkspaceId}
+          onCreateWorkspace={vi.fn()}
+          onSubmit={onSubmit}
+        />
+      )
+    }
+    render(
+      <I18nextProvider i18n={i18n}>
+        <ControlledPage />
+      </I18nextProvider>,
+    )
 
-    fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: 'ws-new' } })
-    fireEvent.change(screen.getByPlaceholderText('What do you want to build?'), {
-      target: { value: 'Fix the login redirect loop' },
+    fireEvent.click(screen.getByRole('button', { name: 'Choose provider' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose agent' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle fast' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose permission' }))
+    expect(screen.getByTestId('prompt-input')).toHaveAttribute('data-provider-id', 'provider-2')
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Newest' }))
+    expect(screen.getByTestId('prompt-input')).toHaveAttribute('data-provider-id', '')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose provider' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose agent' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle fast' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose permission' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    expect(onSubmit).toHaveBeenCalledWith('ws-new', 'Fix the login redirect loop', {
+      backend: 'opencode',
+      providerId: 'provider-2',
+      fastMode: true,
+      approvalMode: 'auto',
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Start chat' }))
+  })
 
-    expect(onSubmit).toHaveBeenCalledWith('ws-new', 'Fix the login redirect loop')
+  it('uses the session PromptInput in new-chat mode', () => {
+    renderPage()
+
+    expect(screen.getByTestId('prompt-input')).toHaveAttribute('data-mode', 'new-chat')
+    expect(screen.getByTestId('prompt-input')).toHaveAttribute('data-workspace-id', 'ws-old')
+    const workspaceSelector = screen.getByRole('button', { name: 'Workspace' })
+    const promptInput = screen.getByTestId('prompt-input')
+    expect(screen.getByTestId('new-chat-composer')).toContainElement(workspaceSelector)
+    expect(screen.getByTestId('new-chat-composer')).toContainElement(promptInput)
+    expect(screen.getByTestId('new-chat-workspace-context')).toHaveClass('mx-6')
+    expect(workspaceSelector.compareDocumentPosition(promptInput) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('fills the available pane so the composer container stays horizontally centered', () => {
+    const { rerender } = renderPage()
+
+    expect(screen.getByTestId('new-chat-page')).toHaveClass('w-full', 'flex-col', 'items-center')
+    expect(screen.getByTestId('new-chat-composer-dock')).toHaveClass('w-full', 'max-w-3xl', 'shrink-0')
+
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <NewChatPage
+          workspaces={[]}
+          defaultWorkspaceId={null}
+          onWorkspaceChange={vi.fn()}
+          onCreateWorkspace={vi.fn()}
+          onSubmit={vi.fn(async () => {})}
+        />
+      </I18nextProvider>,
+    )
+    expect(screen.getByTestId('new-chat-workspace-gate')).toHaveClass('w-full')
   })
 
   it('offers workspace creation from both the empty gate and populated selector', () => {
@@ -81,20 +193,27 @@ describe('NewChatPage', () => {
         <NewChatPage
           workspaces={workspaces}
           defaultWorkspaceId="ws-old"
+          onWorkspaceChange={vi.fn()}
           onCreateWorkspace={onCreateWorkspace}
           onSubmit={vi.fn(async () => {})}
         />
       </I18nextProvider>,
     )
-    fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: '__create_workspace__' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }))
+    fireEvent.click(screen.getByRole('button', { name: '+ Create workspace…' }))
     expect(onCreateWorkspace).toHaveBeenCalledTimes(2)
   })
 
-  it('selects a newly created workspace and keeps the prompt when submission fails', () => {
+  it('keeps long workspace menus scrollable above the bottom composer', () => {
+    renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }))
+    expect(screen.getByTestId('new-chat-workspace-options')).toHaveClass('max-h-64', 'overflow-y-auto')
+  })
+
+  it('selects a newly created workspace and keeps the composer available when submission fails', () => {
     const onSubmit = vi.fn(async () => {})
     const { rerender } = renderPage({ onSubmit })
-    const prompt = screen.getByPlaceholderText('What do you want to build?')
-    fireEvent.change(prompt, { target: { value: 'Keep this prompt' } })
 
     rerender(
       <I18nextProvider i18n={i18n}>
@@ -102,6 +221,7 @@ describe('NewChatPage', () => {
           workspaces={[...workspaces, { ...workspaces[1], id: 'ws-created', name: 'Created' }]}
           defaultWorkspaceId="ws-old"
           selectedWorkspaceId="ws-created"
+          onWorkspaceChange={vi.fn()}
           onCreateWorkspace={vi.fn()}
           onSubmit={onSubmit}
           error="Creating the session timed out. Try again."
@@ -109,10 +229,15 @@ describe('NewChatPage', () => {
       </I18nextProvider>,
     )
 
-    expect(screen.getByLabelText('Workspace')).toHaveValue('ws-created')
-    expect(screen.getByPlaceholderText('What do you want to build?')).toHaveValue('Keep this prompt')
+    expect(screen.getByRole('button', { name: 'Workspace' })).toHaveTextContent('Created')
+    expect(screen.getByTestId('prompt-input')).toHaveAttribute('data-workspace-id', 'ws-created')
     expect(screen.getByRole('alert')).toHaveTextContent('Creating the session timed out. Try again.')
-    fireEvent.click(screen.getByRole('button', { name: 'Start chat' }))
-    expect(onSubmit).toHaveBeenCalledWith('ws-created', 'Keep this prompt')
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onSubmit).toHaveBeenCalledWith('ws-created', 'Fix the login redirect loop', {
+      backend: undefined,
+      providerId: undefined,
+      fastMode: false,
+      approvalMode: 'manual',
+    })
   })
 })

@@ -51,6 +51,41 @@ describe('chat route new chat creation', { concurrency: false }, () => {
     assert.strictEqual(session.source, 'gui');
     assert.strictEqual(session.customTitle, undefined);
   });
+
+  it('persists the New Chat agent, provider, fast, and permission selections', async () => {
+    const handler = await importCreateSessionHandler();
+    const res = createMockRes();
+
+    await handler({
+      params: { id: 'ws-1' },
+      body: {
+        prompt: 'Start with selected controls',
+        backend: 'opencode',
+        providerId: 'provider-2',
+        fastMode: true,
+        approvalMode: 'auto',
+      },
+    }, res);
+
+    assert.strictEqual(res.statusCode, 201);
+    const session = res.jsonBody as {
+      id: string;
+      backend?: string;
+      providerId?: string;
+      fastMode?: boolean;
+      approvalMode?: string;
+    };
+    assert.strictEqual(session.backend, 'opencode');
+    assert.strictEqual(session.providerId, 'provider-2');
+    assert.strictEqual(session.fastMode, true);
+    assert.strictEqual(session.approvalMode, 'auto');
+
+    const persisted = workspaceStore.getLocalSession(session.id);
+    assert.strictEqual(persisted?.backend, 'opencode');
+    assert.strictEqual(persisted?.providerId, 'provider-2');
+    assert.strictEqual(persisted?.fastMode, true);
+    assert.strictEqual(persisted?.approvalMode, 'auto');
+  });
 });
 
 describe('chat route Feishu user info', { concurrency: false }, () => {

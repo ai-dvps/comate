@@ -5,12 +5,24 @@ import { useBackendStore, backendAvailability, type BackendId } from '../stores/
 import { ChevronDown, Check, Lock, Cpu } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 
-interface BackendSelectorProps {
+interface BackendSelectorCommonProps {
   workspaceId: string
-  sessionId: string
   disabled?: boolean
   hideNameBelowSm?: boolean
 }
+
+interface SessionBackendSelectorProps extends BackendSelectorCommonProps {
+  mode?: 'session'
+  sessionId: string
+}
+
+interface NewChatBackendSelectorProps extends BackendSelectorCommonProps {
+  mode: 'new-chat'
+  backendId: BackendId | null
+  onBackendChange: (backendId: BackendId) => void
+}
+
+type BackendSelectorProps = SessionBackendSelectorProps | NewChatBackendSelectorProps
 
 const BACKEND_LABEL_KEYS: Record<string, string> = {
   claude: 'backend.claude',
@@ -23,12 +35,15 @@ const BACKEND_LABEL_KEYS: Record<string, string> = {
  * backend it renders as a locked badge (R4). Bot sessions are hidden by the
  * caller (R14).
  */
-export default function BackendSelector({ workspaceId, sessionId, disabled = false, hideNameBelowSm = false }: BackendSelectorProps) {
+export default function BackendSelector(props: BackendSelectorProps) {
+  const { workspaceId, disabled = false, hideNameBelowSm = false } = props
+  const isNewChat = props.mode === 'new-chat'
+  const sessionId = isNewChat ? null : props.sessionId
   const { t } = useTranslation('chat')
   const [open, setOpen] = useState(false)
 
   const session = useChatStore((s) =>
-    s.sessions[workspaceId]?.find((ses) => ses.id === sessionId),
+    sessionId ? s.sessions[workspaceId]?.find((ses) => ses.id === sessionId) : undefined,
   )
   const setSessionBackend = useChatStore((s) => s.setSessionBackend)
 
@@ -42,11 +57,11 @@ export default function BackendSelector({ workspaceId, sessionId, disabled = fal
     }
   }, [fetchBackends, backends.length])
 
-  const lockedBackend = session?.backend
+  const lockedBackend = isNewChat ? props.backendId : session?.backend
   // The lock materializes at the first message (R4): a draft is always
   // re-selectable, even when a backend is already pre-selected.
-  const isLocked = !!session?.backend && !session?.isDraft
-  const effectiveBackend = (lockedBackend ?? session?.backend ?? defaultBackend ?? 'claude') as BackendId
+  const isLocked = !isNewChat && !!session?.backend && !session?.isDraft
+  const effectiveBackend = (lockedBackend ?? defaultBackend ?? 'claude') as BackendId
   const availability = backendAvailability(backends, effectiveBackend)
   const label = t(BACKEND_LABEL_KEYS[effectiveBackend] ?? effectiveBackend)
 
@@ -77,7 +92,11 @@ export default function BackendSelector({ workspaceId, sessionId, disabled = fal
       setOpen(false)
       return
     }
-    void setSessionBackend(workspaceId, sessionId, backend)
+    if (isNewChat) {
+      props.onBackendChange(backend)
+    } else {
+      void setSessionBackend(workspaceId, props.sessionId, backend)
+    }
     setOpen(false)
   }
 
