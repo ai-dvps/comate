@@ -639,12 +639,12 @@ function App() {
                     key={wsId}
                     className={cn(
                       'absolute inset-0 flex flex-col',
-                      wsId === activeWorkspaceId && activePanel === null
+                      wsId === activeWorkspaceId && activePanel === null && !newChatVisible
                         ? 'visible'
                         : 'invisible pointer-events-none'
                     )}
-                    aria-hidden={wsId !== activeWorkspaceId || activePanel !== null}
-                    {...(wsId !== activeWorkspaceId || activePanel !== null ? { inert: '' } : {})}
+                    aria-hidden={wsId !== activeWorkspaceId || activePanel !== null || newChatVisible}
+                    {...(wsId !== activeWorkspaceId || activePanel !== null || newChatVisible ? { inert: '' } : {})}
                   >
                     <ChatPanel
                       workspaceId={wsId}
