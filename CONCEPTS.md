@@ -118,4 +118,7 @@ Tauri→Electron 壳迁移中，最后一个 Tauri 版本承担的特殊角色�
 ## Prompt composer
 
 ### Prompt semantic reference
-Prompt 中能够被当前工作区确认解析的 Skill 或文件纯文本引用，分别采用 `/skill-name` 与 `@path` 形式。它可以获得轻量语义着色，但仍保持普通文本的光标、选区、复制与逐字删除行为，不是原子 chip 或结构化富文本节点。
+Prompt 中能够被当前工作区确认解析的 Skill 或文件引用，分别采用 `/skill-name` 与 `@path` 形式。它的持久化、复制和提交表示仍是纯文本；编辑器可以在引用完成并解析成功后把它呈现为 Atomic prompt reference。
+
+### Atomic prompt reference
+Prompt semantic reference 在当前草稿编辑器中的轻量 chip 形态。光标、选区和删除把它视为一个整体，不能逐字修改；引用在当前草稿中失效后继续保持原子并显示警示，但重新载入时只按当时的解析结果重建，不跨重启保存结构化 token 身份。

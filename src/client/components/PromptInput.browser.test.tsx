@@ -214,7 +214,6 @@ describe('PromptInput browser', () => {
     workspaceAwareControlsMock.providerWorkspaceIds = []
     appSettingsMock.useModifierToSubmit = false
     toolbarControlMock.forceWideControls = false
-    CSS.highlights.clear()
     vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { paths: string[] }
       return {
