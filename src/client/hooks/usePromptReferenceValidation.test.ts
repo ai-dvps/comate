@@ -131,6 +131,79 @@ describe('usePromptReferenceValidation', () => {
     ])
   })
 
+  it('does not cache an older overlapping refresh response', async () => {
+    const pending: Array<(value: Response) => void> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(
+        () => new Promise<Response>((resolve) => pending.push(resolve)),
+      ),
+    )
+
+    const first = renderHook(() =>
+      usePromptReferenceValidation({
+        workspaceId: 'ws-refresh-race',
+        input: '@race.ts',
+        commands,
+      }),
+    )
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200)
+      pending[0](response(['race.ts']))
+      await Promise.resolve()
+    })
+
+    let olderRefresh!: Promise<unknown>
+    let newerRefresh!: Promise<unknown>
+    act(() => {
+      olderRefresh = first.result.current.refresh()
+      newerRefresh = first.result.current.refresh()
+    })
+
+    await act(async () => {
+      pending[2](response([]))
+      await newerRefresh
+    })
+    await act(async () => {
+      pending[1](response(['race.ts']))
+      await olderRefresh
+    })
+    first.unmount()
+
+    const second = renderHook(() =>
+      usePromptReferenceValidation({
+        workspaceId: 'ws-refresh-race',
+        input: '@race.ts',
+        commands,
+      }),
+    )
+
+    expect(second.result.current.candidates[0].status).toBe('invalid')
+  })
+
+  it('bounds explicit file refresh requests', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response(['bounded.ts']))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() =>
+      usePromptReferenceValidation({
+        workspaceId: 'ws-bounded-refresh',
+        input: '@bounded.ts',
+        commands,
+      }),
+    )
+
+    await act(async () => {
+      await result.current.refresh()
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/workspaces/ws-bounded-refresh/files/resolve',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+  })
+
   it('keeps the last confirmed skill status while commands reload or fail', () => {
     vi.stubGlobal('fetch', vi.fn())
     const { result, rerender } = renderHook(
