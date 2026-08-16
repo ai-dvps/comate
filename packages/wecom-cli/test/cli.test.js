@@ -25,6 +25,11 @@ function run(args, cwd, env) {
       HTTPS_PROXY: undefined,
       ALL_PROXY: undefined,
       all_proxy: undefined,
+      // Hermetic: an ambient session token (e.g. a shell launched inside the
+      // Comate app exports it) must not satisfy auth in "token unset" cases —
+      // `delete` on the override object would let the parent value show
+      // through the spread, so neutralize it here before per-test overrides.
+      COMATE_SESSION_TOKEN: undefined,
       ...env,
     },
   });
