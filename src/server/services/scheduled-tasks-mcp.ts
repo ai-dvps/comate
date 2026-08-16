@@ -96,12 +96,19 @@ export function buildScheduledTaskToolDefinitions(deps: ScheduledTasksMcpDeps): 
       cronExpr?: string;
     }) => {
       try {
+        // Validate the schedule BEFORE writing: a malformed cron must surface
+        // as error text without leaving an orphaned Todo row behind.
+        const nextFireAt = todoSchedulerService.recomputeNextFire({
+          executionType: args.scheduleType,
+          scheduleTime: args.scheduleTime ?? null,
+          cronExpr: args.cronExpr ?? null,
+        });
         const task = store.createTodo(deps.workspaceId, {
           text: args.name, instruction: args.instruction, executionType: args.scheduleType,
           scheduleTime: args.scheduleTime ?? null, cronExpr: args.cronExpr ?? null,
         });
-        const configured = store.updateTodo(task.id, { nextFireAt: todoSchedulerService.recomputeNextFire(task) })!;
-        return textResult(`Todo 已创建并生效（id: ${configured.id}），将按调度执行。可在 Comate 的 Todo 面板中查看和管理。`);
+        store.updateTodo(task.id, { nextFireAt });
+        return textResult(`Todo 已创建并生效（id: ${task.id}），将按调度执行。可在 Comate 的 Todo 面板中查看和管理。`);
       } catch (err) {
         return textResult(`创建任务失败：${err instanceof Error ? err.message : String(err)}`, true);
       }
