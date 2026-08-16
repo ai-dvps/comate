@@ -121,7 +121,7 @@ export default function NewChatPage({
         >
           <div
             data-testid="new-chat-workspace-context"
-            className="mx-6 flex min-h-12 items-center rounded-t-2xl border border-b-0 border-border bg-surface px-3 pb-3 pt-2"
+            className="mx-4 flex items-center rounded-t-2xl border border-b-0 border-border bg-surface px-2.5 pb-2 pt-1"
           >
             <NewChatWorkspaceSelector
               workspaces={workspaces}
