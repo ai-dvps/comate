@@ -1,9 +1,50 @@
-import cliTruncate from 'cli-truncate';
+import { eastAsianWidth } from 'get-east-asian-width';
 import stripAnsi from 'strip-ansi';
 import { redactSensitiveText } from './sensitive-text.js';
 
 const TITLE_COLUMNS = 48;
 const FALLBACK_TITLE = 'New chat';
+const TRUNCATION_ELLIPSIS = '…';
+
+// The packaged (@yao-pkg/pkg) Node runtime segfaults inside
+// Intl.Segmenter.prototype.segment() for every granularity, so title
+// truncation must not pull in grapheme-segmenting width helpers
+// (string-width@8 / slice-ansi@8, both reached via cli-truncate). These
+// helpers keep the same display-width contract with pure JS lookups.
+function displayWidth(text: string): number {
+  let width = 0;
+  for (const character of text) {
+    width += eastAsianWidth(character.codePointAt(0) ?? 0, { ambiguousAsWide: false });
+  }
+  return width;
+}
+
+function sliceByColumns(text: string, maxColumns: number): string {
+  let width = 0;
+  let end = 0;
+  for (const character of text) {
+    const characterWidth = eastAsianWidth(character.codePointAt(0) ?? 0, { ambiguousAsWide: false });
+    if (width + characterWidth > maxColumns) break;
+    width += characterWidth;
+    end += character.length;
+  }
+  return text.slice(0, end);
+}
+
+// Mirrors cli-truncate with position 'end' and preferTruncationOnSpace:
+// cut within the column budget, stepping back to a nearby space when one
+// sits within a few columns of the cut, then append the ellipsis.
+function truncateTitle(text: string, columns: number): string {
+  if (columns < 1) return '';
+  if (displayWidth(text) <= columns) return text;
+  let head = sliceByColumns(text, columns - 1);
+  const lastSpace = head.lastIndexOf(' ');
+  if (lastSpace > 0 && displayWidth(head) - displayWidth(head.slice(0, lastSpace)) <= 3) {
+    head = head.slice(0, lastSpace);
+  }
+  return `${head}${TRUNCATION_ELLIPSIS}`;
+}
+
 const ALWAYS_INTERNAL_ABBREVIATIONS = new Set([
   'dr.', 'jr.', 'mr.', 'mrs.', 'ms.', 'prof.', 'sr.',
 ]);
@@ -139,8 +180,5 @@ export function deriveFallbackSessionTitle(prompt: string): string {
     .trim();
   candidate = redactSensitiveText(candidate);
 
-  return cliTruncate(candidate || FALLBACK_TITLE, TITLE_COLUMNS, {
-    position: 'end',
-    preferTruncationOnSpace: true,
-  });
+  return truncateTitle(candidate || FALLBACK_TITLE, TITLE_COLUMNS);
 }
