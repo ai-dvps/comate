@@ -2262,6 +2262,16 @@ export class ChatService {
     // Shell commands receive only the API-broker audience, so they cannot
     // bypass the SDK permission gate by POSTing browser tools directly.
     const browserEligible = !isBotSession && session.source !== 'scheduled';
+    // Strip ambient authority inherited from a parent Comate process (a shell
+    // launched inside the app exports these): bot and scheduled sessions must
+    // never carry a broker token or the Comate CLI trio, and eligible sessions
+    // mint their own token below.
+    delete env[SESSION_TOKEN_ENV];
+    if (!browserEligible) {
+      delete env.COMATE_CLI_PATH;
+      delete env.COMATE_SERVER_URL;
+      delete env.COMATE_WORKSPACE_ROOT;
+    }
     let taskCapabilityToken: string | undefined;
     if (browserEligible) {
       const runtimeGeneration = randomUUID();
