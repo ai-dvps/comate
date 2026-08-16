@@ -84,12 +84,18 @@ export default function TodoDetail({
     setActiveTab('details')
   }, [todo?.id])
 
+  // Derived so the runs effect below can depend on the primitive fields it
+  // actually reads; depending on `todo` itself would refetch on every parent
+  // re-render that produces a new (equal-content) object.
+  const todoId = todo?.id
+  const todoUpdatedAt = todo?.updatedAt
+
   useEffect(() => {
-    if (!todo) { setRuns([]); setRunsLoading(false); setRunsError(false); return }
+    if (todoId == null) { setRuns([]); setRunsLoading(false); setRunsError(false); return }
     let cancelled = false
     setRunsLoading(true)
     setRunsError(false)
-    void fetch(`/api/todos/${todo.id}/runs`).then(async (res) => {
+    void fetch(`/api/todos/${todoId}/runs`).then(async (res) => {
       if (!res.ok) throw new Error('Failed to fetch Todo runs')
       const data = await res.json()
       if (!cancelled) setRuns(data.runs ?? [])
@@ -99,7 +105,7 @@ export default function TodoDetail({
       if (!cancelled) setRunsLoading(false)
     })
     return () => { cancelled = true }
-  }, [todo?.id, todo?.updatedAt])
+  }, [todoId, todoUpdatedAt])
 
   const handleSpawn = async () => {
     if (!todo?.workspaceId) return
