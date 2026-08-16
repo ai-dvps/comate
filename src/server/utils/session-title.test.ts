@@ -11,6 +11,45 @@ describe('deriveFallbackSessionTitle', () => {
     );
   });
 
+  it('uses the first English sentence without keeping its trailing punctuation', () => {
+    assert.equal(
+      deriveFallbackSessionTitle('First sentence. Second sentence.'),
+      'First sentence',
+    );
+  });
+
+  it('does not treat periods inside versions or abbreviations as sentence boundaries', () => {
+    assert.equal(
+      deriveFallbackSessionTitle('Investigate the v1.2 e.g. migration failure. Then report back.'),
+      'Investigate the v1.2 e.g. migration failure',
+    );
+    assert.equal(
+      deriveFallbackSessionTitle('Read the U.S. documentation. Then summarize it.'),
+      'Read the U.S. documentation',
+    );
+  });
+
+  it('recognizes sentence-ending abbreviations before a new sentence', () => {
+    assert.equal(
+      deriveFallbackSessionTitle('We support apples, oranges, etc. Then report back.'),
+      'We support apples, oranges, etc',
+    );
+    assert.equal(
+      deriveFallbackSessionTitle('We support apples, oranges, etc.'),
+      'We support apples, oranges, etc',
+    );
+  });
+
+  it('removes an ellipsis when it ends the first sentence', () => {
+    assert.equal(deriveFallbackSessionTitle('Wait... Then retry.'), 'Wait');
+  });
+
+  it('recognizes a sentence boundary before a closing quote', () => {
+    assert.equal(deriveFallbackSessionTitle('He said "Fix it." Then stop.'), 'He said "Fix it"');
+    assert.equal(deriveFallbackSessionTitle('He asked "Fix it?" Then stop.'), 'He asked "Fix it"');
+    assert.equal(deriveFallbackSessionTitle('他说“修好了吗？”然后停止。'), '他说“修好了吗”');
+  });
+
   it('strips ANSI sequences, timestamps, and log levels from log prompts', () => {
     assert.equal(
       deriveFallbackSessionTitle(

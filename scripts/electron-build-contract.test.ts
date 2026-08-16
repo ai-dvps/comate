@@ -116,8 +116,8 @@ test('the Electron development command rebuilds the server sidecar and CLIs befo
   );
   assert.match(
     sidecarCommand,
-    /^tsx scripts\/build-sidecar\.ts$/,
-    'build:sidecar must use the sidecar build pipeline',
+    /^tsx scripts\/build-sidecar\.ts\s*&&\s*npm run test:sidecar-new-chat$/,
+    'build:sidecar must package the sidecar and verify the New Chat path in that binary',
   );
   assert.match(
     sidecarBuildSource,
