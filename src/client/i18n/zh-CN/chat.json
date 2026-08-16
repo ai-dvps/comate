@@ -231,6 +231,10 @@
   "agent": "代理",
   "agentLabel": "代理: {{type}}",
   "prompt": "提示词",
+  "promptReference": {
+    "invalidSkill": "Skill 引用已无法解析：{{reference}}",
+    "invalidFile": "文件引用已无法解析：{{reference}}"
+  },
   "result": "结果",
   "thinking": "思考中...",
   "thoughtForSeconds": "思考了几秒",

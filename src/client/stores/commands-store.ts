@@ -131,7 +131,7 @@ export interface UseCommandsResult {
   partial: boolean;
   partialReason: string | undefined;
   fetch: () => Promise<void>;
-  refresh: () => Promise<void>;
+  refresh: () => Promise<{ commands: SlashCommandDto[]; succeeded: boolean }>;
 }
 
 export function useCommands(workspaceId: string): UseCommandsResult {
@@ -145,10 +145,17 @@ export function useCommands(workspaceId: string): UseCommandsResult {
     () => fetchCommands(workspaceId),
     [fetchCommands, workspaceId],
   );
-  const refresh = useCallback(
-    () => refreshCommands(workspaceId),
-    [refreshCommands, workspaceId],
-  );
+  const refresh = useCallback(async () => {
+    await refreshCommands(workspaceId);
+    const state = useCommandsStore.getState();
+    const succeeded = !state.errorByWorkspace[workspaceId];
+    return {
+      commands: succeeded
+        ? (state.commandsByWorkspace[workspaceId]?.commands ?? [])
+        : (cached?.commands ?? []),
+      succeeded,
+    };
+  }, [cached?.commands, refreshCommands, workspaceId]);
 
   return {
     commands: cached?.commands ?? [],

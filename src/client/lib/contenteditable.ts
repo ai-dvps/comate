@@ -61,7 +61,10 @@ function collectPlainTextSegments(element: HTMLElement): {
   const nodeRanges = new Map<Node, { start: number; end: number }>()
 
   const appendText = (node: Text) => {
-    const value = node.textContent ?? ''
+    // Browsers use NBSP to keep ordinary spaces visible around inline
+    // contentEditable elements. The prompt's persistent representation is
+    // plain text, so expose those layout spaces as ordinary spaces.
+    const value = (node.textContent ?? '').replace(/\u00a0/g, ' ')
     const start = text.length
     text += value
     nodeRanges.set(node, { start, end: text.length })
@@ -309,6 +312,18 @@ export function getSelectionOffsets(element: HTMLElement): [number, number] {
     range.endOffset,
   )
   return [start, end]
+}
+
+/** Return anchor/focus offsets without discarding backward selection direction. */
+export function getSelectionAnchorFocusOffsets(
+  element: HTMLElement,
+): [number, number] {
+  const selection = window.getSelection()
+  if (!selection?.anchorNode || !selection.focusNode) return [0, 0]
+  return [
+    plainTextOffsetAtPoint(element, selection.anchorNode, selection.anchorOffset),
+    plainTextOffsetAtPoint(element, selection.focusNode, selection.focusOffset),
+  ]
 }
 
 /**

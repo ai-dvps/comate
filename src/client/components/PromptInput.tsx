@@ -19,18 +19,27 @@ import { useBackendStore, backendAvailability, type BackendId, type BackendInfo 
 import PromptGhostText from './PromptGhostText'
 import {
   extractPlainText,
-  createRangeFromPlainTextOffsets,
   getCaretOffset,
+  getSelectionAnchorFocusOffsets,
   getSelectionOffsets,
   replaceText,
   setCaretOffset,
-  setContent,
-  supportsPlaintextOnly,
+  setSelectionOffsets,
 } from '../lib/contenteditable'
 import {
-  clearPromptReferenceHighlights,
-  setPromptReferenceHighlights,
-} from '../lib/prompt-reference-highlights'
+  getPromptReferenceDeletionRange,
+  projectPromptReferenceChips,
+} from '../lib/prompt-reference-chips'
+import {
+  cloneCommittedReferences,
+  commitValidatedReferences,
+  type CommittedPromptReference,
+  type PromptReferenceCommitSource,
+  rebaseCommittedReferences,
+  reconcileCommittedReferenceStatuses,
+  sameCommittedReferences,
+} from '../lib/prompt-reference-state'
+import type { ValidatedPromptReference } from '../lib/prompt-references'
 
 interface RefreshMeta {
   lastRefreshedAt: Date | null
@@ -143,6 +152,39 @@ type PromptInputProps = SessionPromptInputProps | NewChatPromptInputProps
 const EMPTY_BACKENDS: BackendInfo[] = []
 const NEW_CHAT_DRAFT_KEY = '__new_chat_draft__'
 
+interface PromptUndoSnapshot {
+  value: string
+  caret: number
+  references: CommittedPromptReference[]
+}
+
+interface PendingReferenceCommit {
+  source: PromptReferenceCommitSource
+  commitAtEnd?: boolean
+}
+
+function chipProjectionMatches(
+  element: HTMLElement,
+  input: string,
+  references: CommittedPromptReference[],
+): boolean {
+  if (extractPlainText(element) !== input) return false
+  const chips = Array.from(
+    element.querySelectorAll<HTMLElement>('[data-prompt-reference-chip]'),
+  )
+  return (
+    chips.length === references.length &&
+    chips.every((chip, index) => {
+      const reference = references[index]
+      return (
+        chip.dataset.referenceId === reference.id &&
+        chip.dataset.referenceText === reference.text &&
+        chip.dataset.referenceStatus === reference.status
+      )
+    })
+  )
+}
+
 export default function PromptInput(props: PromptInputProps) {
   const isNewChat = props.mode === 'new-chat'
   const workspaceId = props.workspaceId
@@ -172,9 +214,21 @@ export default function PromptInput(props: PromptInputProps) {
   const backgroundTaskCount = backgroundTasks.length
   const isForegroundActive = isStreaming && activity?.phase !== 'background'
   const isComposerLocked = isForegroundActive || isInterrupting
-  const { commands, fetch: fetchCommands } = useCommands(workspaceId)
-  const { references, refresh: refreshReferences } =
-    usePromptReferenceValidation({ workspaceId, input, commands })
+  const {
+    commands,
+    loading: commandsLoading,
+    error: commandsError,
+    fetch: fetchCommands,
+    refresh: refreshCommands,
+  } = useCommands(workspaceId)
+  const { candidates, refresh: refreshReferences } =
+    usePromptReferenceValidation({
+      workspaceId,
+      input,
+      commands,
+      commandsLoading,
+      commandsError,
+    })
 
   useEffect(() => {
     void fetchCommands()
@@ -206,17 +260,23 @@ export default function PromptInput(props: PromptInputProps) {
   const [historyPickerOpen, setHistoryPickerOpen] = useState(false)
   const [historyPickerFilter, setHistoryPickerFilter] = useState('')
   const [isFocused, setIsFocused] = useState(false)
+  const [committedReferences, setCommittedReferencesState] = useState<
+    CommittedPromptReference[]
+  >([])
+  const [referenceCommitVersion, setReferenceCommitVersion] = useState(0)
 
   const editableRef = useRef<HTMLDivElement>(null)
-  const highlightOwnerRef = useRef(Symbol('prompt-input'))
   const isComposingRef = useRef(false)
   const submitLockRef = useRef(false)
+  const sendInFlightRef = useRef(false)
   const pickerHandleRef = useRef<CommandPickerHandle>(null)
   const filePickerHandleRef = useRef<FilePickerHandle>(null)
   const historyPickerHandleRef = useRef<HistoryPickerHandle>(null)
   const prevInputRef = useRef('')
-  const undoStackRef = useRef<Array<{ value: string; caret: number }>>([])
-  const redoStackRef = useRef<Array<{ value: string; caret: number }>>([])
+  const committedReferencesRef = useRef<CommittedPromptReference[]>([])
+  const pendingReferenceCommitRef = useRef<PendingReferenceCommit | null>(null)
+  const undoStackRef = useRef<PromptUndoSnapshot[]>([])
+  const redoStackRef = useRef<PromptUndoSnapshot[]>([])
   const undoGroupOpenRef = useRef(false)
   const undoGroupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Saved caret position when the editable surface loses focus, so pickers
@@ -253,10 +313,35 @@ export default function PromptInput(props: PromptInputProps) {
 
   const maxHeight = Math.max(Math.round(window.innerHeight * 0.4), 160)
 
-  const pushUndoState = (value: string, caret: number): void => {
+  const setCommittedReferences = (
+    references: CommittedPromptReference[],
+  ): void => {
+    if (sameCommittedReferences(committedReferencesRef.current, references)) {
+      return
+    }
+    committedReferencesRef.current = references
+    setCommittedReferencesState(references)
+  }
+
+  const pushUndoState = (
+    value: string,
+    caret: number,
+    references = committedReferencesRef.current,
+  ): void => {
     const last = undoStackRef.current[undoStackRef.current.length - 1]
-    if (last && last.value === value && last.caret === caret) return
-    undoStackRef.current.push({ value, caret })
+    if (
+      last &&
+      last.value === value &&
+      last.caret === caret &&
+      sameCommittedReferences(last.references, references)
+    ) {
+      return
+    }
+    undoStackRef.current.push({
+      value,
+      caret,
+      references: cloneCommittedReferences(references),
+    })
     redoStackRef.current = []
   }
 
@@ -285,45 +370,72 @@ export default function PromptInput(props: PromptInputProps) {
     }, 500)
   }
   const editableEnabled = !disabled && !isComposerLocked && !isRestarting
-  const contentEditableMode = supportsPlaintextOnly() ? 'plaintext-only' : 'true'
   const placeholder = t('placeholder')
   const placeholderVisible = !input && !isFocused
 
-  // Sync external draft changes (session switch, picker insert)
-  // to the editable surface without disturbing active IME composition.
+  useEffect(() => {
+    let next = reconcileCommittedReferenceStatuses(
+      committedReferencesRef.current,
+      candidates,
+    )
+    const pendingCommit = pendingReferenceCommitRef.current
+    if (pendingCommit) {
+      next = commitValidatedReferences(input, next, candidates, pendingCommit)
+      if (!candidates.some((candidate) => candidate.status === 'pending')) {
+        pendingReferenceCommitRef.current = null
+      }
+    }
+    setCommittedReferences(next)
+  }, [candidates, input, referenceCommitVersion])
+
+  // Reconcile only structural/status changes or external draft replacement.
+  // Ordinary native input already owns the current DOM and is not rebuilt.
   useEffect(() => {
     const el = editableRef.current
     if (!el || isComposingRef.current) return
-    const current = extractPlainText(el)
-    if (current === input) return
-    setContent(el, input)
-    if (document.activeElement === el) {
-      setCaretOffset(el, input.length)
-    }
-  }, [input])
+    if (chipProjectionMatches(el, input, committedReferences)) return
+
+    const active = document.activeElement === el
+    const [anchor, focus] = active
+      ? getSelectionAnchorFocusOffsets(el)
+      : [input.length, input.length]
+    projectPromptReferenceChips(el, input, committedReferences, {
+      invalidLabel: (reference) =>
+        t(
+          reference.kind === 'skill'
+            ? 'promptReference.invalidSkill'
+            : 'promptReference.invalidFile',
+          { reference: reference.text },
+        ),
+    })
+    if (active) setSelectionOffsets(el, anchor, focus)
+  }, [committedReferences, input, t])
 
   useEffect(() => {
-    const owner = highlightOwnerRef.current
-    const el = editableRef.current
-    if (!el || extractPlainText(el) !== input) {
-      clearPromptReferenceHighlights(owner)
-      return
+    const normalizeSelection = () => {
+      const el = editableRef.current
+      const selection = window.getSelection()
+      if (!el || !selection?.anchorNode || !selection.focusNode) return
+      const insideChip = (node: Node) => {
+        const element =
+          node.nodeType === Node.ELEMENT_NODE
+            ? (node as Element)
+            : node.parentElement
+        return Boolean(
+          element?.closest('[data-prompt-reference-chip]') &&
+            el.contains(element),
+        )
+      }
+      if (!insideChip(selection.anchorNode) && !insideChip(selection.focusNode)) {
+        return
+      }
+      const [anchor, focus] = getSelectionAnchorFocusOffsets(el)
+      setSelectionOffsets(el, anchor, focus)
     }
-
-    const skill: Range[] = []
-    const file: Range[] = []
-    for (const reference of references) {
-      const range = createRangeFromPlainTextOffsets(
-        el,
-        reference.start,
-        reference.end,
-      )
-      if (range) (reference.kind === 'skill' ? skill : file).push(range)
-    }
-    setPromptReferenceHighlights(owner, { skill, file })
-
-    return () => clearPromptReferenceHighlights(owner)
-  }, [input, references])
+    document.addEventListener('selectionchange', normalizeSelection)
+    return () =>
+      document.removeEventListener('selectionchange', normalizeSelection)
+  }, [])
 
   useEffect(() => {
     prevInputRef.current = input
@@ -337,8 +449,11 @@ export default function PromptInput(props: PromptInputProps) {
     setSlashTriggerStart(null)
     setArgumentHint(null)
     setLastInsertedCommand(null)
-    const currentInput = useChatStore.getState().drafts[sessionId] ?? ''
-    undoStackRef.current = [{ value: currentInput, caret: currentInput.length }]
+    committedReferencesRef.current = []
+    setCommittedReferencesState([])
+    pendingReferenceCommitRef.current = { source: 'restore' }
+    setReferenceCommitVersion((version) => version + 1)
+    undoStackRef.current = []
     redoStackRef.current = []
     undoGroupOpenRef.current = false
     if (undoGroupTimerRef.current) {
@@ -357,9 +472,32 @@ export default function PromptInput(props: PromptInputProps) {
   const handleInputChange = (
     value: string,
     cursorPos: number,
-    options?: { skipInputSideEffects?: boolean },
+    options?: {
+      skipInputSideEffects?: boolean
+      commitSource?: PromptReferenceCommitSource
+      immediateCandidates?: ValidatedPromptReference[]
+    },
   ) => {
     const prev = prevInputRef.current
+    let nextReferences = rebaseCommittedReferences(
+      prev,
+      value,
+      committedReferencesRef.current,
+    )
+    if (options?.immediateCandidates) {
+      nextReferences = commitValidatedReferences(
+        value,
+        nextReferences,
+        options.immediateCandidates,
+        { source: options.commitSource ?? 'picker' },
+      )
+      pendingReferenceCommitRef.current = null
+    } else if (!options?.skipInputSideEffects) {
+      pendingReferenceCommitRef.current = {
+        source: options?.commitSource ?? 'manual',
+      }
+    }
+    setCommittedReferences(nextReferences)
     prevInputRef.current = value
     setDraft(sessionId, value)
 
@@ -476,6 +614,8 @@ export default function PromptInput(props: PromptInputProps) {
   }
 
   const resetInput = () => {
+    setCommittedReferences([])
+    pendingReferenceCommitRef.current = null
     setDraft(sessionId, '')
     prevInputRef.current = ''
     setArgumentHint(null)
@@ -483,14 +623,68 @@ export default function PromptInput(props: PromptInputProps) {
     setSlashTriggerStart(null)
   }
 
-  const handleSend = () => {
-    const trimmed = input.trim()
-    if (!trimmed || disabled || isComposerLocked || isRestarting || (!hasSession && !isNewChat)) return
-    onSend(trimmed)
-    // New Chat owns the draft until session creation succeeds, so recoverable
-    // creation failures can leave the user's prompt intact for retry.
-    if (!isNewChat) resetInput()
-    editableRef.current?.focus()
+  const handleSend = async () => {
+    const sendInput = input
+    const trimmed = sendInput.trim()
+    if (
+      !trimmed ||
+      disabled ||
+      isComposerLocked ||
+      isRestarting ||
+      (!hasSession && !isNewChat) ||
+      sendInFlightRef.current
+    ) {
+      return
+    }
+
+    sendInFlightRef.current = true
+    const invalidReferenceIdsBeforeRefresh = new Set(
+      committedReferencesRef.current
+        .filter((reference) => reference.status === 'invalid')
+        .map((reference) => reference.id),
+    )
+    try {
+      const commandsResult = await refreshCommands()
+      const validationResult = await refreshReferences(
+        commandsResult?.succeeded ? commandsResult.commands : undefined,
+      )
+      if (prevInputRef.current !== sendInput) return
+
+      let nextReferences = reconcileCommittedReferenceStatuses(
+        committedReferencesRef.current,
+        validationResult.candidates,
+      )
+      nextReferences = commitValidatedReferences(
+        sendInput,
+        nextReferences,
+        validationResult.candidates,
+        { source: 'manual', commitAtEnd: true },
+      )
+      pendingReferenceCommitRef.current = null
+      setCommittedReferences(nextReferences)
+
+      // A newly stale reference must be visible before the user chooses to
+      // send it. A second explicit send is allowed without removing the chip.
+      if (
+        nextReferences.some(
+          (reference) =>
+            reference.status === 'invalid' &&
+            !invalidReferenceIdsBeforeRefresh.has(reference.id),
+        )
+      ) {
+        editableRef.current?.focus()
+        return
+      }
+
+      onSend(trimmed)
+      // New Chat owns the draft until session creation succeeds, so recoverable
+      // creation failures can leave the user's prompt intact for retry.
+      if (!isNewChat) resetInput()
+      editableRef.current?.focus()
+    } finally {
+      sendInFlightRef.current = false
+      submitLockRef.current = false
+    }
   }
 
   const handleClear = () => {
@@ -543,7 +737,9 @@ export default function PromptInput(props: PromptInputProps) {
 
   const handleFocus = () => {
     setIsFocused(true)
-    refreshReferences()
+    void refreshCommands().then((result) =>
+      refreshReferences(result.succeeded ? result.commands : undefined),
+    )
   }
 
   const handleBlur = () => {
@@ -567,7 +763,9 @@ export default function PromptInput(props: PromptInputProps) {
     const [start, end] = getSelectionOffsets(el)
     pushUndoState(input, start)
     replaceText(el, text, start, end)
-    handleInputChange(extractPlainText(el), getCaretOffset(el))
+    handleInputChange(extractPlainText(el), getCaretOffset(el), {
+      commitSource: 'paste',
+    })
   }
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -579,11 +777,40 @@ export default function PromptInput(props: PromptInputProps) {
     const [start, end] = getSelectionOffsets(el)
     pushUndoState(input, start)
     replaceText(el, text, start, end)
-    handleInputChange(extractPlainText(el), getCaretOffset(el))
+    handleInputChange(extractPlainText(el), getCaretOffset(el), {
+      commitSource: 'paste',
+    })
+  }
+
+  const deletePromptReferenceAtSelection = (
+    direction: 'backward' | 'forward',
+  ): boolean => {
+    const el = editableRef.current
+    if (!el) return false
+    const [start, end] = getSelectionOffsets(el)
+    const deletion = getPromptReferenceDeletionRange(
+      el,
+      start,
+      end,
+      direction,
+    )
+    if (!deletion) return false
+
+    flushUndoGroup()
+    pushUndoState(input, start)
+    const value = `${input.slice(0, deletion.start)}${input.slice(deletion.end)}`
+    handleInputChange(value, deletion.start, {
+      skipInputSideEffects: true,
+    })
+    requestAnimationFrame(() => {
+      const current = editableRef.current
+      if (current) setCaretOffset(current, deletion.start)
+    })
+    return true
   }
 
   const handleBeforeInput = (e: React.FormEvent<HTMLDivElement>) => {
-    const inputType = (e.nativeEvent as InputEvent).inputType
+    const inputType = (e.nativeEvent as InputEvent).inputType ?? ''
     if (
       inputType === 'insertFromPaste' ||
       inputType === 'historyUndo' ||
@@ -591,6 +818,28 @@ export default function PromptInput(props: PromptInputProps) {
     ) {
       e.preventDefault()
       return
+    }
+    if (
+      inputType.startsWith('format') ||
+      inputType === 'insertOrderedList' ||
+      inputType === 'insertUnorderedList' ||
+      inputType === 'insertHorizontalRule'
+    ) {
+      e.preventDefault()
+      return
+    }
+    if (
+      inputType === 'deleteContentBackward' ||
+      inputType === 'deleteContentForward'
+    ) {
+      if (
+        deletePromptReferenceAtSelection(
+          inputType === 'deleteContentBackward' ? 'backward' : 'forward',
+        )
+      ) {
+        e.preventDefault()
+        return
+      }
     }
     if (!isComposingRef.current && editableEnabled && !undoGroupOpenRef.current) {
       openUndoGroup()
@@ -609,6 +858,21 @@ export default function PromptInput(props: PromptInputProps) {
       isComposingRef.current = false
     }
 
+    if (
+      !isComposingRef.current &&
+      editableEnabled &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      (e.key === 'Backspace' || e.key === 'Delete') &&
+      deletePromptReferenceAtSelection(
+        e.key === 'Backspace' ? 'backward' : 'forward',
+      )
+    ) {
+      e.preventDefault()
+      return
+    }
+
     // Custom undo/redo for the contentEditable surface. The browser's native
     // undo stack is unreliable here because React replaces the entire DOM on
     // every draft change, so we maintain our own history.
@@ -622,20 +886,32 @@ export default function PromptInput(props: PromptInputProps) {
       if (isUndo) {
         flushUndoGroup()
         if (undoStackRef.current.length === 0) return
-        const current = { value: input, caret: getCaretOffset(el) }
+        const current: PromptUndoSnapshot = {
+          value: input,
+          caret: getCaretOffset(el),
+          references: cloneCommittedReferences(committedReferencesRef.current),
+        }
         const previous = undoStackRef.current.pop()!
         redoStackRef.current.push(current)
         undoGroupOpenRef.current = false
+        pendingReferenceCommitRef.current = null
+        setCommittedReferences(cloneCommittedReferences(previous.references))
         setDraft(sessionId, previous.value)
         prevInputRef.current = previous.value
         requestAnimationFrame(() => setCaretOffset(el, previous.caret))
       } else {
         flushUndoGroup()
         if (redoStackRef.current.length === 0) return
-        const current = { value: input, caret: getCaretOffset(el) }
+        const current: PromptUndoSnapshot = {
+          value: input,
+          caret: getCaretOffset(el),
+          references: cloneCommittedReferences(committedReferencesRef.current),
+        }
         const next = redoStackRef.current.pop()!
         undoStackRef.current.push(current)
         undoGroupOpenRef.current = false
+        pendingReferenceCommitRef.current = null
+        setCommittedReferences(cloneCommittedReferences(next.references))
         setDraft(sessionId, next.value)
         prevInputRef.current = next.value
         requestAnimationFrame(() => setCaretOffset(el, next.caret))
@@ -732,7 +1008,7 @@ export default function PromptInput(props: PromptInputProps) {
       e.preventDefault()
       if (submitLockRef.current) return
       submitLockRef.current = true
-      handleSend()
+      void handleSend()
     }
   }
 
@@ -754,7 +1030,18 @@ export default function PromptInput(props: PromptInputProps) {
     replaceText(el, inserted, start, caret)
     const value = extractPlainText(el)
     const pos = getCaretOffset(el)
-    handleInputChange(value, pos)
+    handleInputChange(value, pos, {
+      commitSource: 'picker',
+      immediateCandidates: [
+        {
+          kind: 'skill',
+          value: command.name,
+          start,
+          end: start + inserted.trimEnd().length,
+          status: 'valid',
+        },
+      ],
+    })
     setLastInsertedCommand(inserted)
     setArgumentHint(command.argumentHint ?? null)
     setPickerOpen(false)
@@ -785,7 +1072,18 @@ export default function PromptInput(props: PromptInputProps) {
     replaceText(el, inserted, start, end)
     const value = extractPlainText(el)
     const pos = getCaretOffset(el)
-    handleInputChange(value, pos)
+    handleInputChange(value, pos, {
+      commitSource: 'picker',
+      immediateCandidates: [
+        {
+          kind: 'file',
+          value: selectedPath,
+          start,
+          end: start + inserted.trimEnd().length,
+          status: 'valid',
+        },
+      ],
+    })
     setFilePickerOpen(false)
     setFileTriggerStart(null)
     caretBeforeBlurRef.current = null
@@ -797,6 +1095,9 @@ export default function PromptInput(props: PromptInputProps) {
     if (el) {
       pushUndoState(input, getCaretOffset(el))
     }
+    setCommittedReferences([])
+    pendingReferenceCommitRef.current = { source: 'restore' }
+    setReferenceCommitVersion((version) => version + 1)
     setDraft(sessionId, selectedPrompt)
     prevInputRef.current = selectedPrompt
     setHistoryPickerOpen(false)
@@ -1118,7 +1419,7 @@ export default function PromptInput(props: PromptInputProps) {
                     aria-multiline="true"
                     aria-placeholder={placeholder}
                     aria-disabled={!editableEnabled}
-                    contentEditable={editableEnabled ? contentEditableMode : 'false'}
+                    contentEditable={editableEnabled ? 'true' : 'false'}
                     tabIndex={editableEnabled ? 0 : -1}
                     onInput={handleInput}
                     onCompositionStart={handleCompositionStart}
@@ -1288,7 +1589,7 @@ export default function PromptInput(props: PromptInputProps) {
                   <>
                     {isStreaming && stopControl}
                     <button
-                      onClick={handleSend}
+                      onClick={() => void handleSend()}
                       disabled={!canSend}
                       className="p-1.5 rounded-lg bg-accent/15 text-accent hover:bg-accent/25 hover:text-accent/80 transition-colors flex items-center gap-1.5 border border-accent/20 disabled:opacity-40 disabled:cursor-not-allowed"
                       title={t('send')}

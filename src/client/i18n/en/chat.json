@@ -232,6 +232,10 @@
   "agent": "Agent",
   "agentLabel": "Agent: {{type}}",
   "prompt": "Prompt",
+  "promptReference": {
+    "invalidSkill": "Skill reference no longer resolves: {{reference}}",
+    "invalidFile": "File reference no longer resolves: {{reference}}"
+  },
   "result": "Result",
   "thinking": "Thinking...",
   "thoughtForSeconds": "Thought for a few seconds",
