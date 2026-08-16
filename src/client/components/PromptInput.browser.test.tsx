@@ -206,6 +206,16 @@ describe('PromptInput browser', () => {
     workspaceAwareControlsMock.providerWorkspaceIds = []
     appSettingsMock.useModifierToSubmit = false
     toolbarControlMock.forceWideControls = false
+    CSS.highlights.clear()
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { paths: string[] }
+      return {
+        ok: true,
+        json: async () => ({
+          paths: body.paths.filter((path) => path === 'src/app.ts'),
+        }),
+      } as Response
+    }))
     if (!Element.prototype.scrollIntoView) {
       Element.prototype.scrollIntoView = vi.fn()
     }
@@ -221,6 +231,17 @@ describe('PromptInput browser', () => {
 
   function editableLocator() {
     return page.getByRole('textbox')
+  }
+
+  function highlightedText(name: string): string[] {
+    const highlight = CSS.highlights.get(name)
+    if (!highlight) return []
+    return Array.from(highlight, (abstractRange) => {
+      const range = document.createRange()
+      range.setStart(abstractRange.startContainer, abstractRange.startOffset)
+      range.setEnd(abstractRange.endContainer, abstractRange.endOffset)
+      return range.toString()
+    })
   }
 
   function inputCardElement() {
@@ -1311,6 +1332,24 @@ describe('PromptInput browser', () => {
     await input.fill('/')
     await waitFor(() => expect(screen.getByText('/commit')).toBeInTheDocument(), {
       timeout: 1000,
+    })
+  })
+
+  it('highlights only resolved skill and file references', async () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const input = editableLocator()
+
+    await input.fill('/commit @src/app.ts /unknown @missing.ts')
+
+    await waitFor(() => {
+      expect(highlightedText('prompt-skill-reference')).toEqual(['/commit'])
+      expect(highlightedText('prompt-file-reference')).toEqual(['@src/app.ts'])
+    })
+
+    await input.fill('/unknown @missing.ts')
+    await waitFor(() => {
+      expect(CSS.highlights.has('prompt-skill-reference')).toBe(false)
+      expect(CSS.highlights.has('prompt-file-reference')).toBe(false)
     })
   })
 })

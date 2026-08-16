@@ -123,6 +123,16 @@
   ::-webkit-scrollbar-thumb:hover {
     background: hsl(var(--color-text-tertiary));
   }
+
+  .prompt-input-editor::highlight(prompt-skill-reference) {
+    color: hsl(var(--color-metric-purple));
+    background-color: hsl(var(--color-metric-purple) / 0.12);
+  }
+
+  .prompt-input-editor::highlight(prompt-file-reference) {
+    color: hsl(var(--color-success));
+    background-color: hsl(var(--color-success) / 0.12);
+  }
 }
 
 @layer components {

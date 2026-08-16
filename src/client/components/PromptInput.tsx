@@ -6,10 +6,11 @@ import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
 import HistoryPicker, { type HistoryPickerHandle } from './HistoryPicker'
-import type { SlashCommandDto } from '../stores/commands-store'
+import { useCommands, type SlashCommandDto } from '../stores/commands-store'
 import { useChatStore, type ApprovalMode } from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { useNgramCompletion } from '../hooks/useNgramCompletion'
+import { usePromptReferenceValidation } from '../hooks/usePromptReferenceValidation'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
 import ApprovalModeToggle from './ApprovalModeToggle'
 import FastModeToggle from './FastModeToggle'
@@ -19,6 +20,7 @@ import { useBackendStore, backendAvailability, type BackendId, type BackendInfo 
 import PromptGhostText from './PromptGhostText'
 import {
   extractPlainText,
+  createRangeFromPlainTextOffsets,
   getCaretOffset,
   getSelectionOffsets,
   replaceText,
@@ -26,6 +28,10 @@ import {
   setContent,
   supportsPlaintextOnly,
 } from '../lib/contenteditable'
+import {
+  clearPromptReferenceHighlights,
+  setPromptReferenceHighlights,
+} from '../lib/prompt-reference-highlights'
 
 interface RefreshMeta {
   lastRefreshedAt: Date | null
@@ -168,6 +174,13 @@ export default function PromptInput(props: PromptInputProps) {
   const isForegroundActive = isStreaming && activity?.phase !== 'background'
   const isComposerLocked = isForegroundActive || isInterrupting
   const { suggest, train } = useNgramCompletion(workspaceId)
+  const { commands, fetch: fetchCommands } = useCommands(workspaceId)
+  const { references, refresh: refreshReferences } =
+    usePromptReferenceValidation({ workspaceId, input, commands })
+
+  useEffect(() => {
+    void fetchCommands()
+  }, [fetchCommands])
 
   useEffect(() => {
     if (!isNewChat) return
@@ -200,6 +213,7 @@ export default function PromptInput(props: PromptInputProps) {
   const [isFocused, setIsFocused] = useState(false)
 
   const editableRef = useRef<HTMLDivElement>(null)
+  const highlightOwnerRef = useRef(Symbol('prompt-input'))
   const isComposingRef = useRef(false)
   const submitLockRef = useRef(false)
   const pickerHandleRef = useRef<CommandPickerHandle>(null)
@@ -292,6 +306,29 @@ export default function PromptInput(props: PromptInputProps) {
       setCaretOffset(el, input.length)
     }
   }, [input])
+
+  useEffect(() => {
+    const owner = highlightOwnerRef.current
+    const el = editableRef.current
+    if (!el || extractPlainText(el) !== input) {
+      clearPromptReferenceHighlights(owner)
+      return
+    }
+
+    const skill: Range[] = []
+    const file: Range[] = []
+    for (const reference of references) {
+      const range = createRangeFromPlainTextOffsets(
+        el,
+        reference.start,
+        reference.end,
+      )
+      if (range) (reference.kind === 'skill' ? skill : file).push(range)
+    }
+    setPromptReferenceHighlights(owner, { skill, file })
+
+    return () => clearPromptReferenceHighlights(owner)
+  }, [input, references])
 
   useEffect(() => {
     prevInputRef.current = input
@@ -514,6 +551,7 @@ export default function PromptInput(props: PromptInputProps) {
 
   const handleFocus = () => {
     setIsFocused(true)
+    refreshReferences()
   }
 
   const handleBlur = () => {
@@ -1166,7 +1204,7 @@ export default function PromptInput(props: PromptInputProps) {
                     onPaste={handlePaste}
                     onDrop={handleDrop}
                     onBeforeInput={handleBeforeInput}
-                    className={`relative z-10 w-full bg-transparent border-0 px-4 py-3 text-text-primary focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words ${!editableEnabled ? 'opacity-50' : ''}`}
+                    className={`prompt-input-editor relative z-10 w-full bg-transparent border-0 px-4 py-3 text-text-primary focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words ${!editableEnabled ? 'opacity-50' : ''}`}
                     style={{ minHeight: '44px', maxHeight: `${maxHeight}px` }}
                   />
                   <PromptGhostText
