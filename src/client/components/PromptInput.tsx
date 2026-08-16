@@ -9,7 +9,6 @@ import HistoryPicker, { type HistoryPickerHandle } from './HistoryPicker'
 import { useCommands, type SlashCommandDto } from '../stores/commands-store'
 import { useChatStore, type ApprovalMode } from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
-import { useNgramCompletion } from '../hooks/useNgramCompletion'
 import { usePromptReferenceValidation } from '../hooks/usePromptReferenceValidation'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
 import ApprovalModeToggle from './ApprovalModeToggle'
@@ -173,7 +172,6 @@ export default function PromptInput(props: PromptInputProps) {
   const backgroundTaskCount = backgroundTasks.length
   const isForegroundActive = isStreaming && activity?.phase !== 'background'
   const isComposerLocked = isForegroundActive || isInterrupting
-  const { suggest, train } = useNgramCompletion(workspaceId)
   const { commands, fetch: fetchCommands } = useCommands(workspaceId)
   const { references, refresh: refreshReferences } =
     usePromptReferenceValidation({ workspaceId, input, commands })
@@ -207,9 +205,6 @@ export default function PromptInput(props: PromptInputProps) {
   const [slashTriggerStart, setSlashTriggerStart] = useState<number | null>(null)
   const [historyPickerOpen, setHistoryPickerOpen] = useState(false)
   const [historyPickerFilter, setHistoryPickerFilter] = useState('')
-  const [completionSuggestion, setCompletionSuggestion] = useState<string | null>(
-    null,
-  )
   const [isFocused, setIsFocused] = useState(false)
 
   const editableRef = useRef<HTMLDivElement>(null)
@@ -342,7 +337,6 @@ export default function PromptInput(props: PromptInputProps) {
     setSlashTriggerStart(null)
     setArgumentHint(null)
     setLastInsertedCommand(null)
-    setCompletionSuggestion(null)
     const currentInput = useChatStore.getState().drafts[sessionId] ?? ''
     undoStackRef.current = [{ value: currentInput, caret: currentInput.length }]
     redoStackRef.current = []
@@ -487,14 +481,12 @@ export default function PromptInput(props: PromptInputProps) {
     setArgumentHint(null)
     setLastInsertedCommand(null)
     setSlashTriggerStart(null)
-    setCompletionSuggestion(null)
   }
 
   const handleSend = () => {
     const trimmed = input.trim()
     if (!trimmed || disabled || isComposerLocked || isRestarting || (!hasSession && !isNewChat)) return
     onSend(trimmed)
-    train(trimmed)
     // New Chat owns the draft until session creation succeeds, so recoverable
     // creation failures can leave the user's prompt intact for retry.
     if (!isNewChat) resetInput()
@@ -733,37 +725,6 @@ export default function PromptInput(props: PromptInputProps) {
       }
     }
 
-    // Completion accept / dismiss when no picker is open.
-    if (
-      completionSuggestion &&
-      !pickerOpen &&
-      !filePickerOpen &&
-      !historyPickerOpen
-    ) {
-      if (e.key === 'Tab') {
-        e.preventDefault()
-        const start = getCaretOffset(el)
-        const before = input.slice(0, start)
-        const after = input.slice(start)
-        const next = before + completionSuggestion + after
-        replaceText(el, next, 0, input.length)
-        handleInputChange(next, start + completionSuggestion.length)
-        setCompletionSuggestion(null)
-        return
-      }
-      if (
-        e.key === 'Escape' ||
-        e.key === 'ArrowLeft' ||
-        e.key === 'ArrowRight'
-      ) {
-        setCompletionSuggestion(null)
-        if (e.key === 'Escape') {
-          e.preventDefault()
-          return
-        }
-      }
-    }
-
     if (
       !isComposingRef.current &&
       shouldSubmitOnEnter(e, useModifierToSubmit)
@@ -796,7 +757,6 @@ export default function PromptInput(props: PromptInputProps) {
     handleInputChange(value, pos)
     setLastInsertedCommand(inserted)
     setArgumentHint(command.argumentHint ?? null)
-    setCompletionSuggestion(null)
     setPickerOpen(false)
     setSlashTriggerStart(null)
     el.focus()
@@ -826,7 +786,6 @@ export default function PromptInput(props: PromptInputProps) {
     const value = extractPlainText(el)
     const pos = getCaretOffset(el)
     handleInputChange(value, pos)
-    setCompletionSuggestion(null)
     setFilePickerOpen(false)
     setFileTriggerStart(null)
     caretBeforeBlurRef.current = null
@@ -841,7 +800,6 @@ export default function PromptInput(props: PromptInputProps) {
     setDraft(sessionId, selectedPrompt)
     prevInputRef.current = selectedPrompt
     setHistoryPickerOpen(false)
-    setCompletionSuggestion(null)
     requestAnimationFrame(() => {
       const el = editableRef.current
       if (!el) return
@@ -907,7 +865,6 @@ export default function PromptInput(props: PromptInputProps) {
 
   const canSend = input.trim().length > 0 && (hasSession || isNewChat) && !isComposerLocked && !isRestarting && !disabled && !lockedBackendUnavailable
   const canClear = input.length > 0
-  const showGhost = !!argumentHint && input === lastInsertedCommand
   const toolbarVisibility = getToolbarVisibility(contentWidth)
   const showSubmitHint = contentWidth !== undefined && contentWidth >= 720
   const {
@@ -919,37 +876,6 @@ export default function PromptInput(props: PromptInputProps) {
     showApproval,
     showClear,
   } = toolbarVisibility
-
-  useEffect(() => {
-    if (
-      !input ||
-      !sessionId ||
-      pickerOpen ||
-      filePickerOpen ||
-      historyPickerOpen ||
-      isComposerLocked ||
-      isRestarting ||
-      showGhost
-    ) {
-      setCompletionSuggestion(null)
-      return
-    }
-    const timer = setTimeout(() => {
-      const suggestion = suggest(input)
-      setCompletionSuggestion(suggestion)
-    }, 300)
-    return () => clearTimeout(timer)
-  }, [
-    input,
-    sessionId,
-    pickerOpen,
-    filePickerOpen,
-    historyPickerOpen,
-    isComposerLocked,
-    isRestarting,
-    showGhost,
-    suggest,
-  ])
 
   const commandsDisabled = disabled || isComposerLocked || isRestarting
   const filesDisabled = disabled || isComposerLocked || isRestarting || !workspaceId
@@ -1211,7 +1137,6 @@ export default function PromptInput(props: PromptInputProps) {
                     input={input}
                     argumentHint={argumentHint}
                     lastInsertedCommand={lastInsertedCommand}
-                    completionSuggestion={completionSuggestion}
                   />
                 </div>
               </div>

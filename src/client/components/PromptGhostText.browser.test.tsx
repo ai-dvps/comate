@@ -145,10 +145,6 @@ describe('PromptInput ghost text alignment', () => {
     }
   })
 
-  function seedHistory(prompts: string[]) {
-    chatStoreMock.setPromptHistory(DEFAULT_PROPS.workspaceId, prompts)
-  }
-
   function editableElement() {
     return screen.getByRole('textbox') as HTMLDivElement
   }
@@ -161,35 +157,28 @@ describe('PromptInput ghost text alignment', () => {
     return document.querySelector('.pointer-events-none.z-20 .text-text-tertiary') as HTMLElement | null
   }
 
-  it('positions the completion suggestion on the same line as the caret when empty lines are in the middle', async () => {
-    seedHistory(['explain the function', 'other prompt', 'explain the function'])
+  it('positions a skill argument hint on the same line as the caret', async () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
     const input = editableLocator()
 
-    await input.fill('explain ')
-    await userEvent.keyboard('{Shift>}{Enter}{/Shift}')
-    await userEvent.keyboard('{Shift>}{Enter}{/Shift}')
-    await userEvent.keyboard('the ')
+    await input.fill('/')
+    await userEvent.click(screen.getByText('/commit'))
 
-    await waitFor(() => expect(ghostElement()?.textContent?.trim()).toBe('function'), {
+    await waitFor(() => expect(ghostElement()?.textContent?.trim()).toBe('<message>'), {
       timeout: 2000,
     })
 
     const el = editableElement()
     const ghost = ghostElement()!
 
-    // Compare the ghost text's vertical position with the caret's vertical
-    // position. They should be on the same line (within a few pixels).
-    const selection = window.getSelection()
-    const caretRect =
-      selection && selection.rangeCount > 0
-        ? selection.getRangeAt(0).getBoundingClientRect()
-        : null
+    // The invisible command mirror and its hint should share a line.
+    const inputMirror = document.querySelector(
+      '.pointer-events-none.z-20 .invisible',
+    ) as HTMLElement
+    const inputRect = inputMirror.getBoundingClientRect()
     const ghostRect = ghost.getBoundingClientRect()
 
-    expect(caretRect).toBeTruthy()
-    expect(Math.abs(ghostRect.top - caretRect!.top)).toBeLessThanOrEqual(2)
-    expect(el.textContent).toContain('explain ')
-    expect(el.textContent).toContain('the ')
+    expect(Math.abs(ghostRect.top - inputRect.top)).toBeLessThanOrEqual(2)
+    expect(el.textContent).toBe('/commit ')
   })
 })
