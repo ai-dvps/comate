@@ -124,14 +124,49 @@
     background: hsl(var(--color-text-tertiary));
   }
 
-  .prompt-input-editor::highlight(prompt-skill-reference) {
+  .prompt-reference-chip {
+    display: inline-block;
+    margin-inline: 0.06em;
+    padding-inline: 0.28em;
+    border: 1px solid transparent;
+    border-radius: 0.34em;
+    font-weight: 500;
+    line-height: 1.35;
+    white-space: nowrap;
+    vertical-align: 0.02em;
+    cursor: default;
+  }
+
+  .prompt-reference-chip--skill {
     color: hsl(var(--color-metric-purple));
     background-color: hsl(var(--color-metric-purple) / 0.12);
   }
 
-  .prompt-input-editor::highlight(prompt-file-reference) {
+  .prompt-reference-chip--file {
     color: hsl(var(--color-success));
     background-color: hsl(var(--color-success) / 0.12);
+  }
+
+  .prompt-reference-chip--invalid {
+    color: hsl(var(--color-warning));
+    background-color: hsl(var(--color-warning) / 0.12);
+    border-color: hsl(var(--color-warning) / 0.65);
+    border-style: dashed;
+  }
+
+  .prompt-reference-chip--invalid::after {
+    content: '!';
+    display: inline-grid;
+    place-items: center;
+    width: 1.05em;
+    height: 1.05em;
+    margin-left: 0.24em;
+    border-radius: 999px;
+    color: hsl(var(--color-warning));
+    background-color: hsl(var(--color-warning) / 0.18);
+    font-size: 0.72em;
+    font-weight: 700;
+    line-height: 1;
   }
 }
 
