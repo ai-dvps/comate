@@ -26,7 +26,7 @@ export interface PromptReferenceRefreshResult {
 interface UsePromptReferenceValidationResult {
   candidates: ValidatedPromptReference[]
   references: PromptReference[]
-  refresh: () => Promise<PromptReferenceRefreshResult>
+  refresh: (commandsOverride?: CommandName[]) => Promise<PromptReferenceRefreshResult>
 }
 
 interface CacheEntry {
@@ -221,9 +221,29 @@ export function usePromptReferenceValidation({
     [fileStatuses, scannedCandidates, statusForSkill],
   )
 
-  const refresh = useCallback(async (): Promise<PromptReferenceRefreshResult> => {
+  const refresh = useCallback(async (
+    commandsOverride?: CommandName[],
+  ): Promise<PromptReferenceRefreshResult> => {
+    const refreshedCommandNames = commandsOverride
+      ? new Set(commandsOverride.map((command) => command.name))
+      : null
+    const refreshedSkillStatus = (name: string) => {
+      if (!refreshedCommandNames) return statusForSkill(name)
+      const status = refreshedCommandNames.has(name) ? 'valid' : 'invalid'
+      confirmedSkillsRef.current.set(name, status)
+      return status
+    }
     if (!workspaceId || filePaths.length === 0) {
-      return { candidates, succeeded: true }
+      return {
+        succeeded: true,
+        candidates: scannedCandidates.map((candidate) => ({
+          ...candidate,
+          status:
+            candidate.kind === 'skill'
+              ? refreshedSkillStatus(candidate.value)
+              : (fileStatuses.get(candidate.value) ?? 'pending'),
+        })),
+      }
     }
 
     const generation = ++requestGenerationRef.current
@@ -243,7 +263,7 @@ export function usePromptReferenceValidation({
           ...candidate,
           status:
             candidate.kind === 'skill'
-              ? statusForSkill(candidate.value)
+              ? refreshedSkillStatus(candidate.value)
               : (statuses.get(candidate.value) ?? 'invalid'),
         })),
       }
@@ -253,6 +273,7 @@ export function usePromptReferenceValidation({
   }, [
     candidates,
     filePaths,
+    fileStatuses,
     requestKey,
     scannedCandidates,
     statusForSkill,

@@ -6,6 +6,7 @@ import { I18nextProvider } from 'react-i18next'
 import PromptInput from './PromptInput'
 import i18n from '../i18n'
 import type { SessionActivitySnapshot } from '../types/message'
+import { extractPlainText, setCaretOffset } from '../lib/contenteditable'
 
 const ACTIVITY_LAYOUT_STYLES = `
   .mx-auto { margin-inline: auto; }
@@ -122,7 +123,14 @@ vi.mock('../stores/commands-store', () => ({
     partial: false,
     partialReason: undefined,
     fetch: vi.fn(),
-    refresh: vi.fn(),
+    refresh: vi.fn(async () => ({
+      commands: [
+        { name: 'commit', description: 'Commit changes', argumentHint: '<message>' },
+        { name: 'compact', description: 'Compact session' },
+        { name: 'explain', description: 'Explain code' },
+      ],
+      succeeded: true,
+    })),
     }
   },
 }))
@@ -231,17 +239,6 @@ describe('PromptInput browser', () => {
 
   function editableLocator() {
     return page.getByRole('textbox')
-  }
-
-  function highlightedText(name: string): string[] {
-    const highlight = CSS.highlights.get(name)
-    if (!highlight) return []
-    return Array.from(highlight, (abstractRange) => {
-      const range = document.createRange()
-      range.setStart(abstractRange.startContainer, abstractRange.startOffset)
-      range.setEnd(abstractRange.endContainer, abstractRange.endOffset)
-      return range.toString()
-    })
   }
 
   function inputCardElement() {
@@ -649,6 +646,9 @@ describe('PromptInput browser', () => {
 
     await userEvent.click(screen.getByText('/commit'))
     await waitFor(() => expect(editableElement().textContent).toContain('/commit'))
+    expect(
+      editableElement().querySelector('[data-prompt-reference-chip]'),
+    ).toHaveTextContent('/commit')
     expect(screen.getByText('<message>')).toBeInTheDocument()
   })
 
@@ -795,7 +795,7 @@ describe('PromptInput browser', () => {
     await new Promise((resolve) => setTimeout(resolve, 400))
     expect(screen.queryByText('the')).not.toBeInTheDocument()
     await userEvent.keyboard('{Tab}')
-    expect(editableElement().textContent).toBe('explain ')
+    expect(extractPlainText(editableElement())).toBe('explain ')
   })
 
   it('pastes plain text and strips formatting', async () => {
@@ -1333,21 +1333,93 @@ describe('PromptInput browser', () => {
     })
   })
 
-  it('highlights only resolved skill and file references', async () => {
+  it('atomizes only completed references that resolve', async () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
     const input = editableLocator()
+
+    await input.fill('/commit')
+    expect(
+      editableElement().querySelector('[data-prompt-reference-chip]'),
+    ).toBeNull()
+
+    await input.fill('/commit-extra ')
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(
+      editableElement().querySelector('[data-prompt-reference-chip]'),
+    ).toBeNull()
 
     await input.fill('/commit @src/app.ts /unknown @missing.ts')
 
     await waitFor(() => {
-      expect(highlightedText('prompt-skill-reference')).toEqual(['/commit'])
-      expect(highlightedText('prompt-file-reference')).toEqual(['@src/app.ts'])
+      expect(
+        Array.from(
+          editableElement().querySelectorAll('[data-prompt-reference-chip]'),
+          (chip) => chip.textContent,
+        ),
+      ).toEqual(['/commit', '@src/app.ts'])
+    })
+  })
+
+  it('reveals a newly invalid chip before allowing an explicit second send', async () => {
+    let fileStillExists = true
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { paths: string[] }
+      return {
+        ok: true,
+        json: async () => ({
+          paths: fileStillExists
+            ? body.paths.filter((path) => path === 'src/app.ts')
+            : [],
+        }),
+      } as Response
+    }))
+    const onSend = vi.fn()
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} onSend={onSend} />)
+
+    await editableLocator().fill('@src/app.ts ')
+    await waitFor(() => {
+      expect(
+        editableElement().querySelector('[data-prompt-reference-chip]'),
+      ).toHaveTextContent('@src/app.ts')
     })
 
-    await input.fill('/unknown @missing.ts')
+    fileStillExists = false
+    await page.getByTitle('Send').click()
+
+    const invalidChip = await waitFor(() => {
+      const chip = editableElement().querySelector<HTMLElement>(
+        '[data-prompt-reference-chip]',
+      )
+      expect(chip).toHaveAttribute('aria-invalid', 'true')
+      return chip!
+    })
+    expect(invalidChip.title).toContain('@src/app.ts')
+    expect(onSend).not.toHaveBeenCalled()
+
+    await page.getByTitle('Send').click()
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('@src/app.ts'))
+  })
+
+  it('deletes a whole chip at its edge and restores it with undo', async () => {
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const input = editableLocator()
+    await input.fill('/commit next')
     await waitFor(() => {
-      expect(CSS.highlights.has('prompt-skill-reference')).toBe(false)
-      expect(CSS.highlights.has('prompt-file-reference')).toBe(false)
+      expect(
+        editableElement().querySelector('[data-prompt-reference-chip]'),
+      ).toHaveTextContent('/commit')
+    })
+
+    act(() => setCaretOffset(editableElement(), '/commit'.length))
+    await userEvent.keyboard('{Backspace}')
+    await waitFor(() => expect(extractPlainText(editableElement())).toBe(' next'))
+
+    await userEvent.keyboard('{Meta>}z{/Meta}')
+    await waitFor(() => {
+      expect(extractPlainText(editableElement())).toBe('/commit next')
+      expect(
+        editableElement().querySelector('[data-prompt-reference-chip]'),
+      ).toHaveTextContent('/commit')
     })
   })
 })
