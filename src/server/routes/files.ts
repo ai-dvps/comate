@@ -26,13 +26,18 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
 };
 
 const MAX_IMAGE_PREVIEW_BYTES = 20 * 1024 * 1024;
+const MAX_RESOLVE_PATHS = 64;
+const MAX_RESOLVE_PATH_LENGTH = 4096;
+const MAX_RESOLVE_PATH_TEXT = 64 * 1024;
 
 function isWithinWorkspace(workspacePath: string, requestedPath: string): boolean {
   return requestedPath === workspacePath || requestedPath.startsWith(`${workspacePath}${path.sep}`);
 }
 
-async function validatePath(workspacePath: string, requestedPath: string): Promise<string | null> {
-  const resolvedBase = await realpath(workspacePath);
+async function validatePathFromResolvedBase(
+  resolvedBase: string,
+  requestedPath: string,
+): Promise<string | null> {
   const requestedCandidate = path.resolve(resolvedBase, requestedPath);
 
   if (!isWithinWorkspace(resolvedBase, requestedCandidate)) {
@@ -46,6 +51,74 @@ async function validatePath(workspacePath: string, requestedPath: string): Promi
 
   return resolvedRequested;
 }
+
+async function validatePath(workspacePath: string, requestedPath: string): Promise<string | null> {
+  return validatePathFromResolvedBase(await realpath(workspacePath), requestedPath);
+}
+
+function parseResolvePaths(body: unknown): string[] | null {
+  if (!body || typeof body !== 'object' || !('paths' in body)) return null;
+  const paths = (body as { paths?: unknown }).paths;
+  if (!Array.isArray(paths) || paths.some((candidate) => typeof candidate !== 'string')) {
+    return null;
+  }
+
+  const uniquePaths = [...new Set(paths as string[])];
+  if (
+    uniquePaths.length > MAX_RESOLVE_PATHS ||
+    uniquePaths.some((candidate) => candidate.length > MAX_RESOLVE_PATH_LENGTH) ||
+    uniquePaths.reduce((total, candidate) => total + candidate.length, 0) > MAX_RESOLVE_PATH_TEXT
+  ) {
+    return null;
+  }
+  return uniquePaths;
+}
+
+// POST /api/workspaces/:id/files/resolve
+router.post('/resolve', async (req, res) => {
+  try {
+    const workspace = await store.get((req.params as { id: string }).id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const candidates = parseResolvePaths(req.body);
+    if (!candidates) {
+      res.status(400).json({ error: 'Invalid paths request' });
+      return;
+    }
+
+    const resolvedBase = await realpath(workspace.folderPath);
+    const existing: string[] = [];
+    for (const candidate of candidates) {
+      if (!candidate || candidate.includes('\0') || path.isAbsolute(candidate)) continue;
+      try {
+        const resolved = await validatePathFromResolvedBase(resolvedBase, candidate);
+        if (resolved && (await stat(resolved)).isFile()) {
+          existing.push(candidate);
+        }
+      } catch (error) {
+        if (
+          error &&
+          typeof error === 'object' &&
+          'code' in error &&
+          (error.code === 'ENOENT' || error.code === 'ENOTDIR')
+        ) {
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    res.json({ paths: existing });
+  } catch (error) {
+    sidecarError('[files/resolve] failed:', error instanceof Error ? (error.stack || error.message) : error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to resolve files' });
+    }
+  }
+});
 
 // GET /api/workspaces/:id/files/search?q=&limit=
 router.get('/search', async (req, res) => {

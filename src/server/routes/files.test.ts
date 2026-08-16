@@ -22,6 +22,22 @@ async function importContentHandler() {
   return layer.route.stack[0].handle;
 }
 
+async function importResolveHandler() {
+  const mod = await import('./files.js');
+  const layer = (mod.default as unknown as {
+    stack: Array<{
+      route?: {
+        path: string;
+        methods: Record<string, boolean>;
+        stack: Array<{ handle: (req: unknown, res: unknown) => Promise<void> }>;
+      };
+    }>;
+  }).stack.find((entry) => entry.route?.path === '/resolve' && entry.route.methods.post);
+
+  assert.ok(layer?.route);
+  return layer.route.stack[0].handle;
+}
+
 function createMockRes(): {
   statusCode: number;
   jsonBody: unknown;
@@ -53,6 +69,101 @@ describe('files routes', { concurrency: false }, () => {
   afterEach(async () => {
     workspaceStore.resetData();
     await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('POST /resolve returns only existing regular files from a mixed batch', async () => {
+    await writeFile(path.join(tempDir, 'alpha.ts'), 'alpha');
+    await mkdir(path.join(tempDir, 'nested'));
+    await writeFile(path.join(tempDir, 'nested', 'beta.ts'), 'beta');
+    const workspace = await workspaceStore.create({ name: 'test-ws', folderPath: tempDir });
+    const handler = await importResolveHandler();
+    const res = createMockRes();
+
+    await handler(
+      {
+        params: { id: workspace.id },
+        body: {
+          paths: [
+            'alpha.ts',
+            'missing.ts',
+            'nested',
+            'nested/beta.ts',
+            'alpha.ts',
+          ],
+        },
+      },
+      res,
+    );
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.deepStrictEqual(res.jsonBody, {
+      paths: ['alpha.ts', 'nested/beta.ts'],
+    });
+  });
+
+  it('POST /resolve omits paths outside the workspace and unsafe candidates', async () => {
+    const outsideDir = await mkdtemp(path.join(os.tmpdir(), 'comate-files-outside-'));
+    const outsidePath = path.join(outsideDir, 'private.ts');
+    await writeFile(outsidePath, 'private');
+    await symlink(outsidePath, path.join(tempDir, 'linked.ts'));
+    const workspace = await workspaceStore.create({ name: 'test-ws', folderPath: tempDir });
+    const handler = await importResolveHandler();
+    const res = createMockRes();
+
+    try {
+      await handler(
+        {
+          params: { id: workspace.id },
+          body: {
+            paths: [
+              outsidePath,
+              '../private.ts',
+              'linked.ts',
+              'bad\0path',
+              '',
+            ],
+          },
+        },
+        res,
+      );
+
+      assert.strictEqual(res.statusCode, 200);
+      assert.deepStrictEqual(res.jsonBody, { paths: [] });
+    } finally {
+      await rm(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST /resolve rejects malformed and over-limit request bodies', async () => {
+    const workspace = await workspaceStore.create({ name: 'test-ws', folderPath: tempDir });
+    const handler = await importResolveHandler();
+
+    for (const body of [
+      undefined,
+      {},
+      { paths: 'alpha.ts' },
+      { paths: [42] },
+      { paths: Array.from({ length: 65 }, (_, index) => `file-${index}.ts`) },
+      { paths: ['x'.repeat(4097)] },
+    ]) {
+      const res = createMockRes();
+      await handler({ params: { id: workspace.id }, body }, res);
+      assert.strictEqual(res.statusCode, 400);
+      assert.deepStrictEqual(res.jsonBody, { error: 'Invalid paths request' });
+    }
+  });
+
+  it('POST /resolve returns workspace-not-found for an unknown workspace', async () => {
+    const handler = await importResolveHandler();
+    const res = createMockRes();
+
+    await handler(
+      { params: { id: 'missing-workspace' }, body: { paths: ['alpha.ts'] } },
+      res,
+    );
+
+    assert.strictEqual(res.statusCode, 404);
+    assert.deepStrictEqual(res.jsonBody, { error: 'Workspace not found' });
   });
 
   it('GET /content returns supported images as base64 preview data', async () => {
