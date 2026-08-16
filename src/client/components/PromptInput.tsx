@@ -1003,7 +1003,11 @@ export default function PromptInput(props: PromptInputProps) {
   )
 
   return (
-    <div className={`max-w-3xl mx-auto px-4 ${isBotSession ? 'py-2' : 'py-4'}`}>
+    <div
+      className={`max-w-3xl mx-auto ${
+        isBotSession ? 'px-4 py-2' : isNewChat ? 'py-0' : 'px-4 py-4'
+      }`}
+    >
       {lockedBackendUnavailable && (
         <div className="mb-2 px-3 py-1.5 text-[11px] rounded-md text-destructive bg-destructive/10 border border-destructive/20">
           {t('backend.unavailableReadOnly', { backend: sessionBackend })}

@@ -157,7 +157,7 @@ describe('NewChatPage', () => {
     const promptInput = screen.getByTestId('prompt-input')
     expect(screen.getByTestId('new-chat-composer')).toContainElement(workspaceSelector)
     expect(screen.getByTestId('new-chat-composer')).toContainElement(promptInput)
-    expect(screen.getByTestId('new-chat-workspace-context')).toHaveClass('mx-6')
+    expect(screen.getByTestId('new-chat-workspace-context')).toHaveClass('mx-4')
     expect(workspaceSelector.compareDocumentPosition(promptInput) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
