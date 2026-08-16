@@ -38,7 +38,14 @@ export class TodoSchedulerService {
 
   constructor(deps: Deps = {}) {
     this.store = deps.store ?? defaultStore;
-    this.execution = deps.execution ?? todoExecutionService;
+    // Lazy default: chat-service participates in an import cycle with this
+    // module, so reading the todoExecutionService binding eagerly at module
+    // evaluation (the singleton below) throws a TDZ ReferenceError whenever
+    // todo-scheduler-service evaluates before todo-execution-service finishes.
+    // Deferring the dereference to call time breaks the cycle.
+    this.execution = deps.execution ?? {
+      runNow: (todoId: string, fireAt?: string) => todoExecutionService.runNow(todoId, fireAt),
+    };
     this.now = deps.now ?? (() => new Date());
     this.hasExecutingSession = deps.hasExecutingSession ?? (() => chatService.hasExecutingRuntime());
   }
@@ -55,7 +62,11 @@ export class TodoSchedulerService {
     this.timer = null;
   }
 
-  recomputeNextFire(todo: Todo): string | null {
+  /**
+   * Structural input so callers can validate a schedule (and let a malformed
+   * cron throw CronParseError) before any Todo row is persisted.
+   */
+  recomputeNextFire(todo: Pick<Todo, 'executionType' | 'scheduleTime' | 'cronExpr'>): string | null {
     if (todo.executionType === 'once') return todo.scheduleTime && new Date(todo.scheduleTime) > this.now() ? todo.scheduleTime : null;
     if (todo.executionType === 'recurring' && todo.cronExpr) return nextCronFire(todo.cronExpr, this.now())?.toISOString() ?? null;
     return null;

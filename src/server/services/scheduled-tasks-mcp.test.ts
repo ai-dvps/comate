@@ -2,13 +2,13 @@ import '../test-utils/test-env.js';
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { store } from '../storage/sqlite-store.js';
+import type { TodoRun } from '../models/todo.js';
 import {
   buildScheduledTaskToolDefinitions,
   resolveScheduledTasksMcpDeps,
   type ScheduledTasksMcpDeps,
 } from './scheduled-tasks-mcp.js';
-import { schedulerEvents } from './scheduler-service.js';
-import { scheduledTasksService } from './scheduled-tasks-service.js';
+import { todoExecutionService } from './todo-execution-service.js';
 
 const HUMAN_ONLY = ['confirm', 'edit', 'delete'];
 
@@ -27,11 +27,15 @@ function textOf(result: { content: { type: string; text: string }[] }): string {
   return result.content.map((c) => c.text).join('\n');
 }
 
+/** Scheduled Todos for the current test workspace (the unified task store). */
+function scheduledTodos(): ReturnType<typeof store.getAllTodos> {
+  return store.getAllTodos({ workspaceId }).filter((t) => t.executionType === 'once' || t.executionType === 'recurring');
+}
+
 let workspaceId: string;
 
 beforeEach(async () => {
   store.resetData();
-  schedulerEvents.removeAllListeners();
   const ws = await store.create({ name: 'WS', folderPath: '/tmp/ws-mcp' });
   workspaceId = ws.id;
 });
@@ -68,24 +72,24 @@ describe('tool surface by session source (KTD-5)', () => {
 });
 
 describe('create tool', () => {
-  it('creates an active task and emits task-created', async () => {
-    const events: { taskId: string }[] = [];
-    schedulerEvents.on('task-created', (e) => events.push(e));
+  it('creates an active scheduled Todo with a computed next fire time', async () => {
+    const scheduleTime = new Date(Date.now() + 3600_000).toISOString();
     const result = await callTool('wecom', 'create_scheduled_task', {
       name: 'deploy',
       instruction: 'run the deploy script at repo root and report the result',
       scheduleType: 'once',
-      scheduleTime: new Date(Date.now() + 3600_000).toISOString(),
+      scheduleTime,
     });
     assert.equal(result.isError ?? false, false);
     assert.match(textOf(result), /生效/);
-    const tasks = store.listScheduledTasks({ workspaceId });
-    assert.equal(tasks.length, 1);
-    assert.equal(tasks[0].status, 'active');
-    assert.equal(events.length, 1);
+    const todos = scheduledTodos();
+    assert.equal(todos.length, 1);
+    assert.equal(todos[0].text, 'deploy');
+    assert.equal(todos[0].executionStatus, 'active');
+    assert.equal(todos[0].nextFireAt, scheduleTime);
   });
 
-  it('rejects invalid schedules as error text instead of throwing', async () => {
+  it('rejects invalid schedules as error text instead of throwing, leaving nothing behind', async () => {
     const result = await callTool(undefined, 'create_scheduled_task', {
       name: 'bad',
       instruction: 'x',
@@ -93,7 +97,9 @@ describe('create tool', () => {
       cronExpr: 'not a cron',
     });
     assert.equal(result.isError, true);
-    assert.match(textOf(result), /调度规则无效/);
+    assert.match(textOf(result), /创建任务失败/);
+    // Validation runs before the write, so no orphaned Todo row survives.
+    assert.equal(scheduledTodos().length, 0);
   });
 });
 
@@ -106,7 +112,9 @@ describe('list/pause/resume/run-now tools', () => {
       cronExpr: '0 3 * * *',
     });
     assert.equal(created.isError ?? false, false);
-    const taskId = store.listScheduledTasks({ workspaceId })[0].id;
+    const todos = scheduledTodos();
+    assert.equal(todos.length, 1);
+    const taskId = todos[0].id;
 
     const listed = await callTool(undefined, 'list_scheduled_tasks', {});
     assert.match(textOf(listed), /nightly/);
@@ -114,24 +122,37 @@ describe('list/pause/resume/run-now tools', () => {
 
     const paused = await callTool(undefined, 'pause_scheduled_task', { taskId });
     assert.match(textOf(paused), /已暂停/);
-    assert.equal(store.getScheduledTask(taskId)!.status, 'paused');
+    assert.equal(store.getTodoById(taskId)!.executionStatus, 'paused');
 
     const resumed = await callTool(undefined, 'resume_scheduled_task', { taskId });
     assert.match(textOf(resumed), /已恢复/);
-    assert.equal(store.getScheduledTask(taskId)!.status, 'active');
+    assert.equal(store.getTodoById(taskId)!.executionStatus, 'active');
 
-    const runNow = await callTool(undefined, 'run_scheduled_task_now', { taskId });
-    assert.equal(runNow.isError ?? false, false);
+    // The real execution singleton would start an SDK session; stub it and
+    // assert the tool routes the right id and reports the run.
+    const originalRunNow = todoExecutionService.runNow.bind(todoExecutionService);
+    let seenId: string | undefined;
+    todoExecutionService.runNow = async (todoId: string) => {
+      seenId = todoId;
+      return { id: 'run-1', status: 'running' } as unknown as TodoRun;
+    };
+    try {
+      const runNow = await callTool(undefined, 'run_scheduled_task_now', { taskId });
+      assert.equal(runNow.isError ?? false, false);
+      assert.equal(seenId, taskId);
+      assert.match(textOf(runNow), /run-1/);
+    } finally {
+      todoExecutionService.runNow = originalRunNow;
+    }
   });
 
   it('pause/resume/run-now against another workspace\'s task fail with error text; the task is untouched', async () => {
     const other = await store.create({ name: 'WS2', folderPath: '/tmp/ws-mcp-other' });
     // The task belongs to `workspaceId`; the tools below are scoped to `other.id`.
-    const task = await scheduledTasksService.createTask(workspaceId, {
-      workspaceId,
-      name: 'victim',
+    const task = store.createTodo(workspaceId, {
+      text: 'victim',
       instruction: 'x',
-      scheduleType: 'recurring',
+      executionType: 'recurring',
       cronExpr: '0 9 * * *',
     });
     const otherTools = buildScheduledTaskToolDefinitions({ workspaceId: other.id, source: undefined });
@@ -143,17 +164,17 @@ describe('list/pause/resume/run-now tools', () => {
 
     const paused = await invoke('pause_scheduled_task', { taskId: task.id });
     assert.equal(paused.isError, true);
-    assert.match(textOf(paused), /not found/);
+    assert.match(textOf(paused), /不存在/);
 
     const resumed = await invoke('resume_scheduled_task', { taskId: task.id });
     assert.equal(resumed.isError, true);
-    assert.match(textOf(resumed), /not found/);
+    assert.match(textOf(resumed), /不存在/);
 
     const ran = await invoke('run_scheduled_task_now', { taskId: task.id });
     assert.equal(ran.isError, true);
-    assert.match(textOf(ran), /not found/);
+    assert.match(textOf(ran), /不存在/);
 
     // Untouched: still active in its own workspace
-    assert.equal(store.getScheduledTask(task.id)!.status, 'active');
+    assert.equal(store.getTodoById(task.id)!.executionStatus, 'active');
   });
 });
