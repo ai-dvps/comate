@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Nothing yet.
+### Changed
+
+- **Workspace groups now expand and collapse from the whole header** — Clicking a workspace name toggles its session list with a smooth transition instead of selecting the workspace and opening an empty “Start a conversation” view.
 
 ## [0.2.0] - 2026-08-16
 

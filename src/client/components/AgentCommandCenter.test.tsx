@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { I18nextProvider } from 'react-i18next'
 import i18n from '../i18n'
@@ -147,10 +147,15 @@ describe('AgentCommandCenter', () => {
       '/feishu-icon.svg',
     )
     const workspaceRegion = screen.getByRole('region', { name: 'Comate' })
+    const sessionRegion = screen.getByTestId('workspace-sessions-ws-1')
     expect(workspaceRegion.querySelector('.lucide-folder-open')).toBeInTheDocument()
+    expect(sessionRegion).toHaveClass('grid-rows-[1fr]', 'opacity-100', 'duration-200')
     fireEvent.click(screen.getByRole('button', { name: 'Collapse Comate' }))
     expect(workspaceRegion.querySelector('.lucide-folder')).toBeInTheDocument()
     expect(workspaceRegion.querySelector('.lucide-folder-open')).not.toBeInTheDocument()
+    expect(sessionRegion).toHaveClass('grid-rows-[0fr]', 'opacity-0', 'duration-200')
+    expect(sessionRegion).toHaveAttribute('aria-hidden', 'true')
+    expect(sessionRegion).toHaveAttribute('inert')
     expect(screen.queryByRole('combobox', { name: 'Filter sessions' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Toggle theme' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'User account' })).toBeInTheDocument()
@@ -163,6 +168,27 @@ describe('AgentCommandCenter', () => {
     expect(capabilities).toHaveClass('w-full', 'justify-start')
     expect(todos).toHaveTextContent('Todos')
     expect(capabilities).toHaveTextContent('Plugins / Skills')
+  })
+
+  it('toggles a workspace group without opening it when the workspace item is clicked', () => {
+    renderCommandCenter(
+      <AgentCommandCenter
+        width={288}
+        onWidthChange={vi.fn()}
+        onCreateWorkspace={vi.fn()}
+        onOpenTodos={vi.fn()}
+        onOpenAnalytics={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onOpenCapabilities={vi.fn()}
+      />,
+    )
+
+    const workspaceRegion = screen.getByRole('region', { name: 'Comate' })
+    fireEvent.click(screen.getByRole('button', { name: 'Comate' }))
+
+    expect(workspaceRegion.querySelector('.lucide-folder')).toBeInTheDocument()
+    expect(workspaceRegion.querySelector('.lucide-folder-open')).not.toBeInTheDocument()
+    expect(workspaceState.openWorkspace).not.toHaveBeenCalled()
   })
 
   it('opens Analytics and Settings from the user account menu', () => {
@@ -232,7 +258,7 @@ describe('AgentCommandCenter', () => {
     expect(accountButton).toHaveFocus()
   })
 
-  it('shows and opens a defined Workspace that is not already open', () => {
+  it('toggles a workspace that is not already open without opening it', () => {
     renderCommandCenter(
       <AgentCommandCenter
         width={288}
@@ -245,8 +271,11 @@ describe('AgentCommandCenter', () => {
       />,
     )
 
+    const workspaceRegion = screen.getByRole('region', { name: 'Hidden tools' })
     fireEvent.click(screen.getByRole('button', { name: 'Hidden tools' }))
-    expect(workspaceState.openWorkspace).toHaveBeenCalledWith('ws-2')
+
+    expect(workspaceRegion.querySelector('.lucide-folder')).toBeInTheDocument()
+    expect(workspaceState.openWorkspace).not.toHaveBeenCalled()
   })
 
   it('reveals Workspace search on demand and closes it with Escape or its close button', () => {
@@ -352,7 +381,7 @@ describe('AgentCommandCenter', () => {
     expect(screen.queryByRole('button', { name: 'Show more sessions in Comate' })).not.toBeInTheDocument()
   })
 
-  it('asks for a name before creating a Session', () => {
+  it('asks for a name before creating a Session', async () => {
     renderCommandCenter(
       <AgentCommandCenter
         width={288}
@@ -365,13 +394,67 @@ describe('AgentCommandCenter', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'New session in Comate' }))
+    const newSessionButton = screen.getByRole('button', { name: 'New session in Comate' })
+    fireEvent.click(newSessionButton)
     fireEvent.change(screen.getByRole('textbox', { name: 'Session name' }), {
       target: { value: 'Release planning' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Create' }))
 
     expect(chatState.createSession).toHaveBeenCalledWith('ws-1', { name: 'Release planning' })
+    await waitFor(() => expect(newSessionButton).toHaveFocus())
+  })
+
+  it('animates the new Session form when opening and cancelling it', () => {
+    renderCommandCenter(
+      <AgentCommandCenter
+        width={288}
+        onWidthChange={vi.fn()}
+        onCreateWorkspace={vi.fn()}
+        onOpenTodos={vi.fn()}
+        onOpenAnalytics={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onOpenCapabilities={vi.fn()}
+      />,
+    )
+
+    const formRegion = screen.getByTestId('new-session-form-ws-1')
+    expect(formRegion).toHaveClass('grid-rows-[0fr]', 'opacity-0', 'duration-200')
+    expect(formRegion).toHaveAttribute('inert')
+
+    fireEvent.click(screen.getByRole('button', { name: 'New session in Comate' }))
+    expect(screen.getByRole('textbox', { name: 'Session name' })).toHaveFocus()
+    expect(formRegion).toHaveClass('grid-rows-[1fr]', 'opacity-100', 'duration-200')
+    expect(formRegion).not.toHaveAttribute('inert')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(formRegion).toHaveClass('grid-rows-[0fr]', 'opacity-0', 'duration-200')
+    expect(formRegion).toHaveAttribute('aria-hidden', 'true')
+    expect(formRegion).toHaveAttribute('inert')
+    expect(screen.getByRole('button', { name: 'New session in Comate' })).toHaveFocus()
+
+    fireEvent.click(screen.getByRole('button', { name: 'New session in Comate' }))
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Session name' }), { key: 'Escape' })
+    expect(screen.getByRole('button', { name: 'New session in Comate' })).toHaveFocus()
+  })
+
+  it('keeps session rows as the workspace navigation boundary', () => {
+    renderCommandCenter(
+      <AgentCommandCenter
+        width={288}
+        onWidthChange={vi.fn()}
+        onCreateWorkspace={vi.fn()}
+        onOpenTodos={vi.fn()}
+        onOpenAnalytics={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onOpenCapabilities={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /Needs approval/ }))
+
+    expect(chatState.setActiveSession).toHaveBeenCalledWith('ws-1', 'session-a')
+    expect(workspaceState.openWorkspace).not.toHaveBeenCalled()
   })
 
   it('restores the Session context menu and renames a Session', () => {

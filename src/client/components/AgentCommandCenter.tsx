@@ -4,7 +4,6 @@ import {
   ArchiveRestore,
   BarChart3,
   CheckSquare,
-  ChevronDown,
   ChevronRight,
   CircleUserRound,
   Clock3,
@@ -178,6 +177,8 @@ export default function AgentCommandCenter({
   const searchInputRef = useRef<HTMLInputElement>(null)
   const userButtonRef = useRef<HTMLButtonElement>(null)
   const userMenuRef = useRef<HTMLDivElement>(null)
+  const newSessionInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
+  const newSessionTriggerRefs = useRef<Record<string, HTMLButtonElement | null>>({})
 
   useEffect(() => {
     setExpanded((current) => {
@@ -212,6 +213,10 @@ export default function AgentCommandCenter({
   useEffect(() => {
     if (searchOpen) searchInputRef.current?.focus()
   }, [searchOpen])
+
+  useEffect(() => {
+    if (creatingWorkspaceId) newSessionInputRefs.current[creatingWorkspaceId]?.focus()
+  }, [creatingWorkspaceId])
 
   useEffect(() => {
     if (!contextMenu) return
@@ -268,6 +273,15 @@ export default function AgentCommandCenter({
     searchButtonRef.current?.focus()
   }
 
+  const toggleWorkspace = useCallback((workspaceId: string) => {
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (next.has(workspaceId)) next.delete(workspaceId)
+      else next.add(workspaceId)
+      return next
+    })
+  }, [])
+
   const activateSession = async (workspaceId: string, sessionId: string) => {
     if (onActivateWork && !onActivateWork()) return
     if (!openWorkspaceIds.includes(workspaceId)) await openWorkspace(workspaceId)
@@ -275,12 +289,17 @@ export default function AgentCommandCenter({
     setActiveSession(workspaceId, sessionId)
   }
 
+  const closeNewSessionForm = (workspaceId: string) => {
+    newSessionTriggerRefs.current[workspaceId]?.focus()
+    setCreatingWorkspaceId(null)
+    setNewSessionName('')
+  }
+
   const createWorkspaceSession = async (workspaceId: string, fallbackCount: number) => {
     if (!openWorkspaceIds.includes(workspaceId)) await openWorkspace(workspaceId)
     const name = newSessionName.trim() || tc('newSessionDefaultName', { count: fallbackCount })
     await createSession(workspaceId, { name })
-    setCreatingWorkspaceId(null)
-    setNewSessionName('')
+    closeNewSessionForm(workspaceId)
   }
 
   const startRename = (session: ChatSession) => {
@@ -442,6 +461,7 @@ export default function AgentCommandCenter({
             const visibleSessions = matchingSessions.slice(0, visibleCount)
             const hasMoreSessions = visibleSessions.length < matchingSessions.length
             const isExpanded = expanded.has(workspace.id)
+            const isCreatingSession = creatingWorkspaceId === workspace.id
             const isWorkspaceActive = activeWorkspaceId === workspace.id
               && !activeSessionIds[workspace.id]
             const WorkspaceFolderIcon = isExpanded ? FolderOpen : Folder
@@ -464,23 +484,23 @@ export default function AgentCommandCenter({
                 >
                   <button
                     type="button"
-                    onClick={() => setExpanded((current) => {
-                      const next = new Set(current)
-                      if (next.has(workspace.id)) next.delete(workspace.id)
-                      else next.add(workspace.id)
-                      return next
-                    })}
+                    onClick={() => toggleWorkspace(workspace.id)}
                     className="flex h-7 w-6 items-center justify-center rounded text-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                     aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${workspace.name}`}
                     aria-expanded={isExpanded}
                   >
-                    {isExpanded
-                      ? <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
-                      : <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />}
+                    <ChevronRight
+                      className={cn(
+                        'h-3.5 w-3.5 transition-transform duration-200 ease-out motion-reduce:transition-none',
+                        isExpanded && 'rotate-90',
+                      )}
+                      aria-hidden="true"
+                    />
                   </button>
                   <button
                     type="button"
-                    onClick={() => void openWorkspace(workspace.id)}
+                    onClick={() => toggleWorkspace(workspace.id)}
+                    aria-expanded={isExpanded}
                     className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs font-medium text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                   >
                     <WorkspaceFolderIcon
@@ -495,6 +515,9 @@ export default function AgentCommandCenter({
                   {running > 0 ? <span className="text-[9px] tabular-nums text-accent" title="Running">{running}</span> : null}
                   {unread > 0 ? <span className="text-[9px] tabular-nums text-text-secondary" title="Completed unread">{unread}</span> : null}
                   <button
+                    ref={(button) => {
+                      newSessionTriggerRefs.current[workspace.id] = button
+                    }}
                     type="button"
                     onClick={() => {
                       setExpanded((current) => new Set(current).add(workspace.id))
@@ -508,48 +531,67 @@ export default function AgentCommandCenter({
                   </button>
                 </div>
 
-                {isExpanded ? (
-                  <div className="ml-3 pl-1.5">
-                    {creatingWorkspaceId === workspace.id ? (
-                      <div className="mb-1 rounded-md border border-border bg-bg p-2">
-                        <input
-                          autoFocus
-                          value={newSessionName}
-                          onChange={(event) => setNewSessionName(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter') {
-                              event.preventDefault()
-                              void createWorkspaceSession(workspace.id, workspaceSessions.length + 1)
-                            } else if (event.key === 'Escape') {
-                              setCreatingWorkspaceId(null)
-                              setNewSessionName('')
-                            }
-                          }}
-                          aria-label={tc('sessionNamePlaceholder')}
-                          placeholder={tc('sessionNamePlaceholder')}
-                          className="h-7 w-full rounded border border-border bg-surface px-2 text-[11px] text-text-primary outline-none placeholder:text-text-tertiary focus:border-accent"
-                        />
-                        <div className="mt-1.5 flex justify-end gap-1">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setCreatingWorkspaceId(null)
-                              setNewSessionName('')
-                            }}
-                            className="rounded px-2 py-1 text-[10px] text-text-tertiary hover:bg-surface-hover hover:text-text-primary"
-                          >
-                            {tc('cancel')}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void createWorkspaceSession(workspace.id, workspaceSessions.length + 1)}
-                            className="rounded bg-accent px-2 py-1 text-[10px] font-medium text-white hover:bg-accent/90"
-                          >
-                            {tc('create')}
-                          </button>
+                <div
+                  data-testid={`workspace-sessions-${workspace.id}`}
+                  className={cn(
+                    'grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none',
+                    isExpanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0',
+                  )}
+                  aria-hidden={!isExpanded}
+                  {...(!isExpanded ? { inert: '' } : {})}
+                >
+                  <div className="min-h-0 overflow-hidden">
+                    <div className="ml-3 pl-1.5">
+                      <div
+                        data-testid={`new-session-form-${workspace.id}`}
+                        className={cn(
+                          'grid transition-[grid-template-rows,opacity,margin] duration-200 ease-out motion-reduce:transition-none',
+                          isCreatingSession
+                            ? 'mb-1 grid-rows-[1fr] opacity-100'
+                            : 'mb-0 grid-rows-[0fr] opacity-0',
+                        )}
+                        aria-hidden={!isCreatingSession}
+                        {...(!isCreatingSession ? { inert: '' } : {})}
+                      >
+                        <div className="min-h-0 overflow-hidden">
+                          <div className="rounded-md border border-border bg-bg p-2">
+                            <input
+                              ref={(input) => {
+                                newSessionInputRefs.current[workspace.id] = input
+                              }}
+                              value={isCreatingSession ? newSessionName : ''}
+                              onChange={(event) => setNewSessionName(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                  event.preventDefault()
+                                  void createWorkspaceSession(workspace.id, workspaceSessions.length + 1)
+                                } else if (event.key === 'Escape') {
+                                  closeNewSessionForm(workspace.id)
+                                }
+                              }}
+                              aria-label={tc('sessionNamePlaceholder')}
+                              placeholder={tc('sessionNamePlaceholder')}
+                              className="h-7 w-full rounded border border-border bg-surface px-2 text-[11px] text-text-primary outline-none placeholder:text-text-tertiary focus:border-accent"
+                            />
+                            <div className="mt-1.5 flex justify-end gap-1">
+                              <button
+                                type="button"
+                                onClick={() => closeNewSessionForm(workspace.id)}
+                                className="rounded px-2 py-1 text-[10px] text-text-tertiary hover:bg-surface-hover hover:text-text-primary"
+                              >
+                                {tc('cancel')}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void createWorkspaceSession(workspace.id, workspaceSessions.length + 1)}
+                                className="rounded bg-accent px-2 py-1 text-[10px] font-medium text-white hover:bg-accent/90"
+                              >
+                                {tc('create')}
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    ) : null}
                     {visibleSessions.map((session) => {
                       const status = sessionStatus[session.id]
                       const activityCount = sessionActivity[session.id]?.backgroundTasks.length ?? 0
@@ -677,8 +719,9 @@ export default function AgentCommandCenter({
                     {visibleSessions.length === 0 ? (
                       <div className="px-2 py-2 text-[10px] text-text-tertiary">{t('shell.noMatchingSessions')}</div>
                     ) : null}
+                    </div>
                   </div>
-                ) : null}
+                </div>
               </section>
             )
           })}
