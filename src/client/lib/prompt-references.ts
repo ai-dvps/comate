@@ -7,7 +7,7 @@ export interface PromptReference {
   end: number
 }
 
-const REFERENCE_PATTERN = /(^|\s)([\/@])(\S+)/g
+const REFERENCE_PATTERN = /(^|\s)([/@])(\S+)/g
 
 export function scanPromptReferences(input: string): PromptReference[] {
   const references: PromptReference[] = []

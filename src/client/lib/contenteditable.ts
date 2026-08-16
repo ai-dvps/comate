@@ -14,40 +14,6 @@ export function supportsPlaintextOnly(): boolean {
 }
 
 /**
- * Walk the children of a node and build a plain-text string. Block-level
- * elements (`<div>`, `<p>`) are converted to newline characters, and `<br>`
- * tags are converted to newlines unless they are the sole content of an empty
- * block (the block separator already provides the newline).
- */
-function walkTextNodes(node: Node): string {
-  let result = ''
-  for (const child of Array.from(node.childNodes)) {
-    if (child.nodeType === Node.TEXT_NODE) {
-      result += child.textContent ?? ''
-    } else if (child.nodeType === Node.ELEMENT_NODE) {
-      const tag = (child as Element).tagName
-      if (tag === 'BR') {
-        const parent = child.parentElement
-        const isOnlyChild = parent !== null && parent.childNodes.length === 1
-        const parentIsBlock =
-          parent !== null && (parent.tagName === 'DIV' || parent.tagName === 'P')
-        // An empty block (<div><br></div>) already gets a newline from the
-        // block separator below; don't add a second one for the <br>.
-        if (!isOnlyChild || !parentIsBlock) {
-          result += '\n'
-        }
-      } else {
-        result += walkTextNodes(child)
-        if (tag === 'DIV' || tag === 'P') {
-          result += '\n'
-        }
-      }
-    }
-  }
-  return result
-}
-
-/**
  * Extract a single plain-text value from a `contentEditable` element.
  *
  * For `contentEditable="plaintext-only"`, newlines are stored literally in the
@@ -58,10 +24,7 @@ function walkTextNodes(node: Node): string {
  * double-counting empty blocks.
  */
 export function extractPlainText(element: HTMLElement): string {
-  if (element.contentEditable === 'plaintext-only') {
-    return element.textContent ?? ''
-  }
-  return walkTextNodes(element)
+  return collectPlainTextSegments(element).text
 }
 
 /**
@@ -114,6 +77,7 @@ function collectPlainTextSegments(element: HTMLElement): {
       const tag = (child as Element).tagName
       if (tag === 'BR') {
         const parent = child.parentElement
+        // The block separator below already represents <div><br></div>.
         const isEmptyBlockPlaceholder =
           parent !== null &&
           parent.childNodes.length === 1 &&

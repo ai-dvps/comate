@@ -9,10 +9,7 @@ export default function PromptGhostText({
   argumentHint,
   lastInsertedCommand,
 }: PromptGhostTextProps) {
-  const showArgumentHint = !!argumentHint && input === lastInsertedCommand
-  const ghost = showArgumentHint ? argumentHint : null
-
-  if (!ghost) return null
+  if (!argumentHint || input !== lastInsertedCommand) return null
 
   const lines = input.split('\n')
   const lastIndex = lines.length - 1
@@ -35,7 +32,7 @@ export default function PromptGhostText({
           >
             <span className="invisible">{line}</span>
             {showGhost ? (
-              <span className="text-text-tertiary">{ghost}</span>
+              <span className="text-text-tertiary">{argumentHint}</span>
             ) : null}
           </div>
         )
