@@ -779,7 +779,7 @@ describe('PromptInput browser', () => {
     )
   })
 
-  it('shows and accepts a completion suggestion', async () => {
+  it('does not suggest text from previously sent prompts', async () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
     const input = editableLocator()
     const sendButton = page.getByTitle('Send')
@@ -792,12 +792,10 @@ describe('PromptInput browser', () => {
     await waitFor(() => expect(DEFAULT_PROPS.onSend).toHaveBeenCalledTimes(2))
 
     await input.fill('explain ')
-    await waitFor(() => expect(screen.getByText('the')).toBeInTheDocument(), {
-      timeout: 2000,
-    })
-
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    expect(screen.queryByText('the')).not.toBeInTheDocument()
     await userEvent.keyboard('{Tab}')
-    await waitFor(() => expect(editableElement().textContent?.trim()).toBe('explain the'))
+    expect(editableElement().textContent).toBe('explain ')
   })
 
   it('pastes plain text and strips formatting', async () => {

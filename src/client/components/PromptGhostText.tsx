@@ -2,19 +2,15 @@ interface PromptGhostTextProps {
   input: string
   argumentHint: string | null
   lastInsertedCommand: string | null
-  completionSuggestion: string | null
 }
 
 export default function PromptGhostText({
   input,
   argumentHint,
   lastInsertedCommand,
-  completionSuggestion,
 }: PromptGhostTextProps) {
   const showArgumentHint = !!argumentHint && input === lastInsertedCommand
-  const ghost = showArgumentHint
-    ? argumentHint
-    : completionSuggestion
+  const ghost = showArgumentHint ? argumentHint : null
 
   if (!ghost) return null
 
