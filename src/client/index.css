@@ -36,6 +36,14 @@
     --color-shimmer-base: 0 0% 42%;
     --color-shimmer-highlight: 0 0% 100%;
 
+    /* Prompt reference chips */
+    --color-reference-skill: 270 55% 38%;
+    --color-reference-skill-surface: 270 70% 96%;
+    --color-reference-file: 150 58% 27%;
+    --color-reference-file-surface: 150 52% 95%;
+    --color-reference-invalid: 32 78% 34%;
+    --color-reference-invalid-surface: 38 86% 94%;
+
     /* Analytics heatmap intensity (light) */
     --color-heatmap-empty: 40 10% 90%;
     --color-heatmap-low: 140 50% 75%;
@@ -84,6 +92,14 @@
     --color-shimmer-base: 0 0% 62%;
     --color-shimmer-highlight: 0 0% 7%;
 
+    /* Prompt reference chips */
+    --color-reference-skill: 270 76% 80%;
+    --color-reference-skill-surface: 270 42% 18%;
+    --color-reference-file: 150 58% 72%;
+    --color-reference-file-surface: 150 34% 15%;
+    --color-reference-invalid: 42 88% 70%;
+    --color-reference-invalid-surface: 36 46% 16%;
+
     /* Analytics heatmap intensity (dark) */
     --color-heatmap-empty: 0 0% 14%;
     --color-heatmap-low: 140 40% 28%;
@@ -125,33 +141,30 @@
   }
 
   .prompt-reference-chip {
-    display: inline-block;
-    margin-inline: 0.06em;
-    padding-inline: 0.28em;
-    border: 1px solid transparent;
-    border-radius: 0.34em;
-    font-weight: 500;
-    line-height: 1.35;
+    display: inline;
+    padding-inline: 0.35em;
+    border-radius: 0.3em;
+    font-weight: 600;
+    line-height: inherit;
+    letter-spacing: -0.01em;
     white-space: nowrap;
-    vertical-align: 0.02em;
+    vertical-align: baseline;
     cursor: default;
   }
 
   .prompt-reference-chip--skill {
-    color: hsl(var(--color-metric-purple));
-    background-color: hsl(var(--color-metric-purple) / 0.12);
+    color: hsl(var(--color-reference-skill));
+    background-color: hsl(var(--color-reference-skill-surface));
   }
 
   .prompt-reference-chip--file {
-    color: hsl(var(--color-success));
-    background-color: hsl(var(--color-success) / 0.12);
+    color: hsl(var(--color-reference-file));
+    background-color: hsl(var(--color-reference-file-surface));
   }
 
   .prompt-reference-chip--invalid {
-    color: hsl(var(--color-warning));
-    background-color: hsl(var(--color-warning) / 0.12);
-    border-color: hsl(var(--color-warning) / 0.65);
-    border-style: dashed;
+    color: hsl(var(--color-reference-invalid));
+    background-color: hsl(var(--color-reference-invalid-surface));
   }
 
   .prompt-reference-chip--invalid::after {
@@ -162,11 +175,16 @@
     height: 1.05em;
     margin-left: 0.24em;
     border-radius: 999px;
-    color: hsl(var(--color-warning));
-    background-color: hsl(var(--color-warning) / 0.18);
+    color: hsl(var(--color-reference-invalid));
+    background-color: color-mix(
+      in srgb,
+      hsl(var(--color-reference-invalid)) 16%,
+      transparent
+    );
     font-size: 0.72em;
     font-weight: 700;
     line-height: 1;
+    vertical-align: 0.08em;
   }
 }
 

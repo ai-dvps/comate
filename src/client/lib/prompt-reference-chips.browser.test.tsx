@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import '../index.css'
 import {
   extractPlainText,
   getCaretOffset,
@@ -63,6 +64,37 @@ describe('prompt reference chip projection', () => {
 
     expect(element.querySelector('em')).toBeNull()
     expect(element.textContent).toBe(text)
+  })
+
+  it('aligns the chip glyph box with surrounding text', () => {
+    const text = 'before /review after'
+    const element = editor()
+    element.style.fontSize = '16px'
+    element.style.lineHeight = '24px'
+
+    projectPromptReferenceChips(element, text, [chip(text, '/review', 'skill')])
+
+    const reference = element.querySelector<HTMLElement>(
+      '[data-prompt-reference-chip]',
+    )
+    expect(reference).not.toBeNull()
+
+    const style = getComputedStyle(reference!)
+    expect(style.lineHeight).toBe('24px')
+    expect(style.marginBlock).toBe('0px')
+    expect(style.borderTopWidth).toBe('0px')
+    expect(style.paddingTop).toBe('0px')
+    expect(style.paddingBottom).toBe('0px')
+    expect(getComputedStyle(reference!, '::before').content).toBe('none')
+
+    const textRange = document.createRange()
+    textRange.setStart(element.firstChild!, 0)
+    textRange.setEnd(element.firstChild!, 'before'.length)
+    const textHeight = textRange.getBoundingClientRect().height
+    const chipHeight = reference!.getBoundingClientRect().height
+
+    expect(chipHeight).toBeLessThan(24)
+    expect(Math.abs(chipHeight - textHeight)).toBeLessThan(1)
   })
 
   it('normalizes requested caret offsets inside a chip to its nearest edge', () => {
