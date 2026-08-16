@@ -40,6 +40,7 @@ interface FileResolution {
 
 const VALIDATION_DEBOUNCE_MS = 150
 const CACHE_TTL_MS = 5000
+const REFRESH_TIMEOUT_MS = 10_000
 const validationCache = new Map<string, CacheEntry>()
 
 function cacheKey(workspaceId: string, path: string): string {
@@ -64,7 +65,7 @@ async function resolveFilePaths(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ paths }),
-    signal,
+    signal: signal ?? AbortSignal.timeout(REFRESH_TIMEOUT_MS),
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const data = (await res.json()) as { paths?: unknown }
@@ -74,16 +75,24 @@ async function resolveFilePaths(
     data.paths.filter((path): path is string => typeof path === 'string'),
   )
   const statuses = new Map<string, 'valid' | 'invalid'>()
-  const expiresAt = Date.now() + CACHE_TTL_MS
   for (const path of paths) {
     const status = validPaths.has(path) ? 'valid' : 'invalid'
     statuses.set(path, status)
+  }
+  return statuses
+}
+
+function cacheFileStatuses(
+  workspaceId: string,
+  statuses: Map<string, 'valid' | 'invalid'>,
+): void {
+  const expiresAt = Date.now() + CACHE_TTL_MS
+  for (const [path, status] of statuses) {
     validationCache.set(cacheKey(workspaceId, path), {
       valid: status === 'valid',
       expiresAt,
     })
   }
-  return statuses
 }
 
 function validReferences(
@@ -164,6 +173,7 @@ export function usePromptReferenceValidation({
           ) {
             return
           }
+          cacheFileStatuses(workspaceId, resolved)
           setFileResolution((current) => {
             if (current.key !== requestKey) return current
             const statuses = new Map(current.statuses)
@@ -255,6 +265,7 @@ export function usePromptReferenceValidation({
       if (generation !== requestGenerationRef.current) {
         return { candidates }
       }
+      cacheFileStatuses(workspaceId, statuses)
       setFileResolution({ key: requestKey, statuses })
       return {
         candidates: scannedCandidates.map((candidate) => ({

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Prompt references now show their resolved meaning inline** — Existing workspace Skills and files receive subtle, theme-aware styling while remaining ordinary editable text; invalid references stay unstyled.
+- **Prompt references are now atomic chips** — Resolved Skills and files appear as lightweight, non-editable chips that can be deleted as a whole and reinserted with `/` or `@`; references that become invalid remain atomic and show a warning state.
 - **Prompt history no longer generates sentence suggestions** — The distracting local n-gram completion overlay and its Tab/Escape/arrow-key behavior are removed, while Skill and file pickers, prompt history, and Skill argument hints remain available.
 - **Workspace groups now expand and collapse from the whole header** — Clicking a workspace name toggles its session list with a smooth transition instead of selecting the workspace and opening an empty “Start a conversation” view.
 

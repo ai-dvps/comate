@@ -31,6 +31,7 @@ interface CommandsState {
 const inflight = new Map<string, Promise<void>>();
 
 const API_BASE = '/api';
+const COMMAND_REFRESH_TIMEOUT_MS = 10_000;
 
 async function doFetch(
   set: (
@@ -43,7 +44,9 @@ async function doFetch(
     errorByWorkspace: { ...state.errorByWorkspace, [workspaceId]: undefined },
   }));
   try {
-    const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/commands`);
+    const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/commands`, {
+      signal: AbortSignal.timeout(COMMAND_REFRESH_TIMEOUT_MS),
+    });
     if (!res.ok) {
       const body = await res.json().catch(() => ({ error: i18next.t('common:requestFailed', 'Request failed') }));
       throw new Error(body.error || `HTTP ${res.status}`);
