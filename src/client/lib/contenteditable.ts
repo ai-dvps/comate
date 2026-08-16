@@ -72,6 +72,104 @@ export function setContent(element: HTMLElement, text: string): void {
   element.textContent = text
 }
 
+interface PlainTextSegment {
+  node: Text
+  start: number
+  end: number
+}
+
+function collectPlainTextSegments(element: HTMLElement): {
+  text: string
+  segments: PlainTextSegment[]
+} {
+  let text = ''
+  const segments: PlainTextSegment[] = []
+
+  const appendText = (node: Text) => {
+    const value = node.textContent ?? ''
+    if (value.length === 0) return
+    const start = text.length
+    text += value
+    segments.push({ node, start, end: text.length })
+  }
+
+  if (element.contentEditable === 'plaintext-only') {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+    let node = walker.nextNode()
+    while (node) {
+      appendText(node as Text)
+      node = walker.nextNode()
+    }
+    return { text, segments }
+  }
+
+  const walk = (node: Node) => {
+    for (const child of Array.from(node.childNodes)) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        appendText(child as Text)
+        continue
+      }
+      if (child.nodeType !== Node.ELEMENT_NODE) continue
+
+      const tag = (child as Element).tagName
+      if (tag === 'BR') {
+        const parent = child.parentElement
+        const isEmptyBlockPlaceholder =
+          parent !== null &&
+          parent.childNodes.length === 1 &&
+          (parent.tagName === 'DIV' || parent.tagName === 'P')
+        if (!isEmptyBlockPlaceholder) text += '\n'
+        continue
+      }
+
+      walk(child)
+      if (tag === 'DIV' || tag === 'P') text += '\n'
+    }
+  }
+
+  walk(element)
+  return { text, segments }
+}
+
+/**
+ * Create a DOM range for offsets measured against `extractPlainText`.
+ * Synthetic newlines created by fallback block markup intentionally do not
+ * produce ranges, because they have no DOM text node to highlight.
+ */
+export function createRangeFromPlainTextOffsets(
+  element: HTMLElement,
+  start: number,
+  end: number,
+): Range | null {
+  const { text, segments } = collectPlainTextSegments(element)
+  if (
+    !Number.isInteger(start) ||
+    !Number.isInteger(end) ||
+    start < 0 ||
+    end > text.length ||
+    start >= end
+  ) {
+    return null
+  }
+
+  const startSegment = segments.find(
+    (segment) => segment.start <= start && start < segment.end,
+  )
+  const endSegment = segments.find(
+    (segment) => segment.start < end && end <= segment.end,
+  )
+  if (!startSegment || !endSegment) return null
+
+  try {
+    const range = document.createRange()
+    range.setStart(startSegment.node, start - startSegment.start)
+    range.setEnd(endSegment.node, end - endSegment.start)
+    return range
+  } catch {
+    return null
+  }
+}
+
 function findNodeAtOffset(
   element: HTMLElement,
   offset: number,
