@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Nothing yet.
+
+## [0.2.0] - 2026-08-16
+
 ### Added
 
 - **New Chat now starts conversations directly from a workspace** — Choose an existing workspace or create one from the integrated composer header, use the same Skills, Files, and Provider controls as an active chat, then submit the first prompt to create and open the session immediately.
@@ -26,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Scheduled-task creation validates before writing** — The scheduled-task MCP tool now checks the schedule before persisting, so an invalid cron returns an error without leaving an orphaned Todo row, and the server test suite covers the unified Todo-backed tool surface again.
+- **Bot and scheduled agent sessions no longer inherit ambient Comate credentials** — Subprocess environments are stripped of any broker token or Comate CLI variables inherited from a parent Comate process before per-session authority is minted.
 - **New Chat no longer crashes the packaged backend while naming a session** — Session titles now use package-safe sentence parsing and width measurement with no `Intl.Segmenter` anywhere in the dependency chain (the `cli-truncate` → `string-width`/`slice-ansi` path also reached it, so Chinese or long prompts still crashed), and the sidecar build verifies the complete workspace-to-session creation path with English, Chinese, and truncating prompts in the packaged binary.
 - **File browser now previews image files** — Opening PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, or SVG files displays the image instead of the generic binary-file placeholder.
 - **Multi-question prompts now submit successfully** — Answering an `AskUserQuestion` card with multiple questions no longer fails with “Approval is no longer pending,” and the server uses the canonical pending question payload when resolving the response.
