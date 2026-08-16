@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   scanPromptReferences,
   type PromptReference,
+  type PromptReferenceValidationStatus,
+  type ValidatedPromptReference,
 } from '../lib/prompt-references'
 
 interface CommandName {
@@ -12,11 +14,19 @@ interface UsePromptReferenceValidationOptions {
   workspaceId: string
   input: string
   commands: CommandName[]
+  commandsLoading?: boolean
+  commandsError?: string
+}
+
+export interface PromptReferenceRefreshResult {
+  candidates: ValidatedPromptReference[]
+  succeeded: boolean
 }
 
 interface UsePromptReferenceValidationResult {
+  candidates: ValidatedPromptReference[]
   references: PromptReference[]
-  refresh: () => void
+  refresh: () => Promise<PromptReferenceRefreshResult>
 }
 
 interface CacheEntry {
@@ -26,33 +36,82 @@ interface CacheEntry {
 
 interface FileResolution {
   key: string
-  validPaths: Set<string>
+  statuses: Map<string, Exclude<PromptReferenceValidationStatus, 'pending'>>
 }
 
 const VALIDATION_DEBOUNCE_MS = 150
 const CACHE_TTL_MS = 5000
 const validationCache = new Map<string, CacheEntry>()
-const EMPTY_VALID_PATHS = new Set<string>()
 
 function cacheKey(workspaceId: string, path: string): string {
   return `${workspaceId}\0${path}`
+}
+
+function confirmedCachedStatus(
+  workspaceId: string,
+  path: string,
+): Exclude<PromptReferenceValidationStatus, 'pending'> | undefined {
+  const cached = validationCache.get(cacheKey(workspaceId, path))
+  if (!cached || cached.expiresAt <= Date.now()) return undefined
+  return cached.valid ? 'valid' : 'invalid'
+}
+
+async function resolveFilePaths(
+  workspaceId: string,
+  paths: string[],
+  signal?: AbortSignal,
+): Promise<Map<string, 'valid' | 'invalid'>> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/files/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paths }),
+    signal,
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const data = (await res.json()) as { paths?: unknown }
+  if (!Array.isArray(data.paths)) throw new Error('Invalid response')
+
+  const validPaths = new Set(
+    data.paths.filter((path): path is string => typeof path === 'string'),
+  )
+  const statuses = new Map<string, 'valid' | 'invalid'>()
+  const expiresAt = Date.now() + CACHE_TTL_MS
+  for (const path of paths) {
+    const status = validPaths.has(path) ? 'valid' : 'invalid'
+    statuses.set(path, status)
+    validationCache.set(cacheKey(workspaceId, path), {
+      valid: status === 'valid',
+      expiresAt,
+    })
+  }
+  return statuses
+}
+
+function validReferences(
+  candidates: ValidatedPromptReference[],
+): PromptReference[] {
+  return candidates.flatMap(({ status, ...reference }) =>
+    status === 'valid' ? [reference] : [],
+  )
 }
 
 export function usePromptReferenceValidation({
   workspaceId,
   input,
   commands,
+  commandsLoading = false,
+  commandsError,
 }: UsePromptReferenceValidationOptions): UsePromptReferenceValidationResult {
-  const candidates = useMemo(() => scanPromptReferences(input), [input])
+  const scannedCandidates = useMemo(() => scanPromptReferences(input), [input])
   const filePaths = useMemo(
     () => [
       ...new Set(
-        candidates
+        scannedCandidates
           .filter((candidate) => candidate.kind === 'file')
           .map((candidate) => candidate.value),
       ),
     ].sort(),
-    [candidates],
+    [scannedCandidates],
   )
   const requestKey = useMemo(
     () => JSON.stringify([workspaceId, filePaths]),
@@ -60,94 +119,149 @@ export function usePromptReferenceValidation({
   )
   const [fileResolution, setFileResolution] = useState<FileResolution>({
     key: requestKey,
-    validPaths: new Set(),
+    statuses: new Map(),
   })
-  const [refreshVersion, setRefreshVersion] = useState(0)
+  const requestGenerationRef = useRef(0)
+  const confirmedSkillsRef = useRef(new Map<string, 'valid' | 'invalid'>())
+  const skillsWorkspaceRef = useRef(workspaceId)
+
+  if (skillsWorkspaceRef.current !== workspaceId) {
+    skillsWorkspaceRef.current = workspaceId
+    confirmedSkillsRef.current = new Map()
+  }
 
   useEffect(() => {
-    if (!workspaceId || filePaths.length === 0) {
-      setFileResolution({ key: requestKey, validPaths: new Set() })
-      return
+    const cachedStatuses = new Map<string, 'valid' | 'invalid'>()
+    const unresolved: string[] = []
+    for (const path of filePaths) {
+      const cached = confirmedCachedStatus(workspaceId, path)
+      if (cached) cachedStatuses.set(path, cached)
+      else unresolved.push(path)
     }
 
-    const now = Date.now()
-    const cachedValid = new Set<string>()
-    let needsValidation = false
-    for (const filePath of filePaths) {
-      const cached = validationCache.get(cacheKey(workspaceId, filePath))
-      if (!cached || cached.expiresAt <= now) {
-        needsValidation = true
-      } else if (cached.valid) {
-        cachedValid.add(filePath)
+    setFileResolution((current) => {
+      const statuses = new Map(cachedStatuses)
+      if (current.key === requestKey) {
+        for (const [path, status] of current.statuses) {
+          if (filePaths.includes(path) && !statuses.has(path)) {
+            statuses.set(path, status)
+          }
+        }
       }
-    }
-    setFileResolution({ key: requestKey, validPaths: cachedValid })
-    if (!needsValidation) return
+      return { key: requestKey, statuses }
+    })
+
+    if (!workspaceId || unresolved.length === 0) return
 
     const controller = new AbortController()
+    const generation = ++requestGenerationRef.current
     const timer = setTimeout(() => {
-      void (async () => {
-        try {
-          const res = await fetch(
-            `/api/workspaces/${workspaceId}/files/resolve`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ paths: filePaths }),
-              signal: controller.signal,
-            },
-          )
-          if (!res.ok) throw new Error(`HTTP ${res.status}`)
-          const data = (await res.json()) as { paths?: unknown }
-          if (!Array.isArray(data.paths)) throw new Error('Invalid response')
-          if (controller.signal.aborted) return
-
-          const validPaths = new Set(
-            data.paths.filter((path): path is string => typeof path === 'string'),
-          )
-          const expiresAt = Date.now() + CACHE_TTL_MS
-          for (const filePath of filePaths) {
-            validationCache.set(cacheKey(workspaceId, filePath), {
-              valid: validPaths.has(filePath),
-              expiresAt,
-            })
+      void resolveFilePaths(workspaceId, unresolved, controller.signal)
+        .then((resolved) => {
+          if (
+            controller.signal.aborted ||
+            generation !== requestGenerationRef.current
+          ) {
+            return
           }
-          setFileResolution({ key: requestKey, validPaths })
-        } catch (error) {
-          if (controller.signal.aborted) return
-          setFileResolution({ key: requestKey, validPaths: new Set() })
-        }
-      })()
+          setFileResolution((current) => {
+            if (current.key !== requestKey) return current
+            const statuses = new Map(current.statuses)
+            for (const [path, status] of resolved) statuses.set(path, status)
+            return { key: requestKey, statuses }
+          })
+        })
+        .catch(() => {
+          // Preserve confirmed values; unresolved paths remain pending.
+        })
     }, VALIDATION_DEBOUNCE_MS)
 
     return () => {
       clearTimeout(timer)
       controller.abort()
     }
-  }, [filePaths, refreshVersion, requestKey, workspaceId])
+  }, [filePaths, requestKey, workspaceId])
 
   const commandNames = useMemo(
     () => new Set(commands.map((command) => command.name)),
     [commands],
   )
-  const validFilePaths =
-    fileResolution.key === requestKey ? fileResolution.validPaths : EMPTY_VALID_PATHS
-  const references = useMemo(
-    () => candidates.filter((candidate) =>
-      candidate.kind === 'skill'
-        ? commandNames.has(candidate.value)
-        : validFilePaths.has(candidate.value),
-    ),
-    [candidates, commandNames, validFilePaths],
+
+  const statusForSkill = useCallback(
+    (name: string): PromptReferenceValidationStatus => {
+      if (!commandsLoading && !commandsError) {
+        const status = commandNames.has(name) ? 'valid' : 'invalid'
+        confirmedSkillsRef.current.set(name, status)
+        return status
+      }
+      return confirmedSkillsRef.current.get(name) ?? 'pending'
+    },
+    [commandNames, commandsError, commandsLoading],
   )
 
-  const refresh = useCallback(() => {
-    for (const filePath of filePaths) {
-      validationCache.delete(cacheKey(workspaceId, filePath))
+  const fileStatuses = useMemo(() => {
+    if (fileResolution.key === requestKey) return fileResolution.statuses
+    const statuses = new Map<string, 'valid' | 'invalid'>()
+    for (const path of filePaths) {
+      const cached = confirmedCachedStatus(workspaceId, path)
+      if (cached) statuses.set(path, cached)
     }
-    setFileResolution({ key: requestKey, validPaths: new Set() })
-    setRefreshVersion((version) => version + 1)
-  }, [filePaths, requestKey, workspaceId])
+    return statuses
+  }, [filePaths, fileResolution, requestKey, workspaceId])
 
-  return { references, refresh }
+  const candidates = useMemo<ValidatedPromptReference[]>(
+    () =>
+      scannedCandidates.map((candidate) => ({
+        ...candidate,
+        status:
+          candidate.kind === 'skill'
+            ? statusForSkill(candidate.value)
+            : (fileStatuses.get(candidate.value) ?? 'pending'),
+      })),
+    [fileStatuses, scannedCandidates, statusForSkill],
+  )
+
+  const refresh = useCallback(async (): Promise<PromptReferenceRefreshResult> => {
+    if (!workspaceId || filePaths.length === 0) {
+      return { candidates, succeeded: true }
+    }
+
+    const generation = ++requestGenerationRef.current
+    for (const path of filePaths) {
+      validationCache.delete(cacheKey(workspaceId, path))
+    }
+
+    try {
+      const statuses = await resolveFilePaths(workspaceId, filePaths)
+      if (generation !== requestGenerationRef.current) {
+        return { candidates, succeeded: false }
+      }
+      setFileResolution({ key: requestKey, statuses })
+      return {
+        succeeded: true,
+        candidates: scannedCandidates.map((candidate) => ({
+          ...candidate,
+          status:
+            candidate.kind === 'skill'
+              ? statusForSkill(candidate.value)
+              : (statuses.get(candidate.value) ?? 'invalid'),
+        })),
+      }
+    } catch {
+      return { candidates, succeeded: false }
+    }
+  }, [
+    candidates,
+    filePaths,
+    requestKey,
+    scannedCandidates,
+    statusForSkill,
+    workspaceId,
+  ])
+
+  return {
+    candidates,
+    references: validReferences(candidates),
+    refresh,
+  }
 }

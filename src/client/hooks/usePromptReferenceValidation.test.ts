@@ -21,7 +21,7 @@ describe('usePromptReferenceValidation', () => {
     vi.useRealTimers()
   })
 
-  it('resolves canonical skills immediately and exact files asynchronously', async () => {
+  it('reports canonical skills immediately and exact files asynchronously', async () => {
     const fetchMock = vi.fn().mockResolvedValue(response(['src/app.ts']))
     vi.stubGlobal('fetch', fetchMock)
 
@@ -33,8 +33,11 @@ describe('usePromptReferenceValidation', () => {
       }),
     )
 
-    expect(result.current.references).toEqual([
-      { kind: 'skill', value: 'review', start: 0, end: 7 },
+    expect(result.current.candidates).toEqual([
+      { kind: 'skill', value: 'review', start: 0, end: 7, status: 'valid' },
+      { kind: 'skill', value: 'unknown', start: 8, end: 16, status: 'invalid' },
+      { kind: 'file', value: 'src/app.ts', start: 17, end: 28, status: 'pending' },
+      { kind: 'file', value: 'missing.ts', start: 29, end: 40, status: 'pending' },
     ])
 
     await act(async () => {
@@ -45,9 +48,11 @@ describe('usePromptReferenceValidation', () => {
       '/api/workspaces/ws-resolve/files/resolve',
       expect.objectContaining({ method: 'POST' }),
     )
-    expect(result.current.references).toEqual([
-      { kind: 'skill', value: 'review', start: 0, end: 7 },
-      { kind: 'file', value: 'src/app.ts', start: 17, end: 28 },
+    expect(result.current.candidates).toEqual([
+      { kind: 'skill', value: 'review', start: 0, end: 7, status: 'valid' },
+      { kind: 'skill', value: 'unknown', start: 8, end: 16, status: 'invalid' },
+      { kind: 'file', value: 'src/app.ts', start: 17, end: 28, status: 'valid' },
+      { kind: 'file', value: 'missing.ts', start: 29, end: 40, status: 'invalid' },
     ])
   })
 
@@ -82,18 +87,20 @@ describe('usePromptReferenceValidation', () => {
       pending[0](response(['old.ts']))
       await Promise.resolve()
     })
-    expect(result.current.references).toEqual([])
+    expect(result.current.candidates).toEqual([
+      { kind: 'file', value: 'new.ts', start: 0, end: 7, status: 'pending' },
+    ])
 
     await act(async () => {
       pending[1](response(['new.ts']))
       await Promise.resolve()
     })
-    expect(result.current.references).toEqual([
-      { kind: 'file', value: 'new.ts', start: 0, end: 7 },
+    expect(result.current.candidates).toEqual([
+      { kind: 'file', value: 'new.ts', start: 0, end: 7, status: 'valid' },
     ])
   })
 
-  it('refreshes visible file references without exposing validation errors', async () => {
+  it('retains confirmed file status when a refresh fails', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(response(['src/app.ts']))
@@ -113,13 +120,41 @@ describe('usePromptReferenceValidation', () => {
     })
     expect(result.current.references).toHaveLength(1)
 
-    act(() => result.current.refresh())
-    expect(result.current.references).toEqual([])
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(200)
+      const refreshPromise = result.current.refresh()
+      await refreshPromise
     })
 
     expect(fetchMock).toHaveBeenCalledTimes(2)
-    expect(result.current.references).toEqual([])
+    expect(result.current.candidates).toEqual([
+      { kind: 'file', value: 'src/app.ts', start: 0, end: 11, status: 'valid' },
+    ])
+  })
+
+  it('keeps the last confirmed skill status while commands reload or fail', () => {
+    vi.stubGlobal('fetch', vi.fn())
+    const { result, rerender } = renderHook(
+      ({ loading, error, commandList }) =>
+        usePromptReferenceValidation({
+          workspaceId: 'ws-skills',
+          input: '/review',
+          commands: commandList,
+          commandsLoading: loading,
+          commandsError: error,
+        }),
+      {
+        initialProps: {
+          loading: false,
+          error: undefined as string | undefined,
+          commandList: commands,
+        },
+      },
+    )
+
+    expect(result.current.candidates[0].status).toBe('valid')
+    rerender({ loading: true, error: undefined, commandList: [] })
+    expect(result.current.candidates[0].status).toBe('valid')
+    rerender({ loading: false, error: 'offline', commandList: [] })
+    expect(result.current.candidates[0].status).toBe('valid')
   })
 })

@@ -39,6 +39,7 @@ export default defineProject({
       'src/client/lib/result-focus-view.test.ts',
       'src/client/lib/conversation-view.test.ts',
       'src/client/lib/prompt-references.test.ts',
+      'src/client/lib/prompt-reference-state.test.ts',
     ],
     exclude: [
       'src/client/lib/keyboard.test.ts',

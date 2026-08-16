@@ -7,6 +7,12 @@ export interface PromptReference {
   end: number
 }
 
+export type PromptReferenceValidationStatus = 'pending' | 'valid' | 'invalid'
+
+export interface ValidatedPromptReference extends PromptReference {
+  status: PromptReferenceValidationStatus
+}
+
 const REFERENCE_PATTERN = /(^|\s)([/@])(\S+)/g
 
 export function scanPromptReferences(input: string): PromptReference[] {
