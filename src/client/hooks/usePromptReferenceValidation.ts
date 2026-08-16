@@ -18,9 +18,8 @@ interface UsePromptReferenceValidationOptions {
   commandsError?: string
 }
 
-export interface PromptReferenceRefreshResult {
+interface PromptReferenceRefreshResult {
   candidates: ValidatedPromptReference[]
-  succeeded: boolean
 }
 
 interface UsePromptReferenceValidationResult {
@@ -133,6 +132,7 @@ export function usePromptReferenceValidation({
   useEffect(() => {
     const cachedStatuses = new Map<string, 'valid' | 'invalid'>()
     const unresolved: string[] = []
+    const requestedPaths = new Set(filePaths)
     for (const path of filePaths) {
       const cached = confirmedCachedStatus(workspaceId, path)
       if (cached) cachedStatuses.set(path, cached)
@@ -143,7 +143,7 @@ export function usePromptReferenceValidation({
       const statuses = new Map(cachedStatuses)
       if (current.key === requestKey) {
         for (const [path, status] of current.statuses) {
-          if (filePaths.includes(path) && !statuses.has(path)) {
+          if (requestedPaths.has(path) && !statuses.has(path)) {
             statuses.set(path, status)
           }
         }
@@ -235,7 +235,6 @@ export function usePromptReferenceValidation({
     }
     if (!workspaceId || filePaths.length === 0) {
       return {
-        succeeded: true,
         candidates: scannedCandidates.map((candidate) => ({
           ...candidate,
           status:
@@ -254,11 +253,10 @@ export function usePromptReferenceValidation({
     try {
       const statuses = await resolveFilePaths(workspaceId, filePaths)
       if (generation !== requestGenerationRef.current) {
-        return { candidates, succeeded: false }
+        return { candidates }
       }
       setFileResolution({ key: requestKey, statuses })
       return {
-        succeeded: true,
         candidates: scannedCandidates.map((candidate) => ({
           ...candidate,
           status:
@@ -268,7 +266,7 @@ export function usePromptReferenceValidation({
         })),
       }
     } catch {
-      return { candidates, succeeded: false }
+      return { candidates }
     }
   }, [
     candidates,

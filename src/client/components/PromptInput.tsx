@@ -37,6 +37,7 @@ import {
   type PromptReferenceCommitSource,
   rebaseCommittedReferences,
   reconcileCommittedReferenceStatuses,
+  restoreCommittedReferences,
   sameCommittedReferences,
 } from '../lib/prompt-reference-state'
 import type { ValidatedPromptReference } from '../lib/prompt-references'
@@ -160,7 +161,6 @@ interface PromptUndoSnapshot {
 
 interface PendingReferenceCommit {
   source: PromptReferenceCommitSource
-  commitAtEnd?: boolean
 }
 
 function chipProjectionMatches(
@@ -263,7 +263,6 @@ export default function PromptInput(props: PromptInputProps) {
   const [committedReferences, setCommittedReferencesState] = useState<
     CommittedPromptReference[]
   >([])
-  const [referenceCommitVersion, setReferenceCommitVersion] = useState(0)
 
   const editableRef = useRef<HTMLDivElement>(null)
   const isComposingRef = useRef(false)
@@ -273,6 +272,7 @@ export default function PromptInput(props: PromptInputProps) {
   const filePickerHandleRef = useRef<FilePickerHandle>(null)
   const historyPickerHandleRef = useRef<HistoryPickerHandle>(null)
   const prevInputRef = useRef('')
+  const referenceDraftSourceRef = useRef<string>()
   const committedReferencesRef = useRef<CommittedPromptReference[]>([])
   const pendingReferenceCommitRef = useRef<PendingReferenceCommit | null>(null)
   const undoStackRef = useRef<PromptUndoSnapshot[]>([])
@@ -386,7 +386,7 @@ export default function PromptInput(props: PromptInputProps) {
       }
     }
     setCommittedReferences(next)
-  }, [candidates, input, referenceCommitVersion])
+  }, [candidates, input])
 
   // Reconcile only structural/status changes or external draft replacement.
   // Ordinary native input already owns the current DOM and is not rebuilt.
@@ -442,6 +442,9 @@ export default function PromptInput(props: PromptInputProps) {
   }, [input])
 
   useEffect(() => {
+    const draftSource = `${workspaceId}\0${sessionId}`
+    if (referenceDraftSourceRef.current === draftSource) return
+    referenceDraftSourceRef.current = draftSource
     setPickerOpen(false)
     setFilePickerOpen(false)
     setHistoryPickerOpen(false)
@@ -449,10 +452,10 @@ export default function PromptInput(props: PromptInputProps) {
     setSlashTriggerStart(null)
     setArgumentHint(null)
     setLastInsertedCommand(null)
-    committedReferencesRef.current = []
-    setCommittedReferencesState([])
+    const restoredReferences = restoreCommittedReferences(input, candidates)
+    committedReferencesRef.current = restoredReferences
+    setCommittedReferencesState(restoredReferences)
     pendingReferenceCommitRef.current = { source: 'restore' }
-    setReferenceCommitVersion((version) => version + 1)
     undoStackRef.current = []
     redoStackRef.current = []
     undoGroupOpenRef.current = false
@@ -460,7 +463,7 @@ export default function PromptInput(props: PromptInputProps) {
       clearTimeout(undoGroupTimerRef.current)
       undoGroupTimerRef.current = null
     }
-  }, [sessionId])
+  }, [candidates, input, sessionId, workspaceId])
 
   // Clear stuck IME composition state when the surface becomes non-editable.
   useEffect(() => {
@@ -646,7 +649,7 @@ export default function PromptInput(props: PromptInputProps) {
     try {
       const commandsResult = await refreshCommands()
       const validationResult = await refreshReferences(
-        commandsResult?.succeeded ? commandsResult.commands : undefined,
+        commandsResult.succeeded ? commandsResult.commands : undefined,
       )
       if (prevInputRef.current !== sendInput) return
 
@@ -1095,9 +1098,12 @@ export default function PromptInput(props: PromptInputProps) {
     if (el) {
       pushUndoState(input, getCaretOffset(el))
     }
-    setCommittedReferences([])
+    setCommittedReferences(
+      selectedPrompt === input
+        ? restoreCommittedReferences(selectedPrompt, candidates)
+        : [],
+    )
     pendingReferenceCommitRef.current = { source: 'restore' }
-    setReferenceCommitVersion((version) => version + 1)
     setDraft(sessionId, selectedPrompt)
     prevInputRef.current = selectedPrompt
     setHistoryPickerOpen(false)
