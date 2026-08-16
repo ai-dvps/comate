@@ -5,7 +5,6 @@ import { useChatStore } from '../stores/chat-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useMessageSearch } from '../hooks/useMessageSearch'
 import { useAppSettings } from '../hooks/use-app-settings'
-import ChatEmptyState from './ChatEmptyState'
 import MessageList from './MessageList'
 import PromptInput from './PromptInput'
 import ApprovalSurface, { CHAT_ABOUT_THIS_MESSAGE } from './ApprovalSurface'
@@ -41,7 +40,6 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const resolveApproval = useChatStore((s) => s.resolveApproval)
   const interruptSession = useChatStore((s) => s.interruptSession)
   const cleanupWorkspace = useChatStore((s) => s.cleanupWorkspace)
-  const createSession = useChatStore((s) => s.createSession)
 
   const workspace = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === workspaceId)
@@ -197,12 +195,6 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
     if (!activeSessionId) return
     sendMessage(workspaceId, activeSessionId, content)
   }
-
-  const handleCreateSession = useCallback(async (name: string) => {
-    const sessionName =
-      name.trim() || t('newSessionDefaultName', { count: sessions.length + 1 })
-    await createSession(workspaceId, { name: sessionName })
-  }, [createSession, workspaceId, sessions.length, t])
 
   const handleRefresh = async () => {
     if (!activeSessionId) return
@@ -404,9 +396,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
                 />
               </div>
             ))
-          ) : (
-            <ChatEmptyState onCreateSession={handleCreateSession} />
-          )}
+          ) : null}
 
           {activeSessionId && (
             <div className="absolute top-4 right-4 z-20 flex flex-col items-end gap-2 pointer-events-none">

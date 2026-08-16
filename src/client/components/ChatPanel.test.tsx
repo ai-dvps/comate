@@ -93,10 +93,6 @@ vi.mock('./WorkflowFloatingPanel', () => ({
     ) : null,
 }))
 
-vi.mock('./ChatEmptyState', () => ({
-  default: () => <div data-testid="chat-empty-state" />,
-}))
-
 describe('ChatPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -119,6 +115,7 @@ describe('ChatPanel', () => {
 
     expect(screen.queryByTestId('prompt-input')).not.toBeInTheDocument()
     expect(screen.queryByTestId('approval-surface')).not.toBeInTheDocument()
+    expect(screen.queryByText('Start a conversation')).not.toBeInTheDocument()
   })
 
   it('renders the prompt input when a session is active', () => {
