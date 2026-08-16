@@ -114,3 +114,8 @@ SkillHub 中以企业为发现入口的标准 Skill 目录。用户先浏览企�
 
 ### 桥接版本 (bridge release)
 Tauri→Electron 壳迁移中，最后一个 Tauri 版本承担的特殊角色：其自动更新通道指向首个 Electron 安装包，把存量用户平滑带到 Electron 线；更新失败时用户可回滚到该版本安装包。Linux 无桥接版本——首个 Linux 版本即 Electron 版本。
+
+## Prompt composer
+
+### Prompt semantic reference
+Prompt 中能够被当前工作区确认解析的 Skill 或文件纯文本引用，分别采用 `/skill-name` 与 `@path` 形式。它可以获得轻量语义着色，但仍保持普通文本的光标、选区、复制与逐字删除行为，不是原子 chip 或结构化富文本节点。

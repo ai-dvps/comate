@@ -32,6 +32,7 @@ interface FileResolution {
 const VALIDATION_DEBOUNCE_MS = 150
 const CACHE_TTL_MS = 5000
 const validationCache = new Map<string, CacheEntry>()
+const EMPTY_VALID_PATHS = new Set<string>()
 
 function cacheKey(workspaceId: string, path: string): string {
   return `${workspaceId}\0${path}`
@@ -130,7 +131,7 @@ export function usePromptReferenceValidation({
     [commands],
   )
   const validFilePaths =
-    fileResolution.key === requestKey ? fileResolution.validPaths : new Set<string>()
+    fileResolution.key === requestKey ? fileResolution.validPaths : EMPTY_VALID_PATHS
   const references = useMemo(
     () => candidates.filter((candidate) =>
       candidate.kind === 'skill'
