@@ -4,6 +4,11 @@ import { redactSensitiveText } from './sensitive-text.js';
 
 const TITLE_COLUMNS = 48;
 const FALLBACK_TITLE = 'New chat';
+const ALWAYS_INTERNAL_ABBREVIATIONS = new Set([
+  'dr.', 'jr.', 'mr.', 'mrs.', 'ms.', 'prof.', 'sr.',
+]);
+const CONTEXTUAL_ABBREVIATIONS = new Set(['e.g.', 'etc.', 'i.e.']);
+const CLOSING_SENTENCE_MARKS = new Set(['"', "'", ')', ']', '}', '’', '”']);
 
 function humanizeCommand(command: string): string {
   const words = command.replace(/^[/$]/, '').split(/[-_:./]+/).filter(Boolean).join(' ');
@@ -32,22 +37,32 @@ function cleanMarkdownLine(line: string): string {
 }
 
 function firstSentence(text: string): string {
-  try {
-    const Segmenter = (Intl as unknown as {
-      Segmenter?: new (
-        locales?: string | string[],
-        options?: { granularity: 'sentence' },
-      ) => { segment(input: string): Iterable<{ segment: string }> };
-    }).Segmenter;
-    if (!Segmenter) return text.split(/(?<=[。！？!?])\s*/u, 1)[0] || text;
-    const segmenter = new Segmenter(undefined, { granularity: 'sentence' });
-    const first = segmenter.segment(text)[Symbol.iterator]().next().value as
-      | { segment?: string }
-      | undefined;
-    return first?.segment?.trim() || text;
-  } catch {
-    return text.split(/(?<=[。！？!?])\s*/u, 1)[0] || text;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (!'。！？!?.'.includes(character)) continue;
+
+    let closingEnd = index + 1;
+    while (closingEnd < text.length && CLOSING_SENTENCE_MARKS.has(text[closingEnd])) closingEnd += 1;
+    if (character !== '.') {
+      return `${text.slice(0, index)}${text.slice(index + 1, closingEnd)}`.trim();
+    }
+    if (text[closingEnd] !== undefined && !/\s/u.test(text[closingEnd])) continue;
+
+    let tokenStart = index;
+    while (tokenStart > 0 && /[A-Za-z.]/u.test(text[tokenStart - 1])) tokenStart -= 1;
+    const token = text.slice(tokenStart, index + 1).toLowerCase();
+    if (ALWAYS_INTERNAL_ABBREVIATIONS.has(token) || /^(?:[a-z]\.){2,}$/u.test(token)) continue;
+    if (CONTEXTUAL_ABBREVIATIONS.has(token)) {
+      let nextStart = closingEnd;
+      while (nextStart < text.length && /\s/u.test(text[nextStart])) nextStart += 1;
+      if (nextStart === text.length || !/[A-Z]/u.test(text[nextStart])) continue;
+    }
+    let boundary = index;
+    while (boundary > 0 && text[boundary - 1] === '.') boundary -= 1;
+    return `${text.slice(0, boundary)}${text.slice(index + 1, closingEnd)}`.trim();
   }
+
+  return text;
 }
 
 function codeIdentifier(lines: string[]): string | undefined {
@@ -120,7 +135,7 @@ export function deriveFallbackSessionTitle(prompt: string): string {
 
   candidate = firstSentence(candidate)
     .replace(/\s+/g, ' ')
-    .replace(/[\s。！？!?；;：:]+$/u, '')
+    .replace(/[\s.。！？!?；;：:]+$/u, '')
     .trim();
   candidate = redactSensitiveText(candidate);
 
