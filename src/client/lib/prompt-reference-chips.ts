@@ -52,7 +52,11 @@ function createChipElement(
   element.dataset.referenceKind = chip.kind
   element.dataset.referenceText = chip.text
   element.dataset.referenceStatus = chip.status
-  element.className = `prompt-reference-chip prompt-reference-chip--${chip.kind}`
+  const kindClass =
+    chip.kind === 'skill'
+      ? 'prompt-reference-chip--skill'
+      : 'prompt-reference-chip--file'
+  element.className = `prompt-reference-chip ${kindClass}`
   element.textContent = chip.text
 
   if (chip.status === 'invalid') {

@@ -22,6 +22,10 @@ export default function PromptGhostText({
       {lines.map((line, index) => {
         const isLast = index === lastIndex
         const showGhost = isLast
+        const trailingWhitespace = isLast ? (line.match(/\s*$/)?.[0] ?? '') : ''
+        const referenceText = isLast
+          ? line.slice(0, line.length - trailingWhitespace.length)
+          : line
         if (line === '' && !showGhost) {
           return <div key={index} className="whitespace-pre-wrap break-words"><br /></div>
         }
@@ -30,7 +34,18 @@ export default function PromptGhostText({
             key={index}
             className="whitespace-pre-wrap break-words"
           >
-            <span className="invisible">{line}</span>
+            {referenceText ? (
+              <span
+                className={isLast
+                  ? 'invisible prompt-reference-chip prompt-reference-chip--skill'
+                  : 'invisible'}
+              >
+                {referenceText}
+              </span>
+            ) : null}
+            {trailingWhitespace ? (
+              <span className="invisible">{trailingWhitespace}</span>
+            ) : null}
             {showGhost ? (
               <span className="text-text-tertiary">{argumentHint}</span>
             ) : null}

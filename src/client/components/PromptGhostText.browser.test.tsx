@@ -91,7 +91,14 @@ vi.mock('../stores/commands-store', () => ({
     partial: false,
     partialReason: undefined,
     fetch: vi.fn(),
-    refresh: vi.fn(),
+    refresh: vi.fn(async () => ({
+      commands: [
+        { name: 'commit', description: 'Commit changes', argumentHint: '<message>' },
+        { name: 'compact', description: 'Compact session' },
+        { name: 'explain', description: 'Explain code' },
+      ],
+      succeeded: true,
+    })),
   }),
 }))
 
@@ -170,15 +177,20 @@ describe('PromptInput ghost text alignment', () => {
 
     const el = editableElement()
     const ghost = ghostElement()!
+    const chip = el.querySelector<HTMLElement>('[data-prompt-reference-chip]')
+    expect(chip).not.toBeNull()
 
-    // The invisible command mirror and its hint should share a line.
+    // The invisible command mirror and its hint should share a line, and the
+    // hint must begin after the rendered chip rather than inside its padding.
     const inputMirror = document.querySelector(
       '.pointer-events-none.z-20 .invisible',
     ) as HTMLElement
     const inputRect = inputMirror.getBoundingClientRect()
     const ghostRect = ghost.getBoundingClientRect()
+    const chipRect = chip!.getBoundingClientRect()
 
     expect(Math.abs(ghostRect.top - inputRect.top)).toBeLessThanOrEqual(2)
+    expect(ghostRect.left).toBeGreaterThanOrEqual(chipRect.right)
     expect(el.textContent).toBe('/commit ')
   })
 })
