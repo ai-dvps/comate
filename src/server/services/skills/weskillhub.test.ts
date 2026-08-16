@@ -332,7 +332,9 @@ describe('WeSkillHub exact-version transactions', () => {
     });
     const cases: Array<{ response: () => Response | Promise<Response>; category: string }> = [
       { response: async () => { throw new Error('redirect to https://secret.internal/file'); }, category: 'network' },
-      { response: async () => { throw new DOMException('private timeout detail', 'TimeoutError'); }, category: 'network' },
+      // DOMException is an Error subclass on current runtimes, so a fetch that
+      // rejects with TimeoutError is the deadline firing → 'timeout', not 'network'.
+      { response: async () => { throw new DOMException('private timeout detail', 'TimeoutError'); }, category: 'timeout' },
       { response: () => new Response('secret body', { status: 502 }), category: 'http' },
       { response: () => new Response(bytes, { headers: { 'Content-Type': 'application/json' } }), category: 'archive' },
       { response: () => new Response(bytes.slice(0, 2), { headers: { 'Content-Type': 'application/zip' } }), category: 'archive' },
