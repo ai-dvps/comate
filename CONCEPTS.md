@@ -51,6 +51,9 @@ The Comate server capability that performs HTTPS requests with saved browser aut
 
 ## Agent runtime
 
+### Sidecar(后端伴生进程)
+桌面应用的后端:一个被打包成单一自包含二进制的 Node 服务进程,由 Electron 壳拉起并监督其生命周期。开发模式同样构建并运行这个打包二进制(而非直接用系统 Node 跑源码),因此只存在于打包运行时里的缺陷(如原生 API 崩溃)在开发环境会原样复现——不能用系统 Node 下的正常表现来排除打包产物的缺陷。
+
 ### Agent 后端 (agent backend)
 The runtime layer that executes an agent session (claude via `@anthropic-ai/claude-agent-sdk`, or opencode), distinct from the Provider layer, which only names a model endpoint. The two layers swap independently: an enterprise can run any backend against any Anthropic-compatible endpoint.
 
@@ -65,6 +68,9 @@ A session is bound to the backend selected at its first message and cannot switc
 
 ### Session Activity
 服务端维护的会话工作状态快照，统一表达 foreground turn、pending interaction、SDK background tasks、stopping 和 interruption。它是前端活跃展示、输入锁定与 runtime idle-close 判定的共同真相源；主 agent 的 `result` 只结束 foreground，不单独决定整个 Session 是否结束。
+
+### New Chat
+不预先创建会话、直接从第一条 prompt 开始对话的应用级流程：用户选择工作区并输入首条 prompt，发送时才创建会话并由服务端从 prompt 派生标题。它是唯一走“服务端派生标题”的建会话路径，因此会触到手动输入标题的建会话路径永远不会执行的服务端代码。
 
 ## Scheduled tasks (定时任务)
 
