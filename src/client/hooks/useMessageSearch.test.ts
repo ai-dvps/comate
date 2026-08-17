@@ -85,6 +85,29 @@ describe('findMessageSearchMatches', () => {
     expect(findMessageSearchMatches(messages, 'config')).toHaveLength(1)
   })
 
+  it('does not index historical image names, bytes, or unavailable reasons', () => {
+    const messages: ChatMessage[] = [{
+      id: 'image-message',
+      role: 'user',
+      parts: [
+        {
+          type: 'image',
+          mediaType: 'image/png',
+          name: 'searchable-bug.png',
+          source: { type: 'base64', data: 'c2VhcmNoYWJsZS1ieXRlcw==' },
+        },
+        {
+          type: 'image',
+          mediaType: 'image/gif',
+          source: { type: 'unavailable', reason: 'searchable compaction reason' },
+        },
+      ],
+      timestamp: 1,
+    }]
+
+    expect(findMessageSearchMatches(messages, 'searchable')).toEqual([])
+  })
+
   it('returns an empty array and zero total matches when nothing matches', () => {
     const messages = [makeTextMessage('hello world')]
     expect(findMessageSearchMatches(messages, 'xyz')).toEqual([])

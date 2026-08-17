@@ -1,6 +1,6 @@
 import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 
-import type { ChatMessage, MessagePart, MessageRole, TaskItem } from '../types/message.js';
+import type { ChatMessage, ImageMediaType, MessagePart, MessageRole, TaskItem } from '../types/message.js';
 
 /**
  * Track unknown SDK block types we've already warned about, to avoid log
@@ -40,12 +40,66 @@ interface RawThinkingBlock {
   thinking?: unknown;
 }
 
+interface RawImageBlock {
+  type: 'image';
+  mediaType?: unknown;
+  media_type?: unknown;
+  name?: unknown;
+  width?: unknown;
+  height?: unknown;
+  source?: unknown;
+}
+
 type RawBlock =
   | RawTextBlock
   | RawToolUseBlock
   | RawToolResultBlock
   | RawThinkingBlock
+  | RawImageBlock
   | { type: string };
+
+const IMAGE_MEDIA_TYPES = new Set<ImageMediaType>([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+]);
+
+function asImageMediaType(value: unknown): ImageMediaType | undefined {
+  return typeof value === 'string' && IMAGE_MEDIA_TYPES.has(value as ImageMediaType)
+    ? value as ImageMediaType
+    : undefined;
+}
+
+function normalizeImageBlock(block: RawImageBlock): MessagePart | undefined {
+  if (!block.source || typeof block.source !== 'object') return undefined;
+  const source = block.source as Record<string, unknown>;
+  const mediaType = asImageMediaType(block.mediaType ?? block.media_type ?? source.media_type);
+  if (!mediaType || typeof source.type !== 'string') return undefined;
+
+  let normalizedSource: Extract<MessagePart, { type: 'image' }>['source'];
+  if (source.type === 'base64' && typeof source.data === 'string' && source.data.length > 0) {
+    normalizedSource = { type: 'base64', data: source.data };
+  } else if (source.type === 'url' && typeof source.url === 'string' && source.url.length > 0) {
+    normalizedSource = { type: 'url', url: source.url };
+  } else if (source.type === 'unavailable') {
+    normalizedSource = {
+      type: 'unavailable',
+      ...(typeof source.reason === 'string' && { reason: source.reason }),
+    };
+  } else {
+    return undefined;
+  }
+
+  return {
+    type: 'image',
+    mediaType,
+    ...(typeof block.name === 'string' && { name: block.name }),
+    ...(typeof block.width === 'number' && Number.isFinite(block.width) && { width: block.width }),
+    ...(typeof block.height === 'number' && Number.isFinite(block.height) && { height: block.height }),
+    source: normalizedSource,
+  };
+}
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -151,6 +205,11 @@ export function partsFromSdkContent(
       case 'thinking': {
         const text = asString((block as RawThinkingBlock).thinking);
         parts.push({ type: 'thinking', text, state: 'complete' });
+        break;
+      }
+      case 'image': {
+        const image = normalizeImageBlock(block as RawImageBlock);
+        if (image) parts.push(image);
         break;
       }
       default: {

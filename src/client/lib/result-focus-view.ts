@@ -38,6 +38,13 @@ function samePart(left: RenderablePart, right: RenderablePart): boolean {
   switch (left.type) {
     case 'text':
       return right.type === 'text' && left.text === right.text
+    case 'image':
+      return right.type === 'image' &&
+        left.mediaType === right.mediaType &&
+        left.name === right.name &&
+        left.width === right.width &&
+        left.height === right.height &&
+        left.source === right.source
     case 'thinking':
       return right.type === 'thinking' && left.text === right.text && left.isStreaming === right.isStreaming
     case 'tool_use':

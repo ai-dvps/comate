@@ -558,6 +558,36 @@ function sanitizeMessagePart(part: unknown): MessagePart | null {
             state: p.state === 'streaming' ? 'streaming' : 'complete',
           }
         : null
+    case 'image': {
+      const mediaType = p.mediaType
+      if (
+        mediaType !== 'image/png' &&
+        mediaType !== 'image/jpeg' &&
+        mediaType !== 'image/webp' &&
+        mediaType !== 'image/gif'
+      ) return null
+      if (!p.source || typeof p.source !== 'object') return null
+      const rawSource = p.source as Record<string, unknown>
+      const source = rawSource.type === 'base64' && typeof rawSource.data === 'string'
+        ? { type: 'base64' as const, data: rawSource.data }
+        : rawSource.type === 'url' && typeof rawSource.url === 'string'
+          ? { type: 'url' as const, url: rawSource.url }
+          : rawSource.type === 'unavailable'
+            ? {
+                type: 'unavailable' as const,
+                ...(typeof rawSource.reason === 'string' && { reason: rawSource.reason }),
+              }
+            : null
+      if (!source) return null
+      return {
+        type: 'image',
+        mediaType,
+        ...(typeof p.name === 'string' && { name: p.name }),
+        ...(typeof p.width === 'number' && Number.isFinite(p.width) && { width: p.width }),
+        ...(typeof p.height === 'number' && Number.isFinite(p.height) && { height: p.height }),
+        source,
+      }
+    }
     case 'tool_use':
       return typeof p.toolUseId === 'string' && typeof p.toolName === 'string'
         ? {

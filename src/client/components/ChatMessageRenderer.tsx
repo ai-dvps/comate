@@ -26,6 +26,7 @@ import CompactBoundary from './CompactBoundary'
 import SubagentBriefStatus from './SubagentBriefStatus'
 import StreamingToolInputPreview from './StreamingToolInputPreview'
 import WorkflowToolCard from './WorkflowToolCard'
+import HistoricalImageRail from './HistoricalImageRail'
 import { cn } from './ui/utils'
 import { formatMessageTimestamp } from '../lib/format-message-timestamp'
 import {
@@ -378,6 +379,16 @@ function ChatMessageRenderer({
                 )
               }
               return renderAssistantText(part, idx)
+            }
+            if (part.type === 'image') {
+              if (idx > 0 && message.parts[idx - 1]?.type === 'image') return null
+              const images: Array<Extract<RenderablePart, { type: 'image' }>> = []
+              for (let imageIndex = idx; imageIndex < message.parts.length; imageIndex += 1) {
+                const candidate = message.parts[imageIndex]
+                if (candidate?.type !== 'image') break
+                images.push(candidate)
+              }
+              return <HistoricalImageRail key={partKey} images={images} />
             }
             if (part.type === 'thinking') {
               return (

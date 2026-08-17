@@ -4,6 +4,59 @@ import assert from 'node:assert';
 import { normalizeSessionMessage, partsFromSdkContent, scanSdkMessagesForTasks } from './message-normalizer.js';
 import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 
+describe('message-normalizer historical images', () => {
+  it('preserves Claude image blocks in their original order', () => {
+    const parts = partsFromSdkContent([
+      { type: 'text', text: 'before' },
+      {
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' },
+      },
+      { type: 'text', text: 'after' },
+    ]);
+
+    assert.deepStrictEqual(parts, [
+      { type: 'text', text: 'before' },
+      {
+        type: 'image',
+        mediaType: 'image/png',
+        source: { type: 'base64', data: 'iVBORw0KGgo=' },
+      },
+      { type: 'text', text: 'after' },
+    ]);
+  });
+
+  it('preserves OpenCode normalized image sources and unavailable state', () => {
+    const parts = partsFromSdkContent([
+      {
+        type: 'image',
+        mediaType: 'image/webp',
+        name: 'capture.webp',
+        source: { type: 'url', url: 'https://example.com/capture.webp' },
+      },
+      {
+        type: 'image',
+        mediaType: 'image/gif',
+        source: { type: 'unavailable', reason: 'Image removed during compaction.' },
+      },
+    ]);
+
+    assert.deepStrictEqual(parts, [
+      {
+        type: 'image',
+        mediaType: 'image/webp',
+        name: 'capture.webp',
+        source: { type: 'url', url: 'https://example.com/capture.webp' },
+      },
+      {
+        type: 'image',
+        mediaType: 'image/gif',
+        source: { type: 'unavailable', reason: 'Image removed during compaction.' },
+      },
+    ]);
+  });
+});
+
 describe('message-normalizer tool_use_meta', () => {
   it('attaches block-level tool_use_meta to tool_use parts', () => {
     const parts = partsFromSdkContent([

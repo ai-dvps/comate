@@ -13,6 +13,15 @@ interface SourcePartAnchor {
 
 export type RenderablePart =
   | ({ type: 'text'; text: string; timestamp?: number } & SourcePartAnchor)
+  | ({
+      type: 'image'
+      mediaType: Extract<ChatMessage['parts'][number], { type: 'image' }>['mediaType']
+      name?: string
+      width?: number
+      height?: number
+      source: Extract<ChatMessage['parts'][number], { type: 'image' }>['source']
+      timestamp?: number
+    } & SourcePartAnchor)
   | ({ type: 'thinking'; text: string; isStreaming: boolean; timestamp?: number } & SourcePartAnchor)
   | {
       type: 'tool_use'
@@ -83,6 +92,17 @@ export function adaptChatMessage(
               type: 'thinking',
               text: part.text,
               isStreaming: part.state === 'streaming',
+              timestamp,
+              ...sourceAnchor,
+            }
+          case 'image':
+            return {
+              type: 'image',
+              mediaType: part.mediaType,
+              name: part.name,
+              width: part.width,
+              height: part.height,
+              source: part.source,
               timestamp,
               ...sourceAnchor,
             }

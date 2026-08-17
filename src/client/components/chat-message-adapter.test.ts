@@ -33,6 +33,15 @@ const toolResultPart = (toolUseId: string): MessagePart => ({
   isError: false,
 })
 
+const imagePart = (): MessagePart => ({
+  type: 'image',
+  mediaType: 'image/png',
+  name: 'bug.png',
+  width: 640,
+  height: 480,
+  source: { type: 'base64', data: 'iVBORw0KGgo=' },
+})
+
 describe('adaptChatMessage', () => {
   it('sets timestamp on every rendered part from msg.timestamp', () => {
     const adapted = adaptChatMessage(msg([textPart('hi'), thinkingPart('hmm'), toolUsePart('Bash')], 5000))
@@ -66,6 +75,22 @@ describe('adaptChatMessage', () => {
     expect(adapted.parts[0]).toMatchObject({ type: 'text', text: 'hi' })
     expect(adapted.parts[1]).toMatchObject({ type: 'thinking', text: 'hmm', isStreaming: true })
     expect(adapted.parts[2]).toMatchObject({ type: 'tool_use', toolName: 'Bash', isStreaming: true })
+  })
+
+  it('preserves historical image metadata and source', () => {
+    const adapted = adaptChatMessage(msg([textPart('look'), imagePart()], 1000))
+
+    expect(adapted.parts).toEqual([
+      expect.objectContaining({ type: 'text', text: 'look' }),
+      expect.objectContaining({
+        type: 'image',
+        mediaType: 'image/png',
+        name: 'bug.png',
+        width: 640,
+        height: 480,
+        source: { type: 'base64', data: 'iVBORw0KGgo=' },
+      }),
+    ])
   })
 
   it('skips null/unknown parts', () => {

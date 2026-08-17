@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import ChatMessageRenderer, {
@@ -73,6 +73,61 @@ describe('ChatMessageRenderer width', () => {
 
     expect(container.firstElementChild).toHaveClass('w-full', 'max-w-[95%]')
     expect(container.firstElementChild).not.toHaveClass('max-w-none')
+  })
+})
+
+describe('ChatMessageRenderer historical images', () => {
+  const imageMessage: RenderableMessage = {
+    id: 'image-message',
+    role: 'user',
+    parts: [
+      {
+        type: 'image',
+        mediaType: 'image/png',
+        name: 'first.png',
+        source: { type: 'base64', data: 'iVBORw0KGgo=' },
+      },
+      {
+        type: 'image',
+        mediaType: 'image/jpeg',
+        name: 'second.jpg',
+        source: { type: 'url', url: 'https://example.com/second.jpg' },
+      },
+    ],
+  }
+
+  it('renders ordered accessible thumbnails and previews the selected image', async () => {
+    const user = userEvent.setup()
+    render(<ChatMessageRenderer {...baseProps} message={imageMessage} />)
+
+    const thumbnails = screen.getAllByRole('button', { name: /imageInput.preview/ })
+    expect(thumbnails).toHaveLength(2)
+    expect(thumbnails[0]).toHaveAccessibleName('imageInput.preview')
+    expect(thumbnails[0].querySelector('img')).toHaveAttribute('src', 'data:image/png;base64,iVBORw0KGgo=')
+    expect(thumbnails[1].querySelector('img')).toHaveAttribute('src', 'https://example.com/second.jpg')
+
+    await user.click(thumbnails[1])
+    expect(screen.getByRole('dialog', { name: 'second.jpg' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'second.jpg' })).toHaveAttribute('src', 'https://example.com/second.jpg')
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await waitFor(() => expect(thumbnails[1]).toHaveFocus())
+  })
+
+  it('renders an explicit placeholder when historical bytes are unavailable', () => {
+    const message: RenderableMessage = {
+      id: 'missing-image',
+      role: 'user',
+      parts: [{
+        type: 'image',
+        mediaType: 'image/gif',
+        name: 'old.gif',
+        source: { type: 'unavailable', reason: 'Image removed during compaction.' },
+      }],
+    }
+
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+    expect(screen.getByRole('status', { name: 'old.gif' })).toHaveTextContent('Image removed during compaction.')
   })
 })
 
