@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { Copy, FileWarning } from 'lucide-react'
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { cn } from './ui/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import MarkdownPreview from './MarkdownPreview'
@@ -26,6 +26,8 @@ export default function CodeMirrorFileViewer({
   const absolutePath = getPathDisplayInfo(tab.path, workspacePath).displayAbsolute
   const language = useMemo(() => getCodeMirrorLanguage(tab.name), [tab.name])
   const fontSize = fontSizeValue(chatFontSize)
+  const [failedVideoUrl, setFailedVideoUrl] = useState<string>()
+  const videoLoadFailed = Boolean(tab.videoUrl && failedVideoUrl === tab.videoUrl)
 
   const handleCopy = useCallback(async () => {
     try {
@@ -77,15 +79,21 @@ export default function CodeMirrorFileViewer({
       </div>
 
       <div className={cn('flex-1 overflow-auto', isMarkdown(tab.name) && 'p-0')} data-testid="file-viewer-content">
-        {tab.videoUrl ? (
+        {tab.videoUrl && !videoLoadFailed ? (
           <div className="flex items-center justify-center h-full p-4 bg-black/90">
             <video
               src={tab.videoUrl}
               controls
               preload="metadata"
+              onError={() => setFailedVideoUrl(tab.videoUrl)}
               aria-label={t('videoPreviewLabel', { name: tab.name })}
               className="max-w-full max-h-full"
             />
+          </div>
+        ) : videoLoadFailed ? (
+          <div className="flex flex-col items-center justify-center h-full gap-3 px-6 text-center text-text-secondary">
+            <FileWarning className="w-8 h-8" />
+            <p className="text-sm">{t('videoPreviewError')}</p>
           </div>
         ) : tab.imageDataUrl ? (
           <div className="flex items-center justify-center h-full p-4 bg-surface/50">

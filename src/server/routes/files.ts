@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { createReadStream } from 'fs';
 import { realpath, readdir, readFile, stat } from 'fs/promises';
 import path from 'path';
+import { pipeline } from 'stream/promises';
 import { store } from '../storage/sqlite-store.js';
 import { searchFiles } from '../services/file-search.js';
 import { sidecarError } from '../utils/sidecar-logger.js';
@@ -290,7 +291,7 @@ router.get('/media', async (req, res) => {
         'Content-Length': String(range.end - range.start + 1),
         'Content-Range': `bytes ${range.start}-${range.end}/${fileStat.size}`,
       });
-      createReadStream(targetPath, range).pipe(res);
+      await pipeline(createReadStream(targetPath, range), res);
       return;
     }
 
@@ -298,8 +299,11 @@ router.get('/media', async (req, res) => {
       ...commonHeaders,
       'Content-Length': String(fileStat.size),
     });
-    createReadStream(targetPath).pipe(res);
+    await pipeline(createReadStream(targetPath), res);
   } catch (error) {
+    if (req.aborted || res.destroyed) {
+      return;
+    }
     console.error('Failed to stream video:', error);
     if (!res.headersSent) {
       res.status(500).json({ error: 'Failed to stream video' });
