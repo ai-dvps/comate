@@ -101,6 +101,7 @@
   "clear": "Clear",
   "pinSideBySide": "Pin side-by-side",
   "searchFiles": "Search files…",
+  "refreshFiles": "Refresh files",
   "loadingFiles": "Loading files…",
   "noFilesMatch": "No files match{{filter}}",
   "selectOrCreateWorkspace": "Select or create a workspace to get started",

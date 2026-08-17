@@ -100,6 +100,52 @@ describe('FileExplorer', () => {
     })
   })
 
+  it('refreshes the root tree and any expanded folders on demand', async () => {
+    let rootLoadCount = 0
+    let folderLoadCount = 0
+    global.fetch = vi.fn((url: string) => {
+      if (url.includes('?path=src')) {
+        folderLoadCount += 1
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            nodes: folderLoadCount === 1
+              ? [{ name: 'App.tsx', type: 'file' }]
+              : [
+                  { name: 'App.tsx', type: 'file' },
+                  { name: 'new-helper.ts', type: 'file' },
+                ],
+          }),
+        })
+      }
+
+      rootLoadCount += 1
+      const nodes = rootLoadCount === 1
+        ? [{ name: 'src', type: 'folder' }]
+        : [
+            { name: 'src', type: 'folder' },
+            { name: 'CHANGELOG.md', type: 'file' },
+          ]
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ nodes }),
+      })
+    }) as unknown as typeof global.fetch
+
+    renderWithI18n(<FileExplorer onFileClick={vi.fn()} />)
+
+    await waitFor(() => expect(screen.getByText('src')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('src'))
+    await waitFor(() => expect(screen.getByText('App.tsx')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh files' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('CHANGELOG.md')).toBeInTheDocument()
+      expect(screen.getByText('new-helper.ts')).toBeInTheDocument()
+    })
+  })
+
   it('selects a file on single click and highlights it', async () => {
     global.fetch = vi.fn(() =>
       Promise.resolve({
