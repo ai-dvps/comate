@@ -64,6 +64,83 @@ describe('opencodeMessagesToSessionMessages', () => {
     assert.equal(result.is_error, true);
     assert.equal(result.content, 'ENOENT');
   });
+
+  it('maps persisted data URL images to shared base64 image parts', () => {
+    const out = opencodeMessagesToSessionMessages([{
+      info: { id: 'm-image', role: 'user' },
+      parts: [
+        { id: 'p-before', type: 'text', messageID: 'm-image', text: 'before' },
+        {
+          id: 'p-image',
+          type: 'file',
+          messageID: 'm-image',
+          mime: 'image/webp',
+          filename: '../screen.webp',
+          url: 'data:image/webp;base64,UklGRg==',
+        },
+        { id: 'p-after', type: 'text', messageID: 'm-image', text: 'after' },
+      ],
+    }]) as Array<{ message: { content: Array<Record<string, unknown>> } }>;
+
+    assert.deepEqual(out[0].message.content, [
+      { type: 'text', text: 'before' },
+      {
+        type: 'image',
+        mediaType: 'image/webp',
+        name: 'screen.webp',
+        source: { type: 'base64', data: 'UklGRg==' },
+      },
+      { type: 'text', text: 'after' },
+    ]);
+  });
+
+  it('keeps safe remote image URLs without copying them', () => {
+    const out = opencodeMessagesToSessionMessages([{
+      info: { id: 'm-remote', role: 'user' },
+      parts: [{
+        id: 'p-remote',
+        type: 'file',
+        messageID: 'm-remote',
+        mime: 'image/png',
+        filename: 'remote.png',
+        url: 'https://cdn.example.test/remote.png',
+      }],
+    }]) as Array<{ message: { content: Array<Record<string, unknown>> } }>;
+
+    assert.deepEqual(out[0].message.content, [{
+      type: 'image',
+      mediaType: 'image/png',
+      name: 'remote.png',
+      source: { type: 'url', url: 'https://cdn.example.test/remote.png' },
+    }]);
+  });
+
+  it('marks missing, invalid, unsafe, and compacted image data unavailable', () => {
+    const out = opencodeMessagesToSessionMessages([{
+      info: { id: 'm-broken', role: 'user' },
+      parts: [
+        { id: 'missing', type: 'file', messageID: 'm-broken', mime: 'image/png', filename: 'missing.png' },
+        { id: 'invalid', type: 'file', messageID: 'm-broken', mime: 'image/jpeg', url: 'data:image/jpeg;base64,***' },
+        { id: 'unsafe', type: 'file', messageID: 'm-broken', mime: 'image/webp', url: 'file:///tmp/image.webp' },
+        {
+          id: 'compacted',
+          type: 'file',
+          messageID: 'm-broken',
+          mime: 'image/gif',
+          url: 'data:image/gif;base64,R0lGODlh',
+          compacted: true,
+        },
+      ],
+    }]) as Array<{ message: { content: Array<{ source: { type: string; reason?: string } }> } }>;
+
+    assert.deepEqual(out[0].message.content.map((part) => part.source.type), [
+      'unavailable',
+      'unavailable',
+      'unavailable',
+      'unavailable',
+    ]);
+    for (const part of out[0].message.content) assert.ok(part.source.reason);
+  });
 });
 
 describe('pairTaskToolCallsWithChildren', () => {
