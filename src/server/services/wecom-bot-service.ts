@@ -804,7 +804,7 @@ export class WeComBotService {
 
   /**
    * Handle `/stop`: interrupt the user's active WeCom session if it has an
-   * in-flight turn, resolve any pending approvals/questions as denied, and
+   * in-flight turn, resolve any pending approvals as denied, and
    * confirm the action. Mirrors feishu-bot-service handleStopCommand.
    */
   private async handleStopCommand(
@@ -2012,7 +2012,7 @@ export class WeComBotService {
   }
 
   /**
-   * Fold a resolved card receipt (question answer or permission outcome) into
+   * Fold a resolved permission-card receipt into
    * the session's active streaming reply so the receipt and the agent's
    * continuation share one bubble (R1/R6). Appends WITHOUT finalizing the
    * stream. No-ops when the text is empty, when there is no active stream for
