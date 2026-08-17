@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Prompt messages now accept screenshots and images** — Paste, drop, or choose ordered PNG, JPEG, WebP, and GIF images alongside text (or send images alone) to supported Claude Code and OpenCode models. Static images are proportionally normalized to the active model limits, failed admission restores the complete draft, and accepted images are rendered later from the backend-owned transcript rather than a separate Comate archive.
 - **File Explorer now plays workspace video files** — Opening a supported video displays native playback controls with streamed seeking instead of the generic binary-file placeholder.
 - **Sidebar workspace rows now have a right-click context menu** — Right-clicking a workspace offers Edit Workspace (opens Settings scoped to that workspace), Open Folder (reveals the workspace folder in the OS file manager), and Reload Sessions (refreshes that workspace's session list); expanded workspaces also refresh their session lists when the window regains focus.
 
