@@ -18,6 +18,7 @@ export const onWindowMaximizedChange = vi.fn(() => () => {});
 export const syncTitleBarOverlay = vi.fn();
 export const updateBadgeState = vi.fn(() => Promise.resolve());
 export const revealInFileManager = vi.fn(() => Promise.resolve());
+export const openFolder = vi.fn(() => Promise.resolve());
 export const openExternal = vi.fn(() => Promise.resolve());
 export const openDirectoryDialog = vi.fn((): Promise<string | null> => Promise.resolve(null));
 export const isNotificationPermissionGranted = vi.fn(() => Promise.resolve(false));
