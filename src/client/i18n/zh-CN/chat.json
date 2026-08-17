@@ -9,6 +9,7 @@
   "skills": "技能",
   "files": "文件",
   "placeholder": "向 Claude 询问任何关于代码的问题...",
+  "imageOnlySessionTitle": "图片提示",
   "clear": "清空",
   "send": "发送",
   "refresh": "刷新",

@@ -24,7 +24,11 @@ export interface DecodedImage {
 }
 
 export interface ImageInputRuntime {
-  decode: (blob: Blob, dimensions: ImageDimensions) => Promise<DecodedImage>
+  decode: (
+    blob: Blob,
+    dimensions: ImageDimensions,
+    targetDimensions?: ImageDimensions,
+  ) => Promise<DecodedImage>
   encode: (
     decoded: DecodedImage,
     mediaType: Exclude<ImageMediaType, 'image/gif'>,
@@ -199,9 +203,20 @@ function base64Length(blob: Blob): number {
   return 4 * Math.ceil(blob.size / 3)
 }
 
-async function decodeInBrowser(blob: Blob): Promise<DecodedImage> {
+async function decodeInBrowser(
+  blob: Blob,
+  _dimensions: ImageDimensions,
+  targetDimensions?: ImageDimensions,
+): Promise<DecodedImage> {
   if (typeof createImageBitmap === 'function') {
-    const bitmap = await createImageBitmap(blob, { imageOrientation: 'from-image' })
+    const bitmap = await createImageBitmap(blob, {
+      imageOrientation: 'from-image',
+      ...(targetDimensions && {
+        resizeWidth: targetDimensions.width,
+        resizeHeight: targetDimensions.height,
+        resizeQuality: 'high',
+      }),
+    })
     return {
       source: bitmap,
       width: bitmap.width,
@@ -274,6 +289,21 @@ function validateDimensions(
   }
 }
 
+function dimensionsWithinLimit(
+  dimensions: ImageDimensions,
+  maxDimensionPx: number,
+): ImageDimensions {
+  const scale = Math.min(
+    1,
+    maxDimensionPx / dimensions.width,
+    maxDimensionPx / dimensions.height,
+  )
+  return {
+    width: Math.max(1, Math.round(dimensions.width * scale)),
+    height: Math.max(1, Math.round(dimensions.height * scale)),
+  }
+}
+
 async function normalizeStaticImage(
   blob: Blob,
   mediaType: Exclude<ImageMediaType, 'image/gif'>,
@@ -283,13 +313,13 @@ async function normalizeStaticImage(
   imageIndex: number,
   forceEncode: boolean,
 ): Promise<{ blob: Blob; width: number; height: number }> {
+  const targetDimensions = dimensionsWithinLimit(decoded, limits.maxDimensionPx)
   const scale = Math.min(
     1,
-    limits.maxDimensionPx / decoded.width,
-    limits.maxDimensionPx / decoded.height,
+    targetDimensions.width / decoded.width,
+    targetDimensions.height / decoded.height,
   )
-  let width = Math.max(1, Math.round(decoded.width * scale))
-  let height = Math.max(1, Math.round(decoded.height * scale))
+  let { width, height } = targetDimensions
 
   if (
     !forceEncode &&
@@ -353,7 +383,16 @@ export async function normalizeImageBatch(
 
       let decoded: DecodedImage
       try {
-        decoded = await runtime.decode(file, headerDimensions)
+        const targetDimensions = mediaType === 'image/gif'
+          ? undefined
+          : dimensionsWithinLimit(headerDimensions, limits.maxDimensionPx)
+        const resizeTarget = targetDimensions && (
+          targetDimensions.width !== headerDimensions.width ||
+          targetDimensions.height !== headerDimensions.height
+        )
+          ? targetDimensions
+          : undefined
+        decoded = await runtime.decode(file, headerDimensions, resizeTarget)
       } catch {
         throw new ImageInputError('invalid_dimensions', 'Image could not be decoded', index)
       }

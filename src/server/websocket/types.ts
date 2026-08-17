@@ -50,6 +50,7 @@ export interface WsErrorResponse {
     message: string
     code?: string
     details?: ImageInputValidationError
+    retryable?: boolean
   }
 }
 
@@ -94,7 +95,7 @@ export interface SendMessagePayload {
   workspaceId: string
   sessionId: string
   /** Stable identity shared by optimistic state, admission acknowledgement, and transcript reconciliation. */
-  clientTurnId: string
+  clientTurnId?: string
   /** Empty remains valid for image-only turns; strings preserve text-only wire compatibility. */
   content: string
   /** Omitted for legacy/text-only turns; array order is provider submission order. */

@@ -224,6 +224,37 @@ describe('session-runtime activity callback', { concurrency: false }, () => {
     assert.deepEqual(queued.message.content, content);
   });
 
+  it('does not forward OpenCode-only image filenames to Claude SDK content', async () => {
+    const sdk = createActivitySdkClient();
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      sdk.client,
+    );
+
+    runtime.pushMessage([{
+      type: 'image',
+      name: 'screen.png',
+      source: {
+        type: 'base64',
+        media_type: 'image/png',
+        data: 'iVBORw0KGgo=',
+      },
+    }]);
+
+    const queued = await sdk.nextInput();
+    assert.deepEqual(queued.message.content, [{
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: 'image/png',
+        data: 'iVBORw0KGgo=',
+      },
+    }]);
+  });
+
   it('accepts an image-only native Claude turn', async () => {
     const sdk = createActivitySdkClient();
     runtime = SessionRuntime.open(
@@ -262,6 +293,70 @@ describe('session-runtime activity callback', { concurrency: false }, () => {
 
     const queued = await sdk.nextInput();
     assert.equal(queued.uuid, '550e8400-e29b-41d4-a716-446655440000');
+  });
+
+  it('resolves pushMessage only after the backend admission hook resolves', async () => {
+    const sdk = createActivitySdkClient();
+    let resolveAdmission!: () => void;
+    const admission = new Promise<void>((resolve) => {
+      resolveAdmission = resolve;
+    });
+    const driver = {
+      backendId: 'opencode' as const,
+      prepareAdmission: () => admission,
+      createStreamingQuery: sdk.client.createStreamingQuery.bind(sdk.client),
+    };
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      sdk.client,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      driver,
+    );
+
+    let admitted = false;
+    const pending = runtime.pushMessage('hello', '550e8400-e29b-41d4-a716-446655440000')
+      .then(() => { admitted = true; });
+    const queued = await sdk.nextInput();
+    assert.equal(queued.uuid, '550e8400-e29b-41d4-a716-446655440000');
+    assert.equal(admitted, false);
+    resolveAdmission();
+    await pending;
+    assert.equal(admitted, true);
+  });
+
+  it('returns to idle when backend admission rejects', async () => {
+    const sdk = createActivitySdkClient();
+    const driver = {
+      backendId: 'opencode' as const,
+      prepareAdmission: () => Promise.reject(new Error('prompt rejected')),
+      createStreamingQuery: sdk.client.createStreamingQuery.bind(sdk.client),
+    };
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      sdk.client,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      driver,
+    );
+
+    await assert.rejects(
+      runtime.pushMessage('hello', '550e8400-e29b-41d4-a716-446655440000'),
+      /prompt rejected/,
+    );
+    assert.equal(runtime.isProcessingTurn(), false);
   });
 
   it('generates a UUID for legacy callers without a client turn id', async () => {

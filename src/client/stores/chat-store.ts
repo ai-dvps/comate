@@ -20,7 +20,11 @@ import { isBotSession } from '../lib/session-filter'
 import { useToastStore } from './toast-store'
 import { useScheduledTaskStore } from './scheduled-task-store'
 import type { SchedulerRunEventPayload } from '../lib/scheduled-task-events'
-import { DEFAULT_TIMEOUT, wsClient } from '../lib/websocket-client.js'
+import {
+  DEFAULT_TIMEOUT,
+  WebSocketRequestTimeoutError,
+  wsClient,
+} from '../lib/websocket-client.js'
 import type { WsEventMessage } from '@server/websocket/types'
 import { BROWSER_TOOL_PREFIX } from '@server/services/browser-tool-names'
 import {
@@ -1353,12 +1357,22 @@ function dispatchPendingTurn(set: SseSetter, snapshot: PendingTurnSnapshot): voi
         typeof (result as { clientTurnId?: unknown }).clientTurnId === 'string' &&
         (result as { clientTurnId: string }).clientTurnId !== snapshot.clientTurnId
       ) {
-        throw new Error('Admission acknowledgement did not match the submitted turn')
+        throw new Error(i18next.t(
+          'common:admissionAcknowledgementMismatch',
+          'The server acknowledgement did not match the submitted message',
+        ))
       }
       settlePendingTurn(set, snapshot, 'accepted')
     })
     .catch((error) => {
       console.error('Failed to send message:', error)
+      if (error instanceof WebSocketRequestTimeoutError) {
+        // Admission is ambiguous: the server may still accept the first request.
+        // Retry the immutable snapshot with the same clientTurnId; the server
+        // deduplicates that identity and returns the original admission result.
+        dispatchPendingTurn(set, snapshot)
+        return
+      }
       settlePendingTurn(set, snapshot, 'rejected', error)
     })
 }

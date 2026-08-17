@@ -17,11 +17,16 @@ import {
   newChatDraftSessionId,
   promptImageDraftKey,
 } from './chat-store'
-import { DEFAULT_TIMEOUT, wsClient } from '../lib/websocket-client'
+import {
+  DEFAULT_TIMEOUT,
+  WebSocketRequestTimeoutError,
+  wsClient,
+} from '../lib/websocket-client'
 import { useToastStore } from './toast-store'
 import type { SubagentState, TaskItem, WorkflowState, WorkflowStatus } from '../types/message'
 import type { WsEventMessage } from '@server/websocket/types'
 import { toUserTurnImage } from '../lib/image-input'
+import zhCommon from '../i18n/zh-CN/common.json'
 
 function makePromptImage(id: string) {
   return {
@@ -227,6 +232,74 @@ describe('multimodal pending turn ownership', () => {
     expect(state.imageDrafts[promptImageDraftKey('ws-1', 's1')]).toEqual([submitted, newer])
     expect(state.pendingTurns.s1).toBeUndefined()
     expect(state.messages.s1?.some((message) => message.id === clientTurnId)).toBe(false)
+    historySpy.mockRestore()
+    requestSpy.mockRestore()
+  })
+
+  it('retries an ambiguous timeout with the same identity without restoring or duplicating the draft', async () => {
+    const image = makePromptImage('slow')
+    const retry = deferred<unknown>()
+    let sendAttempt = 0
+    const requestSpy = vi.spyOn(wsClient, 'request').mockImplementation((type) => {
+      if (type !== 'sendMessage') return Promise.resolve({})
+      sendAttempt += 1
+      return sendAttempt === 1
+        ? Promise.reject(new WebSocketRequestTimeoutError('sendMessage'))
+        : retry.promise
+    })
+    const historySpy = vi.spyOn(useChatStore.getState(), 'addPromptHistory').mockImplementation(() => {})
+    useChatStore.getState().setActiveSession('ws-1', 's1')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    useChatStore.setState({ serverNonce: { s1: 'nonce-1' } })
+    requestSpy.mockClear()
+
+    const clientTurnId = useChatStore.getState().sendMessage('ws-1', 's1', {
+      text: 'slow admission',
+      images: [image],
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const sends = requestSpy.mock.calls.filter(([type]) => type === 'sendMessage')
+    expect(sends).toHaveLength(2)
+    expect(sends[0]?.[1]).toMatchObject({ clientTurnId })
+    expect(sends[1]?.[1]).toMatchObject({ clientTurnId })
+    expect(useChatStore.getState().pendingTurns.s1?.clientTurnId).toBe(clientTurnId)
+    expect(useChatStore.getState().drafts.s1).toBeUndefined()
+    expect(useChatStore.getState().imageDrafts[promptImageDraftKey('ws-1', 's1')]).toBeUndefined()
+    expect(useChatStore.getState().messages.s1?.filter((message) => message.id === clientTurnId)).toHaveLength(1)
+
+    retry.resolve({ sent: true, clientTurnId })
+    await retry.promise
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(useChatStore.getState().pendingTurns.s1).toBeUndefined()
+    historySpy.mockRestore()
+    requestSpy.mockRestore()
+  })
+
+  it('localizes an admission acknowledgement identity mismatch', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockImplementation((type, payload) =>
+      type === 'sendMessage'
+        ? Promise.resolve({ sent: true, clientTurnId: `${String(payload.clientTurnId)}-wrong` })
+        : Promise.resolve({}),
+    )
+    const historySpy = vi.spyOn(useChatStore.getState(), 'addPromptHistory').mockImplementation(() => {})
+    useChatStore.getState().setActiveSession('ws-1', 's1')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    useChatStore.setState({ serverNonce: { s1: 'nonce-1' } })
+    requestSpy.mockClear()
+
+    useChatStore.getState().sendMessage('ws-1', 's1', 'identity mismatch')
+    await vi.waitFor(() => {
+      const systemText = useChatStore.getState().messages.s1
+        ?.flatMap((message) => message.parts)
+        .find((part) => part.type === 'text' && part.text.includes('server acknowledgement'))
+      expect(systemText).toMatchObject({
+        type: 'text',
+        text: expect.stringContaining('The server acknowledgement did not match the submitted message'),
+      })
+    })
+    expect(zhCommon.admissionAcknowledgementMismatch).toBe('服务器确认与已提交的消息不匹配')
+
     historySpy.mockRestore()
     requestSpy.mockRestore()
   })

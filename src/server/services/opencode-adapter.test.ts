@@ -159,6 +159,31 @@ describe('extractPromptParts', () => {
     assert.deepEqual(__testables.extractPromptParts({ message: { role: 'user' } } as never), []);
   });
 
+  it('preserves a sanitized supplied image filename', async () => {
+    const { __testables } = await import('./opencode-adapter.js');
+    assert.deepEqual(__testables.extractPromptParts({
+      message: { role: 'user', content: [{
+        type: 'image',
+        name: '../screenshots/login\u0000.png',
+        source: { type: 'base64', media_type: 'image/png', data: 'AA==' },
+      }] },
+    } as never), [{
+      type: 'file',
+      mime: 'image/png',
+      filename: 'login.png',
+      url: 'data:image/png;base64,AA==',
+    }]);
+  });
+
+  it('encodes only valid UUIDs as reserved OpenCode message ids', async () => {
+    const { __testables } = await import('./opencode-adapter.js');
+    assert.equal(
+      __testables.encodeComateMessageId('550e8400-e29b-41d4-a716-446655440000'),
+      'msg_comate_550e8400e29b41d4a716446655440000',
+    );
+    assert.equal(__testables.encodeComateMessageId('not-a-uuid'), undefined);
+  });
+
   it('recognizes slash commands only for text-only turns', async () => {
     const { __testables } = await import('./opencode-adapter.js');
     assert.deepEqual(
@@ -229,6 +254,160 @@ describe('OpencodeBackendDriver multimodal prompt dispatch', () => {
     assert.deepEqual(requests[1].body.parts, [
       { type: 'file', mime: 'image/gif', filename: 'image-1.gif', url: 'data:image/gif;base64,R0lGODlh' },
     ]);
+  });
+
+  it('settles admission from prompt_async and forwards the stable message id', async () => {
+    const { OpencodeBackendDriver } = await import('./opencode-adapter.js');
+    const driver = new OpencodeBackendDriver({
+      directory: '/workspace',
+      comateSessionId: 's',
+      provider: makeProvider(),
+      env: {},
+    });
+    const requests: Array<Record<string, unknown>> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input, init) => {
+      requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    const clientTurnId = '550e8400-e29b-41d4-a716-446655440000';
+
+    try {
+      const internals = driver as unknown as {
+        instance: { baseUrl: string; directory: string; authHeaders: Record<string, string> };
+        backendSessionId: string;
+        consumeInput: (input: AsyncIterable<SDKUserMessage>, options: Options) => void;
+      };
+      internals.instance = { baseUrl: 'http://opencode.test', directory: '/workspace', authHeaders: {} };
+      internals.backendSessionId = 'oc-1';
+      const admitted = driver.prepareAdmission(clientTurnId);
+      internals.consumeInput((async function* () {
+        yield {
+          type: 'user',
+          uuid: clientTurnId,
+          parent_tool_use_id: null,
+          message: { role: 'user', content: 'hello' },
+        } as SDKUserMessage;
+      })(), {} as Options);
+      await admitted;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    assert.equal(requests[0].messageID, 'msg_comate_550e8400e29b41d4a716446655440000');
+  });
+
+  it('rejects admission when prompt_async rejects the request', async () => {
+    const { OpencodeBackendDriver } = await import('./opencode-adapter.js');
+    const driver = new OpencodeBackendDriver({
+      directory: '/workspace',
+      comateSessionId: 's',
+      provider: makeProvider(),
+      env: {},
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(null, { status: 503 })) as typeof fetch;
+    const clientTurnId = '550e8400-e29b-41d4-a716-446655440000';
+
+    try {
+      const internals = driver as unknown as {
+        instance: { baseUrl: string; directory: string; authHeaders: Record<string, string> };
+        backendSessionId: string;
+        consumeInput: (input: AsyncIterable<SDKUserMessage>, options: Options) => void;
+      };
+      internals.instance = { baseUrl: 'http://opencode.test', directory: '/workspace', authHeaders: {} };
+      internals.backendSessionId = 'oc-1';
+      const admitted = driver.prepareAdmission(clientTurnId);
+      internals.consumeInput((async function* () {
+        yield {
+          type: 'user',
+          uuid: clientTurnId,
+          parent_tool_use_id: null,
+          message: { role: 'user', content: 'hello' },
+        } as SDKUserMessage;
+      })(), {} as Options);
+      await assert.rejects(admitted, /HTTP 503/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('releases retry image bytes after terminal idle and error events', async () => {
+    const { OpencodeBackendDriver, __testables } = await import('./opencode-adapter.js');
+    const driver = new OpencodeBackendDriver({
+      directory: '/workspace',
+      comateSessionId: 's',
+      provider: makeProvider(),
+      env: {},
+    });
+    const internals = driver as unknown as {
+      lastPrompt?: { parts: unknown[] };
+      sendPrompt: (parts: ReturnType<typeof __testables.extractPromptParts>, options: Options) => Promise<void>;
+      routeEvent: (event: unknown, options: Options, sessionId: string) => void;
+      instance: { baseUrl: string; directory: string; authHeaders: Record<string, string> };
+      backendSessionId: string;
+    };
+    internals.instance = { baseUrl: 'http://opencode.test', directory: '/workspace', authHeaders: {} };
+    internals.backendSessionId = 'oc-1';
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(null, { status: 204 })) as typeof fetch;
+    const parts = __testables.extractPromptParts({ message: { role: 'user', content: [{
+      type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AA==' },
+    }] } } as never);
+
+    try {
+      await internals.sendPrompt(parts, {} as Options);
+      assert.ok(internals.lastPrompt);
+      internals.routeEvent({ type: 'session.idle', properties: { sessionID: 'oc-1' } }, {} as Options, 'oc-1');
+      assert.equal(internals.lastPrompt, undefined);
+
+      await internals.sendPrompt(parts, {} as Options);
+      internals.routeEvent({
+        type: 'session.error',
+        properties: { sessionID: 'oc-1', error: { message: 'rate limit exceeded' } },
+      }, {} as Options, 'oc-1');
+      assert.equal(internals.lastPrompt, undefined);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('keeps the same image snapshot and message id for one model fallback', async () => {
+    const { OpencodeBackendDriver } = await import('./opencode-adapter.js');
+    const driver = new OpencodeBackendDriver({
+      directory: '/workspace',
+      comateSessionId: 's',
+      provider: makeProvider(),
+      env: {},
+    });
+    const parts = [{
+      type: 'file' as const,
+      mime: 'image/png',
+      filename: 'screen.png',
+      url: 'data:image/png;base64,AA==',
+    }];
+    const messageID = 'msg_comate_550e8400e29b41d4a716446655440000';
+    let retried: { parts: unknown[]; messageID?: string } | undefined;
+    const internals = driver as unknown as {
+      modelID: string;
+      lastPrompt?: { parts: typeof parts; messageID?: string };
+      sendPrompt: (retryParts: typeof parts, options: Options, retryMessageID?: string) => Promise<void>;
+      routeEvent: (event: unknown, options: Options, sessionId: string) => void;
+    };
+    internals.modelID = 'test-model[1m]';
+    internals.lastPrompt = { parts, messageID };
+    internals.sendPrompt = async (retryParts, _options, retryMessageID) => {
+      retried = { parts: retryParts, messageID: retryMessageID };
+    };
+
+    internals.routeEvent({
+      type: 'session.error',
+      properties: { sessionID: 'oc-1', error: { message: 'model not found' } },
+    }, {} as Options, 'oc-1');
+    await Promise.resolve();
+
+    assert.deepEqual(retried, { parts, messageID });
+    assert.ok(internals.lastPrompt, 'fallback keeps bytes until the retry reaches a terminal event');
   });
 });
 

@@ -94,7 +94,7 @@ describe('opencodeMessagesToSessionMessages', () => {
     ]);
   });
 
-  it('keeps safe remote image URLs without copying them', () => {
+  it('marks remote image URLs unavailable without creating a network source', () => {
     const out = opencodeMessagesToSessionMessages([{
       info: { id: 'm-remote', role: 'user' },
       parts: [{
@@ -111,8 +111,16 @@ describe('opencodeMessagesToSessionMessages', () => {
       type: 'image',
       mediaType: 'image/png',
       name: 'remote.png',
-      source: { type: 'url', url: 'https://cdn.example.test/remote.png' },
+      source: { type: 'unavailable', reason: 'Backend transcript image URL is unavailable.' },
     }]);
+  });
+
+  it('restores a reserved OpenCode message id to the stable client UUID', () => {
+    const out = opencodeMessagesToSessionMessages([{
+      info: { id: 'msg_comate_550e8400e29b41d4a716446655440000', role: 'user' },
+      parts: [{ id: 'p1', type: 'text', messageID: 'msg_comate_550e8400e29b41d4a716446655440000', text: 'hello' }],
+    }]);
+    assert.equal(out[0].uuid, '550e8400-e29b-41d4-a716-446655440000');
   });
 
   it('marks missing, invalid, unsafe, and compacted image data unavailable', () => {

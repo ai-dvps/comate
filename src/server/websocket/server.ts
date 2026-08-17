@@ -1,6 +1,6 @@
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import type { Server } from 'http';
-import type { UUID } from 'node:crypto';
+import { createHash, randomUUID, type UUID } from 'node:crypto';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import { chatService } from '../services/chat-service.js';
 import { todoRunEvents, type TodoRunEvent } from '../services/todo-execution-service.js';
@@ -40,6 +40,11 @@ class WsRequestValidationError extends Error {
   readonly code = 'INVALID_SEND_MESSAGE';
 }
 
+class WsAdmissionBusyError extends Error {
+  readonly code = 'SEND_ADMISSION_BUSY';
+  readonly retryable = true;
+}
+
 const UUID_CLIENT_TURN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isSafeClientTurnId(value: string): value is UUID {
@@ -59,9 +64,6 @@ function parseSendMessagePayload(payload: unknown): ValidatedSendMessagePayload 
   if (typeof candidate.sessionId !== 'string' || candidate.sessionId.trim().length === 0) {
     throw new WsRequestValidationError('sessionId is required');
   }
-  if (typeof candidate.clientTurnId !== 'string' || !isSafeClientTurnId(candidate.clientTurnId)) {
-    throw new WsRequestValidationError('clientTurnId is invalid');
-  }
   if (typeof candidate.content !== 'string') {
     throw new WsRequestValidationError('content must be a string');
   }
@@ -71,10 +73,17 @@ function parseSendMessagePayload(payload: unknown): ValidatedSendMessagePayload 
   if (candidate.content.trim().length === 0 && (!candidate.images || candidate.images.length === 0)) {
     throw new WsRequestValidationError('A message requires text or at least one image');
   }
+  const isLegacyTextTurn = candidate.clientTurnId === undefined && candidate.images === undefined;
+  if (!isLegacyTextTurn && (
+    typeof candidate.clientTurnId !== 'string' || !isSafeClientTurnId(candidate.clientTurnId)
+  )) {
+    throw new WsRequestValidationError('clientTurnId is invalid');
+  }
+  const clientTurnId = isLegacyTextTurn ? randomUUID() : candidate.clientTurnId as UUID;
   return {
     workspaceId: candidate.workspaceId,
     sessionId: candidate.sessionId,
-    clientTurnId: candidate.clientTurnId,
+    clientTurnId,
     content: candidate.content,
     ...(candidate.images === undefined ? {} : { images: candidate.images }),
   };
@@ -89,6 +98,18 @@ export class ComateWebSocketServer {
   private wss?: WebSocketServer;
   private clients = new Map<WebSocket, ClientContext>();
   private runtimeEventUnsubscribers = new Map<string, Map<WebSocket, () => void>>();
+  /** Retain recent admissions so a timed-out client can retry the same turn identity safely. */
+  private sendAdmissions = new Map<string, {
+    workspaceId: string;
+    sessionId: string;
+    fingerprint: string;
+    promise: Promise<void>;
+    settled: boolean;
+    createdAt: number;
+  }>();
+
+  private static readonly TARGET_MAX_SEND_ADMISSIONS = 1000;
+  private static readonly SEND_ADMISSION_DEDUP_TTL_MS = 5 * 60 * 1000;
 
   attach(server: Server, options: OriginGuardOptions = {}): void {
     // Origin/Host check on the upgrade handshake (plan U9): cross-origin pages
@@ -233,13 +254,20 @@ export class ComateWebSocketServer {
       const details = err && typeof err === 'object' && 'details' in err
         ? (err as { details?: WsErrorResponse['error']['details'] }).details
         : undefined;
+      const errorCode = err && typeof err === 'object' && 'code' in err
+        ? (err as { code?: unknown }).code
+        : undefined;
+      const retryable = err && typeof err === 'object' && 'retryable' in err
+        ? (err as { retryable?: unknown }).retryable
+        : undefined;
       this.sendError(ctx.socket, req.id, {
         message: err instanceof Error ? err.message : 'Internal error',
         ...(details?.kind === 'image_input_validation'
           ? { code: 'IMAGE_INPUT_VALIDATION', details }
-          : err instanceof WsRequestValidationError
-            ? { code: err.code }
+          : typeof errorCode === 'string'
+            ? { code: errorCode }
             : {}),
+        ...(retryable === true ? { retryable: true } : {}),
       });
     }
   }
@@ -345,15 +373,60 @@ export class ComateWebSocketServer {
 
   private async handleSendMessage(ctx: ClientContext, req: WsRequest): Promise<void> {
     const { workspaceId, sessionId, clientTurnId, content, images } = parseSendMessagePayload(req.payload);
-    await chatService.pushMessage(
-      sessionId,
-      workspaceId,
-      images && images.length > 0 ? { text: content, images } : content,
-      undefined,
-      undefined,
-      undefined,
-      clientTurnId,
-    );
+    const fingerprint = createHash('sha256')
+      .update(JSON.stringify({ workspaceId, sessionId, content, images }))
+      .digest('hex');
+    const existing = this.sendAdmissions.get(clientTurnId);
+    if (existing) {
+      if (
+        existing.workspaceId !== workspaceId ||
+        existing.sessionId !== sessionId ||
+        existing.fingerprint !== fingerprint
+      ) {
+        throw new WsRequestValidationError('clientTurnId was already used for a different turn');
+      }
+      await existing.promise;
+    } else {
+      if (this.sendAdmissions.size >= ComateWebSocketServer.TARGET_MAX_SEND_ADMISSIONS) {
+        const expiry = Date.now() - ComateWebSocketServer.SEND_ADMISSION_DEDUP_TTL_MS;
+        for (const [knownClientTurnId, admission] of this.sendAdmissions) {
+          if (admission.settled && admission.createdAt <= expiry) {
+            this.sendAdmissions.delete(knownClientTurnId);
+          }
+          if (this.sendAdmissions.size < ComateWebSocketServer.TARGET_MAX_SEND_ADMISSIONS) break;
+        }
+        if (this.sendAdmissions.size >= ComateWebSocketServer.TARGET_MAX_SEND_ADMISSIONS) {
+          throw new WsAdmissionBusyError('Message admission is busy; retry this turn shortly');
+        }
+      }
+      const promise = chatService.pushMessage(
+        sessionId,
+        workspaceId,
+        images && images.length > 0 ? { text: content, images } : content,
+        undefined,
+        undefined,
+        undefined,
+        clientTurnId,
+      );
+      const admission = {
+        workspaceId,
+        sessionId,
+        fingerprint,
+        promise,
+        settled: false,
+        createdAt: Date.now(),
+      };
+      this.sendAdmissions.set(clientTurnId, admission);
+      try {
+        await promise;
+        admission.settled = true;
+      } catch (error) {
+        if (this.sendAdmissions.get(clientTurnId)?.promise === promise) {
+          this.sendAdmissions.delete(clientTurnId);
+        }
+        throw error;
+      }
+    }
     this.sendOk(ctx.socket, req.id, { sent: true, clientTurnId });
   }
 

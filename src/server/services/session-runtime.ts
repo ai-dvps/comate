@@ -47,6 +47,7 @@ export type RuntimeUserContentBlock =
   | { type: 'text'; text: string }
   | {
       type: 'image';
+      name?: string;
       source: {
         type: 'base64';
         media_type: ImageMediaType;
@@ -1043,7 +1044,7 @@ export class SessionRuntime {
     this.onSubscribed?.();
   }
 
-  pushMessage(content: RuntimeUserContent, clientTurnId?: UUID): void {
+  pushMessage(content: RuntimeUserContent, clientTurnId?: UUID): Promise<void> {
     if (this.stopping) {
       throw new Error('Session is stopping and cannot accept new messages.');
     }
@@ -1052,9 +1053,16 @@ export class SessionRuntime {
     }
     this.stopFenceActive = false;
     const uuid = clientTurnId ?? randomUUID();
+    const admission = this.driver.prepareAdmission?.(uuid) ?? Promise.resolve();
+    const providerContent = this.driver.backendId === 'claude' && Array.isArray(content)
+      ? content.map((block) => {
+          if (block.type !== 'image' || block.name === undefined) return block;
+          return { type: block.type, source: block.source };
+        })
+      : content;
     const msg: SDKUserMessage = {
       type: 'user',
-      message: { role: 'user', content },
+      message: { role: 'user', content: providerContent },
       parent_tool_use_id: null,
       uuid,
     };
@@ -1063,6 +1071,13 @@ export class SessionRuntime {
     this.evaluateActivity();
     this.input.push(msg);
     this.kimiLoopDetector?.reset();
+    return admission.catch((error) => {
+      if (this.foregroundMessageUuid === uuid) {
+        this.foregroundMessageUuid = undefined;
+        this.evaluateActivity();
+      }
+      throw error;
+    });
   }
 
   resolveApproval(requestId: string, result: PermissionResult, provenance?: ApprovalResolutionProvenance): boolean {

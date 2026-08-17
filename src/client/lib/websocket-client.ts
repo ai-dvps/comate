@@ -12,6 +12,26 @@ export type WsEventListener = (event: WsEventMessage) => void;
 export type WsReconnectListener = () => void;
 export type WsDisconnectListener = () => void;
 
+export class WebSocketRequestError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+    readonly details?: WsErrorResponse['error']['details'],
+    readonly ambiguous = false,
+    readonly retryable?: boolean,
+  ) {
+    super(message)
+    this.name = 'WebSocketRequestError'
+  }
+}
+
+export class WebSocketRequestTimeoutError extends WebSocketRequestError {
+  constructor(type: WsRequestType) {
+    super(`WebSocket request timeout: ${type}`, 'REQUEST_TIMEOUT', undefined, true, true)
+    this.name = 'WebSocketRequestTimeoutError'
+  }
+}
+
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
@@ -114,7 +134,7 @@ export class WebSocketClient {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         this.removeQueuedRequest(id);
-        reject(new Error(`WebSocket request timeout: ${type}`));
+        reject(new WebSocketRequestTimeoutError(type));
       }, timeout);
 
       this.pending.set(id, { resolve, reject, timer });
@@ -164,7 +184,13 @@ export class WebSocketClient {
         pending.resolve((msg as WsResponse).payload);
       } else {
         const errMsg = (msg as WsErrorResponse).error;
-        pending.reject(new Error(errMsg.message));
+        pending.reject(new WebSocketRequestError(
+          errMsg.message,
+          errMsg.code,
+          errMsg.details,
+          false,
+          (errMsg as WsErrorResponse['error'] & { retryable?: boolean }).retryable,
+        ));
       }
       return;
     }

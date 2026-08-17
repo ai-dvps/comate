@@ -9,6 +9,7 @@
   "skills": "Skills",
   "files": "Files",
   "placeholder": "Ask Claude anything about your code...",
+  "imageOnlySessionTitle": "Image prompt",
   "clear": "Clear",
   "send": "Send",
   "refresh": "Refresh",

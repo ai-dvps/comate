@@ -729,6 +729,7 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
         pushMessageCalls.push(message);
         pushMessageClientTurnIds.push(clientTurnId);
         callbacks.onActivity?.();
+        return Promise.resolve();
       },
       resolveApproval: () => {},
       interrupt: () => Promise.resolve(),
@@ -846,7 +847,7 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
     await service.pushMessage('s1', 'ws-1', {
       text: 'Fix this layout',
       images: [
-        { id: 'first', mediaType: 'image/png', data: bytes.toString('base64'), width: 1, height: 1 },
+        { id: 'first', name: '../layout.png', mediaType: 'image/png', data: bytes.toString('base64'), width: 1, height: 1 },
         { id: 'second', mediaType: 'image/png', data: bytes.toString('base64'), width: 1, height: 1 },
       ],
     });
@@ -855,7 +856,7 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
     const calls = (runtime as unknown as { pushMessageCalls: unknown[] }).pushMessageCalls;
     assert.deepStrictEqual(calls, [[
       { type: 'text', text: 'Fix this layout' },
-      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: bytes.toString('base64') } },
+      { type: 'image', name: '../layout.png', source: { type: 'base64', media_type: 'image/png', data: bytes.toString('base64') } },
       { type: 'image', source: { type: 'base64', media_type: 'image/png', data: bytes.toString('base64') } },
     ]]);
   });
@@ -907,6 +908,23 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
         images: [{ id: 'image', mediaType: 'image/png', data: bytes.toString('base64'), width: 1, height: 1 }],
       }),
       /before admission/,
+    );
+    assert.equal(clearedDraft, false);
+  });
+
+  it('awaits asynchronous provider admission before promoting a draft', async () => {
+    setupStoreMocks();
+    let clearedDraft = false;
+    workspaceStore.clearDraftFlag = () => {
+      clearedDraft = true;
+    };
+    const runtime = createMockRuntime();
+    runtime.pushMessage = () => Promise.reject(new Error('OpenCode prompt admission failed with HTTP 503'));
+    SessionRuntime.open = () => runtime;
+
+    await assert.rejects(
+      () => service.pushMessage('s1', 'ws-1', 'retry me'),
+      /prompt admission failed/,
     );
     assert.equal(clearedDraft, false);
   });

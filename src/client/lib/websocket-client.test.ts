@@ -54,7 +54,11 @@ describe('WebSocketClient queued request cleanup', () => {
   it('does not flush a queued request after that request times out', async () => {
     const client = new WebSocketClient()
     const request = client.request('status', { workspaceId: 'ws-1' }, 10)
-    const rejection = expect(request).rejects.toThrow('WebSocket request timeout: status')
+    const rejection = expect(request).rejects.toMatchObject({
+      message: 'WebSocket request timeout: status',
+      code: 'REQUEST_TIMEOUT',
+      ambiguous: true,
+    })
 
     await vi.advanceTimersByTimeAsync(10)
     await rejection
@@ -84,6 +88,52 @@ describe('WebSocketClient queued request cleanup', () => {
     await reconnect
 
     expect(socket.sent).toEqual([])
+    client.disconnect()
+  })
+
+  it('preserves structured server error codes and image validation details', async () => {
+    const client = new WebSocketClient()
+    const connected = client.connect()
+    await Promise.resolve()
+    const socket = FakeWebSocket.instances[0]
+    socket.open()
+    await connected
+
+    const request = client.request('sendMessage', {
+      workspaceId: 'ws-1',
+      sessionId: 's1',
+      clientTurnId: '550e8400-e29b-41d4-a716-446655440000',
+      content: '',
+      images: [],
+    })
+    const sent = JSON.parse(socket.sent[0]) as { id: string }
+    socket.onmessage?.({
+      data: JSON.stringify({
+        id: sent.id,
+        ok: false,
+        error: {
+          message: 'Image media type does not match its contents',
+          code: 'IMAGE_INPUT_VALIDATION',
+          retryable: true,
+          details: {
+            kind: 'image_input_validation',
+            code: 'media_signature_mismatch',
+            message: 'Image media type does not match its contents',
+            imageIndex: 0,
+          },
+        },
+      }),
+    })
+
+    await expect(request).rejects.toMatchObject({
+      code: 'IMAGE_INPUT_VALIDATION',
+      retryable: true,
+      details: {
+        kind: 'image_input_validation',
+        code: 'media_signature_mismatch',
+        imageIndex: 0,
+      },
+    })
     client.disconnect()
   })
 })

@@ -285,6 +285,8 @@ export default function PromptInput(props: PromptInputProps) {
   const historyPickerHandleRef = useRef<HistoryPickerHandle>(null)
   const imageFileInputRef = useRef<HTMLInputElement>(null)
   const imageIntakeKeysRef = useRef<Set<string>>(new Set())
+  const imageIntakeRevisionsRef = useRef<Map<string, number>>(new Map())
+  const imageComposerDisposedRef = useRef(false)
   const prevInputRef = useRef('')
   const referenceDraftSourceRef = useRef<string>()
   const committedReferencesRef = useRef<CommittedPromptReference[]>([])
@@ -354,6 +356,21 @@ export default function PromptInput(props: PromptInputProps) {
 
     return () => {
       observer.disconnect()
+    }
+  }, [])
+
+  useEffect(() => {
+    imageComposerDisposedRef.current = false
+    const intakeKeys = imageIntakeKeysRef.current
+    const intakeRevisions = imageIntakeRevisionsRef.current
+    return () => {
+      imageComposerDisposedRef.current = true
+      for (const key of intakeKeys) {
+        intakeRevisions.set(
+          key,
+          (intakeRevisions.get(key) ?? 0) + 1,
+        )
+      }
     }
   }, [])
 
@@ -751,6 +768,10 @@ export default function PromptInput(props: PromptInputProps) {
       pushUndoState(input, getCaretOffset(el))
     }
     images.forEach(releasePromptImage)
+    imageIntakeRevisionsRef.current.set(
+      imageDraftKey,
+      (imageIntakeRevisionsRef.current.get(imageDraftKey) ?? 0) + 1,
+    )
     setImageDrafts(workspaceId, sessionId, [])
     setImageErrors((current) => {
       const next = { ...current }
@@ -869,6 +890,7 @@ export default function PromptInput(props: PromptInputProps) {
     }
     if (imageIntakeKeysRef.current.has(operationKey)) return
     imageIntakeKeysRef.current.add(operationKey)
+    const operationRevision = imageIntakeRevisionsRef.current.get(operationKey) ?? 0
 
     const existingImages = useChatStore.getState().imageDrafts[operationKey] ?? []
     setImageErrors((current) => {
@@ -882,6 +904,13 @@ export default function PromptInput(props: PromptInputProps) {
         existingImages,
         limits: imageProfile.limits,
       })
+      if (
+        imageComposerDisposedRef.current ||
+        (imageIntakeRevisionsRef.current.get(operationKey) ?? 0) !== operationRevision
+      ) {
+        added.forEach((image) => releasePromptImage(image))
+        return
+      }
       const latest = useChatStore.getState().imageDrafts[operationKey] ?? []
       const totalBase64Bytes = [...latest, ...added]
         .reduce((total, image) => total + image.data.length, 0)
@@ -889,11 +918,15 @@ export default function PromptInput(props: PromptInputProps) {
         latest.length + added.length > imageProfile.limits.maxImages ||
         totalBase64Bytes > imageProfile.limits.maxBase64BytesPerBatch
       ) {
-        added.forEach(releasePromptImage)
+        added.forEach((image) => releasePromptImage(image))
         throw new ImageInputError('batch_too_large', 'The image batch is too large')
       }
       setImageDrafts(operationWorkspaceId, operationSessionId, [...latest, ...added])
     } catch (error) {
+      if (
+        imageComposerDisposedRef.current ||
+        (imageIntakeRevisionsRef.current.get(operationKey) ?? 0) !== operationRevision
+      ) return
       const code = error instanceof ImageInputError ? error.code : 'invalid_dimensions'
       setImageErrors((current) => ({
         ...current,
@@ -901,11 +934,13 @@ export default function PromptInput(props: PromptInputProps) {
       }))
     } finally {
       imageIntakeKeysRef.current.delete(operationKey)
-      setImageBusyKeys((current) => {
-        const next = new Set(current)
-        next.delete(operationKey)
-        return next
-      })
+      if (!imageComposerDisposedRef.current) {
+        setImageBusyKeys((current) => {
+          const next = new Set(current)
+          next.delete(operationKey)
+          return next
+        })
+      }
     }
   }
 
