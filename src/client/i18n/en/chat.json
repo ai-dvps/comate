@@ -334,6 +334,7 @@
     "isDefault": "Default",
     "tab": "Agent",
     "hooksNotWired": "Hook scripts are not executed yet on either agent",
+    "imageInputModelUnsupported": "The selected model does not support image input",
     "scheduledGoalNoEvaluator": "Scheduled runs execute as plain prompt on this agent — no completion check"
   }
 }

@@ -145,9 +145,11 @@ describe('listBackendCapabilities', () => {
     }
     assert.equal(claudeTable.hooks.state, 'unavailable');
     assert.equal(claudeTable.hooks.reasonKey, 'backend.hooksNotWired');
+    assert.equal(claudeTable.imageInput.state, 'full');
     const opencodeTable = listBackendCapabilities('opencode');
     assert.equal(opencodeTable.analytics.state, 'unavailable');
     assert.equal(opencodeTable.analytics.reasonKey, 'backend.analyticsNotCounted');
     assert.equal(opencodeTable.hooks.state, 'unavailable');
+    assert.equal(opencodeTable.imageInput.state, 'full');
   });
 });

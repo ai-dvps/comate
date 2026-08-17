@@ -16,6 +16,23 @@ export interface CapabilityEntry {
   reasonKey?: string
 }
 
+export interface ImageInputLimits {
+  allowedMediaTypes: readonly ('image/png' | 'image/jpeg' | 'image/webp' | 'image/gif')[]
+  maxDimensionPx: number
+  targetBase64BytesPerImage: number
+  maxRawBytesPerImage: number
+  maxPixelsPerImage: number
+  maxImages: number
+  maxBase64BytesPerBatch: number
+  preserveAnimatedGif: true
+}
+
+export interface ImageInputProfile {
+  enabled: boolean
+  reasonKey?: string
+  limits: ImageInputLimits
+}
+
 export interface BackendInfo {
   id: BackendId
   availability: { status: 'available' | 'unavailable'; reason?: string }

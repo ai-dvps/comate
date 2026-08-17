@@ -14,6 +14,8 @@ const FAST_MODE_UNSUPPORTED_PATTERNS = [
   'claude-3-opus',
 ];
 
+export { resolveImageInputProfile } from './image-input-profile.js';
+
 export function providerSupportsFastMode(model?: string): boolean {
   if (!model) {
     // Providers without an explicit model inherit the SDK default, which is

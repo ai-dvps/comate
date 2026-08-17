@@ -7,7 +7,11 @@
  * - Support request/response multiplexing plus server-pushed events.
  */
 
-import type { SessionActivitySnapshot } from '../types/message.js'
+import type {
+  ImageInputValidationError,
+  SessionActivitySnapshot,
+  UserTurnImage,
+} from '../types/message.js'
 
 export type WsRequestType =
   | 'subscribe'
@@ -45,6 +49,7 @@ export interface WsErrorResponse {
   error: {
     message: string
     code?: string
+    details?: ImageInputValidationError
   }
 }
 
@@ -88,7 +93,10 @@ export interface StatusResult {
 export interface SendMessagePayload {
   workspaceId: string
   sessionId: string
+  /** Empty remains valid for image-only turns; strings preserve text-only wire compatibility. */
   content: string
+  /** Omitted for legacy/text-only turns; array order is provider submission order. */
+  images?: UserTurnImage[]
 }
 
 export interface LoadMessagesPayload {
