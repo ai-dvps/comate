@@ -1108,30 +1108,6 @@ export class SessionRuntime {
   }
 
   /**
-   * Return the only pending single free-text question, if there is one.
-   * Channel adapters use this to route the next ordinary chat message back to
-   * AskUserQuestion instead of accidentally starting a second user turn.
-   */
-  getPendingFreeTextQuestion():
-    | { requestId: string; questions: QuestionPayload[] }
-    | undefined {
-    let match: { requestId: string; questions: QuestionPayload[] } | undefined;
-    for (const [requestId, pending] of this.pendingApprovals) {
-      const questions = pending.questions ?? [];
-      if (
-        pending.type !== 'question' ||
-        questions.length !== 1 ||
-        questions[0].options.length !== 0
-      ) {
-        continue;
-      }
-      if (match) return undefined;
-      match = { requestId, questions };
-    }
-    return match;
-  }
-
-  /**
    * Registers a pending tool approval, emits the pending_approval SSE event,
    * and returns a Promise that resolves when resolveApproval is called.
    * Used by the bot canUseTool callback to mirror the GUI approval flow.
