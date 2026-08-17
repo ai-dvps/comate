@@ -119,6 +119,12 @@
   "sessionNamePlaceholder": "会话名称",
   "create": "创建",
   "cancel": "取消",
+  "workspaceMenu": {
+    "editWorkspace": "编辑工作区",
+    "openFolder": "打开文件夹",
+    "reloadSessions": "重新加载会话",
+    "openFolderFailed": "无法打开工作区文件夹"
+  },
   "renameSession": "重命名会话",
   "newSession": "新会话",
   "newSessionDefaultName": "会话 {{count}}",

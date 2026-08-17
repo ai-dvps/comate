@@ -119,6 +119,12 @@
   "sessionNamePlaceholder": "Session name",
   "create": "Create",
   "cancel": "Cancel",
+  "workspaceMenu": {
+    "editWorkspace": "Edit Workspace",
+    "openFolder": "Open Folder",
+    "reloadSessions": "Reload Sessions",
+    "openFolderFailed": "Could not open the workspace folder"
+  },
   "renameSession": "Rename session",
   "newSession": "New Session",
   "newSessionDefaultName": "Session {{count}}",
