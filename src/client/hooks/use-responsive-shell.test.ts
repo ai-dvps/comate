@@ -52,7 +52,23 @@ describe('deriveResponsiveShell', () => {
     expect(deriveResponsiveShell({
       ...base,
       viewportWidth: 700,
-      forceLeftExpanded: true,
+      forcedExpandedSide: 'left',
     })).toEqual({ leftExpanded: true, rightExpanded: false })
+  })
+
+  it('temporarily hides the preferred right region when reopening the left region needs its space', () => {
+    expect(deriveResponsiveShell({
+      ...base,
+      viewportWidth: 1000,
+      forcedExpandedSide: 'left',
+    })).toEqual({ leftExpanded: true, rightExpanded: false })
+  })
+
+  it('temporarily hides the preferred left region when reopening the right region needs its space', () => {
+    expect(deriveResponsiveShell({
+      ...base,
+      viewportWidth: 1000,
+      forcedExpandedSide: 'right',
+    })).toEqual({ leftExpanded: false, rightExpanded: true })
   })
 })

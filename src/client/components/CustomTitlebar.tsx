@@ -111,7 +111,7 @@ export default function CustomTitlebar({
       >
         {isMac ? (
           <div
-            data-tauri-drag-region
+            data-electron-drag-region
             data-testid="titlebar-macos-traffic-lights"
             className="w-[72px] flex-shrink-0 self-stretch"
           />
@@ -133,14 +133,14 @@ export default function CustomTitlebar({
             ? <PanelLeftOpen className="h-4 w-4" aria-hidden="true" />
             : <PanelLeftClose className="h-4 w-4" aria-hidden="true" />}
         </button>
-        <div data-tauri-drag-region className="min-w-0 flex-1 self-stretch" />
+        <div data-electron-drag-region className="min-w-0 flex-1 self-stretch" />
       </div>
 
       <div
         data-testid="titlebar-conversation"
         className="flex min-w-0 flex-1 items-center border-b border-border px-3"
       >
-        <div data-tauri-drag-region className="min-w-0 flex-1 self-stretch" />
+        <div data-electron-drag-region className="min-w-0 flex-1 self-stretch" />
         <div className="pointer-events-none min-w-0 max-w-[70%] text-center">
           {managementTitle ? (
             <div className="truncate text-xs font-medium text-text-primary">{managementTitle}</div>
@@ -152,10 +152,11 @@ export default function CustomTitlebar({
             </div>
           )}
         </div>
-        <div data-tauri-drag-region className="min-w-0 flex-1 self-stretch" />
+        <div data-electron-drag-region className="min-w-0 flex-1 self-stretch" />
       </div>
 
       <div
+        data-electron-drag-region
         data-testid="titlebar-context"
         className={cn(
           'flex flex-shrink-0 items-center border-b border-border transition-[width] duration-200 ease-out motion-reduce:transition-none',
@@ -165,9 +166,9 @@ export default function CustomTitlebar({
         style={{ width: contextSegmentWidth + (isWindows ? 138 : 0) }}
       >
         {!contextAvailable ? (
-          <div data-tauri-drag-region className="flex-1 self-stretch" />
+          <div data-electron-drag-region className="flex-1 self-stretch" />
         ) : managementTitle ? (
-          <div data-tauri-drag-region className="flex-1 self-stretch" />
+          <div data-electron-drag-region className="flex-1 self-stretch" />
         ) : rightCollapsed ? (
           <div className="flex flex-1 items-center justify-center">
             <button
@@ -189,8 +190,6 @@ export default function CustomTitlebar({
               role="tablist"
               aria-label={t('shell.contextTabs')}
               className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2 scrollbar-hide"
-              data-testid="titlebar-interactive"
-              style={interactiveStyle}
             >
               {tabs.map((tab) => {
                 const active = tab.id === activeTabId
@@ -200,6 +199,8 @@ export default function CustomTitlebar({
                     role="tab"
                     tabIndex={active ? 0 : -1}
                     aria-selected={active}
+                    data-testid="titlebar-interactive"
+                    style={interactiveStyle}
                     onClick={() => onSelectTab(tab.id)}
                     className={cn(
                       'group flex h-7 min-w-0 max-w-44 flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 text-[11px]',

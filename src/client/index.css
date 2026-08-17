@@ -379,7 +379,7 @@
 /* Electron custom titlebar dragging (U2): the preload exposes no startDragging
    IPC — Electron drags frameless regions via -webkit-app-region. Inert in
    plain browsers. */
-[data-tauri-drag-region] {
+[data-electron-drag-region] {
   -webkit-app-region: drag;
 }
 

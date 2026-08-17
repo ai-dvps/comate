@@ -60,14 +60,26 @@ vi.mock('../components/CustomTitlebar', () => ({
   default: ({
     contextAvailable,
     onAddTab,
+    onToggleLeft,
     onToggleRight,
+    leftCollapsed,
+    rightCollapsed,
   }: {
     contextAvailable: boolean
     onAddTab: () => void
+    onToggleLeft: () => void
     onToggleRight: () => void
+    leftCollapsed: boolean
+    rightCollapsed: boolean
   }) => (
-    <div data-testid="custom-titlebar" data-context-available={contextAvailable}>
+    <div
+      data-testid="custom-titlebar"
+      data-context-available={contextAvailable}
+      data-left-collapsed={leftCollapsed}
+      data-right-collapsed={rightCollapsed}
+    >
       <button type="button" onClick={onAddTab}>Add context tab</button>
+      <button type="button" onClick={onToggleLeft}>Toggle left panel</button>
       <button type="button" onClick={onToggleRight}>Toggle right panel</button>
     </div>
   ),
@@ -530,6 +542,29 @@ describe('App layout', () => {
 
     fireEvent.click(getByRole('button', { name: 'Toggle right panel' }))
     await waitFor(() => expect(getByTestId('context-workspace')).toHaveAttribute('data-collapsed', 'true'))
+  })
+
+  it('gives the most recently reopened side priority when both side panels do not fit', async () => {
+    mockWorkspaceStore.activeWorkspaceId = 'ws1'
+    mockWorkspaceStore.openWorkspaceIds = ['ws1']
+    mockWorkspaceStore.workspaces = [{ id: 'ws1', name: 'Test', folderPath: '/tmp' }]
+
+    renderWithI18n(<App />)
+    const titlebar = await screen.findByTestId('custom-titlebar')
+    expect(titlebar).toHaveAttribute('data-left-collapsed', 'false')
+    expect(titlebar).toHaveAttribute('data-right-collapsed', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle right panel' }))
+    await waitFor(() => {
+      expect(titlebar).toHaveAttribute('data-left-collapsed', 'true')
+      expect(titlebar).toHaveAttribute('data-right-collapsed', 'false')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle left panel' }))
+    await waitFor(() => {
+      expect(titlebar).toHaveAttribute('data-left-collapsed', 'false')
+      expect(titlebar).toHaveAttribute('data-right-collapsed', 'true')
+    })
   })
 
   it('keeps Session work mounted and hides Browser content during management navigation', async () => {
