@@ -23,7 +23,7 @@ vi.mock('./PromptInput', () => ({
   }: {
     workspaceId: string
     mode?: string
-    onSend: (content: string) => void
+    onSend: (turn: { text: string; images: [] }) => void
     backendId?: string | null
     onBackendChange?: (backendId: 'claude' | 'opencode') => void
     providerId?: string | null
@@ -48,7 +48,7 @@ vi.mock('./PromptInput', () => ({
       <button type="button" onClick={() => onProviderChange?.('provider-2')}>Choose provider</button>
       <button type="button" onClick={() => onFastModeChange?.(!fastMode)}>Toggle fast</button>
       <button type="button" onClick={() => onApprovalModeChange?.('auto')}>Choose permission</button>
-      <button type="button" disabled={disabled} onClick={() => onSend('Fix the login redirect loop')}>Send</button>
+      <button type="button" disabled={disabled} onClick={() => onSend({ text: 'Fix the login redirect loop', images: [] })}>Send</button>
     </div>
   ),
 }))
@@ -140,7 +140,7 @@ describe('NewChatPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Choose permission' }))
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
 
-    expect(onSubmit).toHaveBeenCalledWith('ws-new', 'Fix the login redirect loop', {
+    expect(onSubmit).toHaveBeenCalledWith('ws-new', { text: 'Fix the login redirect loop', images: [] }, {
       backend: 'opencode',
       providerId: 'provider-2',
       fastMode: true,
@@ -233,7 +233,7 @@ describe('NewChatPage', () => {
     expect(screen.getByTestId('prompt-input')).toHaveAttribute('data-workspace-id', 'ws-created')
     expect(screen.getByRole('alert')).toHaveTextContent('Creating the session timed out. Try again.')
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-    expect(onSubmit).toHaveBeenCalledWith('ws-created', 'Fix the login redirect loop', {
+    expect(onSubmit).toHaveBeenCalledWith('ws-created', { text: 'Fix the login redirect loop', images: [] }, {
       backend: undefined,
       providerId: undefined,
       fastMode: false,

@@ -11,6 +11,7 @@ import type {
   SubagentPart,
   SubagentState,
   TaskItem,
+  UserTurnImage,
   WorkflowState,
 } from '../types/message'
 import { diagLog } from '../utils/diag-logger'
@@ -22,7 +23,11 @@ import type { SchedulerRunEventPayload } from '../lib/scheduled-task-events'
 import { DEFAULT_TIMEOUT, wsClient } from '../lib/websocket-client.js'
 import type { WsEventMessage } from '@server/websocket/types'
 import { BROWSER_TOOL_PREFIX } from '@server/services/browser-tool-names'
-import { releasePromptImage, type PromptImageDraft } from '../lib/image-input'
+import {
+  releasePromptImage,
+  toUserTurnImage,
+  type PromptImageDraft,
+} from '../lib/image-input'
 
 export type { ChatMessage, MessagePart, MessageRole, SubagentMessage, SubagentPart, SubagentState } from '../types/message'
 
@@ -30,6 +35,27 @@ export type PendingInteractionKind = 'approval' | 'question'
 
 export function promptImageDraftKey(workspaceId: string, sessionId: string): string {
   return `${JSON.stringify(workspaceId)}:${JSON.stringify(sessionId)}`
+}
+
+export const NEW_CHAT_DRAFT_SESSION_ID = '__new_chat_draft__'
+
+export function newChatDraftSessionId(workspaceId: string): string {
+  return `${NEW_CHAT_DRAFT_SESSION_ID}:${JSON.stringify(workspaceId)}`
+}
+
+export interface PromptTurnDraft {
+  text: string
+  images: readonly PromptImageDraft[]
+}
+
+export interface PendingTurnSnapshot {
+  readonly clientTurnId: string
+  readonly workspaceId: string
+  readonly sessionId: string
+  readonly text: string
+  readonly content: string
+  readonly images: readonly PromptImageDraft[]
+  readonly wireImages: readonly UserTurnImage[]
 }
 
 export interface SessionStatusEntry {
@@ -435,8 +461,9 @@ export interface ChatState {
   historyLoadState: Record<string, 'loading' | 'loaded'>
   approvalQueue: Record<string, PendingItem[]>
   serverNonce: Record<string, string>
-  draftQueue: Record<string, { workspaceId: string; content: string } | undefined>
-  pendingSend: Record<string, { workspaceId: string; content: string } | undefined>
+  draftQueue: Record<string, PendingTurnSnapshot | undefined>
+  pendingSend: Record<string, PendingTurnSnapshot | undefined>
+  pendingTurns: Record<string, PendingTurnSnapshot | undefined>
   drafts: Record<string, string>
   imageDrafts: Record<string, PromptImageDraft[]>
   subagents: Record<string, SubagentState[]>
@@ -469,7 +496,11 @@ export interface ChatState {
   toggleSessionArchive: (workspaceId: string, sessionId: string, isArchived: boolean) => Promise<void>
   setActiveSession: (workspaceId: string, sessionId: string) => void
   loadMessages: (workspaceId: string, sessionId: string) => Promise<void>
-  sendMessage: (workspaceId: string, sessionId: string, content: string) => void
+  sendMessage: (
+    workspaceId: string,
+    sessionId: string,
+    turn: string | PromptTurnDraft,
+  ) => string | undefined
   fetchPromptHistory: (workspaceId: string) => Promise<void>
   addPromptHistory: (workspaceId: string, sessionId: string, content: string) => void
   setDraft: (sessionId: string, content: string) => void
@@ -477,6 +508,12 @@ export interface ChatState {
     workspaceId: string,
     sessionId: string,
     images: PromptImageDraft[],
+  ) => void
+  transferDraft: (
+    workspaceId: string,
+    fromSessionId: string,
+    toSessionId: string,
+    turn: PromptTurnDraft,
   ) => void
   clearMessages: (sessionId: string) => void
   resolveApproval: (
@@ -1136,6 +1173,148 @@ function addSystemMessage(
       ],
     },
   }
+}
+
+function samePromptImages(
+  left: readonly PromptImageDraft[] | undefined,
+  right: readonly PromptImageDraft[],
+): boolean {
+  return Boolean(
+    left &&
+    left.length === right.length &&
+    left.every((image, index) => image.id === right[index]?.id),
+  )
+}
+
+function releaseUniquePromptImages(
+  images: readonly PromptImageDraft[] | undefined,
+  releasedPreviewUrls: Set<string>,
+): void {
+  for (const image of images ?? []) {
+    if (releasedPreviewUrls.has(image.previewUrl)) continue
+    releasedPreviewUrls.add(image.previewUrl)
+    releasePromptImage(image)
+  }
+}
+
+function mergeRestoredText(submitted: string, current: string | undefined): string {
+  if (!current) return submitted
+  if (!submitted || current === submitted) return current
+  return `${submitted}\n${current}`
+}
+
+function mergeRestoredImages(
+  submitted: readonly PromptImageDraft[],
+  current: readonly PromptImageDraft[] | undefined,
+): PromptImageDraft[] {
+  if (!current?.length) return [...submitted]
+  const currentIds = new Set(current.map((image) => image.id))
+  return [
+    ...submitted.filter((image) => !currentIds.has(image.id)),
+    ...current,
+  ]
+}
+
+function settlePendingTurn(
+  set: SseSetter,
+  snapshot: PendingTurnSnapshot,
+  outcome: 'accepted' | 'rejected',
+  error?: unknown,
+): void {
+  if (outcome === 'accepted') {
+    const current = useChatStore.getState().pendingTurns[snapshot.sessionId]
+    if (current?.clientTurnId !== snapshot.clientTurnId) return
+    snapshot.images.forEach(releasePromptImage)
+  }
+
+  set((state) => {
+    const current = state.pendingTurns[snapshot.sessionId]
+    if (current?.clientTurnId !== snapshot.clientTurnId) return {}
+
+    const pendingTurns = { ...state.pendingTurns }
+    delete pendingTurns[snapshot.sessionId]
+    const pendingSend = { ...state.pendingSend }
+    if (pendingSend[snapshot.sessionId]?.clientTurnId === snapshot.clientTurnId) {
+      delete pendingSend[snapshot.sessionId]
+    }
+    const draftQueue = { ...state.draftQueue }
+    if (draftQueue[snapshot.sessionId]?.clientTurnId === snapshot.clientTurnId) {
+      delete draftQueue[snapshot.sessionId]
+    }
+
+    if (outcome === 'accepted') {
+      return {
+        pendingTurns,
+        pendingSend,
+        draftQueue,
+      }
+    }
+
+    const key = promptImageDraftKey(snapshot.workspaceId, snapshot.sessionId)
+    const drafts = { ...state.drafts }
+    const restoredText = mergeRestoredText(snapshot.text, drafts[snapshot.sessionId])
+    if (restoredText) drafts[snapshot.sessionId] = restoredText
+    else delete drafts[snapshot.sessionId]
+    const imageDrafts = { ...state.imageDrafts }
+    const restoredImages = mergeRestoredImages(snapshot.images, imageDrafts[key])
+    if (restoredImages.length > 0) imageDrafts[key] = restoredImages
+    else delete imageDrafts[key]
+    const messages = {
+      ...state.messages,
+      [snapshot.sessionId]: (state.messages[snapshot.sessionId] || []).filter(
+        (message) => message.id !== snapshot.clientTurnId,
+      ),
+    }
+    const failureText = `${i18next.t('common:failedToSend', 'Failed to send')}: ${error instanceof Error ? error.message : i18next.t('common:networkError', 'Network error')}`
+    const withSystemMessage = addSystemMessage(
+      { ...state, messages },
+      snapshot.sessionId,
+      failureText,
+    )
+    return {
+      pendingTurns,
+      pendingSend,
+      draftQueue,
+      drafts,
+      imageDrafts,
+      messages: withSystemMessage.messages,
+      isStreaming: { ...state.isStreaming, [snapshot.sessionId]: false },
+      totalMessageCount: {
+        ...state.totalMessageCount,
+        [snapshot.sessionId]: Math.max(
+          0,
+          (state.totalMessageCount[snapshot.sessionId] || 0) - 1,
+        ),
+      },
+    }
+  })
+}
+
+function dispatchPendingTurn(set: SseSetter, snapshot: PendingTurnSnapshot): void {
+  void wsClient
+    .request('sendMessage', {
+      workspaceId: snapshot.workspaceId,
+      sessionId: snapshot.sessionId,
+      clientTurnId: snapshot.clientTurnId,
+      content: snapshot.content,
+      ...(snapshot.wireImages.length > 0 && { images: snapshot.wireImages }),
+    })
+    .then((result) => {
+      if (
+        result &&
+        typeof result === 'object' &&
+        'clientTurnId' in result &&
+        typeof (result as { clientTurnId?: unknown }).clientTurnId === 'string' &&
+        (result as { clientTurnId: string }).clientTurnId !== snapshot.clientTurnId
+      ) {
+        throw new Error('Admission acknowledgement did not match the submitted turn')
+      }
+      settlePendingTurn(set, snapshot, 'accepted')
+    })
+    .catch((error) => {
+      console.error('Failed to send message:', error)
+      settlePendingTurn(set, snapshot, 'rejected', error)
+    })
 }
 
 function hasPendingItem(state: ChatState, sessionId: string, requestId: string): boolean {
@@ -1836,21 +2015,9 @@ export function handleSseEvent(
         }
         const pending = state.pendingSend[sessionId]
         if (pending) {
-          const { workspaceId, content } = pending
           updates.pendingSend = { ...state.pendingSend }
           delete updates.pendingSend[sessionId]
-          wsClient
-            .request('sendMessage', { workspaceId, sessionId, content })
-            .catch((err) => {
-              console.error('Failed to send queued message:', err)
-              set((s) =>
-                addSystemMessage(
-                  s,
-                  sessionId,
-                  `${i18next.t('common:failedToSend', 'Failed to send')}: ${err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error')}`,
-                ),
-              )
-            })
+          dispatchPendingTurn(set, pending)
         }
         return updates
       })
@@ -1934,15 +2101,9 @@ export function handleSseEvent(
         // If queue is now empty and there's a draft message, send it
         const draft = state.draftQueue[sessionId]
         if (nextQueue.length === 0 && draft) {
-          const { workspaceId, content } = draft
           updates.draftQueue = { ...state.draftQueue }
           delete updates.draftQueue[sessionId]
-          // Send the queued message asynchronously
-          wsClient
-            .request('sendMessage', { workspaceId, sessionId, content })
-            .catch((err) => {
-              console.error('Failed to send queued message:', err)
-            })
+          dispatchPendingTurn(set, draft)
         }
         return updates
       })
@@ -2642,6 +2803,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   serverNonce: {},
   draftQueue: {},
   pendingSend: {},
+  pendingTurns: {},
   drafts: {},
   imageDrafts: {},
   subagents: {},
@@ -3003,7 +3165,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
 
         const imageKey = promptImageDraftKey(workspaceId, sessionId)
-        state.imageDrafts[imageKey]?.forEach(releasePromptImage)
+        const releasedPreviewUrls = new Set<string>()
+        releaseUniquePromptImages(state.imageDrafts[imageKey], releasedPreviewUrls)
+        releaseUniquePromptImages(state.pendingTurns[sessionId]?.images, releasedPreviewUrls)
         const nextImageDrafts = { ...state.imageDrafts }
         delete nextImageDrafts[imageKey]
 
@@ -3028,6 +3192,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           serverNonce: withoutSession(state.serverNonce),
           draftQueue: withoutSession(state.draftQueue),
           pendingSend: withoutSession(state.pendingSend),
+          pendingTurns: withoutSession(state.pendingTurns),
           subagents: withoutSession(state.subagents),
           tasks: withoutSession(state.tasks),
           pendingTaskCreates: withoutSession(state.pendingTaskCreates),
@@ -3252,26 +3417,63 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete nextBackgroundSessions[workspaceId]
       const keyPrefix = `${JSON.stringify(workspaceId)}:`
       const nextImageDrafts = { ...state.imageDrafts }
+      const releasedPreviewUrls = new Set<string>()
       for (const [key, images] of Object.entries(state.imageDrafts)) {
         if (!key.startsWith(keyPrefix)) continue
-        images.forEach(releasePromptImage)
+        releaseUniquePromptImages(images, releasedPreviewUrls)
         delete nextImageDrafts[key]
+      }
+      const nextPendingTurns = { ...state.pendingTurns }
+      for (const [sessionId, pending] of Object.entries(state.pendingTurns)) {
+        if (pending?.workspaceId !== workspaceId) continue
+        releaseUniquePromptImages(pending.images, releasedPreviewUrls)
+        delete nextPendingTurns[sessionId]
+      }
+      const withoutWorkspaceTurns = (
+        turns: Record<string, PendingTurnSnapshot | undefined>,
+      ): Record<string, PendingTurnSnapshot | undefined> => {
+        const next = { ...turns }
+        for (const [sessionId, pending] of Object.entries(turns)) {
+          if (pending?.workspaceId === workspaceId) delete next[sessionId]
+        }
+        return next
       }
       return {
         promptHistory: nextPromptHistory,
         backgroundSessions: nextBackgroundSessions,
         imageDrafts: nextImageDrafts,
+        pendingTurns: nextPendingTurns,
+        pendingSend: withoutWorkspaceTurns(state.pendingSend),
+        draftQueue: withoutWorkspaceTurns(state.draftQueue),
       }
     })
   },
 
-  sendMessage: (workspaceId: string, sessionId: string, content: string) => {
+  sendMessage: (workspaceId: string, sessionId: string, turn: string | PromptTurnDraft) => {
     // Defensive guard: do not send messages to bot sessions
     const session = get().sessions[workspaceId]?.find((s) => s.id === sessionId)
     if (session && isBotSession(session.source)) {
       console.warn('[sendMessage] blocked: cannot send messages to bot sessions')
-      return
+      return undefined
     }
+
+    if (get().pendingTurns[sessionId]) return undefined
+
+    const draft = typeof turn === 'string'
+      ? { text: turn, images: [] as readonly PromptImageDraft[] }
+      : turn
+    const content = draft.text.trim()
+    if (!content && draft.images.length === 0) return undefined
+    const clientTurnId = generateId()
+    const snapshot: PendingTurnSnapshot = Object.freeze({
+      clientTurnId,
+      workspaceId,
+      sessionId,
+      text: draft.text,
+      content,
+      images: Object.freeze([...draft.images]),
+      wireImages: Object.freeze(draft.images.map(toUserTurnImage)),
+    })
 
     // Record user-sent prompt in workspace-scoped history.
     get().addPromptHistory(workspaceId, sessionId, content)
@@ -3281,20 +3483,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
       subscribeToSession(set, get, workspaceId, sessionId)
     }
 
-    const userMessageId = generateId()
-
-    // Optimistically add user message and clear the input draft
+    // Optimistically add the immutable user turn and transfer matching draft
+    // ownership into pending state. The visible composer can immediately hold
+    // a newer draft, but cannot submit it until this admission settles.
     set((state) => {
       const nextDrafts = { ...state.drafts }
-      delete nextDrafts[sessionId]
+      if (nextDrafts[sessionId] === snapshot.text) delete nextDrafts[sessionId]
+      const imageKey = promptImageDraftKey(workspaceId, sessionId)
+      const nextImageDrafts = { ...state.imageDrafts }
+      if (samePromptImages(nextImageDrafts[imageKey], snapshot.images)) {
+        delete nextImageDrafts[imageKey]
+      }
       const nextUnread = { ...state.unreadCompletions }
       delete nextUnread[sessionId]
+      const parts: MessagePart[] = [
+        ...(content ? [{ type: 'text' as const, text: content }] : []),
+        ...snapshot.wireImages.map((image) => ({
+          type: 'image' as const,
+          mediaType: image.mediaType,
+          name: image.name,
+          width: image.width,
+          height: image.height,
+          source: { type: 'base64' as const, data: image.data },
+        })),
+      ]
       const newMessages: ChatMessage[] = [
         ...(state.messages[sessionId] || []),
         {
-          id: userMessageId,
+          id: clientTurnId,
           role: 'user' as const,
-          parts: [{ type: 'text', text: content }],
+          parts,
           timestamp: Date.now(),
         },
       ]
@@ -3306,18 +3524,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ? { ...state.historyLoadState, [sessionId]: 'loaded' as const }
         : state.historyLoadState
       const currentActivity = state.sessionActivity[sessionId]
-      const foregroundActivity: SessionActivitySnapshot = {
-        phase: 'foreground',
-        active: true,
-        backgroundTasks: currentActivity?.backgroundTasks ?? [],
-      }
       return {
         messages: { ...state.messages, [sessionId]: newMessages },
         drafts: nextDrafts,
+        imageDrafts: nextImageDrafts,
+        pendingTurns: { ...state.pendingTurns, [sessionId]: snapshot },
         sessions: { ...state.sessions, [workspaceId]: nextSessions },
         historyLoadState,
         isStreaming: { ...state.isStreaming, [sessionId]: true },
-        sessionActivity: { ...state.sessionActivity, [sessionId]: foregroundActivity },
+        sessionActivity: {
+          ...state.sessionActivity,
+          [sessionId]: {
+            phase: 'foreground',
+            active: true,
+            backgroundTasks: currentActivity?.backgroundTasks ?? [],
+          },
+        },
         streamStartedAt: { ...state.streamStartedAt, [sessionId]: Date.now() },
         unreadCompletions: nextUnread,
         totalMessageCount: {
@@ -3332,9 +3554,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const queue = get().approvalQueue[sessionId] || []
     if (queue.length > 0) {
       set((state) => ({
-        draftQueue: { ...state.draftQueue, [sessionId]: { workspaceId, content } },
+        draftQueue: { ...state.draftQueue, [sessionId]: snapshot },
       }))
-      return
+      return clientTurnId
     }
 
     // Gate the send on subscription_ack — without an ack, the server has not
@@ -3342,24 +3564,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // only into the ring buffer. The ack handler drains pendingSend.
     if (!get().serverNonce[sessionId]) {
       set((state) => ({
-        pendingSend: { ...state.pendingSend, [sessionId]: { workspaceId, content } },
+        pendingSend: { ...state.pendingSend, [sessionId]: snapshot },
       }))
-      return
+      return clientTurnId
     }
 
-    // Send via WebSocket
-    wsClient
-      .request('sendMessage', { workspaceId, sessionId, content })
-      .catch((err) => {
-        console.error('Failed to send message:', err)
-        set((state) =>
-          addSystemMessage(
-            state,
-            sessionId,
-          `${i18next.t('common:failedToSend', 'Failed to send')}: ${err instanceof Error ? err.message : i18next.t('common:networkError', 'Network error')}`,
-        ),
-      )
-    })
+    dispatchPendingTurn(set, snapshot)
+    return clientTurnId
   },
 
   fetchPromptHistory: async (workspaceId: string) => {
@@ -3479,6 +3690,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       if (state.imageDrafts[key] === images) return {}
       return { imageDrafts: { ...state.imageDrafts, [key]: images } }
+    })
+  },
+
+  transferDraft: (workspaceId, fromSessionId, toSessionId, turn) => {
+    if (!workspaceId || !fromSessionId || !toSessionId) return
+    const fromImageKey = promptImageDraftKey(workspaceId, fromSessionId)
+    const toImageKey = promptImageDraftKey(workspaceId, toSessionId)
+    set((state) => {
+      const drafts = { ...state.drafts }
+      if (drafts[fromSessionId] === turn.text) delete drafts[fromSessionId]
+      drafts[toSessionId] = turn.text
+      const imageDrafts = { ...state.imageDrafts }
+      if (samePromptImages(imageDrafts[fromImageKey], turn.images)) {
+        delete imageDrafts[fromImageKey]
+      }
+      imageDrafts[toImageKey] = [...turn.images]
+      return { drafts, imageDrafts }
     })
   },
 

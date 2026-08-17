@@ -22,7 +22,7 @@ export const DEFAULT_TIMEOUT = 30000;
 const BASE_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30000;
 
-class WebSocketClient {
+export class WebSocketClient {
   private socket: WebSocket | null = null;
   private pending = new Map<string, PendingRequest>();
   private eventListeners = new Set<WsEventListener>();
@@ -92,6 +92,7 @@ class WebSocketClient {
       reject(new Error('WebSocket disconnected'));
     }
     this.pending.clear();
+    this.messageQueue = [];
     this.socket?.close();
     this.socket = null;
   }
@@ -112,6 +113,7 @@ class WebSocketClient {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        this.removeQueuedRequest(id);
         reject(new Error(`WebSocket request timeout: ${type}`));
       }, timeout);
 
@@ -124,12 +126,17 @@ class WebSocketClient {
         void this.connect().catch((err) => {
           if (this.pending.has(id)) {
             this.pending.delete(id);
+            this.removeQueuedRequest(id);
             clearTimeout(timer);
             reject(err);
           }
         });
       }
     });
+  }
+
+  private removeQueuedRequest(id: string): void {
+    this.messageQueue = this.messageQueue.filter((request) => request.id !== id);
   }
 
   private flushQueue(): void {

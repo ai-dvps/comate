@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoaderCircle } from 'lucide-react'
-import { useChatStore } from '../stores/chat-store'
+import { useChatStore, type PromptTurnDraft } from '../stores/chat-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useMessageSearch } from '../hooks/useMessageSearch'
 import { useAppSettings } from '../hooks/use-app-settings'
@@ -191,9 +191,9 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
   const currentApproval = approvalQueue[0] || null
   const approvalQueueLength = approvalQueue.length
 
-  const handleSend = (content: string) => {
+  const handleSend = (turn: PromptTurnDraft) => {
     if (!activeSessionId) return
-    sendMessage(workspaceId, activeSessionId, content)
+    sendMessage(workspaceId, activeSessionId, turn)
   }
 
   const handleRefresh = async () => {
