@@ -318,6 +318,26 @@
     "multiSelect": "Multi-select",
     "optionFallback": "Option {{number}}"
   },
+  "imageInput": {
+    "attachments": "Image attachments",
+    "attach": "Attach images",
+    "preview": "Preview {{name}}",
+    "closePreview": "Close image preview",
+    "remove": "Remove {{name}}",
+    "moveLeft": "Move {{name}} left",
+    "moveRight": "Move {{name}} right",
+    "processing": "Processing images",
+    "errors": {
+      "unsupported_media_type": "This image format is not supported.",
+      "invalid_base64": "This image could not be read.",
+      "media_signature_mismatch": "The image type does not match its contents.",
+      "invalid_dimensions": "This image is corrupt or has unsafe dimensions.",
+      "image_too_large": "This image is too large and could not be normalized.",
+      "too_many_images": "Too many images are attached.",
+      "batch_too_large": "The attached images are too large as a batch.",
+      "model_unsupported": "The selected model does not support image input."
+    }
+  },
   "backend": {
     "selectorTitle": "Agent",
     "claude": "Claude Code",

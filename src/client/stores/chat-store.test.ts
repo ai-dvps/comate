@@ -14,6 +14,7 @@ import {
   deriveInFlightBrowserToolIds,
   type SseSetter,
   mergeSessionStatusEntry,
+  promptImageDraftKey,
 } from './chat-store'
 import { DEFAULT_TIMEOUT, wsClient } from '../lib/websocket-client'
 import { useToastStore } from './toast-store'
@@ -46,6 +47,53 @@ describe('session status polling', () => {
       ),
       undefined,
     )
+  })
+})
+
+describe('runtime image drafts', () => {
+  it('keys image drafts by workspace and session identity', () => {
+    useChatStore.setState({ imageDrafts: {} })
+    const first = [{
+      id: 'one',
+      name: 'one.png',
+      mediaType: 'image/png' as const,
+      data: 'AA==',
+      width: 1,
+      height: 1,
+      blob: new Blob(),
+      previewUrl: 'blob:one',
+    }]
+    const second = [{ ...first[0], id: 'two', previewUrl: 'blob:two' }]
+
+    useChatStore.getState().setImageDrafts('workspace-a', 'same-session', first)
+    useChatStore.getState().setImageDrafts('workspace-b', 'same-session', second)
+
+    expect(useChatStore.getState().imageDrafts[promptImageDraftKey('workspace-a', 'same-session')]).toBe(first)
+    expect(useChatStore.getState().imageDrafts[promptImageDraftKey('workspace-b', 'same-session')]).toBe(second)
+  })
+
+  it('removes an empty image draft without touching another session', () => {
+    const retained = [{
+      id: 'retained',
+      name: 'retained.png',
+      mediaType: 'image/png' as const,
+      data: 'AA==',
+      width: 1,
+      height: 1,
+      blob: new Blob(),
+      previewUrl: 'blob:retained',
+    }]
+    useChatStore.setState({
+      imageDrafts: {
+        [promptImageDraftKey('workspace-a', 'one')]: retained,
+        [promptImageDraftKey('workspace-a', 'two')]: retained,
+      },
+    })
+
+    useChatStore.getState().setImageDrafts('workspace-a', 'one', [])
+
+    expect(useChatStore.getState().imageDrafts[promptImageDraftKey('workspace-a', 'one')]).toBeUndefined()
+    expect(useChatStore.getState().imageDrafts[promptImageDraftKey('workspace-a', 'two')]).toBe(retained)
   })
 })
 

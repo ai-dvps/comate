@@ -1,13 +1,13 @@
 import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Activity, ArrowUp, X, Square, Loader2, SlashSquare, Paperclip, RefreshCw, User, History } from 'lucide-react'
+import { Activity, ArrowUp, X, Square, Loader2, SlashSquare, Paperclip, RefreshCw, User, History, ImagePlus } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
 import HistoryPicker, { type HistoryPickerHandle } from './HistoryPicker'
 import { useCommands, type SlashCommandDto } from '../stores/commands-store'
-import { useChatStore, type ApprovalMode } from '../stores/chat-store'
+import { promptImageDraftKey, useChatStore, type ApprovalMode } from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { usePromptReferenceValidation } from '../hooks/usePromptReferenceValidation'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
@@ -15,7 +15,15 @@ import ApprovalModeToggle from './ApprovalModeToggle'
 import FastModeToggle from './FastModeToggle'
 import ProviderSelector from './ProviderSelector'
 import BackendSelector from './BackendSelector'
-import { useBackendStore, backendAvailability, type BackendId, type BackendInfo } from '../stores/backend-store'
+import { useBackendStore, backendAvailability, backendCapability, type BackendId } from '../stores/backend-store'
+import { useProviderStore } from '../stores/provider-store'
+import { resolveImageInputProfile } from '@server/utils/image-input-profile'
+import {
+  ImageInputError,
+  normalizeImageBatch,
+  releasePromptImage,
+} from '../lib/image-input'
+import PromptImageRail from './PromptImageRail'
 import PromptGhostText from './PromptGhostText'
 import {
   extractPlainText,
@@ -150,7 +158,6 @@ interface NewChatPromptInputProps extends PromptInputCommonProps {
 
 type PromptInputProps = SessionPromptInputProps | NewChatPromptInputProps
 
-const EMPTY_BACKENDS: BackendInfo[] = []
 const NEW_CHAT_DRAFT_KEY = '__new_chat_draft__'
 
 interface PromptUndoSnapshot {
@@ -207,6 +214,9 @@ export default function PromptInput(props: PromptInputProps) {
     sessionId ? s.drafts[sessionId] ?? '' : '',
   )
   const setDraft = useChatStore((s) => s.setDraft)
+  const imageDraftKey = promptImageDraftKey(workspaceId, sessionId)
+  const images = useChatStore((s) => s.imageDrafts?.[imageDraftKey] ?? [])
+  const setImageDrafts = useChatStore((s) => s.setImageDrafts)
   const stopBackgroundTask = useChatStore((s) => s.stopBackgroundTask)
   const isRestarting = useChatStore((s) => isNewChat ? false : s.isRestartingRuntime[sessionId] ?? false)
   const activity = useChatStore((s) => isNewChat ? undefined : s.sessionActivity[sessionId])
@@ -263,6 +273,8 @@ export default function PromptInput(props: PromptInputProps) {
   const [committedReferences, setCommittedReferencesState] = useState<
     CommittedPromptReference[]
   >([])
+  const [imageBusyKeys, setImageBusyKeys] = useState<Set<string>>(() => new Set())
+  const [imageErrors, setImageErrors] = useState<Record<string, string>>({})
 
   const editableRef = useRef<HTMLDivElement>(null)
   const isComposingRef = useRef(false)
@@ -271,6 +283,7 @@ export default function PromptInput(props: PromptInputProps) {
   const pickerHandleRef = useRef<CommandPickerHandle>(null)
   const filePickerHandleRef = useRef<FilePickerHandle>(null)
   const historyPickerHandleRef = useRef<HistoryPickerHandle>(null)
+  const imageFileInputRef = useRef<HTMLInputElement>(null)
   const prevInputRef = useRef('')
   const referenceDraftSourceRef = useRef<string>()
   const committedReferencesRef = useRef<CommittedPromptReference[]>([])
@@ -284,6 +297,46 @@ export default function PromptInput(props: PromptInputProps) {
   const caretBeforeBlurRef = useRef<number | null>(null)
   const inputCardRef = useRef<HTMLDivElement>(null)
   const [contentWidth, setContentWidth] = useState<number | undefined>(undefined)
+
+  const session = useChatStore((s) => isNewChat
+    ? undefined
+    : s.sessions[workspaceId]?.find((item) => item.id === sessionId))
+  const sessionBackend = session?.backend
+  const activeBackend = isNewChat ? props.backendId : sessionBackend
+  const activeProviderId = isNewChat ? props.providerId : session?.providerId ?? null
+  const backends = useBackendStore((s) => s.backends)
+  const fetchBackends = useBackendStore((s) => s.fetchBackends)
+  const providers = useProviderStore((s) => s.providers)
+  const fetchProviders = useProviderStore((s) => s.fetchProviders)
+  const activeProvider = activeProviderId
+    ? providers.find((provider) => provider.id === activeProviderId)
+    : providers.find((provider) => provider.isDefault)
+  const imageBackendCapability = backendCapability(backends, activeBackend ?? undefined, 'imageInput')
+  const normalizedActiveBackend = activeBackend === 'claude' || activeBackend === 'opencode'
+    ? activeBackend
+    : null
+  const imageProfile = normalizedActiveBackend
+    ? resolveImageInputProfile(normalizedActiveBackend, activeProvider?.model)
+    : null
+  const imageInputAvailable =
+    !isBotSession &&
+    imageBackendCapability.state === 'full' &&
+    imageProfile?.enabled === true
+  const imageUnsupportedReasonKey = imageBackendCapability.state !== 'full'
+    ? imageBackendCapability.reasonKey
+    : imageProfile?.reasonKey
+  const imageUnsupportedReason = imageUnsupportedReasonKey
+    ? t(imageUnsupportedReasonKey)
+    : t('imageInput.errors.model_unsupported')
+  const imageBusy = imageBusyKeys.has(imageDraftKey)
+
+  useEffect(() => {
+    if (backends.length === 0) void fetchBackends()
+  }, [backends.length, fetchBackends])
+
+  useEffect(() => {
+    if (providers.length === 0) void fetchProviders()
+  }, [fetchProviders, providers.length])
 
   useEffect(() => {
     const el = inputCardRef.current
@@ -630,10 +683,11 @@ export default function PromptInput(props: PromptInputProps) {
     const sendInput = input
     const trimmed = sendInput.trim()
     if (
-      !trimmed ||
+      (!trimmed && images.length === 0) ||
       disabled ||
       isComposerLocked ||
       isRestarting ||
+      (images.length > 0 && !imageInputAvailable) ||
       (!hasSession && !isNewChat) ||
       sendInFlightRef.current
     ) {
@@ -695,6 +749,13 @@ export default function PromptInput(props: PromptInputProps) {
     if (el) {
       pushUndoState(input, getCaretOffset(el))
     }
+    images.forEach(releasePromptImage)
+    setImageDrafts(workspaceId, sessionId, [])
+    setImageErrors((current) => {
+      const next = { ...current }
+      delete next[imageDraftKey]
+      return next
+    })
     resetInput()
     if (pickerOpen) {
       setPickerOpen(false)
@@ -705,6 +766,30 @@ export default function PromptInput(props: PromptInputProps) {
       setFileTriggerStart(null)
     }
     editableRef.current?.focus()
+  }
+
+  const handleRemoveImage = (imageId: string) => {
+    const removed = images.find((image) => image.id === imageId)
+    if (removed) releasePromptImage(removed)
+    setImageDrafts(
+      workspaceId,
+      sessionId,
+      images.filter((image) => image.id !== imageId),
+    )
+  }
+
+  const handleMoveImage = (fromIndex: number, toIndex: number) => {
+    if (
+      fromIndex < 0 ||
+      toIndex < 0 ||
+      fromIndex >= images.length ||
+      toIndex >= images.length ||
+      fromIndex === toIndex
+    ) return
+    const reordered = [...images]
+    const [moved] = reordered.splice(fromIndex, 1)
+    reordered.splice(toIndex, 0, moved)
+    setImageDrafts(workspaceId, sessionId, reordered)
   }
 
   const handleInput = () => {
@@ -757,9 +842,7 @@ export default function PromptInput(props: PromptInputProps) {
     }
   }
 
-  const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    const text = e.clipboardData.getData('text/plain')
+  const insertTransferredText = (text: string) => {
     if (!text) return
     const el = editableRef.current
     if (!el) return
@@ -771,18 +854,72 @@ export default function PromptInput(props: PromptInputProps) {
     })
   }
 
+  const handleImageFiles = async (candidateFiles: readonly File[]) => {
+    if (candidateFiles.length === 0) return
+    const operationWorkspaceId = workspaceId
+    const operationSessionId = sessionId
+    const operationKey = promptImageDraftKey(operationWorkspaceId, operationSessionId)
+    if (!imageInputAvailable || !imageProfile) {
+      setImageErrors((current) => ({
+        ...current,
+        [operationKey]: imageUnsupportedReason,
+      }))
+      return
+    }
+
+    const existingImages = useChatStore.getState().imageDrafts[operationKey] ?? []
+    setImageErrors((current) => {
+      const next = { ...current }
+      delete next[operationKey]
+      return next
+    })
+    setImageBusyKeys((current) => new Set(current).add(operationKey))
+    try {
+      const added = await normalizeImageBatch(candidateFiles, {
+        existingImages,
+        limits: imageProfile.limits,
+      })
+      const latest = useChatStore.getState().imageDrafts[operationKey] ?? []
+      const totalBase64Bytes = [...latest, ...added]
+        .reduce((total, image) => total + image.data.length, 0)
+      if (
+        latest.length + added.length > imageProfile.limits.maxImages ||
+        totalBase64Bytes > imageProfile.limits.maxBase64BytesPerBatch
+      ) {
+        added.forEach(releasePromptImage)
+        throw new ImageInputError('batch_too_large', 'The image batch is too large')
+      }
+      setImageDrafts(operationWorkspaceId, operationSessionId, [...latest, ...added])
+    } catch (error) {
+      const code = error instanceof ImageInputError ? error.code : 'invalid_dimensions'
+      setImageErrors((current) => ({
+        ...current,
+        [operationKey]: t(`imageInput.errors.${code}`),
+      }))
+    } finally {
+      setImageBusyKeys((current) => {
+        const next = new Set(current)
+        next.delete(operationKey)
+        return next
+      })
+    }
+  }
+
+  const imageFilesFromTransfer = (transfer: DataTransfer): File[] =>
+    Array.from(transfer.files).filter((file) => file.type.startsWith('image/'))
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const text = e.clipboardData.getData('text/plain')
+    insertTransferredText(text)
+    void handleImageFiles(imageFilesFromTransfer(e.clipboardData))
+  }
+
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     const text = e.dataTransfer.getData('text/plain')
-    if (!text) return
-    const el = editableRef.current
-    if (!el) return
-    const [start, end] = getSelectionOffsets(el)
-    pushUndoState(input, start)
-    replaceText(el, text, start, end)
-    handleInputChange(extractPlainText(el), getCaretOffset(el), {
-      commitSource: 'paste',
-    })
+    insertTransferredText(text)
+    void handleImageFiles(imageFilesFromTransfer(e.dataTransfer))
   }
 
   const deletePromptReferenceAtSelection = (
@@ -1157,21 +1294,12 @@ export default function PromptInput(props: PromptInputProps) {
     setHistoryPickerOpen(true)
   }
 
-  const sessionBackend = useChatStore((s) => isNewChat
-    ? undefined
-    : s.sessions[workspaceId]?.find((ses) => ses.id === sessionId)?.backend)
-  const backends = useBackendStore((s) => isNewChat ? EMPTY_BACKENDS : s.backends)
-  const fetchBackends = useBackendStore((s) => s.fetchBackends)
-  useEffect(() => {
-    if (!isNewChat && backends.length === 0) {
-      fetchBackends()
-    }
-  }, [fetchBackends, backends.length, isNewChat])
   const lockedBackendUnavailable =
     !isNewChat && !!sessionBackend && backendAvailability(backends, sessionBackend)?.status === 'unavailable'
 
-  const canSend = input.trim().length > 0 && (hasSession || isNewChat) && !isComposerLocked && !isRestarting && !disabled && !lockedBackendUnavailable
-  const canClear = input.length > 0
+  const hasDraftContent = input.trim().length > 0 || images.length > 0
+  const canSend = hasDraftContent && (hasSession || isNewChat) && !isComposerLocked && !isRestarting && !disabled && !lockedBackendUnavailable && !imageBusy && (images.length === 0 || imageInputAvailable)
+  const canClear = input.length > 0 || images.length > 0
   const toolbarVisibility = getToolbarVisibility(contentWidth)
   const showSubmitHint = contentWidth !== undefined && contentWidth >= 720
   const {
@@ -1186,7 +1314,10 @@ export default function PromptInput(props: PromptInputProps) {
 
   const commandsDisabled = disabled || isComposerLocked || isRestarting
   const filesDisabled = disabled || isComposerLocked || isRestarting || !workspaceId
+  const imageIntakeDisabled = disabled || isComposerLocked || isRestarting || imageBusy || !imageInputAvailable
   const historyDisabled = disabled || isComposerLocked || isRestarting || !hasSession || isNewChat
+  const imageRailError = imageErrors[imageDraftKey]
+    ?? (normalizedActiveBackend && !imageInputAvailable ? imageUnsupportedReason : null)
 
   const handleStopBackgroundTask = async (taskId: string) => {
     const stopKey = getBackgroundTaskStopKey(sessionId, taskId)
@@ -1406,6 +1537,29 @@ export default function PromptInput(props: PromptInputProps) {
             : 'relative rounded-xl border border-border bg-work shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)] transition-colors focus-within:border-border-hover'}
         >
           <>
+            <input
+              ref={imageFileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              multiple
+              disabled={imageIntakeDisabled}
+              onChange={(event) => {
+                const selected = Array.from(event.currentTarget.files ?? [])
+                event.currentTarget.value = ''
+                void handleImageFiles(selected)
+              }}
+              className="sr-only"
+              tabIndex={-1}
+              aria-hidden="true"
+            />
+            <PromptImageRail
+              images={images}
+              busy={imageBusy}
+              error={imageRailError}
+              disabled={disabled || isComposerLocked || isRestarting}
+              onRemove={handleRemoveImage}
+              onMove={handleMoveImage}
+            />
             <div
               className={`grid transition-[grid-template-rows] duration-300 ease-out ${isComposerLocked ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'}`}
             >
@@ -1450,6 +1604,17 @@ export default function PromptInput(props: PromptInputProps) {
             </div>
             <div data-testid="prompt-input-toolbar" className="flex items-center px-2 pb-2 pt-1 gap-1">
               <div className="flex min-w-0 items-center gap-1 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => imageFileInputRef.current?.click()}
+                  disabled={imageIntakeDisabled}
+                  aria-label={t('imageInput.attach')}
+                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-text-tertiary transition-colors hover:bg-chrome-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                  title={imageInputAvailable ? t('imageInput.attach') : imageUnsupportedReason}
+                >
+                  <ImagePlus className="h-3 w-3" />
+                  <span className="hidden sm:inline">{t('imageInput.attach')}</span>
+                </button>
                 <CommandPicker
                   ref={pickerHandleRef}
                   workspaceId={workspaceId}

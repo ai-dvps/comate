@@ -22,10 +22,15 @@ import type { SchedulerRunEventPayload } from '../lib/scheduled-task-events'
 import { DEFAULT_TIMEOUT, wsClient } from '../lib/websocket-client.js'
 import type { WsEventMessage } from '@server/websocket/types'
 import { BROWSER_TOOL_PREFIX } from '@server/services/browser-tool-names'
+import { releasePromptImage, type PromptImageDraft } from '../lib/image-input'
 
 export type { ChatMessage, MessagePart, MessageRole, SubagentMessage, SubagentPart, SubagentState } from '../types/message'
 
 export type PendingInteractionKind = 'approval' | 'question'
+
+export function promptImageDraftKey(workspaceId: string, sessionId: string): string {
+  return `${JSON.stringify(workspaceId)}:${JSON.stringify(sessionId)}`
+}
 
 export interface SessionStatusEntry {
   pendingCount: number
@@ -433,6 +438,7 @@ export interface ChatState {
   draftQueue: Record<string, { workspaceId: string; content: string } | undefined>
   pendingSend: Record<string, { workspaceId: string; content: string } | undefined>
   drafts: Record<string, string>
+  imageDrafts: Record<string, PromptImageDraft[]>
   subagents: Record<string, SubagentState[]>
   sessionStatus: Record<string, SessionStatusEntry>
   sessionActivity: Record<string, SessionActivitySnapshot>
@@ -467,6 +473,11 @@ export interface ChatState {
   fetchPromptHistory: (workspaceId: string) => Promise<void>
   addPromptHistory: (workspaceId: string, sessionId: string, content: string) => void
   setDraft: (sessionId: string, content: string) => void
+  setImageDrafts: (
+    workspaceId: string,
+    sessionId: string,
+    images: PromptImageDraft[],
+  ) => void
   clearMessages: (sessionId: string) => void
   resolveApproval: (
     workspaceId: string,
@@ -2632,6 +2643,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   draftQueue: {},
   pendingSend: {},
   drafts: {},
+  imageDrafts: {},
   subagents: {},
   sessionStatus: {},
   sessionActivity: {},
@@ -2990,11 +3002,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
           return next
         }
 
+        const imageKey = promptImageDraftKey(workspaceId, sessionId)
+        state.imageDrafts[imageKey]?.forEach(releasePromptImage)
+        const nextImageDrafts = { ...state.imageDrafts }
+        delete nextImageDrafts[imageKey]
+
         return {
           sessions: { ...state.sessions, [workspaceId]: nextSessions },
           activeSessionIds: nextActiveSessionIds,
           messages: withoutSession(state.messages),
           drafts: withoutSession(state.drafts),
+          imageDrafts: nextImageDrafts,
           inFlightBrowserTools: withoutSession(state.inFlightBrowserTools),
           sessionStatus: withoutSession(state.sessionStatus),
           sessionActivity: withoutSession(state.sessionActivity),
@@ -3232,7 +3250,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete nextPromptHistory[workspaceId]
       const nextBackgroundSessions = { ...state.backgroundSessions }
       delete nextBackgroundSessions[workspaceId]
-      return { promptHistory: nextPromptHistory, backgroundSessions: nextBackgroundSessions }
+      const keyPrefix = `${JSON.stringify(workspaceId)}:`
+      const nextImageDrafts = { ...state.imageDrafts }
+      for (const [key, images] of Object.entries(state.imageDrafts)) {
+        if (!key.startsWith(keyPrefix)) continue
+        images.forEach(releasePromptImage)
+        delete nextImageDrafts[key]
+      }
+      return {
+        promptHistory: nextPromptHistory,
+        backgroundSessions: nextBackgroundSessions,
+        imageDrafts: nextImageDrafts,
+      }
     })
   },
 
@@ -3435,6 +3464,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       if (state.drafts[sessionId] === content) return {}
       return { drafts: { ...state.drafts, [sessionId]: content } }
+    })
+  },
+
+  setImageDrafts: (workspaceId: string, sessionId: string, images: PromptImageDraft[]) => {
+    if (!workspaceId || !sessionId) return
+    const key = promptImageDraftKey(workspaceId, sessionId)
+    set((state) => {
+      if (images.length === 0) {
+        if (state.imageDrafts[key] === undefined) return {}
+        const nextImageDrafts = { ...state.imageDrafts }
+        delete nextImageDrafts[key]
+        return { imageDrafts: nextImageDrafts }
+      }
+      if (state.imageDrafts[key] === images) return {}
+      return { imageDrafts: { ...state.imageDrafts, [key]: images } }
     })
   },
 
