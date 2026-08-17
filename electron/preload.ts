@@ -79,7 +79,7 @@ const api = {
     ipcRenderer.invoke('comate:set-titlebar-overlay', theme),
 
   // Custom titlebar dragging has no IPC equivalent: Electron drags via CSS
-  // `-webkit-app-region: drag` on the data-tauri-drag-region elements (see
+  // `-webkit-app-region: drag` on the data-electron-drag-region elements (see
   // src/client/index.css), so `startDragging` is intentionally not exposed.
 
   /** Dock badge / macOS accessory-policy toggle / Windows taskbar flash. */

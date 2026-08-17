@@ -46,10 +46,13 @@ describe('CustomTitlebar', () => {
     expect(screen.getByTestId('titlebar-command-center')).not.toHaveClass('border-b')
     expect(screen.getByTestId('titlebar-conversation')).toHaveClass('border-b')
     expect(screen.getByTestId('titlebar-context')).toHaveClass('border-b')
+    expect(screen.getByTestId('titlebar-context')).toHaveAttribute('data-electron-drag-region')
     expect(screen.getByTestId('titlebar-context')).toHaveStyle({ width: '520px' })
     expect(screen.getByText('Comate')).toBeInTheDocument()
     expect(screen.getByText('Agent shell')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /App\.tsx/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: /App\.tsx/ })).toHaveAttribute('data-testid', 'titlebar-interactive')
+    expect(screen.getByRole('tablist')).not.toHaveAttribute('data-testid', 'titlebar-interactive')
     expect(screen.getAllByTestId('titlebar-interactive').length).toBeGreaterThan(1)
 
     fireEvent.click(screen.getByRole('button', { name: 'Collapse command center' }))

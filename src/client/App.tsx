@@ -225,16 +225,14 @@ function App() {
   } = useRightPanelWidth()
 
   const viewportWidth = useViewportWidth()
-  const [forceLeftExpanded, setForceLeftExpanded] = useState(false)
-  const [forceRightExpanded, setForceRightExpanded] = useState(false)
+  const [forcedExpandedSide, setForcedExpandedSide] = useState<'left' | 'right' | null>(null)
   const responsiveShell = deriveResponsiveShell({
     viewportWidth,
     leftWidth: sidebarExpandedWidth,
     rightWidth: rightPanelExpandedWidth,
     leftPreferredExpanded: !isSidebarCollapsed,
     rightPreferredExpanded: !isRightPanelCollapsed,
-    forceLeftExpanded,
-    forceRightExpanded,
+    forcedExpandedSide,
   })
   const isLeftEffectivelyCollapsed = !responsiveShell.leftExpanded
   const isRightEffectivelyCollapsed = !responsiveShell.rightExpanded
@@ -242,54 +240,53 @@ function App() {
   const effectiveRightPanelWidth = responsiveShell.rightExpanded ? rightPanelExpandedWidth : 0
 
   useEffect(() => {
-    setForceLeftExpanded(false)
-    setForceRightExpanded(false)
+    setForcedExpandedSide(null)
   }, [viewportWidth])
 
   const handleToggleLeft = useCallback(() => {
-    if (forceLeftExpanded) {
-      setForceLeftExpanded(false)
+    if (forcedExpandedSide === 'left') {
+      setForcedExpandedSide(null)
       return
     }
     if (isLeftEffectivelyCollapsed) {
-      setForceLeftExpanded(true)
+      setForcedExpandedSide('left')
       if (isSidebarCollapsed) toggleSidebarCollapse()
       return
     }
     toggleSidebarCollapse()
   }, [
-    forceLeftExpanded,
+    forcedExpandedSide,
     isLeftEffectivelyCollapsed,
     isSidebarCollapsed,
     toggleSidebarCollapse,
   ])
 
+  const ensureRightExpanded = useCallback(() => {
+    if (!isRightEffectivelyCollapsed) return
+    setForcedExpandedSide('right')
+    if (isRightPanelCollapsed) toggleRightPanelCollapse()
+  }, [isRightEffectivelyCollapsed, isRightPanelCollapsed, toggleRightPanelCollapse])
+
   const handleToggleRight = useCallback(() => {
     if (!activeWorkspaceId) return
-    if (forceRightExpanded) {
-      setForceRightExpanded(false)
+    if (forcedExpandedSide === 'right') {
+      setForcedExpandedSide(null)
       if (!isRightPanelCollapsed) toggleRightPanelCollapse()
       return
     }
     if (isRightEffectivelyCollapsed) {
-      setForceRightExpanded(true)
-      if (isRightPanelCollapsed) toggleRightPanelCollapse()
+      ensureRightExpanded()
       return
     }
     toggleRightPanelCollapse()
   }, [
     activeWorkspaceId,
-    forceRightExpanded,
+    ensureRightExpanded,
+    forcedExpandedSide,
     isRightEffectivelyCollapsed,
     isRightPanelCollapsed,
     toggleRightPanelCollapse,
   ])
-
-  const ensureRightExpanded = useCallback(() => {
-    if (!isRightEffectivelyCollapsed) return
-    setForceRightExpanded(true)
-    if (isRightPanelCollapsed) toggleRightPanelCollapse()
-  }, [isRightEffectivelyCollapsed, isRightPanelCollapsed, toggleRightPanelCollapse])
 
   useSidebarKeyboardShortcut(handleToggleLeft)
 
