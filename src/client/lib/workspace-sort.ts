@@ -20,15 +20,16 @@ export function sortWorkspacesByActivity<T extends WorkspaceWithId>(
   sessionsByWorkspace: Readonly<Record<string, readonly ChatSession[]>>,
   lastActivityAt: Record<string, number>,
 ): T[] {
+  const timestamps = new Map(
+    workspaces.map((workspace) => [
+      workspace.id,
+      getWorkspaceActivityTimestamp(sessionsByWorkspace[workspace.id], lastActivityAt),
+    ]),
+  )
+
   return [...workspaces].sort((left, right) => {
-    const leftTimestamp = getWorkspaceActivityTimestamp(
-      sessionsByWorkspace[left.id],
-      lastActivityAt,
-    )
-    const rightTimestamp = getWorkspaceActivityTimestamp(
-      sessionsByWorkspace[right.id],
-      lastActivityAt,
-    )
+    const leftTimestamp = timestamps.get(left.id) ?? Number.NEGATIVE_INFINITY
+    const rightTimestamp = timestamps.get(right.id) ?? Number.NEGATIVE_INFINITY
 
     if (leftTimestamp === rightTimestamp) return 0
     return rightTimestamp - leftTimestamp
