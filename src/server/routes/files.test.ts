@@ -3,6 +3,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { mkdir, mkdtemp, open, rm, symlink, writeFile } from 'fs/promises';
 import type { AddressInfo } from 'net';
+import http from 'http';
 import os from 'os';
 import path from 'path';
 import express from 'express';
@@ -234,6 +235,37 @@ describe('files routes', { concurrency: false }, () => {
       assert.strictEqual(response.headers.get('content-range'), 'bytes 2-5/10');
       assert.strictEqual(response.headers.get('content-type'), 'video/webm');
       assert.strictEqual(Buffer.from(await response.arrayBuffer()).toString(), '2345');
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('GET /media contains client cancellations and continues serving video', async () => {
+    const video = Buffer.alloc(4 * 1024 * 1024, 7);
+    await writeFile(path.join(tempDir, 'clip.mp4'), video);
+    const workspace = await workspaceStore.create({ name: 'test-ws', folderPath: tempDir });
+    const { default: fileRoutes } = await import('./files.js');
+    const app = express();
+    app.use('/api/workspaces/:id/files', fileRoutes);
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const mediaPath = `/api/workspaces/${workspace.id}/files/media?path=clip.mp4`;
+      await new Promise<void>((resolve, reject) => {
+        const request = http.get({ hostname: '127.0.0.1', port, path: mediaPath }, (response) => {
+          response.once('data', () => response.destroy());
+          response.once('close', resolve);
+        });
+        request.once('error', reject);
+      });
+
+      const response = await fetch(`http://127.0.0.1:${port}${mediaPath}`, {
+        headers: { Range: 'bytes=0-3' },
+      });
+      assert.strictEqual(response.status, 206);
+      assert.deepStrictEqual(Buffer.from(await response.arrayBuffer()), video.subarray(0, 4));
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
