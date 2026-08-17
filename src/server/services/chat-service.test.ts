@@ -26,7 +26,7 @@ import type { Provider } from '../models/provider.js';
 import type { SseEvent } from '../types/message.js';
 import type { Options, SDKSessionInfo, SessionMessage, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { BotPersona, BotRole } from '../models/bot.js';
-import type { QuestionPayload, PermissionSuggestion } from '../types/message.js';
+import type { PermissionSuggestion } from '../types/message.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -909,20 +909,6 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
           }
         });
       },
-      requestToolQuestion: (requestId: string, _questions: QuestionPayload[], _input: Record<string, unknown>, options: { signal?: AbortSignal; timeout?: number } = {}) => {
-        return new Promise<PermissionResult>((resolve) => {
-          pendingApprovals.set(requestId, { resolve });
-          if (options.timeout) {
-            setTimeout(() => {
-              const p = pendingApprovals.get(requestId);
-              if (p) {
-                pendingApprovals.delete(requestId);
-                p.resolve({ behavior: 'deny', message: 'Request timed out waiting for user response.' });
-              }
-            }, options.timeout);
-          }
-        });
-      },
       interrupt: () => Promise.resolve(),
       addBotEventHandler: () => {},
       clearBotEventHandlers: () => {},
@@ -1076,6 +1062,58 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     await service.getOrCreateRuntime('s1', 'ws-1', false);
     assert.ok(capturedOptions, 'options must be captured');
     assert.strictEqual(capturedOptions.env.WECOM_USER_ID, undefined);
+  });
+
+  it('bot session without a botId binding (migration fallback) removes AskUserQuestion', async () => {
+    workspaceStore.getSessionUsers = () => [];
+    workspaceStore.getBotUser = () => null;
+    // captureBotOptions' mock session has no botId and no source, so the
+    // options assembly lands on the legacy workspace-scoped fallback.
+    const options = await captureBotOptions({ wecomBotEnabled: true }, 'feishu-user-1');
+    assert.ok(
+      (options.disallowedTools ?? []).includes('AskUserQuestion'),
+      `expected AskUserQuestion in disallowedTools, got ${JSON.stringify(options.disallowedTools)}`,
+    );
+  });
+
+  it('GUI session keeps AskUserQuestion available', async () => {
+    const mockWorkspace = createMockWorkspace('ws-1');
+    workspaceStore.get = async () => mockWorkspace;
+    workspaceStore.getLocalSession = () => createMockSession('s1');
+    workspaceStore.getDefaultProvider = () => createMockProvider();
+
+    let capturedOptions: Options | undefined;
+    SessionRuntime.open = (...args: unknown[]) => {
+      capturedOptions = args[3] as Options;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime('s1', 'ws-1', false);
+    assert.ok(capturedOptions, 'options must be captured');
+    assert.ok(
+      !(capturedOptions.disallowedTools ?? []).includes('AskUserQuestion'),
+      `GUI sessions must keep AskUserQuestion, got ${JSON.stringify(capturedOptions.disallowedTools)}`,
+    );
+  });
+
+  it('scheduled session keeps AskUserQuestion available', async () => {
+    const mockWorkspace = createMockWorkspace('ws-1');
+    workspaceStore.get = async () => mockWorkspace;
+    workspaceStore.getLocalSession = () => ({ ...createMockSession('s1'), source: 'scheduled' });
+    workspaceStore.getDefaultProvider = () => createMockProvider();
+
+    let capturedOptions: Options | undefined;
+    SessionRuntime.open = (...args: unknown[]) => {
+      capturedOptions = args[3] as Options;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime('s1', 'ws-1', false);
+    assert.ok(capturedOptions, 'options must be captured');
+    assert.ok(
+      !(capturedOptions.disallowedTools ?? []).includes('AskUserQuestion'),
+      `scheduled sessions must keep AskUserQuestion, got ${JSON.stringify(capturedOptions.disallowedTools)}`,
+    );
   });
 
   it('bot session with policy denying Shell: canUseTool returns deny for Bash with generic message', async () => {
@@ -1289,7 +1327,7 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     assert.ok(!logs.some((line) => line.includes('DisallowedSkill')), 'log line must not contain the skill name');
   });
 
-  it('bot session: AskUserQuestion without runtime logs missing-runtime', async () => {
+  it('bot session: AskUserQuestion no longer routes to the pending-question flow (U2)', async () => {
     const canUseTool = await captureBotCanUseTool({
       wecomBotEnabled: true,
       wecomToolPermissions: {
@@ -1305,27 +1343,17 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
       },
     });
 
-    // Remove the runtime so the ask path cannot find it.
-    (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.delete('s1');
+    // With the interception branches removed, the gate treats the tool like any
+    // other uncategorized tool call: an immediate policy verdict, never a
+    // pending question. (Production blocks the call earlier — the tool-disallow
+    // entry asserted by the U1 tests.)
+    const result = await canUseTool('AskUserQuestion', {
+      questions: [{ question: 'ok?', options: [{ label: 'yes' }] }],
+    }, { toolUseID: 'tu-q-gone', signal: new AbortController().signal });
 
-    const { logs, restore } = collectDiagLogs();
-    let result;
-    try {
-      result = await canUseTool('AskUserQuestion', {
-        questions: [{ question: 'ok?', options: [{ label: 'yes' }] }],
-      });
-    } finally {
-      restore();
-    }
-    assert.strictEqual(result.behavior, 'deny');
-    assert.ok(
-      logs.some((line) => line.includes('reason=missing-runtime') && line.includes('tool=AskUserQuestion')),
-      'expected missing-runtime to be logged',
-    );
-    assert.ok(
-      !logs.some((line) => line.includes('ok?')),
-      'log line must not contain question text',
-    );
+    assert.strictEqual(result.behavior, 'allow', 'uncategorized tool falls through to the policy verdict');
+    const runtime = (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.get('s1')!;
+    assert.strictEqual(runtime.getStatus().pendingCount, 0, 'no pending question may be registered');
   });
 
   it('bot session: ask policy without runtime logs missing-runtime', async () => {
@@ -1519,47 +1547,6 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     assert.strictEqual(result.behavior, 'deny');
     if (result.behavior === 'deny') {
       assert.ok(result.message.includes('timed out'), 'timeout should produce a timed-out message');
-    }
-  });
-
-  it('bot session AskUserQuestion registers a pending question and resolves with answers', async () => {
-    const canUseTool = await captureBotCanUseTool({
-      wecomBotEnabled: true,
-      wecomToolPermissions: {
-        posture: 'safe',
-        categoryDefaults: {
-          fileRead: 'allow',
-          fileWrite: 'deny',
-          shell: 'deny',
-          network: 'deny',
-          subagents: 'deny',
-          reply: 'allow',
-        },
-      },
-    });
-
-    const promise = canUseTool('AskUserQuestion', {
-      questions: [{ question: 'What is your favorite color?', options: [{ label: 'Red' }, { label: 'Blue' }] }],
-    }, { toolUseID: 'tu-q-1', signal: new AbortController().signal });
-
-    assert.ok(promise instanceof Promise, 'AskUserQuestion should return a Promise');
-
-    const runtime = (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.get('s1')!;
-    runtime.resolveApproval('tu-q-1', {
-      behavior: 'allow',
-      updatedInput: {
-        questions: [{ question: 'What is your favorite color?', options: [{ label: 'Red' }, { label: 'Blue' }] }],
-        answers: { 'What is your favorite color?': 'Red' },
-      },
-    });
-
-    const result = await promise;
-    assert.strictEqual(result.behavior, 'allow');
-    if (result.behavior === 'allow') {
-      assert.deepStrictEqual(
-        (result.updatedInput as Record<string, unknown>).answers,
-        { 'What is your favorite color?': 'Red' },
-      );
     }
   });
 
@@ -2321,7 +2308,6 @@ describe('chat-service bot-level dynamic policy (legacy permission model)', { co
       pushMessage: () => {},
       resolveApproval: () => {},
       requestToolApproval: () => Promise.resolve({ behavior: 'allow' as const }),
-      requestToolQuestion: () => Promise.resolve({ behavior: 'allow' as const }),
       interrupt: () => Promise.resolve(),
       addBotEventHandler: () => {},
       clearBotEventHandlers: () => {},
@@ -2660,7 +2646,6 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
         approvalCalls.push({ toolName, input, options });
         return Promise.resolve(approvalResult ?? { behavior: 'allow' as const });
       },
-      requestToolQuestion: () => Promise.resolve({ behavior: 'allow' as const }),
       consumeResolutionProvenance: () => provenance,
       // U9: the MCP classification gate reads annotations through this
       // channel; absent (undefined map) classifies every tool unknown.
@@ -2896,6 +2881,54 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     assert.strictEqual(options.sandbox?.allowUnsandboxedCommands, true);
     const fsx = options.sandbox?.filesystem as { allowWrite: string[] };
     assert.deepStrictEqual(fsx.allowWrite, ['/']);
+  });
+
+  // ------------------------------------------------ U1 AskUserQuestion removal
+
+  it('U1: sandbox bot session removes AskUserQuestion from the tool context', async () => {
+    const { options } = await setupBotSession();
+    // Removal (R1): the tool never enters the model's tool context. This is
+    // the sole enforcement layer — the SDK contract for the tool-disallow
+    // option is absolute (removed from context and cannot be used), so no
+    // deny-rule backstop rides the permission merge.
+    assert.ok(
+      (options.disallowedTools ?? []).includes('AskUserQuestion'),
+      `expected AskUserQuestion in disallowedTools, got ${JSON.stringify(options.disallowedTools)}`,
+    );
+  });
+
+  it('U1: legacy kill-switch bot session carries the same AskUserQuestion removal', async () => {
+    const { options } = await setupBotSession({ killSwitch: true });
+    assert.ok(
+      (options.disallowedTools ?? []).includes('AskUserQuestion'),
+      `expected AskUserQuestion in disallowedTools, got ${JSON.stringify(options.disallowedTools)}`,
+    );
+  });
+
+  it('U1: rebuilt options still disallow AskUserQuestion after toggling the kill switch', async () => {
+    const { options, sessionId, workspaceId, openCalls } = await setupBotSession({ killSwitch: true });
+    assert.ok(
+      (options.disallowedTools ?? []).includes('AskUserQuestion'),
+      'the legacy branch build must carry the removal',
+    );
+
+    // Rebuild = close + recreate (performRebuild's shape), with the kill
+    // switch cleared so the rebuild lands on the sandbox branch instead.
+    await service.closeRuntime(sessionId);
+    const workspace = await workspaceStore.get(workspaceId);
+    assert.ok(workspace, 'workspace must exist');
+    await workspaceStore.update(workspaceId, {
+      settings: { ...workspace.settings, botPermissionSandboxDisabled: false },
+    });
+    await service.getOrCreateRuntime(sessionId, workspaceId, true, undefined, 'user-1');
+
+    assert.strictEqual(openCalls.length, 2, 'a fresh runtime must have been created');
+    const rebuilt = openCalls[1];
+    assert.ok(rebuilt.sandbox, 'the rebuild must have taken the sandbox branch after the toggle');
+    assert.ok(
+      (rebuilt.disallowedTools ?? []).includes('AskUserQuestion'),
+      `rebuilt options must still carry the removal, got ${JSON.stringify(rebuilt.disallowedTools)}`,
+    );
   });
 
   // ------------------------------------------------------- U12 capability
@@ -3797,7 +3830,10 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     assert.strictEqual(options.sandbox, undefined);
     assert.strictEqual(options.settingSources, undefined);
     assert.strictEqual(options.plugins, undefined);
-    const settings = options.settings as { permissions?: unknown };
+    const settings = options.settings as { permissions?: { allow: string[]; ask: string[]; deny: string[] } };
+    // U1: the legacy branch carries no derived permission rules (the
+    // tool-context removal is the sole enforcement and lives on
+    // options.disallowedTools, asserted by the U1 tests).
     assert.strictEqual(settings.permissions, undefined);
     // Legacy: non-whitelisted bash denies for normal.
     const denied = await canUseTool('Bash', { command: 'rm -rf /' });

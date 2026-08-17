@@ -1,12 +1,12 @@
 import '../test-utils/test-env.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
+import * as cardModule from './feishu-card-builder.js';
 import {
   buildWorkspaceListCard,
   buildSessionListCard,
   buildDisabledSessionListCard,
   buildApprovalCard,
-  buildQuestionCard,
   buildTerminalDecisionCard,
   buildStreamingAnswerCard,
   markdownText,
@@ -18,7 +18,6 @@ import {
 } from './feishu-card-builder.js';
 import type { Workspace } from '../models/workspace.js';
 import type { ChatSession } from '../models/session.js';
-import type { QuestionPayload } from '../types/message.js';
 
 function findByTag(elements: unknown[], tag: string): Record<string, unknown> | undefined {
   return elements.find((el) => (el as Record<string, unknown>).tag === tag) as
@@ -298,116 +297,10 @@ describe('buildApprovalCard', () => {
   });
 });
 
-describe('buildQuestionCard', () => {
-  it('renders single-select option buttons', () => {
-    const questions: QuestionPayload[] = [
-      {
-        question: 'Pick one',
-        options: [{ label: 'A' }, { label: 'B' }],
-        multiSelect: false,
-      },
-    ];
-    const card = buildQuestionCard({
-      requestId: 'req-1',
-      workspaceId: 'ws-1',
-      sessionId: 's1',
-      questions,
-    });
-    assert.strictEqual(card.schema, '2.0');
-
-    const buttons = findAllByTag(card.body.elements, 'button');
-    const optionButtons = buttons.slice(0, -1);
-    assert.strictEqual(optionButtons.length, 2);
-    assert.deepStrictEqual(optionButtons[0].behaviors, [
-      {
-        type: 'callback',
-        value: {
-          action: 'question',
-          workspaceId: 'ws-1',
-          sessionId: 's1',
-          requestId: 'req-1',
-          questionIndex: 0,
-          answer: 'A',
-          multiSelect: false,
-        },
-      },
-    ]);
-
-    const submitButton = buttons[buttons.length - 1];
-    assert.deepStrictEqual(submitButton.behaviors, [
-      {
-        type: 'callback',
-        value: {
-          action: 'question_submit',
-          workspaceId: 'ws-1',
-          sessionId: 's1',
-          requestId: 'req-1',
-        },
-      },
-    ]);
-  });
-
-  it('renders multi-select toggle buttons and a submit button', () => {
-    const questions: QuestionPayload[] = [
-      {
-        question: 'Pick many',
-        options: [{ label: 'A' }, { label: 'B' }],
-        multiSelect: true,
-      },
-    ];
-    const card = buildQuestionCard({
-      requestId: 'req-1',
-      workspaceId: 'ws-1',
-      sessionId: 's1',
-      questions,
-    });
-
-    const texts = findAllByTag(card.body.elements, 'div');
-    assert.ok(texts.some((t) => (t.text as { content: string }).content === '（多选）'));
-
-    const buttons = findAllByTag(card.body.elements, 'button');
-    assert.strictEqual(buttons.length, 3);
-    const values = buttons.map((b) => (b.behaviors as Array<{ value: unknown }>)[0].value);
-    assert.deepStrictEqual(values[2], {
-      action: 'question_submit',
-      workspaceId: 'ws-1',
-      sessionId: 's1',
-      requestId: 'req-1',
-    });
-  });
-
-  it('renders free-form fallback text and no option buttons', () => {
-    const questions: QuestionPayload[] = [{ question: 'Why?', multiSelect: false }];
-    const card = buildQuestionCard({
-      requestId: 'req-1',
-      workspaceId: 'ws-1',
-      sessionId: 's1',
-      questions,
-    });
-
-    const buttons = findAllByTag(card.body.elements, 'button');
-    assert.strictEqual(buttons.length, 0);
-
-    const texts = findAllByTag(card.body.elements, 'div');
-    assert.ok(
-      texts.some((t) => (t.text as { content: string }).content === '请在聊天中直接回复该问题。'),
-    );
-  });
-
-  it('shows option descriptions', () => {
-    const card = buildQuestionCard({
-      requestId: 'req-1',
-      workspaceId: 'ws-1',
-      sessionId: 's1',
-      questions: [{
-        question: 'Environment?',
-        options: [{ label: 'Staging', description: 'Use the test environment' }],
-        multiSelect: false,
-      }],
-    });
-
-    const button = findAllByTag(card.body.elements, 'button')[0];
-    assert.match((button.text as { content: string }).content, /Use the test environment/);
+describe('U3 question-path removal (symbol absence)', () => {
+  it('no longer exports buildQuestionCard', () => {
+    const exports = cardModule as unknown as Record<string, unknown>;
+    assert.strictEqual(exports.buildQuestionCard, undefined, 'buildQuestionCard must be gone');
   });
 });
 

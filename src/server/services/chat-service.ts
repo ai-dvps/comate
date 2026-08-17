@@ -14,7 +14,6 @@ import type {
   SseEvent,
   WorkflowState,
   SessionActivitySnapshot,
-  QuestionPayload,
 } from '../types/message.js';
 import { normalizeSessionMessage, scanSdkMessagesForTasks } from './message-normalizer.js';
 import { SdkClient } from './sdk-client.js';
@@ -250,28 +249,6 @@ function auditPathFromToolInput(input: Record<string, unknown>): string | undefi
     if (typeof value === 'string') return value;
   }
   return undefined;
-}
-
-/** Normalize an AskUserQuestion tool input into question payloads. */
-function mapAskUserQuestionInput(input: Record<string, unknown>): QuestionPayload[] {
-  return (input.questions as unknown[] ?? []).map((q: unknown) => {
-    const qx = q as Record<string, unknown>;
-    return {
-      question: typeof qx.question === 'string' ? qx.question : '',
-      header: typeof qx.header === 'string' ? qx.header : undefined,
-      options: Array.isArray(qx.options)
-        ? qx.options.map((o: unknown) => {
-            const ox = o as Record<string, unknown>;
-            return {
-              label: typeof ox.label === 'string' ? ox.label : '',
-              description: typeof ox.description === 'string' ? ox.description : undefined,
-              preview: typeof ox.preview === 'string' ? ox.preview : undefined,
-            };
-          })
-        : [],
-      multiSelect: qx.multiSelect === true,
-    };
-  });
 }
 
 /** Positive finite tool-input timeout, or undefined. */
@@ -2453,6 +2430,20 @@ export class ChatService {
     };
 
     if (isBotSession) {
+      // Bot sessions (wecom/feishu today) never get AskUserQuestion: the tool
+      // is removed from the model's context entirely, so a decision request
+      // can only surface as plain text in the IM channel. Removal over
+      // denial — with the tool absent there is no call to waste and no
+      // guidance text needed. One assignment covers all three permission
+      // assemblies below (sandbox branch, legacy kill-switch branch, and the
+      // no-botId migration fallback) — they share this options object.
+      // disallowedTools also blocks harness-internal direct calls, not just
+      // model-emitted tool_use blocks.
+      options.disallowedTools = [
+        ...(options.disallowedTools ?? []),
+        'AskUserQuestion',
+      ];
+
       // Sanitize the child process environment for bot sessions: remove WeCom
       // and non-Anthropic cloud credentials. Anthropic provider keys are kept
       // because the SDK child needs them to call the API.
@@ -2571,6 +2562,9 @@ export class ChatService {
             // ==============================================================
             // LEGACY permission model (runtime kill switch, U3 Operational
             // Notes): prior behavior preserved verbatim for canary rollback.
+            // U1 exception: AskUserQuestion stays removed here too — rolling
+            // back the permission model no longer restores the question flow
+            // (intended; plain-text IM questions replace it).
             // ==============================================================
             // The legacy cross-user read check enumerates the workspace's
             // known user dirs — rebuild the path context with them (the
@@ -2729,26 +2723,6 @@ export class ChatService {
                     message: "I can't do that in this workspace.",
                   };
                 }
-              }
-
-              // AskUserQuestion always requires user input, regardless of policy
-              if (toolName === 'AskUserQuestion') {
-                const runtime = this.runtimes.get(session.id);
-                if (!runtime) {
-                  diagLog(
-                    `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=missing-runtime`,
-                  );
-                  return {
-                    behavior: 'deny' as const,
-                    message: "I can't do that in this workspace.",
-                  };
-                }
-                const questions = mapAskUserQuestionInput(input);
-                const timeout = extractToolTimeout(input);
-                return runtime.requestToolQuestion(sdkOptions.toolUseID, questions, input, {
-                  timeout,
-                  signal: sdkOptions.signal,
-                });
               }
 
               if (decision === 'ask') {
@@ -3419,20 +3393,6 @@ export class ChatService {
                 }
               }
 
-              // AskUserQuestion always requires user input, regardless of policy
-              if (toolName === 'AskUserQuestion') {
-                const runtime = this.runtimes.get(session.id);
-                if (!runtime) {
-                  return denyRouted('final', 'missing-runtime');
-                }
-                const questions = mapAskUserQuestionInput(input);
-                const timeout = extractToolTimeout(input);
-                return runtime.requestToolQuestion(sdkOptions.toolUseID, questions, input, {
-                  timeout,
-                  signal: sdkOptions.signal,
-                });
-              }
-
               // ---- MCP tools: classification gating (U9, R10/KTD-20). ------
               // MCP server processes run OUTSIDE the session sandbox, so this
               // gate is the only boundary. Read-class tools fall through to
@@ -3646,25 +3606,6 @@ export class ChatService {
                 message: "I can't do that in this workspace.",
               };
             }
-          }
-
-          if (toolName === 'AskUserQuestion') {
-            const runtime = this.runtimes.get(session.id);
-            if (!runtime) {
-              diagLog(
-                `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=missing-runtime`,
-              );
-              return {
-                behavior: 'deny' as const,
-                message: "I can't do that in this workspace.",
-              };
-            }
-            const questions = mapAskUserQuestionInput(input);
-            const timeout = extractToolTimeout(input);
-            return runtime.requestToolQuestion(sdkOptions.toolUseID, questions, input, {
-              timeout,
-              signal: sdkOptions.signal,
-            });
           }
 
           if (decision === 'ask') {

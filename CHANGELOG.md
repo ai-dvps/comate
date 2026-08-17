@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Bot sessions now ask questions as plain chat text** — WeCom and Feishu bot sessions no longer offer the agent the structured AskUserQuestion tool, so a decision request surfaces as a plain text message the user answers by replying; the now-unreachable WeCom and Feishu question cards, card-answer routing, and free-text question interception are removed, while GUI sessions keep the structured question flow unchanged.
 - **Workspaces now follow recent Session activity** — The Workspace list moves the Workspace with the newest effective Session activity to the top, including running work, unread completions, and pending user interactions, while preserving expansion and selection state.
 - **Prompt references are now atomic chips** — Resolved Skills and files appear as lightweight, non-editable chips that can be deleted as a whole and reinserted with `/` or `@`; references that become invalid remain atomic and show a warning state.
 - **Prompt history no longer generates sentence suggestions** — The distracting local n-gram completion overlay and its Tab/Escape/arrow-key behavior are removed, while Skill and file pickers, prompt history, and Skill argument hints remain available.

@@ -5,10 +5,8 @@ import type { SseEvent } from '../types/message.js';
 export const FALLBACK_TEXT = '⚠️ 处理失败，请稍后重试。';
 import {
   buildApprovalCard,
-  buildQuestionCard,
   type FeishuCard,
 } from './feishu-card-builder.js';
-import { feishuCardActionHandler } from './feishu-card-action-handler.js';
 import { FeishuCardStream, hasVisibleChar } from './feishu-card-stream.js';
 import { getRandomAcknowledgment } from '../utils/bot-placeholder.js';
 import { sendPlainTextMessage } from './feishu-message-utils.js';
@@ -49,7 +47,6 @@ export class FeishuStreamReply {
   private responseText = '';
   private visiblePlaceholder = '';
   private seenPendingApprovals = new Set<string>();
-  private seenPendingQuestions = new Set<string>();
 
   constructor(
     thread: Thread,
@@ -188,14 +185,7 @@ export class FeishuStreamReply {
         this.setPlaceholder('\n\n⏸️ 等待你确认一项操作…');
         this.postApprovalCard(event);
         break;
-      case 'pending_question':
-        diagLog(`[FeishuStreamReply ${this.sessionId}] handler event=pending_question requestId=${event.requestId}`);
-        this.signalWaiting();
-        this.setPlaceholder('\n\n⏸️ 等待你回答一个问题…');
-        this.postQuestionCard(event);
-        break;
       case 'approval_timeout':
-        feishuCardActionHandler.unregisterQuestion(event.requestId);
         this.sendTextMessage('⏰ 请求已超时，已按拒绝处理。');
         break;
       default:
@@ -328,24 +318,6 @@ export class FeishuStreamReply {
     this.sendCard(card).catch((err) => {
       console.error('[FeishuStreamReply] Failed to post approval card:', err);
       this.setPlaceholder('\n\n⚠️ 确认卡片发送失败，本次操作已取消。');
-      this.onCardDeliveryFailure?.(event.requestId);
-    });
-  }
-
-  private postQuestionCard(event: Extract<SseEvent, { type: 'pending_question' }>): void {
-    if (this.seenPendingQuestions.has(event.requestId)) return;
-    this.seenPendingQuestions.add(event.requestId);
-    feishuCardActionHandler.registerQuestion(event.requestId, event.questions);
-    const card = buildQuestionCard({
-      requestId: event.requestId,
-      workspaceId: this.workspaceId,
-      sessionId: this.sessionId,
-      questions: event.questions,
-    });
-    this.sendCard(card).catch((err) => {
-      console.error('[FeishuStreamReply] Failed to post question card:', err);
-      feishuCardActionHandler.unregisterQuestion(event.requestId);
-      this.setPlaceholder('\n\n⚠️ 问题卡片发送失败，本次请求已取消。');
       this.onCardDeliveryFailure?.(event.requestId);
     });
   }

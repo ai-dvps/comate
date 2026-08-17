@@ -363,19 +363,20 @@ describe('FeishuBotService', () => {
       assert.strictEqual(pushArgs[2], 'hello again');
     });
 
-    it('uses a chat reply to settle a pending free-text question without starting a new turn', async () => {
+    it('U3: a chat reply never settles a pending question — it starts a normal turn (AE4)', async () => {
       activeSessions.set(getFeishuBotUserId(feishuUserId), 'session-existing');
       createdSessions.push({ workspaceId: workspace.id, name: 'Existing', source: 'feishu' });
       let pushed = false;
-      let resolved: unknown;
+      const resolved: unknown[] = [];
       chatService.pushMessage = async () => { pushed = true; };
       chatService.getRuntimeIfExists = () => ({
-        getPendingFreeTextQuestion: () => ({
-          requestId: 'question-1',
-          questions: [{ question: 'Why?', multiSelect: false }],
-        }),
+        // A stale pending question must be ignored: the reply enters as a
+        // fresh user turn, never as a question answer.
+        getPendingCardState: (requestId: string) => requestId === 'question-1'
+          ? { type: 'question', questions: [{ question: 'Why?', multiSelect: false }] }
+          : undefined,
         resolveApproval: (_requestId: string, result: unknown) => {
-          resolved = result;
+          resolved.push(result);
           return true;
         },
       }) as ReturnType<typeof chatService.getRuntimeIfExists>;
@@ -384,12 +385,8 @@ describe('FeishuBotService', () => {
         handleChatMessage: (thread: MockThread, feishuUserId: string, text: string) => Promise<void>;
       }).handleChatMessage(thread, feishuUserId, 'Because it is safer');
 
-      assert.strictEqual(pushed, false);
-      assert.deepStrictEqual(
-        (resolved as { updatedInput: { answers: Record<string, string> } }).updatedInput.answers,
-        { 'Why?': 'Because it is safer' },
-      );
-      assert.strictEqual(larkCalls.filter((call) => call.method === 'card.create').length, 0);
+      assert.strictEqual(pushed, true, 'the reply must enter as a normal user turn');
+      assert.deepStrictEqual(resolved, [], 'no pending question may be resolved by a chat reply');
     });
 
     it('denies a pending decision when its Feishu card cannot be delivered', async () => {
@@ -406,7 +403,6 @@ describe('FeishuBotService', () => {
 
       let resolved: { requestId: string; result: unknown } | undefined;
       chatService.getRuntimeIfExists = () => ({
-        getPendingFreeTextQuestion: () => undefined,
         getPendingCardState: (requestId: string) => requestId === 'approval-1'
           ? { type: 'approval', input: { command: 'npm test' }, toolName: 'Bash' }
           : undefined,

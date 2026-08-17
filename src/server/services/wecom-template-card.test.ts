@@ -1,11 +1,11 @@
 import '../test-utils/test-env.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as cardModule from './wecom-template-card.js';
 import {
   encodeButtonKey,
   decodeButtonKey,
   buildToolApprovalCard,
-  buildQuestionCard,
   buildWecomSessionListCard,
   buildEscalationApprovalCard,
   buildEscalationNoticeCard,
@@ -14,7 +14,6 @@ import {
   isEscalationAction,
   parseTemplateCardEvent,
   verifySessionOwner,
-  formatQuestionFold,
   formatPermissionFold,
 } from './wecom-template-card.js';
 
@@ -181,140 +180,11 @@ describe('wecom-template-card', () => {
     });
   });
 
-  describe('buildQuestionCard', () => {
-    it('builds a vote_interaction card for a single boolean question', () => {
-      const card = buildQuestionCard({
-        requestId: 'req-q1',
-        sessionId: 'sess-q1',
-        questions: [
-          {
-            question: '是否继续？',
-            header: '确认',
-            options: [
-              { label: '是' },
-              { label: '否' },
-            ],
-            multiSelect: false,
-          },
-        ],
-      });
-
-      assert.strictEqual(card.card_type, 'vote_interaction');
-      assert.ok(card.checkbox);
-      assert.strictEqual(card.checkbox?.mode, 0);
-      assert.strictEqual(card.checkbox?.option_list.length, 2);
-      assert.strictEqual(card.checkbox?.option_list[0].text, '是');
-      assert.strictEqual(card.checkbox?.option_list[1].text, '否');
-      assert.ok(card.submit_button);
-      assert.strictEqual(card.submit_button?.text, '提交');
-    });
-
-    it('shows option descriptions without preselecting a multiple-question answer', () => {
-      const card = buildQuestionCard({
-        requestId: 'req-q-desc',
-        sessionId: 'sess-q-desc',
-        questions: [
-          {
-            question: '选择环境',
-            header: '环境',
-            options: [{ label: '测试', description: '不会影响生产数据' }, { label: '生产' }],
-            multiSelect: false,
-          },
-          {
-            question: '选择范围',
-            header: '范围',
-            options: [{ label: '单个项目' }, { label: '全部项目' }],
-            multiSelect: false,
-          },
-        ],
-      });
-
-      assert.match(card.select_list?.[0].option_list[0].text ?? '', /不会影响生产数据/);
-      assert.strictEqual(card.select_list?.[0].selected_id, undefined);
-      assert.strictEqual(card.select_list?.[1].selected_id, undefined);
-    });
-
-    it('builds a multiple_interaction card for multiple questions', () => {
-      const card = buildQuestionCard({
-        requestId: 'req-q2',
-        sessionId: 'sess-q2',
-        questions: [
-          {
-            question: '选择颜色',
-            options: [{ label: '红' }, { label: '蓝' }],
-            multiSelect: false,
-          },
-          {
-            question: '选择大小',
-            options: [{ label: '大' }, { label: '小' }],
-            multiSelect: false,
-          },
-        ],
-      });
-
-      assert.strictEqual(card.card_type, 'multiple_interaction');
-      assert.ok(card.select_list);
-      assert.strictEqual(card.select_list?.length, 2);
-      assert.strictEqual(card.select_list![0].option_list.length, 2);
-      assert.strictEqual(card.select_list![1].option_list.length, 2);
-      assert.ok(card.submit_button);
-    });
-
-    it('builds a vote_interaction card for a single multi-select question', () => {
-      const card = buildQuestionCard({
-        requestId: 'req-q3',
-        sessionId: 'sess-q3',
-        questions: [
-          {
-            question: '选择所有适用的选项',
-            options: [{ label: 'A' }, { label: 'B' }, { label: 'C' }],
-            multiSelect: true,
-          },
-        ],
-      });
-
-      assert.strictEqual(card.card_type, 'vote_interaction');
-      assert.ok(card.checkbox);
-      assert.strictEqual(card.checkbox?.mode, 1);
-      assert.strictEqual(card.checkbox?.option_list.length, 3);
-      assert.strictEqual(card.checkbox?.option_list[0].text, 'A');
-      assert.ok(card.submit_button);
-    });
-
-    it('falls back to text_notice for free-text questions', () => {
-      const card = buildQuestionCard({
-        requestId: 'req-q4',
-        sessionId: 'sess-q4',
-        questions: [
-          {
-            question: '请描述您的需求',
-            options: [],
-            multiSelect: false,
-          },
-        ],
-      });
-
-      assert.strictEqual(card.card_type, 'text_notice');
-      assert.ok(card.main_title);
-      assert.ok(card.main_title?.desc?.includes('请描述您的需求'));
-      assert.ok(card.sub_title_text?.includes('请在聊天中直接回复'));
-    });
-
-    it('includes task_id when provided', () => {
-      const card = buildQuestionCard({
-        requestId: 'req-q5',
-        sessionId: 'sess-q5',
-        questions: [
-          {
-            question: '是否继续？',
-            options: [{ label: '是' }, { label: '否' }],
-            multiSelect: false,
-          },
-        ],
-        taskId: 'task-q5',
-      });
-
-      assert.strictEqual(card.task_id, 'task-q5');
+  describe('U2 question-path removal (symbol absence)', () => {
+    it('no longer exports buildQuestionCard or formatQuestionFold', () => {
+      const exports = cardModule as unknown as Record<string, unknown>;
+      assert.strictEqual(exports.buildQuestionCard, undefined, 'buildQuestionCard must be gone');
+      assert.strictEqual(exports.formatQuestionFold, undefined, 'formatQuestionFold must be gone');
     });
   });
 
@@ -592,49 +462,6 @@ describe('wecom-template-card', () => {
       const getChannelUserIdBySession = () => null;
       const result = verifySessionOwner('user-abc', 'sess-1', 'ws-1', getChannelUserIdBySession);
       assert.strictEqual(result, false);
-    });
-  });
-
-  describe('formatQuestionFold', () => {
-    it('renders a single question as ❓/↳ lines', () => {
-      const text = formatQuestionFold([{ question: 'Continue?' }], { 'Continue?': 'Yes' });
-      assert.strictEqual(text, '❓Continue?\n↳ 你的选择：Yes');
-    });
-
-    it('renders one pair per question in order and never lists unselected options', () => {
-      const text = formatQuestionFold(
-        [{ question: 'Color' }, { question: 'Size' }],
-        { Color: 'Red', Size: 'Large' },
-      );
-      assert.strictEqual(
-        text,
-        '❓Color\n↳ 你的选择：Red\n\n❓Size\n↳ 你的选择：Large',
-      );
-      assert.ok(!text.includes('Blue'), 'unselected option never appears');
-    });
-
-    it('renders a multi-select answer as a single joined choice string', () => {
-      const text = formatQuestionFold([{ question: 'Pick' }], { Pick: 'A, B' });
-      assert.ok(text.includes('↳ 你的选择：A, B'));
-    });
-
-    it('truncates an over-long question prompt with an ellipsis', () => {
-      const long = 'x'.repeat(250);
-      const text = formatQuestionFold([{ question: long }], { [long]: 'ok' });
-      const firstLine = text.split('\n')[0];
-      assert.ok(firstLine.startsWith('❓'));
-      assert.ok(firstLine.endsWith('…'), 'long prompt ends with ellipsis');
-      assert.ok(firstLine.length <= 1 + 200 + 1, `prompt capped, got length ${firstLine.length}`);
-    });
-
-    it('omits a question whose answer is empty or missing', () => {
-      assert.strictEqual(
-        formatQuestionFold([{ question: 'A' }, { question: 'B' }], { A: 'yes' }),
-        '❓A\n↳ 你的选择：yes',
-        'B (no answer) is omitted',
-      );
-      assert.strictEqual(formatQuestionFold([{ question: 'A' }], {}), '');
-      assert.strictEqual(formatQuestionFold([{ question: 'A' }], { A: '   ' }), '');
     });
   });
 
