@@ -14,6 +14,7 @@ import type {
   SseEvent,
   WorkflowState,
   SessionActivitySnapshot,
+  UserTurnContent,
 } from '../types/message.js';
 import { normalizeSessionMessage, scanSdkMessagesForTasks } from './message-normalizer.js';
 import { SdkClient } from './sdk-client.js';
@@ -23,7 +24,12 @@ import {
   type BackendId,
 } from './agent-backends.js';
 import { OpencodeBackendDriver, buildServeConfig } from './opencode-adapter.js';
-import { SessionRuntime, APPROVAL_TIMEOUT_DENY_MESSAGE, type ApprovalResolutionProvenance } from './session-runtime.js';
+import {
+  SessionRuntime,
+  APPROVAL_TIMEOUT_DENY_MESSAGE,
+  type ApprovalResolutionProvenance,
+  type RuntimeUserContent,
+} from './session-runtime.js';
 import { reconstructSubagentState } from './subagent-loader.js';
 import { opencodeServerManager, opencodeFetch } from './opencode-server-manager.js';
 import {
@@ -43,6 +49,8 @@ import { normalizeWindowsPath } from '../utils/normalize-windows-path.js';
 import { loadClaudeSettings } from '../utils/claude-settings.js';
 import { buildClaudeEnv, prependEnvPath, getPathEnvKey } from '../utils/sdk-env.js';
 import { deriveFallbackSessionTitle } from '../utils/session-title.js';
+import { resolveImageInputProfile } from '../utils/image-input-profile.js';
+import { validateUserTurnImages } from '../utils/image-input-validation.js';
 import { pluginSettingsService } from './plugin-settings-service.js';
 import { evaluateToolPermission, getToolPermissionDenialReason, resolveEffectivePolicy } from './tool-permission-policy.js';
 import { createPathPolicyContext, validateToolInput, verifyBotFileToolAccess, canonicalizeBotPath } from './bot-path-policy.js';
@@ -1995,34 +2003,61 @@ export class ChatService {
   async pushMessage(
     sessionId: string,
     workspaceId: string,
-    message: string,
+    message: string | UserTurnContent,
     isBotSession?: boolean,
     botEventHandler?: (id: number, event: SseEvent) => void,
     botUserId?: string,
   ): Promise<void> {
     const runtime = await this.getOrCreateRuntime(sessionId, workspaceId, isBotSession, botEventHandler, botUserId);
 
+    let runtimeContent: RuntimeUserContent = message as string;
+    if (typeof message !== 'string') {
+      if (message.text !== undefined && typeof message.text !== 'string') {
+        throw new ChatError('Message text must be a string', 'INVALID_MESSAGE', 400);
+      }
+      const text = message.text?.trim() ?? '';
+      const profile = resolveImageInputProfile(runtime.getBackendId(), runtime.getModelId());
+      const images = validateUserTurnImages(message.images, profile);
+      if (!text && images.length === 0) {
+        throw new ChatError('A message requires text or at least one image', 'INVALID_MESSAGE', 400);
+      }
+      runtimeContent = [
+        ...(text ? [{ type: 'text' as const, text }] : []),
+        ...images.map((image) => ({
+          type: 'image' as const,
+          source: {
+            type: 'base64' as const,
+            media_type: image.mediaType,
+            data: image.data,
+          },
+        })),
+      ];
+    }
+
     // U11 (KTD-19): a new turn resets the per-turn override-deny cap.
     this.sessionOverrideDenies.delete(sessionId);
 
-    // Promote a draft session to a real SDK session on first message. The SDK
-    // creates the persistent session when this message is pushed, so clear the
-    // draft flag now so future renames go through sdkClient.renameSession instead
-    // of only updating the local SQLite row.
+    runtime.pushMessage(runtimeContent);
+
+    // Runtime push is the admission boundary. Only promote/lock a draft after
+    // that synchronous operation succeeds; a rejection must leave it retryable.
+    // Once admitted, housekeeping failures must not turn the accepted turn into
+    // a client-visible send failure that encourages duplicate resubmission.
     const localSession = workspaceStore.getLocalSession(sessionId);
     if (localSession?.isDraft) {
-      // The backend lock lands HERE — at the first message (R4), not at
-      // runtime creation: a draft may be re-selected any time before this
-      // point (a runtime created by merely viewing the session never locks).
-      if (!localSession.backend) {
-        const backend = runtime.getBackendId();
-        workspaceStore.updateSessionBackend(sessionId, backend);
-        diagLog(`[ChatService] session ${sessionId} backend locked to '${backend}' at first message`);
+      try {
+        if (!localSession.backend) {
+          const backend = runtime.getBackendId();
+          workspaceStore.updateSessionBackend(sessionId, backend);
+          diagLog(`[ChatService] session ${sessionId} backend locked to '${backend}' at first message`);
+        }
+        workspaceStore.clearDraftFlag(sessionId);
+      } catch (error) {
+        diagLog(
+          `[ChatService] admitted turn ${sessionId} but draft promotion failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
-      workspaceStore.clearDraftFlag(sessionId);
     }
-
-    runtime.pushMessage(message);
   }
 
   getSessionsStatus(workspaceId: string): Record<

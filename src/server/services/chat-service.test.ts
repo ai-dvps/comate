@@ -704,9 +704,10 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
       onSubscribed?: () => void;
       onUnsubscribed?: () => void;
       onActivity?: () => void;
+      modelId?: string;
     } = {},
-  ): SessionRuntime & { pushMessageCalls: string[]; botHandlers: Array<(id: number, event: SseEvent) => void> } {
-    const pushMessageCalls: string[] = [];
+  ): SessionRuntime & { pushMessageCalls: unknown[]; botHandlers: Array<(id: number, event: SseEvent) => void> } {
+    const pushMessageCalls: unknown[] = [];
     const botHandlers: Array<(id: number, event: SseEvent) => void> = [];
     const mock = {
       isClosed: () => false,
@@ -719,7 +720,7 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
       unsubscribe: () => {
         callbacks.onUnsubscribed?.();
       },
-      pushMessage: (message: string) => {
+      pushMessage: (message: unknown) => {
         pushMessageCalls.push(message);
         callbacks.onActivity?.();
       },
@@ -735,10 +736,11 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
       setApprovalMode: () => {},
       getApprovalMode: () => 'manual' as const,
       getBackendId: () => 'claude' as const,
+      getModelId: () => callbacks.modelId ?? 'claude-sonnet-4-6',
       pushMessageCalls,
       botHandlers,
     };
-    return mock as unknown as SessionRuntime & { pushMessageCalls: string[]; botHandlers: Array<(id: number, event: SseEvent) => void> };
+    return mock as unknown as SessionRuntime & { pushMessageCalls: unknown[]; botHandlers: Array<(id: number, event: SseEvent) => void> };
   }
 
   function setupStoreMocks(session: ChatSession = createMockSession('s1')) {
@@ -794,8 +796,90 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
 
     await service.pushMessage('s1', 'ws-1', 'hello world');
     const runtime = (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.get('s1');
-    const calls = (runtime as unknown as { pushMessageCalls: string[] }).pushMessageCalls;
+    const calls = (runtime as unknown as { pushMessageCalls: unknown[] }).pushMessageCalls;
     assert.deepStrictEqual(calls, ['hello world']);
+  });
+
+  it('translates a validated mixed image turn into ordered Claude content blocks', async () => {
+    setupStoreMocks();
+    workspaceStore.getDefaultProvider = () => ({
+      ...createMockProvider(),
+      model: 'claude-sonnet-4-6',
+    });
+    SessionRuntime.open = () => createMockRuntime();
+    const bytes = Buffer.alloc(33);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes);
+    bytes.writeUInt32BE(13, 8);
+    bytes.write('IHDR', 12, 'ascii');
+    bytes.writeUInt32BE(1, 16);
+    bytes.writeUInt32BE(1, 20);
+
+    await service.pushMessage('s1', 'ws-1', {
+      text: 'Fix this layout',
+      images: [
+        { id: 'first', mediaType: 'image/png', data: bytes.toString('base64'), width: 1, height: 1 },
+        { id: 'second', mediaType: 'image/png', data: bytes.toString('base64'), width: 1, height: 1 },
+      ],
+    });
+
+    const runtime = (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.get('s1');
+    const calls = (runtime as unknown as { pushMessageCalls: unknown[] }).pushMessageCalls;
+    assert.deepStrictEqual(calls, [[
+      { type: 'text', text: 'Fix this layout' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: bytes.toString('base64') } },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: bytes.toString('base64') } },
+    ]]);
+  });
+
+  it('rejects an unsupported image profile before runtime push', async () => {
+    setupStoreMocks();
+    const runtime = createMockRuntime({ modelId: 'test-model' });
+    SessionRuntime.open = () => {
+      return runtime;
+    };
+
+    await assert.rejects(
+      () => service.pushMessage('s1', 'ws-1', {
+        text: '',
+        images: [{ id: 'image', mediaType: 'image/png', data: 'AA==', width: 1, height: 1 }],
+      }),
+      (error: unknown) =>
+        error instanceof Error &&
+        (error as { details?: { code?: string } }).details?.code === 'model_unsupported',
+    );
+    assert.deepEqual(runtime.pushMessageCalls, []);
+  });
+
+  it('keeps a draft unpromoted when runtime admission synchronously rejects the image turn', async () => {
+    setupStoreMocks();
+    workspaceStore.getDefaultProvider = () => ({
+      ...createMockProvider(),
+      model: 'claude-sonnet-4-6',
+    });
+    let clearedDraft = false;
+    workspaceStore.clearDraftFlag = () => {
+      clearedDraft = true;
+    };
+    const runtime = createMockRuntime();
+    runtime.pushMessage = () => {
+      throw new Error('Provider rejected image decode before admission');
+    };
+    SessionRuntime.open = () => runtime;
+    const bytes = Buffer.alloc(33);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes);
+    bytes.writeUInt32BE(13, 8);
+    bytes.write('IHDR', 12, 'ascii');
+    bytes.writeUInt32BE(1, 16);
+    bytes.writeUInt32BE(1, 20);
+
+    await assert.rejects(
+      () => service.pushMessage('s1', 'ws-1', {
+        text: '',
+        images: [{ id: 'image', mediaType: 'image/png', data: bytes.toString('base64'), width: 1, height: 1 }],
+      }),
+      /before admission/,
+    );
+    assert.equal(clearedDraft, false);
   });
 
   it('registers bot event handler when isBotSession is true', async () => {

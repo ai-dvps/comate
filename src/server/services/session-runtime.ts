@@ -16,6 +16,7 @@ import type {
   SessionActivitySnapshot,
   SessionActivityInterruption,
   SessionBackgroundTask,
+  ImageMediaType,
 } from '../types/message.js';
 import type { ApprovalMode } from '../models/session.js';
 import type { Provider } from '../models/provider.js';
@@ -41,6 +42,19 @@ import { browserAuditService } from './browser-audit.js';
 const RING_BUFFER_CAP = 500;
 const STOP_DRAIN_TIMEOUT_MS = 2000;
 const BACKGROUND_TASK_STOP_TIMEOUT_MS = 10_000;
+
+export type RuntimeUserContentBlock =
+  | { type: 'text'; text: string }
+  | {
+      type: 'image';
+      source: {
+        type: 'base64';
+        media_type: ImageMediaType;
+        data: string;
+      };
+    };
+
+export type RuntimeUserContent = string | RuntimeUserContentBlock[];
 
 /**
  * Deny message produced when an approval TTL expires (timeoutDeny). Exported
@@ -257,6 +271,11 @@ export class SessionRuntime {
   /** The backend this runtime drives (the driver's identity). */
   getBackendId(): import('./backend-driver.js').BackendDriver['backendId'] {
     return this.driver.backendId;
+  }
+
+  /** Model fixed into this runtime's provider options at creation time. */
+  getModelId(): string | undefined {
+    return this.options.model;
   }
 
   private provider?: Provider;
@@ -1024,7 +1043,7 @@ export class SessionRuntime {
     this.onSubscribed?.();
   }
 
-  pushMessage(content: string): void {
+  pushMessage(content: RuntimeUserContent): void {
     if (this.stopping) {
       throw new Error('Session is stopping and cannot accept new messages.');
     }

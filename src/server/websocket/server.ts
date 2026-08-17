@@ -35,6 +35,36 @@ import type {
 } from './types.js';
 import type { SseEvent } from '../types/message.js';
 
+class WsRequestValidationError extends Error {
+  readonly code = 'INVALID_SEND_MESSAGE';
+}
+
+function parseSendMessagePayload(payload: unknown): SendMessagePayload {
+  if (!payload || typeof payload !== 'object') {
+    throw new WsRequestValidationError('Send message payload must be an object');
+  }
+  const candidate = payload as Partial<SendMessagePayload>;
+  if (typeof candidate.workspaceId !== 'string' || candidate.workspaceId.trim().length === 0) {
+    throw new WsRequestValidationError('workspaceId is required');
+  }
+  if (typeof candidate.sessionId !== 'string' || candidate.sessionId.trim().length === 0) {
+    throw new WsRequestValidationError('sessionId is required');
+  }
+  if (typeof candidate.clientTurnId !== 'string' || candidate.clientTurnId.trim().length === 0) {
+    throw new WsRequestValidationError('clientTurnId is required');
+  }
+  if (typeof candidate.content !== 'string') {
+    throw new WsRequestValidationError('content must be a string');
+  }
+  if (candidate.images !== undefined && !Array.isArray(candidate.images)) {
+    throw new WsRequestValidationError('images must be an array');
+  }
+  if (candidate.content.trim().length === 0 && (!candidate.images || candidate.images.length === 0)) {
+    throw new WsRequestValidationError('A message requires text or at least one image');
+  }
+  return candidate as SendMessagePayload;
+}
+
 interface ClientContext {
   socket: WebSocket;
   subscriptions: Map<string, string>; // sessionId -> workspaceId
@@ -185,8 +215,16 @@ export class ComateWebSocketServer {
       }
     } catch (err) {
       diagWarn(`[WebSocket] request ${req.id} failed: ${err instanceof Error ? err.message : String(err)}`);
+      const details = err && typeof err === 'object' && 'details' in err
+        ? (err as { details?: WsErrorResponse['error']['details'] }).details
+        : undefined;
       this.sendError(ctx.socket, req.id, {
         message: err instanceof Error ? err.message : 'Internal error',
+        ...(details?.kind === 'image_input_validation'
+          ? { code: 'IMAGE_INPUT_VALIDATION', details }
+          : err instanceof WsRequestValidationError
+            ? { code: err.code }
+            : {}),
       });
     }
   }
@@ -291,9 +329,13 @@ export class ComateWebSocketServer {
   }
 
   private async handleSendMessage(ctx: ClientContext, req: WsRequest): Promise<void> {
-    const { workspaceId, sessionId, content } = req.payload as unknown as SendMessagePayload;
-    await chatService.pushMessage(sessionId, workspaceId, content);
-    this.sendOk(ctx.socket, req.id, { sent: true });
+    const { workspaceId, sessionId, clientTurnId, content, images } = parseSendMessagePayload(req.payload);
+    await chatService.pushMessage(
+      sessionId,
+      workspaceId,
+      images && images.length > 0 ? { text: content, images } : content,
+    );
+    this.sendOk(ctx.socket, req.id, { sent: true, clientTurnId });
   }
 
   private async handleLoadMessages(ctx: ClientContext, req: WsRequest): Promise<void> {
@@ -440,7 +482,7 @@ export class ComateWebSocketServer {
     this.send(socket, msg);
   }
 
-  private sendError(socket: WebSocket, id: string, error: { message: string; code?: string }): void {
+  private sendError(socket: WebSocket, id: string, error: WsErrorResponse['error']): void {
     const msg: WsErrorResponse = { id, ok: false, error };
     this.send(socket, msg);
   }

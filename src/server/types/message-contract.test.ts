@@ -18,6 +18,7 @@ describe('multimodal message contract', () => {
     const payload: SendMessagePayload = {
       workspaceId: 'workspace-1',
       sessionId: 'session-1',
+      clientTurnId: 'turn-1',
       content: 'plain text',
     };
     assert.equal(payload.content, 'plain text');
@@ -28,6 +29,7 @@ describe('multimodal message contract', () => {
     const payload: SendMessagePayload = {
       workspaceId: 'workspace-1',
       sessionId: 'session-1',
+      clientTurnId: 'turn-1',
       content: '',
       images: [
         { id: 'second', mediaType: 'image/png', data: 'AA==', width: 1, height: 1 },
