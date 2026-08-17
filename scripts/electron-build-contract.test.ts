@@ -93,6 +93,16 @@ test('the Electron development command stops all dev servers when the app quits'
   );
 });
 
+test('the renderer development server refuses to reuse an occupied port', () => {
+  const viteConfig = readFileSync('vite.config.ts', 'utf8');
+
+  assert.match(
+    viteConfig,
+    /server:\s*\{[\s\S]*?port:\s*5173,[\s\S]*?strictPort:\s*true,/,
+    'dev startup must fail instead of attaching Electron to a stale Vite server',
+  );
+});
+
 test('the Electron development command rebuilds the server sidecar and CLIs before launch', () => {
   const packageJson = JSON.parse(readFileSync('package.json', 'utf8')) as PackageJson;
   const devCommand = packageJson.scripts?.['dev:electron'] ?? '';
