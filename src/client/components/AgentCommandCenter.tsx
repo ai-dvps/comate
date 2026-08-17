@@ -161,6 +161,10 @@ export default function AgentCommandCenter({
   const [expanded, setExpanded] = useState<Set<string>>(
     () => new Set(workspaces.map((workspace) => workspace.id)),
   )
+  // Latest-value ref for `expanded`: the focus-refresh effect below must not
+  // depend on `expanded`, or every workspace toggle re-subscribes its
+  // listeners and clears an armed debounce before it can fire.
+  const expandedRef = useRef(expanded)
   const [visibleSessionCounts, setVisibleSessionCounts] = useState<Record<string, number>>({})
   const [creatingWorkspaceId, setCreatingWorkspaceId] = useState<string | null>(null)
   const [newSessionName, setNewSessionName] = useState('')
@@ -228,18 +232,26 @@ export default function AgentCommandCenter({
     }
   }, [tc])
 
+  // Keep expandedRef current for the focus-refresh timer below; this runs on
+  // commit, so any toggle lands before the debounce can fire.
+  useEffect(() => {
+    expandedRef.current = expanded
+  }, [expanded])
+
   // Focus-time session freshness (U4): when the window regains focus,
   // refresh only expanded workspaces' session lists so externally created
-  // bot sessions appear without an app restart. The shared helper's
-  // in-flight guard prevents duplicate concurrent fetches; selection and
-  // scroll are untouched (the list keys stay stable across refetch).
+  // bot sessions appear without an app restart. The expanded set is read
+  // through a ref rather than a dep so toggling a workspace neither
+  // re-subscribes these listeners nor cancels an armed debounce. The shared
+  // helper's in-flight guard prevents duplicate concurrent fetches; selection
+  // and scroll are untouched (the list keys stay stable across refetch).
   useEffect(() => {
     let refreshTimer: ReturnType<typeof setTimeout> | null = null
     const refreshExpanded = () => {
       if (refreshTimer) clearTimeout(refreshTimer)
       refreshTimer = setTimeout(() => {
         refreshTimer = null
-        for (const workspaceId of expanded) {
+        for (const workspaceId of expandedRef.current) {
           void refreshWorkspaceSessions(workspaceId)
         }
       }, 800)
@@ -254,7 +266,7 @@ export default function AgentCommandCenter({
       window.removeEventListener('focus', refreshExpanded)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [expanded, refreshWorkspaceSessions])
+  }, [refreshWorkspaceSessions])
 
   const endDrag = useCallback(() => {
     if (!dragRef.current) return
