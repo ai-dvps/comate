@@ -569,6 +569,19 @@ function registerIpcHandlers(): void {
     shell.showItemInFolder(targetPath);
   });
 
+  // Open-folder semantics: unlike reveal-in-file-manager (which selects the
+  // item in its parent), this opens the folder itself so the file manager
+  // shows its contents — Finder/Explorer double-click behavior.
+  ipcMain.handle('comate:open-folder', async (_event, targetPath: unknown) => {
+    if (typeof targetPath !== 'string' || targetPath.length === 0) {
+      throw new Error('open-folder: path is required');
+    }
+    const errorMessage = await shell.openPath(targetPath);
+    if (errorMessage) {
+      throw new Error(`open-folder: ${errorMessage}`);
+    }
+  });
+
   // lib.rs open_url: http(s) only, system browser.
   ipcMain.handle('comate:open-url', async (_event, url: unknown) => {
     if (typeof url !== 'string' || (!url.startsWith('http://') && !url.startsWith('https://'))) {

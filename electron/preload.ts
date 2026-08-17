@@ -90,6 +90,10 @@ const api = {
   revealInFileManager: (path: string): Promise<void> =>
     ipcRenderer.invoke('comate:reveal-in-file-manager', path),
 
+  /** Open a folder in the OS file manager, showing its contents. */
+  openFolder: (path: string): Promise<void> =>
+    ipcRenderer.invoke('comate:open-folder', path),
+
   /** Open an http/https URL in the system browser (validated main-side). */
   openUrl: (url: string): Promise<void> => ipcRenderer.invoke('comate:open-url', url),
 
