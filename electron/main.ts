@@ -66,6 +66,7 @@ import {
 } from './updater';
 import { resolvePackagedRuntime, shouldEnableUpdater } from './runtime-mode';
 import { isTrustedUiUrl as matchesTrustedUiUrl } from './trusted-ui-url';
+import { addSidecarAuthorization } from './api-request-auth';
 
 // ---------------------------------------------------------------------------
 // Early, pre-ready setup (order matters: these must run before 'ready')
@@ -205,6 +206,22 @@ let viewManager: BrowserViewManager | null = null;
 let shellDebugPort: number | null = null;
 let shellControlPort: number | null = null;
 let shellControlToken: string | null = null;
+
+function authorizeSidecarMediaRequests(port: number, token: string): void {
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    {
+      urls: [
+        `http://localhost:${port}/api/workspaces/*/files/media*`,
+        `http://127.0.0.1:${port}/api/workspaces/*/files/media*`,
+      ],
+    },
+    (details, callback) => {
+      callback({
+        requestHeaders: addSidecarAuthorization(details.requestHeaders, token),
+      });
+    },
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Updater (U5: electron-updater behind the pure state machine in updater.ts)
@@ -915,6 +932,7 @@ function startSidecar(): void {
     .then(({ port, desktopToken }) => {
       apiPort = port;
       apiToken = desktopToken ?? null;
+      if (apiToken) authorizeSidecarMediaRequests(port, apiToken);
       apiInfoLatch.succeed({ port, token: desktopToken ?? '' });
       logger.info(`Sidecar ready on port ${port}`);
     })

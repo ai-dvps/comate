@@ -96,6 +96,7 @@
     "partialFallback": "结果不完整 — 仅扫描了部分文件。"
   },
   "copyContent": "复制内容",
+  "videoPreviewLabel": "视频预览：{{name}}",
   "markdownPreviewError": "无法渲染此 Markdown 预览。请重启 Comate 后重试。",
   "close": "关闭",
   "clear": "清除",

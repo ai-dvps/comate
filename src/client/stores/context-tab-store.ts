@@ -4,6 +4,7 @@ import { basename } from '../lib/path-utils'
 import { isUntrackedFile } from '../lib/git-status-helpers'
 import type { GitStatusItem } from './git-changes-store'
 import { useBrowserPaneStore } from './browser-pane-store'
+import { getApiBase } from '../lib/desktop-api'
 
 export interface FileContextTab {
   type: 'file'
@@ -14,6 +15,7 @@ export interface FileContextTab {
   content: string
   isBinary: boolean
   imageDataUrl?: string
+  videoUrl?: string
   preview: boolean
 }
 
@@ -258,15 +260,21 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
         && typeof data.content === 'string'
         ? `data:${data.mimeType};base64,${data.content}`
         : undefined
+      const videoPath = data.mimeType?.startsWith('video/')
+        ? `/api/workspaces/${workspaceId}/files/media?path=${encodeURIComponent(path)}`
+        : undefined
+      const videoUrl = videoPath ? `${await getApiBase()}${videoPath}` : undefined
+      if (abortControllers.get(key) !== controller) return
       const tab: FileContextTab = {
         type: 'file',
         id: preview ? 'file:preview' : `file:${path}`,
         workspaceId,
         path,
         name,
-        content: imageDataUrl ? '' : typeof data.content === 'string' ? data.content : '',
+        content: imageDataUrl || videoUrl ? '' : typeof data.content === 'string' ? data.content : '',
         isBinary: data.isBinary === true,
         imageDataUrl,
+        videoUrl,
         preview,
       }
       set((state) => {

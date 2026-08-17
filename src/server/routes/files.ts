@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { createReadStream } from 'fs';
 import { realpath, readdir, readFile, stat } from 'fs/promises';
 import path from 'path';
 import { store } from '../storage/sqlite-store.js';
@@ -23,6 +24,16 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
   '.webp': 'image/webp',
+};
+
+const VIDEO_MIME_TYPES: Record<string, string> = {
+  '.m4v': 'video/mp4',
+  '.mkv': 'video/x-matroska',
+  '.mov': 'video/quicktime',
+  '.mp4': 'video/mp4',
+  '.ogg': 'video/ogg',
+  '.ogv': 'video/ogg',
+  '.webm': 'video/webm',
 };
 
 const MAX_IMAGE_PREVIEW_BYTES = 20 * 1024 * 1024;
@@ -72,6 +83,33 @@ function parseResolvePaths(body: unknown): string[] | null {
     return null;
   }
   return uniquePaths;
+}
+
+function parseByteRange(rangeHeader: string, size: number): { start: number; end: number } | null {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+  if (!match || size <= 0) return null;
+
+  const [, startText, endText] = match;
+  if (!startText && !endText) return null;
+
+  if (!startText) {
+    const suffixLength = Number(endText);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return null;
+    return { start: Math.max(size - suffixLength, 0), end: size - 1 };
+  }
+
+  const start = Number(startText);
+  const requestedEnd = endText ? Number(endText) : size - 1;
+  if (
+    !Number.isSafeInteger(start)
+    || !Number.isSafeInteger(requestedEnd)
+    || start < 0
+    || start >= size
+    || requestedEnd < start
+  ) {
+    return null;
+  }
+  return { start, end: Math.min(requestedEnd, size - 1) };
 }
 
 // POST /api/workspaces/:id/files/resolve
@@ -197,6 +235,80 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/workspaces/:id/files/media?path=
+router.get('/media', async (req, res) => {
+  try {
+    const workspace = await store.get((req.params as { id: string }).id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const relativePath = req.query.path as string;
+    if (!relativePath) {
+      res.status(400).json({ error: 'path is required' });
+      return;
+    }
+
+    const targetPath = await validatePath(workspace.folderPath, relativePath);
+    if (!targetPath) {
+      res.status(403).json({ error: 'Path outside workspace' });
+      return;
+    }
+
+    const mimeType = VIDEO_MIME_TYPES[path.extname(targetPath).toLowerCase()];
+    if (!mimeType) {
+      res.status(415).json({ error: 'Unsupported video format' });
+      return;
+    }
+
+    const fileStat = await stat(targetPath);
+    if (!fileStat.isFile()) {
+      res.status(400).json({ error: 'Not a file' });
+      return;
+    }
+
+    const commonHeaders = {
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'private, no-store',
+      'Content-Type': mimeType,
+      'X-Content-Type-Options': 'nosniff',
+    };
+    const rangeHeader = req.headers.range;
+    if (rangeHeader) {
+      const range = parseByteRange(rangeHeader, fileStat.size);
+      if (!range) {
+        res.status(416).set({
+          ...commonHeaders,
+          'Content-Range': `bytes */${fileStat.size}`,
+        }).end();
+        return;
+      }
+
+      res.status(206).set({
+        ...commonHeaders,
+        'Content-Length': String(range.end - range.start + 1),
+        'Content-Range': `bytes ${range.start}-${range.end}/${fileStat.size}`,
+      });
+      createReadStream(targetPath, range).pipe(res);
+      return;
+    }
+
+    res.status(200).set({
+      ...commonHeaders,
+      'Content-Length': String(fileStat.size),
+    });
+    createReadStream(targetPath).pipe(res);
+  } catch (error) {
+    console.error('Failed to stream video:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to stream video' });
+    } else {
+      res.destroy(error instanceof Error ? error : undefined);
+    }
+  }
+});
+
 // GET /api/workspaces/:id/files/content?path=
 router.get('/content', async (req, res) => {
   try {
@@ -225,13 +337,26 @@ router.get('/content', async (req, res) => {
       return;
     }
 
-    const mimeType = IMAGE_MIME_TYPES[path.extname(targetPath).toLowerCase()];
-    if (mimeType) {
+    const extension = path.extname(targetPath).toLowerCase();
+    const videoMimeType = VIDEO_MIME_TYPES[extension];
+    if (videoMimeType) {
+      res.json({
+        path: relativePath,
+        content: null,
+        mimeType: videoMimeType,
+        isBinary: true,
+        size: fileStat.size,
+      });
+      return;
+    }
+
+    const imageMimeType = IMAGE_MIME_TYPES[extension];
+    if (imageMimeType) {
       if (fileStat.size > MAX_IMAGE_PREVIEW_BYTES) {
         res.json({
           path: relativePath,
           content: null,
-          mimeType,
+          mimeType: imageMimeType,
           isBinary: true,
           size: fileStat.size,
           previewUnavailable: 'too_large',
@@ -244,7 +369,7 @@ router.get('/content', async (req, res) => {
         path: relativePath,
         content: buffer.toString('base64'),
         encoding: 'base64',
-        mimeType,
+        mimeType: imageMimeType,
         isBinary: true,
         size: fileStat.size,
       });

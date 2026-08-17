@@ -2,8 +2,10 @@ import '../test-utils/test-env.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { mkdir, mkdtemp, open, rm, symlink, writeFile } from 'fs/promises';
+import type { AddressInfo } from 'net';
 import os from 'os';
 import path from 'path';
+import express from 'express';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 
 async function importContentHandler() {
@@ -187,6 +189,103 @@ describe('files routes', { concurrency: false }, () => {
       isBinary: true,
       size: image.length,
     });
+  });
+
+  it('GET /content returns video metadata without loading the video into JSON', async () => {
+    const video = Buffer.from('video-bytes');
+    await writeFile(path.join(tempDir, 'clip.mp4'), video);
+    const workspace = await workspaceStore.create({ name: 'test-ws', folderPath: tempDir });
+    const handler = await importContentHandler();
+    const res = createMockRes();
+
+    await handler(
+      { params: { id: workspace.id }, query: { path: 'clip.mp4' } },
+      res,
+    );
+
+    assert.deepStrictEqual(res.jsonBody, {
+      path: 'clip.mp4',
+      content: null,
+      mimeType: 'video/mp4',
+      isBinary: true,
+      size: video.length,
+    });
+  });
+
+  it('GET /media streams byte ranges for supported workspace videos', async () => {
+    const video = Buffer.from('0123456789');
+    await writeFile(path.join(tempDir, 'clip.webm'), video);
+    const workspace = await workspaceStore.create({ name: 'test-ws', folderPath: tempDir });
+    const { default: fileRoutes } = await import('./files.js');
+    const app = express();
+    app.use('/api/workspaces/:id/files', fileRoutes);
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(
+        `http://127.0.0.1:${port}/api/workspaces/${workspace.id}/files/media?path=clip.webm`,
+        { headers: { Range: 'bytes=2-5' } },
+      );
+
+      assert.strictEqual(response.status, 206);
+      assert.strictEqual(response.headers.get('accept-ranges'), 'bytes');
+      assert.strictEqual(response.headers.get('content-range'), 'bytes 2-5/10');
+      assert.strictEqual(response.headers.get('content-type'), 'video/webm');
+      assert.strictEqual(Buffer.from(await response.arrayBuffer()).toString(), '2345');
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('GET /media rejects unsatisfiable ranges without returning file bytes', async () => {
+    const video = Buffer.from('0123456789');
+    await writeFile(path.join(tempDir, 'clip.mp4'), video);
+    const workspace = await workspaceStore.create({ name: 'test-ws', folderPath: tempDir });
+    const { default: fileRoutes } = await import('./files.js');
+    const app = express();
+    app.use('/api/workspaces/:id/files', fileRoutes);
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(
+        `http://127.0.0.1:${port}/api/workspaces/${workspace.id}/files/media?path=clip.mp4`,
+        { headers: { Range: 'bytes=20-30' } },
+      );
+
+      assert.strictEqual(response.status, 416);
+      assert.strictEqual(response.headers.get('content-range'), 'bytes */10');
+      assert.strictEqual((await response.arrayBuffer()).byteLength, 0);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('GET /media refuses symlinked videos outside the workspace', async () => {
+    const outsideDir = await mkdtemp(path.join(os.tmpdir(), 'comate-video-outside-'));
+    const outsidePath = path.join(outsideDir, 'private.mp4');
+    await writeFile(outsidePath, Buffer.from('private-video'));
+    await symlink(outsidePath, path.join(tempDir, 'linked.mp4'));
+    const workspace = await workspaceStore.create({ name: 'test-ws', folderPath: tempDir });
+    const { default: fileRoutes } = await import('./files.js');
+    const app = express();
+    app.use('/api/workspaces/:id/files', fileRoutes);
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(
+        `http://127.0.0.1:${port}/api/workspaces/${workspace.id}/files/media?path=linked.mp4`,
+      );
+      assert.strictEqual(response.status, 403);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await rm(outsideDir, { recursive: true, force: true });
+    }
   });
 
   it('GET /content declines to inline images larger than the preview limit', async () => {
