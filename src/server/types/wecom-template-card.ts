@@ -65,19 +65,6 @@ export interface ToolApprovalCardOptions {
   taskId?: string;
 }
 
-/** Options for building a question card. */
-export interface QuestionCardOptions {
-  requestId: string;
-  sessionId: string;
-  questions: Array<{
-    question: string;
-    header?: string;
-    options: { label: string; description?: string; preview?: string }[];
-    multiSelect: boolean;
-  }>;
-  taskId?: string;
-}
-
 /** Options for building a workspace-switch (`/workspace`) card. */
 export interface WorkspaceListCardOptions {
   requestId: string;

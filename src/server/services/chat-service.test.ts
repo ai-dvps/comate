@@ -26,7 +26,7 @@ import type { Provider } from '../models/provider.js';
 import type { SseEvent } from '../types/message.js';
 import type { Options, SDKSessionInfo, SessionMessage, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { BotPersona, BotRole } from '../models/bot.js';
-import type { QuestionPayload, PermissionSuggestion } from '../types/message.js';
+import type { PermissionSuggestion } from '../types/message.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -909,20 +909,6 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
           }
         });
       },
-      requestToolQuestion: (requestId: string, _questions: QuestionPayload[], _input: Record<string, unknown>, options: { signal?: AbortSignal; timeout?: number } = {}) => {
-        return new Promise<PermissionResult>((resolve) => {
-          pendingApprovals.set(requestId, { resolve });
-          if (options.timeout) {
-            setTimeout(() => {
-              const p = pendingApprovals.get(requestId);
-              if (p) {
-                pendingApprovals.delete(requestId);
-                p.resolve({ behavior: 'deny', message: 'Request timed out waiting for user response.' });
-              }
-            }, options.timeout);
-          }
-        });
-      },
       interrupt: () => Promise.resolve(),
       addBotEventHandler: () => {},
       clearBotEventHandlers: () => {},
@@ -1341,7 +1327,7 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     assert.ok(!logs.some((line) => line.includes('DisallowedSkill')), 'log line must not contain the skill name');
   });
 
-  it('bot session: AskUserQuestion without runtime logs missing-runtime', async () => {
+  it('bot session: AskUserQuestion no longer routes to the pending-question flow (U2)', async () => {
     const canUseTool = await captureBotCanUseTool({
       wecomBotEnabled: true,
       wecomToolPermissions: {
@@ -1357,27 +1343,17 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
       },
     });
 
-    // Remove the runtime so the ask path cannot find it.
-    (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.delete('s1');
+    // With the interception branches removed, the gate treats the tool like any
+    // other uncategorized tool call: an immediate policy verdict, never a
+    // pending question. (Production blocks the call earlier — disallowedTools
+    // plus the deny backstop asserted by the U1 tests.)
+    const result = await canUseTool('AskUserQuestion', {
+      questions: [{ question: 'ok?', options: [{ label: 'yes' }] }],
+    }, { toolUseID: 'tu-q-gone', signal: new AbortController().signal });
 
-    const { logs, restore } = collectDiagLogs();
-    let result;
-    try {
-      result = await canUseTool('AskUserQuestion', {
-        questions: [{ question: 'ok?', options: [{ label: 'yes' }] }],
-      });
-    } finally {
-      restore();
-    }
-    assert.strictEqual(result.behavior, 'deny');
-    assert.ok(
-      logs.some((line) => line.includes('reason=missing-runtime') && line.includes('tool=AskUserQuestion')),
-      'expected missing-runtime to be logged',
-    );
-    assert.ok(
-      !logs.some((line) => line.includes('ok?')),
-      'log line must not contain question text',
-    );
+    assert.strictEqual(result.behavior, 'allow', 'uncategorized tool falls through to the policy verdict');
+    const runtime = (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.get('s1')!;
+    assert.strictEqual(runtime.getStatus().pendingCount, 0, 'no pending question may be registered');
   });
 
   it('bot session: ask policy without runtime logs missing-runtime', async () => {
@@ -1571,47 +1547,6 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     assert.strictEqual(result.behavior, 'deny');
     if (result.behavior === 'deny') {
       assert.ok(result.message.includes('timed out'), 'timeout should produce a timed-out message');
-    }
-  });
-
-  it('bot session AskUserQuestion registers a pending question and resolves with answers', async () => {
-    const canUseTool = await captureBotCanUseTool({
-      wecomBotEnabled: true,
-      wecomToolPermissions: {
-        posture: 'safe',
-        categoryDefaults: {
-          fileRead: 'allow',
-          fileWrite: 'deny',
-          shell: 'deny',
-          network: 'deny',
-          subagents: 'deny',
-          reply: 'allow',
-        },
-      },
-    });
-
-    const promise = canUseTool('AskUserQuestion', {
-      questions: [{ question: 'What is your favorite color?', options: [{ label: 'Red' }, { label: 'Blue' }] }],
-    }, { toolUseID: 'tu-q-1', signal: new AbortController().signal });
-
-    assert.ok(promise instanceof Promise, 'AskUserQuestion should return a Promise');
-
-    const runtime = (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.get('s1')!;
-    runtime.resolveApproval('tu-q-1', {
-      behavior: 'allow',
-      updatedInput: {
-        questions: [{ question: 'What is your favorite color?', options: [{ label: 'Red' }, { label: 'Blue' }] }],
-        answers: { 'What is your favorite color?': 'Red' },
-      },
-    });
-
-    const result = await promise;
-    assert.strictEqual(result.behavior, 'allow');
-    if (result.behavior === 'allow') {
-      assert.deepStrictEqual(
-        (result.updatedInput as Record<string, unknown>).answers,
-        { 'What is your favorite color?': 'Red' },
-      );
     }
   });
 
@@ -2373,7 +2308,6 @@ describe('chat-service bot-level dynamic policy (legacy permission model)', { co
       pushMessage: () => {},
       resolveApproval: () => {},
       requestToolApproval: () => Promise.resolve({ behavior: 'allow' as const }),
-      requestToolQuestion: () => Promise.resolve({ behavior: 'allow' as const }),
       interrupt: () => Promise.resolve(),
       addBotEventHandler: () => {},
       clearBotEventHandlers: () => {},
@@ -2712,7 +2646,6 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
         approvalCalls.push({ toolName, input, options });
         return Promise.resolve(approvalResult ?? { behavior: 'allow' as const });
       },
-      requestToolQuestion: () => Promise.resolve({ behavior: 'allow' as const }),
       consumeResolutionProvenance: () => provenance,
       // U9: the MCP classification gate reads annotations through this
       // channel; absent (undefined map) classifies every tool unknown.
