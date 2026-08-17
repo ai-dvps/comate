@@ -17,6 +17,7 @@ import {
   Pencil,
   Plus,
   Puzzle,
+  RefreshCw,
   Search,
   Settings,
   Sparkles,
@@ -26,6 +27,8 @@ import {
 } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { getSessionDisplayName } from '../lib/session-filter'
+import { openFolder } from '../lib/desktop-api'
+import { useToastStore } from '../stores/toast-store'
 import { useChatStore, type ChatSession } from '../stores/chat-store'
 import {
   CHANNEL_STATUS_CLASS,
@@ -118,6 +121,7 @@ export default function AgentCommandCenter({
   onOpenTodos,
   onOpenAnalytics,
   onOpenSettings,
+  onOpenSettingsForWorkspace,
   onOpenCapabilities,
   onActivateWork,
   activeDestination = 'work',
@@ -162,18 +166,18 @@ export default function AgentCommandCenter({
   const [newSessionName, setNewSessionName] = useState('')
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
   const [editingSessionName, setEditingSessionName] = useState('')
-  const [contextMenu, setContextMenu] = useState<{
-    x: number
-    y: number
-    workspaceId: string
-    sessionId: string
-  } | null>(null)
+  const [contextMenu, setContextMenu] = useState<
+    | { type: 'session'; x: number; y: number; workspaceId: string; sessionId: string }
+    | { type: 'workspace'; x: number; y: number; workspaceId: string }
+    | null
+  >(null)
   const [deleteTarget, setDeleteTarget] = useState<{
     workspaceId: string
     session: ChatSession
   } | null>(null)
   const dragRef = useRef<{ move: (event: MouseEvent) => void; up: () => void } | null>(null)
   const requestedSessionsRef = useRef(new Set<string>())
+  const refreshingWorkspacesRef = useRef(new Set<string>())
   const searchButtonRef = useRef<HTMLButtonElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const userButtonRef = useRef<HTMLButtonElement>(null)
@@ -199,6 +203,30 @@ export default function AgentCommandCenter({
       void fetchSessions(workspace.id)
     }
   }, [fetchSessions, sessions, workspaces])
+
+  // Single refetch path for the workspace menu's Reload Sessions and U4's
+  // focus refresh: guards against duplicate concurrent fetches per workspace.
+  const refreshWorkspaceSessions = useCallback(async (workspaceId: string) => {
+    if (refreshingWorkspacesRef.current.has(workspaceId)) return
+    refreshingWorkspacesRef.current.add(workspaceId)
+    try {
+      await fetchSessions(workspaceId)
+    } finally {
+      refreshingWorkspacesRef.current.delete(workspaceId)
+    }
+  }, [fetchSessions])
+
+  const openWorkspaceFolder = useCallback(async (folderPath: string) => {
+    try {
+      await openFolder(folderPath)
+    } catch (error) {
+      useToastStore.getState().addToast({
+        severity: 'error',
+        message: tc('workspaceMenu.openFolderFailed'),
+      })
+      console.error('Failed to open workspace folder:', error)
+    }
+  }, [tc])
 
   const endDrag = useCallback(() => {
     if (!dragRef.current) return
@@ -478,6 +506,15 @@ export default function AgentCommandCenter({
             return (
               <section key={workspace.id} className="mb-1" aria-label={workspace.name}>
                 <div
+                  onContextMenu={(event) => {
+                    event.preventDefault()
+                    setContextMenu({
+                      type: 'workspace',
+                      x: event.clientX,
+                      y: event.clientY,
+                      workspaceId: workspace.id,
+                    })
+                  }}
                   className={cn(
                     'group flex h-9 items-center gap-1 rounded-md px-1.5',
                     isWorkspaceActive ? 'bg-surface-active' : 'hover:bg-surface-hover',
@@ -608,6 +645,7 @@ export default function AgentCommandCenter({
                           onContextMenu={(event) => {
                             event.preventDefault()
                             setContextMenu({
+                              type: 'session',
                               x: event.clientX,
                               y: event.clientY,
                               workspaceId: workspace.id,
@@ -804,6 +842,54 @@ export default function AgentCommandCenter({
       ) : null}
 
       {contextMenu ? (() => {
+        if (contextMenu.type === 'workspace') {
+          const workspace = workspaces.find((candidate) => candidate.id === contextMenu.workspaceId)
+          if (!workspace) return null
+          const menuItemClass = 'flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-text-secondary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:bg-surface-hover disabled:opacity-50 disabled:pointer-events-none'
+          return (
+            <div
+              role="menu"
+              className="fixed z-50 min-w-44 overflow-hidden rounded-md border border-border bg-surface py-1 shadow-xl"
+              style={{ left: contextMenu.x, top: contextMenu.y }}
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className={menuItemClass}
+                onClick={() => {
+                  onOpenSettingsForWorkspace?.(workspace.id)
+                  setContextMenu(null)
+                }}
+              >
+                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />{tc('workspaceMenu.editWorkspace')}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className={menuItemClass}
+                disabled={!workspace.folderPath}
+                onClick={() => {
+                  setContextMenu(null)
+                  if (workspace.folderPath) void openWorkspaceFolder(workspace.folderPath)
+                }}
+              >
+                <FolderOpen className="h-3.5 w-3.5" aria-hidden="true" />{tc('workspaceMenu.openFolder')}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className={menuItemClass}
+                onClick={() => {
+                  setContextMenu(null)
+                  void refreshWorkspaceSessions(workspace.id)
+                }}
+              >
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />{tc('workspaceMenu.reloadSessions')}
+              </button>
+            </div>
+          )
+        }
         const session = sessions[contextMenu.workspaceId]?.find(
           (candidate) => candidate.id === contextMenu.sessionId,
         )
