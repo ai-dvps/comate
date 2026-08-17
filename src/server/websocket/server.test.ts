@@ -104,6 +104,102 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
     }
   });
 
+  it('acknowledges send admission with the matching client turn id only after push resolves', async () => {
+    const originalPushMessage = chatService.pushMessage.bind(chatService);
+    let resolvePush: (() => void) | undefined;
+    chatService.pushMessage = async () => new Promise<void>((resolve) => {
+      resolvePush = resolve;
+    });
+    try {
+      ws = await connect();
+      const responsePromise = waitForMessage<WsResponse>(ws, (message) =>
+        'id' in message && message.id === 'send-1',
+      );
+      sendRequest(ws, 'send-1', 'sendMessage', {
+        workspaceId: 'ws-1',
+        sessionId: 'session-1',
+        clientTurnId: 'turn-1',
+        content: 'hello',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.ok(resolvePush, 'push should be awaiting runtime admission');
+      resolvePush();
+
+      const response = await responsePromise;
+      assert.deepEqual(response.payload, { sent: true, clientTurnId: 'turn-1' });
+    } finally {
+      chatService.pushMessage = originalPushMessage;
+    }
+  });
+
+  it('rejects malformed send payloads without a partial runtime push', async () => {
+    const originalPushMessage = chatService.pushMessage.bind(chatService);
+    let pushed = false;
+    chatService.pushMessage = async () => {
+      pushed = true;
+    };
+    try {
+      ws = await connect();
+      const responsePromise = waitForMessage<WsErrorResponse>(ws, (message) =>
+        'id' in message && message.id === 'send-invalid',
+      );
+      sendRequest(ws, 'send-invalid', 'sendMessage', {
+        workspaceId: 'ws-1',
+        sessionId: 'session-1',
+        content: '',
+        images: [],
+      });
+
+      const response = await responsePromise;
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'INVALID_SEND_MESSAGE');
+      assert.equal(pushed, false);
+    } finally {
+      chatService.pushMessage = originalPushMessage;
+    }
+  });
+
+  it('returns structured pre-admission image validation failures without acknowledging', async () => {
+    const originalPushMessage = chatService.pushMessage.bind(chatService);
+    chatService.pushMessage = async () => {
+      const error = new Error('Image media type does not match its contents');
+      Object.assign(error, {
+        details: {
+          kind: 'image_input_validation',
+          code: 'media_signature_mismatch',
+          message: error.message,
+          imageIndex: 0,
+        },
+      });
+      throw error;
+    };
+    try {
+      ws = await connect();
+      const responsePromise = waitForMessage<WsErrorResponse>(ws, (message) =>
+        'id' in message && message.id === 'send-rejected',
+      );
+      sendRequest(ws, 'send-rejected', 'sendMessage', {
+        workspaceId: 'ws-1',
+        sessionId: 'session-1',
+        clientTurnId: 'turn-rejected',
+        content: '',
+        images: [{ id: 'bad', mediaType: 'image/png', data: 'AA==', width: 1, height: 1 }],
+      });
+
+      const response = await responsePromise;
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'IMAGE_INPUT_VALIDATION');
+      assert.deepEqual(response.error.details, {
+        kind: 'image_input_validation',
+        code: 'media_signature_mismatch',
+        message: 'Image media type does not match its contents',
+        imageIndex: 0,
+      });
+    } finally {
+      chatService.pushMessage = originalPushMessage;
+    }
+  });
+
   it('multiplexes multiple concurrent requests', async () => {
     const originalStatus = chatService.getSessionsStatus.bind(chatService);
     chatService.getSessionsStatus = () => ({

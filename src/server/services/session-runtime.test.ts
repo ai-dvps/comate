@@ -189,6 +189,65 @@ describe('session-runtime activity callback', { concurrency: false }, () => {
     assert.strictEqual(activityCalls, 1);
   });
 
+  it('queues ordered native Claude image blocks with optional text', async () => {
+    const sdk = createActivitySdkClient();
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      sdk.client,
+    );
+    const content = [
+      { type: 'text' as const, text: 'Fix this layout' },
+      {
+        type: 'image' as const,
+        source: {
+          type: 'base64' as const,
+          media_type: 'image/png' as const,
+          data: 'iVBORw0KGgo=',
+        },
+      },
+      {
+        type: 'image' as const,
+        source: {
+          type: 'base64' as const,
+          media_type: 'image/jpeg' as const,
+          data: '/9j/2Q==',
+        },
+      },
+    ];
+
+    runtime.pushMessage(content);
+
+    const queued = await sdk.nextInput();
+    assert.deepEqual(queued.message.content, content);
+  });
+
+  it('accepts an image-only native Claude turn', async () => {
+    const sdk = createActivitySdkClient();
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      sdk.client,
+    );
+    const content = [{
+      type: 'image' as const,
+      source: {
+        type: 'base64' as const,
+        media_type: 'image/gif' as const,
+        data: 'R0lGODlh',
+      },
+    }];
+
+    runtime.pushMessage(content);
+
+    const queued = await sdk.nextInput();
+    assert.deepEqual(queued.message.content, content);
+  });
+
   it('does not invoke onActivity for each SDK message in runMessageLoop', async () => {
     const messages: SDKMessage[] = [
       { type: 'text', text: 'hello' } as SDKMessage,
