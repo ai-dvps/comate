@@ -13,7 +13,6 @@ import type {
   NormalizedSelectedItem,
   ParsedCardEvent,
   ToolApprovalCardOptions,
-  QuestionCardOptions,
   SessionListCardOptions,
   WorkspaceListCardOptions,
   EscalationApprovalCardOptions,
@@ -236,97 +235,9 @@ function humanizeToolName(toolName: string): string {
     case 'command': return '执行命令';
     case 'file_write': return '修改文件';
     case 'web_research': return '查询资料';
-    case 'question': return '回答问题';
     case 'browser': return '操作浏览器';
     default: return '执行操作';
   }
-}
-
-function formatQuestionOption(option: { label: string; description?: string }): string {
-  if (!option.description?.trim()) return option.label;
-  return truncateFold(`${option.label} — ${option.description.trim()}`, 80);
-}
-
-/**
- * Build a question card.
- * - Single question with options → `vote_interaction` (mode 0 for single
- *   select, mode 1 for multi-select)
- * - Multiple questions → `multiple_interaction`
- *
- * For free-text questions with no options, we render a single text-notice card
- * instructing the user to reply in chat (fallback because cards lack clean text
- * input).
- */
-export function buildQuestionCard(options: QuestionCardOptions): TemplateCard {
-  const { requestId, sessionId, questions, taskId } = options;
-
-  // If any question has no options, fall back to a text-notice card instructing
-  // the user to reply in chat.
-  const hasFreeText = questions.some((q) => q.options.length === 0);
-  if (hasFreeText) {
-    const questionText = questions.map((q) => q.question).join('\n');
-    return {
-      card_type: 'text_notice',
-      source: { desc: 'Comate', desc_color: 0 },
-      main_title: {
-        title: '需要您的回答',
-        desc: questionText,
-      },
-      task_id: taskId,
-      sub_title_text: '请在聊天中直接回复您的答案。',
-    };
-  }
-
-  // Single question with options → vote_interaction
-  if (questions.length === 1) {
-    const q = questions[0];
-    return {
-      card_type: 'vote_interaction',
-      source: { desc: 'Comate', desc_color: 0 },
-      main_title: {
-        title: q.header ?? '请选择',
-        desc: q.question,
-      },
-      task_id: taskId,
-      checkbox: {
-        question_key: encodeButtonKey(requestId, 'allow', sessionId),
-        mode: q.multiSelect ? 1 : 0,
-        option_list: q.options.map((opt, idx) => ({
-          id: String(idx),
-          text: formatQuestionOption(opt),
-        })),
-      },
-      submit_button: {
-        text: '提交',
-        key: encodeButtonKey(requestId, 'allow', sessionId),
-      },
-    };
-  }
-
-  // Multiple questions → multiple_interaction
-  const selectList = questions.map((q, qIdx) => ({
-    question_key: encodeButtonKey(`${requestId}:${qIdx}`, 'allow', sessionId),
-    title: q.header ?? `问题 ${qIdx + 1}`,
-    option_list: q.options.map((opt, idx) => ({
-      id: String(idx),
-      text: formatQuestionOption(opt),
-    })),
-  }));
-
-  return {
-    card_type: 'multiple_interaction',
-    source: { desc: 'Comate', desc_color: 0 },
-    main_title: {
-      title: '请回答以下问题',
-      desc: questions.map((q) => q.question).join(' / '),
-    },
-    task_id: taskId,
-    select_list: selectList,
-    submit_button: {
-      text: '提交',
-      key: encodeButtonKey(requestId, 'allow', sessionId),
-    },
-  };
 }
 
 /**
@@ -618,35 +529,12 @@ export function verifySessionOwner(
   return ownerChannelUserId === wecomUserId;
 }
 
-/** Approximate character cap for a folded question prompt (KTD4). */
-const FOLD_QUESTION_PROMPT_MAX = 200;
+/** Approximate character cap for a folded card summary line (KTD4). */
+const FOLD_PROMPT_MAX = 200;
 
-function truncateFold(text: string, max: number = FOLD_QUESTION_PROMPT_MAX): string {
+function truncateFold(text: string, max: number = FOLD_PROMPT_MAX): string {
   if (text.length <= max) return text;
   return `${text.slice(0, max)}…`;
-}
-
-/**
- * Format the resolved AskUserQuestion fold for the streaming reply (R2, KTD3).
- *
- * Emits one `❓{question}` line and one `↳ 你的选择：{labels}` line per
- * question that has a non-empty answer, in question order. Questions with no
- * answer (or a whitespace-only answer) are omitted, and an all-empty result
- * returns `''` so the caller can skip the append. Multi-select labels arrive
- * pre-joined in `answers` (see `buildAnswersFromCardEvent`). Question prompts
- * are capped at ~200 characters with an ellipsis. Pure function, no I/O.
- */
-export function formatQuestionFold(
-  questions: ReadonlyArray<{ question: string }>,
-  answers: Record<string, string>,
-): string {
-  const blocks: string[] = [];
-  for (const q of questions) {
-    const answer = answers[q.question];
-    if (!answer || !answer.trim()) continue;
-    blocks.push(`❓${truncateFold(q.question)}\n↳ 你的选择：${answer}`);
-  }
-  return blocks.join('\n\n');
 }
 
 /** Permission outcomes that can be folded into the streaming reply. */

@@ -185,103 +185,21 @@ describe('FeishuCardActionHandler', { concurrency: false }, () => {
     assert.strictEqual((replay as { toast: { type: string } }).toast.type, 'error');
   });
 
-  it('question single-select waits for submit and terminalizes with the answer', async () => {
+  it('U3: no longer exposes the question flow (actions and registration removed)', async () => {
+    workspaceStore.get = async () => makeWorkspace();
     const { sessionId } = await createFeishuSessionForUser(nonOwnerUserId);
 
-    let resolvedInput: unknown = null;
-    chatService.getRuntimeIfExists = () => ({
-      getPendingCardState: () => ({ type: 'question' }),
-      resolveApproval: (_requestId: string, result: unknown) => {
-        resolvedInput = result;
-        return true;
-      },
-    }) as ReturnType<typeof chatService.getRuntimeIfExists>;
-
-    handler.registerQuestion('req-1', [
-      { question: 'Pick one', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false },
-    ]);
-
-    const payload: CardActionPayload = {
-      action: 'question',
-      workspaceId: 'ws-1',
-      sessionId,
-      requestId: 'req-1',
-      questionIndex: 0,
-      answer: 'A',
-      multiSelect: false,
-    };
-    const result = await handler.handle(nonOwnerUserId, payload);
-
-    assert.strictEqual(resolvedInput, null);
-    assert.match((result as { toast: { content: string } }).toast.content, /已选择/);
-
-    const submitted = await handler.handle(nonOwnerUserId, {
-      action: 'question_submit',
-      workspaceId: 'ws-1',
-      sessionId,
-      requestId: 'req-1',
-    });
-    assert.strictEqual(
-      (resolvedInput as { updatedInput: { answers: Record<string, string> } }).updatedInput.answers['Pick one'],
-      'A',
-    );
-    assert.ok((submitted as { terminalCard?: unknown }).terminalCard);
-  });
-
-  it('rejects forged question options and ignores client-carried selection mode', async () => {
-    const { sessionId } = await createFeishuSessionForUser(nonOwnerUserId);
-    chatService.getRuntimeIfExists = () => ({
-      getPendingCardState: () => ({ type: 'question' }),
-      resolveApproval: () => true,
-    }) as ReturnType<typeof chatService.getRuntimeIfExists>;
-    handler.registerQuestion('req-forged', [
-      { question: 'Pick one', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false },
-    ]);
-
-    const forged = await handler.handle(nonOwnerUserId, {
-      action: 'question',
-      workspaceId: 'ws-1',
-      sessionId,
-      requestId: 'req-forged',
-      questionIndex: 0,
-      answer: 'INJECTED',
-      multiSelect: true,
-    });
-    assert.strictEqual((forged as { toast: { type: string } }).toast.type, 'error');
-
-    await handler.handle(nonOwnerUserId, {
-      action: 'question', workspaceId: 'ws-1', sessionId, requestId: 'req-forged',
-      questionIndex: 0, answer: 'A', multiSelect: true,
-    });
-    await handler.handle(nonOwnerUserId, {
-      action: 'question', workspaceId: 'ws-1', sessionId, requestId: 'req-forged',
-      questionIndex: 0, answer: 'B', multiSelect: true,
-    });
-    const submitted = await handler.handle(nonOwnerUserId, {
-      action: 'question_submit', workspaceId: 'ws-1', sessionId, requestId: 'req-forged',
-    });
-    const cardText = JSON.stringify((submitted as { terminalCard: unknown }).terminalCard);
-    assert.match(cardText, /B/);
-    assert.doesNotMatch(cardText, /A；B/);
-  });
-
-  it('keeps the question pending when submit has no selection', async () => {
-    const { sessionId } = await createFeishuSessionForUser(nonOwnerUserId);
-    let resolveCalls = 0;
-    chatService.getRuntimeIfExists = () => ({
-      getPendingCardState: () => ({ type: 'question' }),
-      resolveApproval: () => { resolveCalls++; return true; },
-    }) as ReturnType<typeof chatService.getRuntimeIfExists>;
-    handler.registerQuestion('req-empty', [
-      { question: 'Pick one', options: [{ label: 'A' }], multiSelect: false },
-    ]);
+    const proto = FeishuCardActionHandler.prototype as unknown as Record<string, unknown>;
+    assert.strictEqual(proto.registerQuestion, undefined, 'registerQuestion must be gone');
+    assert.strictEqual(proto.unregisterQuestion, undefined, 'unregisterQuestion must be gone');
 
     const result = await handler.handle(nonOwnerUserId, {
-      action: 'question_submit', workspaceId: 'ws-1', sessionId, requestId: 'req-empty',
+      action: 'question',
+      workspaceId: 'ws-1',
+      sessionId,
+      requestId: 'req-q',
     });
-
-    assert.strictEqual(resolveCalls, 0);
-    assert.strictEqual(result.toast.type, 'error');
+    assert.strictEqual(result.toast.content, '未知操作。');
     assert.strictEqual(result.terminalCard, undefined);
   });
 });

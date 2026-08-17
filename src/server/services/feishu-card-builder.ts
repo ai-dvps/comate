@@ -1,6 +1,5 @@
 import type { Workspace } from '../models/workspace.js';
 import type { ChatSession } from '../models/session.js';
-import type { QuestionPayload } from '../types/message.js';
 import { humanizeBotToolName } from '../utils/bot-tool-presentation.js';
 
 /**
@@ -290,59 +289,6 @@ export function buildApprovalCard(params: {
       behavior: 'deny',
     }),
   );
-
-  return cardV2(elements);
-}
-
-export function buildQuestionCard(params: {
-  requestId: string;
-  workspaceId: string;
-  sessionId: string;
-  questions: QuestionPayload[];
-}): FeishuCardV2 {
-  const { requestId, workspaceId, sessionId, questions } = params;
-  const elements: unknown[] = [markdownText('需要你的回答'), plainText('请回答以下问题：')];
-  let hasOptions = false;
-
-  for (const [index, question] of questions.entries()) {
-    elements.push(plainText(question.question));
-
-    if (question.options && question.options.length > 0) {
-      hasOptions = true;
-      if (question.multiSelect) {
-        elements.push(plainText('（多选）'));
-      }
-      for (const option of question.options) {
-        elements.push(
-          actionButton(
-            option.description ? `${option.label} — ${option.description}` : option.label,
-            'default', {
-            action: 'question',
-            workspaceId,
-            sessionId,
-            requestId,
-            questionIndex: index,
-            answer: option.label,
-            multiSelect: question.multiSelect,
-            }),
-        );
-      }
-    } else {
-      // Free-form questions are not supported via card buttons; ask the user to reply in chat.
-      elements.push(plainText('请在聊天中直接回复该问题。'));
-    }
-  }
-
-  if (hasOptions) {
-    elements.push(
-      actionButton('提交', 'primary', {
-        action: 'question_submit',
-        workspaceId,
-        sessionId,
-        requestId,
-      }),
-    );
-  }
 
   return cardV2(elements);
 }

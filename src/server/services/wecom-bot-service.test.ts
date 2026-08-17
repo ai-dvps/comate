@@ -633,29 +633,6 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     }]);
   });
 
-  it('denies a pending question when its answer card cannot be delivered', async () => {
-    const ws = (await workspaceStore.list())[0];
-    const conn = (service as any).connections.values().next().value;
-    conn.status = 'disconnected';
-    pendingCardState = {
-      type: 'question',
-      questions: [{ question: 'Which target?', options: [{ label: 'A' }], multiSelect: false }],
-    };
-
-    await assert.rejects(
-      (service as any).sendSessionTemplateCard(ws.id, 'owner-1', testSessionId, {
-        card_type: 'vote_interaction',
-        task_id: 'req-question-undeliverable',
-        main_title: { title: '需要你的回答', desc: 'Which target?' },
-      }),
-      /is not connected/,
-    );
-
-    assert.strictEqual(resolvedApprovals.length, 1);
-    assert.strictEqual(resolvedApprovals[0].requestId, 'req-question-undeliverable');
-    assert.strictEqual(resolvedApprovals[0].result.behavior, 'deny');
-  });
-
   it('leaves disconnected admin escalations to the durable delivery queue', async () => {
     const ws = (await workspaceStore.list())[0];
     const bot = workspaceStore.listBots()[0];
@@ -813,55 +790,33 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     assert.strictEqual(updatedCards.length, 0);
   });
 
-  it('resolves question when user submits an answer', async () => {
-    const ws = (await workspaceStore.list())[0];
-    pendingCardState = {
-      type: 'question',
-      questions: [
-        {
-          question: 'Choose one',
-          options: [{ label: 'A' }, { label: 'B' }],
-          multiSelect: false,
-        },
-      ],
-    };
-
-    const key = encodeButtonKey('req-1', 'allow', testSessionId);
-    await (service as any).handleTemplateCardEvent(
-      ws.id,
-      makeCardEvent(key, {
-        event: {
-          selected_items: [
-            { question_key: encodeButtonKey('req-1', 'allow', testSessionId), option_ids: ['1'] },
-          ],
-        },
-      }),
+  it('U2: no longer defines buildAnswersFromCardEvent (question flow removed)', () => {
+    assert.strictEqual(
+      (service as unknown as Record<string, unknown>).buildAnswersFromCardEvent,
+      undefined,
+      'the card-event answer parser must be gone from the bot service',
     );
-
-    assert.strictEqual(resolvedApprovals.length, 1);
-    assert.strictEqual(resolvedApprovals[0].result.behavior, 'allow');
-    assert.deepStrictEqual(resolvedApprovals[0].result.updatedInput, {
-      questions: pendingCardState.questions,
-      answers: { 'Choose one': 'B' },
-    });
-    assert.match(updatedCards[0].card.main_title.desc, /已提交$/);
   });
 
-  it('uses a normal text reply to resolve one pending free-text question', async () => {
+  it('U2: a chat message at a decision point starts a normal turn — no free-text reroute (AE1)', async () => {
     const ws = (await workspaceStore.list())[0];
     const questions = [{ question: '请描述目标', options: [], multiSelect: false }];
-    let pushedMessages = 0;
+    const pushedMessages: Array<{ sessionId: string; workspaceId: string; content: string }> = [];
     const previousPushMessage = chatService.pushMessage;
+    const previousGetRuntime = chatService.getRuntimeIfExists;
     chatService.getRuntimeIfExists = () =>
       ({
+        // Even a stale pending free-text question must be ignored: the reply
+        // enters as a fresh user turn, never as a question answer.
         getPendingFreeTextQuestion: () => ({ requestId: 'req-free-text', questions }),
+        getPendingCardState: () => pendingCardState,
         resolveApproval: (requestId: string, result: any) => {
           callOrder.push('resolve');
           resolvedApprovals.push({ requestId, result });
         },
       }) as any;
-    chatService.pushMessage = async () => {
-      pushedMessages += 1;
+    chatService.pushMessage = async (sessionId: string, workspaceId: string, content: string) => {
+      pushedMessages.push({ sessionId, workspaceId, content });
     };
     injectActiveStream();
 
@@ -878,74 +833,14 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
       });
     } finally {
       chatService.pushMessage = previousPushMessage;
+      chatService.getRuntimeIfExists = previousGetRuntime;
     }
 
-    assert.strictEqual(pushedMessages, 0, 'answer must not become a second user turn');
-    assert.strictEqual(resolvedApprovals[0].requestId, 'req-free-text');
-    assert.deepStrictEqual(resolvedApprovals[0].result.updatedInput, {
-      questions,
-      answers: { '请描述目标': '先完成登录流程' },
-    });
-    assert.deepStrictEqual(foldedTexts, ['❓请描述目标\n↳ 你的选择：先完成登录流程']);
-  });
-
-  it('resolves multiple questions from a multiple_interaction card', async () => {
-    const ws = (await workspaceStore.list())[0];
-    pendingCardState = {
-      type: 'question',
-      questions: [
-        { question: 'Q1', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false },
-        { question: 'Q2', options: [{ label: 'C' }, { label: 'D' }], multiSelect: false },
-      ],
-    };
-
-    const key = encodeButtonKey('req-1', 'allow', testSessionId);
-    await (service as any).handleTemplateCardEvent(
-      ws.id,
-      makeCardEvent(key, {
-        event: {
-          selected_items: [
-            { question_key: encodeButtonKey('req-1:0', 'allow', testSessionId), option_ids: ['0'] },
-            { question_key: encodeButtonKey('req-1:1', 'allow', testSessionId), option_ids: ['1'] },
-          ],
-        },
-      }),
-    );
-
-    assert.deepStrictEqual(resolvedApprovals[0].result.updatedInput.answers, {
-      Q1: 'A',
-      Q2: 'D',
-    });
-  });
-
-  it('joins multi-select options with a comma', async () => {
-    const ws = (await workspaceStore.list())[0];
-    pendingCardState = {
-      type: 'question',
-      questions: [
-        {
-          question: 'Pick all that apply',
-          options: [{ label: 'A' }, { label: 'B' }, { label: 'C' }],
-          multiSelect: true,
-        },
-      ],
-    };
-
-    const key = encodeButtonKey('req-1', 'allow', testSessionId);
-    await (service as any).handleTemplateCardEvent(
-      ws.id,
-      makeCardEvent(key, {
-        event: {
-          selected_items: [
-            { question_key: encodeButtonKey('req-1', 'allow', testSessionId), option_ids: ['0', '2'] },
-          ],
-        },
-      }),
-    );
-
-    assert.deepStrictEqual(resolvedApprovals[0].result.updatedInput.answers, {
-      'Pick all that apply': 'A, C',
-    });
+    assert.strictEqual(pushedMessages.length, 1, 'the message must become a normal user turn');
+    assert.strictEqual(pushedMessages[0].content, '先完成登录流程');
+    assert.strictEqual(pushedMessages[0].sessionId, testSessionId);
+    assert.deepStrictEqual(resolvedApprovals, [], 'no pending question may be resolved by a chat reply');
+    assert.deepStrictEqual(foldedTexts, [], 'no question fold may be appended');
   });
 
   it('keeps an approved permission receipt out of the final answer bubble', async () => {
@@ -1006,46 +901,6 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     assert.match(updatedCards[0].card.main_title.desc, /已始终允许$/);
   });
 
-  it('keeps a card question receipt out of the final answer bubble', async () => {
-    const ws = (await workspaceStore.list())[0];
-    pendingCardState = {
-      type: 'question',
-      questions: [{ question: 'Choose one', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false }],
-    };
-    injectActiveStream();
-
-    const key = encodeButtonKey('req-1', 'allow', testSessionId);
-    await (service as any).handleTemplateCardEvent(
-      ws.id,
-      makeCardEvent(key, {
-        event: { selected_items: [{ question_key: key, option_ids: ['1'] }] },
-      }),
-    );
-
-    assert.deepStrictEqual(foldedTexts, []);
-    assert.deepStrictEqual(callOrder, ['resolve']);
-    assert.deepStrictEqual(resolvedApprovals[0].result.updatedInput.answers, { 'Choose one': 'B' });
-  });
-
-  it('keeps multi-select receipts on the terminal card', async () => {
-    const ws = (await workspaceStore.list())[0];
-    pendingCardState = {
-      type: 'question',
-      questions: [{ question: 'Pick all', options: [{ label: 'A' }, { label: 'B' }, { label: 'C' }], multiSelect: true }],
-    };
-    injectActiveStream();
-
-    const key = encodeButtonKey('req-1', 'allow', testSessionId);
-    await (service as any).handleTemplateCardEvent(
-      ws.id,
-      makeCardEvent(key, {
-        event: { selected_items: [{ question_key: key, option_ids: ['0', '2'] }] },
-      }),
-    );
-
-    assert.deepStrictEqual(foldedTexts, []);
-  });
-
   it('skips the fold when no stream is active and still resolves (R4/AE5)', async () => {
     const ws = (await workspaceStore.list())[0];
     // No injectActiveStream — activeStreamReplies is empty (turn finalized / abandoned card).
@@ -1056,47 +911,6 @@ describe('WeComBotService template card events', { concurrency: false }, () => {
     assert.deepStrictEqual(foldedTexts, []);
     assert.strictEqual(resolvedApprovals.length, 1);
     assert.match(updatedCards[0].card.main_title.desc, /已允许$/);
-  });
-
-  it('keeps a question pending and prompts once when no answer is selected', async () => {
-    const ws = (await workspaceStore.list())[0];
-    pendingCardState = {
-      type: 'question',
-      questions: [{ question: 'Choose one', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false }],
-    };
-    injectActiveStream();
-
-    const sentMessages: Array<{ userId: string; body: any }> = [];
-    const conn = (service as any).connections.values().next().value;
-    conn.client.sendMessage = async (userId: string, body: any) => {
-      sentMessages.push({ userId, body });
-    };
-
-    const key = encodeButtonKey('req-1', 'allow', testSessionId);
-    await (service as any).handleTemplateCardEvent(ws.id, makeCardEvent(key));
-
-    assert.deepStrictEqual(foldedTexts, []);
-    assert.strictEqual(resolvedApprovals.length, 0);
-    assert.strictEqual(updatedCards.length, 0);
-    assert.deepStrictEqual(sentMessages, [{
-      userId: 'owner-1',
-      body: { msgtype: 'markdown', markdown: { content: '请为每个问题选择有效答案后再提交。' } },
-    }]);
-  });
-
-  it('rejects multiple selections for a single-choice question', async () => {
-    const ws = (await workspaceStore.list())[0];
-    pendingCardState = {
-      type: 'question',
-      questions: [{ question: 'Choose one', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false }],
-    };
-    const key = encodeButtonKey('req-1', 'allow', testSessionId);
-    await (service as any).handleTemplateCardEvent(ws.id, makeCardEvent(key, {
-      event: { selected_items: [{ question_key: key, option_ids: ['0', '1'] }] },
-    }));
-
-    assert.strictEqual(resolvedApprovals.length, 0);
-    assert.strictEqual(updatedCards.length, 0);
   });
 
   it('tolerates the stream reporting a closed passive reply (append returns false) (R7)', async () => {

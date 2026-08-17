@@ -104,7 +104,7 @@ describe('wecom-stream-reply', () => {
     );
   });
 
-  it('sends a question card on pending_question', () => {
+  it('ignores pending_question events (U2: bot question flow removed)', () => {
     const { handler } = createStreamReply(conn, makeFrame(), 'sess-1', 'user-1');
 
     handler(1, {
@@ -120,12 +120,7 @@ describe('wecom-stream-reply', () => {
       ],
     } as SseEvent);
 
-    assert.strictEqual(sentCards.length, 1);
-    const card = sentCards[0];
-    assert.strictEqual(card.card_type, 'vote_interaction');
-    assert.strictEqual(card.main_title.title, 'Question header');
-    assert.strictEqual(card.main_title.desc, 'Choose one');
-    assert.strictEqual(card.task_id, 'req-question-1');
+    assert.strictEqual(sentCards.length, 0, 'pending_question must no longer send a card');
   });
 
   it('sends an expiry notice to the requester on approval_timeout for a card this stream sent (U8, AE9)', () => {
@@ -831,7 +826,7 @@ describe('wecom-stream-reply multi-result delivery', { concurrency: false }, () 
     handler.cleanup();
   });
 
-  it('still sends approval and question cards raised after the first result finishes the bubble', async () => {
+  it('still sends approval cards raised after the first result finishes the bubble', async () => {
     const { conn } = makeTrackingConn();
     const sentCards: any[] = [];
     const cardConn: StreamReplyConnection = {
@@ -857,18 +852,6 @@ describe('wecom-stream-reply multi-result delivery', { concurrency: false }, () 
       title: 'Run command?',
       description: 'Confirm this command',
     } as SseEvent);
-    handler(1, {
-      type: 'pending_question',
-      requestId: 'req-q2',
-      questions: [
-        {
-          question: 'Choose one',
-          header: 'Question header',
-          options: [{ label: 'A' }, { label: 'B' }],
-          multiSelect: false,
-        },
-      ],
-    } as SseEvent);
     // Same requestId again: still deduped across turns.
     handler(1, {
       type: 'pending_approval',
@@ -882,7 +865,7 @@ describe('wecom-stream-reply multi-result delivery', { concurrency: false }, () 
     } as SseEvent);
     await new Promise((r) => setTimeout(r, 20));
 
-    assert.strictEqual(sentCards.length, 2, 'approval + question cards sent after the first result; duplicate requestId deduped');
+    assert.strictEqual(sentCards.length, 1, 'approval card sent after the first result; duplicate requestId deduped');
     handler.cleanup();
   });
 

@@ -12,7 +12,6 @@ import type {
   TemplateCardEventData,
   EventMessageWith,
 } from '@wecom/aibot-node-sdk';
-import type { QuestionPayload } from '../types/message.js';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -29,18 +28,15 @@ import { validateSendFilePath } from './wecom-send-file-policy.js';
 import { REPLY_TOOL_NAME, evaluateToolPermission, resolveEffectivePolicy } from './tool-permission-policy.js';
 import { diagLog } from '../utils/diag-logger.js';
 import { summarizeBotToolOperation } from '../utils/bot-tool-presentation.js';
-import { validateQuestionAnswers } from '../utils/question-answer-validation.js';
 import {
   buildWecomSessionListCard,
   buildWecomWorkspaceListCard,
   buildEscalationApprovalCard,
   buildEscalationResultCard,
   buildTerminalCard,
-  decodeButtonKey,
   isEscalationAction,
   parseTemplateCardEvent,
   verifySessionOwner,
-  formatQuestionFold,
   formatPermissionFold,
   type NormalizedSelectedItem,
 } from './wecom-template-card.js';
@@ -671,26 +667,6 @@ export class WeComBotService {
     const sessionId = await this.getOrCreateSession(workspaceId, wecomUserId);
     if (!sessionId) return;
 
-    const runtime = chatService.getRuntimeIfExists(sessionId);
-    const pendingFreeText = runtime?.getPendingFreeTextQuestion?.();
-    const freeTextAnswer = content.trim();
-    if (runtime && pendingFreeText && freeTextAnswer) {
-      const question = pendingFreeText.questions[0];
-      const answers = { [question.question]: freeTextAnswer };
-      this.foldIntoActiveStream(
-        sessionId,
-        formatQuestionFold(pendingFreeText.questions, answers),
-      );
-      runtime.resolveApproval(pendingFreeText.requestId, {
-        behavior: 'allow',
-        updatedInput: { questions: pendingFreeText.questions, answers },
-      });
-      diagLog(
-        `[WeComBotService] resolved free-text question sessionId=${sessionId} requestId=${pendingFreeText.requestId}`,
-      );
-      return;
-    }
-
     const conn = this.getConnectionForWorkspace(workspaceId);
     if (!conn) return;
 
@@ -828,7 +804,7 @@ export class WeComBotService {
 
   /**
    * Handle `/stop`: interrupt the user's active WeCom session if it has an
-   * in-flight turn, resolve any pending approvals/questions as denied, and
+   * in-flight turn, resolve any pending approvals as denied, and
    * confirm the action. Mirrors feishu-bot-service handleStopCommand.
    */
   private async handleStopCommand(
@@ -1602,37 +1578,6 @@ export class WeComBotService {
       );
       return;
     }
-
-    // Question: parse selected options, preserve the answer on the terminal
-    // card, then resume the existing stream without duplicating a receipt in
-    // the final answer bubble.
-    const answers = this.buildAnswersFromCardEvent(parsed, pending.questions);
-    const validation = validateQuestionAnswers(pending.questions, answers);
-    if (!validation.valid) {
-      try {
-        await this.sendDirectMessage(workspaceId, parsed.wecomUserId, '请为每个问题选择有效答案后再提交。');
-      } catch (err) {
-        console.error('[WeComBotService] Failed to send invalid-answer notice:', err);
-      }
-      return;
-    }
-    this.setActiveStreamStatus(parsed.sessionId, '\n\n已收到你的回答，继续处理…');
-    runtime.resolveApproval(parsed.requestId, {
-      behavior: 'allow',
-      updatedInput: { questions: pending.questions, answers: validation.answers },
-    });
-    await this.updateCardToTerminal(
-      workspaceId,
-      frame,
-      parsed,
-      '已提交',
-      {
-        title: '回答已提交',
-        desc: pending.questions.map((question) => question.question).join('\n'),
-        selectionText: Object.values(validation.answers).join('；'),
-      },
-      true,
-    );
   }
 
   /**
@@ -2067,7 +2012,7 @@ export class WeComBotService {
   }
 
   /**
-   * Fold a resolved card receipt (question answer or permission outcome) into
+   * Fold a resolved permission-card receipt into
    * the session's active streaming reply so the receipt and the agent's
    * continuation share one bubble (R1/R6). Appends WITHOUT finalizing the
    * stream. No-ops when the text is empty, when there is no active stream for
@@ -2086,38 +2031,6 @@ export class WeComBotService {
   private setActiveStreamStatus(sessionId: string, text: string): void {
     const stream = this.activeStreamReplies.get(sessionId);
     stream?.setPlaceholder?.(text, false);
-  }
-
-  private buildAnswersFromCardEvent(
-    parsed: { requestId: string; selectedItems?: NormalizedSelectedItem[] },
-    questions: QuestionPayload[],
-  ): Record<string, string> {
-    const answers: Record<string, string> = {};
-
-    for (const item of parsed.selectedItems ?? []) {
-      if (!item.question_key || !Array.isArray(item.option_ids)) continue;
-      const decoded = decodeButtonKey(item.question_key);
-      if (!decoded) continue;
-
-      // The question key encodes either `requestId` (single-question vote) or
-      // `requestId:qIdx` (multiple-interaction). Verify it belongs to this request.
-      const [baseRequestId, qIdxStr] = decoded.requestId.split(':');
-      if (baseRequestId !== parsed.requestId) continue;
-      const qIdx = qIdxStr === undefined ? 0 : Number(qIdxStr);
-      if (!Number.isFinite(qIdx) || qIdx < 0 || qIdx >= questions.length) continue;
-
-      const question = questions[qIdx];
-      const labels: string[] = [];
-      for (const optId of item.option_ids) {
-        const opt = question.options[Number(optId)];
-        if (opt) labels.push(opt.label);
-      }
-      if (labels.length > 0) {
-        answers[question.question] = labels.join(', ');
-      }
-    }
-
-    return answers;
   }
 
   private async updateCardToTerminal(
