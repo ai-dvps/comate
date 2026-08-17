@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
-import { compareSessionActivity } from './session-sort'
+import { compareSessionActivity, getSessionActivityTimestamp } from './session-sort'
 import type { ChatSession } from '../stores/chat-store'
 
 function makeSession(overrides: Partial<ChatSession> = {}): ChatSession {
@@ -16,6 +16,21 @@ function makeSession(overrides: Partial<ChatSession> = {}): ChatSession {
 }
 
 describe('compareSessionActivity', () => {
+  it('projects the same primary activity timestamp used by the comparator', () => {
+    const session = makeSession({
+      id: 'a',
+      lastModified: 2000,
+      updatedAt: new Date(1000).toISOString(),
+    })
+
+    assert.strictEqual(getSessionActivityTimestamp(session, { a: 3000 }), 3000)
+    assert.strictEqual(getSessionActivityTimestamp(session, {}), 2000)
+    assert.strictEqual(
+      getSessionActivityTimestamp(makeSession({ updatedAt: new Date(1000).toISOString() }), {}),
+      1000,
+    )
+  })
+
   it('sorts a more-recently active session above a less-recent one', () => {
     const a = makeSession({ id: 'a' })
     const b = makeSession({ id: 'b' })
