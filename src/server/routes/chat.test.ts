@@ -398,7 +398,46 @@ describe('chat route approvals funnel (U8, KTD-15)', { concurrency: false }, () 
     }
   });
 
-  it('rejects empty, out-of-option, and invalid single/multi-choice answers', async () => {
+  it('accepts custom Other answers for single- and multi-choice questions', async () => {
+    const questions = [
+      { question: 'Choose one', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false },
+      { question: 'Choose many', options: [{ label: 'X' }, { label: 'Y' }], multiSelect: true },
+    ];
+    const answers = {
+      'Choose one': 'A custom answer',
+      'Choose many': 'X, another custom answer',
+    };
+    const resolveCalls: Array<{ requestId: string; result: unknown }> = [];
+    const fakeRuntime = {
+      getPendingCardState: () => ({ type: 'question' as const, questions }),
+      resolveApproval: (requestId: string, result: unknown) => {
+        resolveCalls.push({ requestId, result });
+        return true;
+      },
+    };
+    const stub = stubChatService({ getRuntimeIfExists: () => fakeRuntime });
+    try {
+      const handler = await importApprovalsHandler();
+      const res = createMockRes();
+      await handler({
+        params: { id: 'ws-1', sessionId: 'sess-1', requestId: 'req-question' },
+        body: { behavior: 'allow', answers },
+      }, res);
+
+      assert.strictEqual(res.statusCode, 200);
+      assert.deepStrictEqual(resolveCalls[0], {
+        requestId: 'req-question',
+        result: {
+          behavior: 'allow',
+          updatedInput: { questions, answers },
+        },
+      });
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('rejects empty single- and multi-choice answers', async () => {
     let resolveCalls = 0;
     const questions = [
       { question: 'Choose one', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false },
@@ -413,10 +452,7 @@ describe('chat route approvals funnel (U8, KTD-15)', { concurrency: false }, () 
       const handler = await importApprovalsHandler();
       for (const answers of [
         { 'Choose one': '', 'Choose many': 'X' },
-        { 'Choose one': 'C', 'Choose many': 'X' },
-        { 'Choose one': 'A, B', 'Choose many': 'X' },
-        { 'Choose one': 'A', 'Choose many': 'X, Z' },
-        { 'Choose one': 'A', 'Choose many': 'X, X' },
+        { 'Choose one': 'A', 'Choose many': '   ' },
       ]) {
         const res = createMockRes();
         await handler({
