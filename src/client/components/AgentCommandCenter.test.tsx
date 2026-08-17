@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { I18nextProvider } from 'react-i18next'
 import i18n from '../i18n'
@@ -630,5 +630,149 @@ describe('AgentCommandCenter workspace context menu', () => {
 
     fireEvent.contextMenu(screen.getByRole('button', { name: /Needs approval/ }))
     expect(screen.getByRole('menuitem', { name: 'Rename session' })).toBeInTheDocument()
+  })
+})
+
+describe('AgentCommandCenter focus-time session refresh', () => {
+  const FOCUS_DEBOUNCE_MS = 800
+
+  function renderCenter(overrides: Partial<React.ComponentProps<typeof AgentCommandCenter>> = {}) {
+    return renderCommandCenter(
+      <AgentCommandCenter
+        width={288}
+        onWidthChange={vi.fn()}
+        onCreateWorkspace={vi.fn()}
+        onOpenTodos={vi.fn()}
+        onOpenAnalytics={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onOpenCapabilities={vi.fn()}
+        {...overrides}
+      />,
+    )
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+    ;(workspaceState.workspaces[0] as { folderPath?: string }).folderPath = '/tmp/comate'
+    delete (workspaceState.workspaces[1] as { folderPath?: string }).folderPath
+    chatState.sessions['ws-1'] = [{
+      id: 'session-a',
+      workspaceId: 'ws-1',
+      name: 'Needs approval',
+      createdAt: '2026-08-14T00:00:00.000Z',
+      updatedAt: '2026-08-14T00:00:00.000Z',
+      isDraft: true,
+      isWip: true,
+      source: 'wecom',
+    }]
+    chatState.sessions['ws-2'] = []
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('refreshes expanded workspaces on window focus after the debounce', () => {
+    renderCenter()
+    // Mount already fetched each workspace once; clear so only focus-driven
+    // calls are counted.
+    vi.mocked(chatState.fetchSessions).mockClear()
+
+    fireEvent.focus(window)
+    expect(chatState.fetchSessions).not.toHaveBeenCalled()
+
+    act(() => {
+      vi.advanceTimersByTime(FOCUS_DEBOUNCE_MS)
+    })
+    expect(chatState.fetchSessions).toHaveBeenCalledWith('ws-1')
+    expect(chatState.fetchSessions).toHaveBeenCalledWith('ws-2')
+  })
+
+  it('refreshes expanded workspaces when the document becomes visible', () => {
+    renderCenter()
+    vi.mocked(chatState.fetchSessions).mockClear()
+
+    act(() => {
+      fireEvent(document, new Event('visibilitychange'))
+    })
+    expect(chatState.fetchSessions).not.toHaveBeenCalled()
+
+    act(() => {
+      vi.advanceTimersByTime(FOCUS_DEBOUNCE_MS)
+    })
+    expect(chatState.fetchSessions).toHaveBeenCalledWith('ws-1')
+  })
+
+  it('does not refresh collapsed workspaces on focus', () => {
+    renderCenter()
+    // Collapse ws-2 by clicking its workspace row toggle.
+    fireEvent.click(screen.getByRole('button', { name: 'Hidden tools' }))
+    vi.mocked(chatState.fetchSessions).mockClear()
+
+    fireEvent.focus(window)
+    act(() => {
+      vi.advanceTimersByTime(FOCUS_DEBOUNCE_MS)
+    })
+    expect(chatState.fetchSessions).toHaveBeenCalledWith('ws-1')
+    expect(chatState.fetchSessions).not.toHaveBeenCalledWith('ws-2')
+  })
+
+  it('collapses rapid re-focus into one fetch per workspace', () => {
+    renderCenter()
+    vi.mocked(chatState.fetchSessions).mockClear()
+
+    fireEvent.focus(window)
+    act(() => {
+      vi.advanceTimersByTime(FOCUS_DEBOUNCE_MS / 2)
+    })
+    fireEvent.focus(window)
+    act(() => {
+      vi.advanceTimersByTime(FOCUS_DEBOUNCE_MS / 2)
+    })
+    expect(chatState.fetchSessions).not.toHaveBeenCalled()
+
+    act(() => {
+      vi.advanceTimersByTime(FOCUS_DEBOUNCE_MS)
+    })
+    expect(chatState.fetchSessions).toHaveBeenCalledTimes(2)
+  })
+
+  it('skips a workspace whose fetch is already in flight', async () => {
+    let resolveFetch: ((value: { ok: boolean }) => void) | null = null
+    chatState.fetchSessions.mockImplementation(
+      () => new Promise((resolve) => { resolveFetch = resolve }),
+    )
+    renderCenter()
+
+    fireEvent.focus(window)
+    act(() => {
+      vi.advanceTimersByTime(FOCUS_DEBOUNCE_MS)
+    })
+    expect(chatState.fetchSessions).toHaveBeenCalledWith('ws-1')
+
+    // Second focus while the first fetch is still pending: no duplicate.
+    fireEvent.focus(window)
+    act(() => {
+      vi.advanceTimersByTime(FOCUS_DEBOUNCE_MS)
+    })
+    expect(chatState.fetchSessions).toHaveBeenCalledTimes(2) // ws-1 + ws-2 only
+
+    await act(async () => {
+      resolveFetch?.({ ok: true })
+    })
+  })
+
+  it('keeps the streaming session rendered and selection untouched after refresh', async () => {
+    chatState.fetchSessions.mockResolvedValue({ ok: true })
+    renderCenter()
+
+    fireEvent.focus(window)
+    await act(async () => {
+      vi.advanceTimersByTime(FOCUS_DEBOUNCE_MS)
+    })
+
+    expect(screen.getByText('Needs approval')).toBeInTheDocument()
+    expect(chatState.setActiveSession).not.toHaveBeenCalled()
   })
 })

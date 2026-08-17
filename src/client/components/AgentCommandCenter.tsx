@@ -228,6 +228,34 @@ export default function AgentCommandCenter({
     }
   }, [tc])
 
+  // Focus-time session freshness (U4): when the window regains focus,
+  // refresh only expanded workspaces' session lists so externally created
+  // bot sessions appear without an app restart. The shared helper's
+  // in-flight guard prevents duplicate concurrent fetches; selection and
+  // scroll are untouched (the list keys stay stable across refetch).
+  useEffect(() => {
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null
+    const refreshExpanded = () => {
+      if (refreshTimer) clearTimeout(refreshTimer)
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null
+        for (const workspaceId of expanded) {
+          void refreshWorkspaceSessions(workspaceId)
+        }
+      }, 800)
+    }
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshExpanded()
+    }
+    window.addEventListener('focus', refreshExpanded)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      if (refreshTimer) clearTimeout(refreshTimer)
+      window.removeEventListener('focus', refreshExpanded)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [expanded, refreshWorkspaceSessions])
+
   const endDrag = useCallback(() => {
     if (!dragRef.current) return
     document.removeEventListener('mousemove', dragRef.current.move)
