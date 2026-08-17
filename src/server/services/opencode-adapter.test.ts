@@ -93,27 +93,142 @@ describe('toPermissionReply', () => {
   });
 });
 
-describe('extractPromptText', () => {
-  it('extracts string content and text blocks', async () => {
+describe('extractPromptParts', () => {
+  it('preserves mixed text/image order and emits native OpenCode file parts', async () => {
     const { __testables } = await import('./opencode-adapter.js');
-    assert.equal(
-      __testables.extractPromptText({ message: { role: 'user', content: 'hello' } } as never),
-      'hello',
-    );
-    assert.equal(
-      __testables.extractPromptText({
+    assert.deepEqual(
+      __testables.extractPromptParts({
         message: {
           role: 'user',
           content: [
             { type: 'text', text: 'a' },
-            { type: 'image' },
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: 'image/png', data: 'aGVsbG8=' },
+            },
             { type: 'text', text: 'b' },
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: 'image/gif', data: 'R0lGODlh' },
+            },
           ],
         },
       } as never),
-      'a\nb',
+      [
+        { type: 'text', text: 'a' },
+        {
+          type: 'file',
+          mime: 'image/png',
+          filename: 'image-1.png',
+          url: 'data:image/png;base64,aGVsbG8=',
+        },
+        { type: 'text', text: 'b' },
+        {
+          type: 'file',
+          mime: 'image/gif',
+          filename: 'image-2.gif',
+          url: 'data:image/gif;base64,R0lGODlh',
+        },
+      ],
     );
-    assert.equal(__testables.extractPromptText({ message: { role: 'user' } } as never), '');
+  });
+
+  it('supports legacy text and image-only turns', async () => {
+    const { __testables } = await import('./opencode-adapter.js');
+    assert.deepEqual(
+      __testables.extractPromptParts({ message: { role: 'user', content: 'hello' } } as never),
+      [{ type: 'text', text: 'hello' }],
+    );
+    assert.deepEqual(
+      __testables.extractPromptParts({
+        message: {
+          role: 'user',
+          content: [{
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/jpeg', data: '/9j/' },
+          }],
+        },
+      } as never),
+      [{
+        type: 'file',
+        mime: 'image/jpeg',
+        filename: 'image-1.jpg',
+        url: 'data:image/jpeg;base64,/9j/',
+      }],
+    );
+    assert.deepEqual(__testables.extractPromptParts({ message: { role: 'user' } } as never), []);
+  });
+
+  it('recognizes slash commands only for text-only turns', async () => {
+    const { __testables } = await import('./opencode-adapter.js');
+    assert.deepEqual(
+      __testables.extractTextOnlySlashCommand([{ type: 'text', text: ' /review now ' }]),
+      { name: 'review', args: 'now' },
+    );
+    assert.equal(
+      __testables.extractTextOnlySlashCommand([
+        { type: 'text', text: '/review now' },
+        { type: 'file', mime: 'image/png', filename: 'image-1.png', url: 'data:image/png;base64,AA==' },
+      ]),
+      undefined,
+    );
+  });
+});
+
+describe('OpencodeBackendDriver multimodal prompt dispatch', () => {
+  it('posts mixed and image-only turns to prompt_async without flattening file parts', async () => {
+    const { OpencodeBackendDriver, __testables } = await import('./opencode-adapter.js');
+    const driver = new OpencodeBackendDriver({
+      directory: '/workspace',
+      comateSessionId: 's',
+      provider: makeProvider(),
+      env: {},
+    });
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      requests.push({
+        url: String(input),
+        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+      });
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+
+    try {
+      const internals = driver as unknown as {
+        instance: { baseUrl: string; directory: string; authHeaders: Record<string, string> };
+        backendSessionId: string;
+        sendPrompt: (parts: ReturnType<typeof __testables.extractPromptParts>, options: Options) => Promise<void>;
+      };
+      internals.instance = { baseUrl: 'http://opencode.test', directory: '/workspace', authHeaders: {} };
+      internals.backendSessionId = 'oc-1';
+
+      const mixed = __testables.extractPromptParts({
+        message: { role: 'user', content: [
+          { type: 'text', text: '/review this' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AA==' } },
+        ] },
+      } as never);
+      const imageOnly = __testables.extractPromptParts({
+        message: { role: 'user', content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/gif', data: 'R0lGODlh' } },
+        ] },
+      } as never);
+      await internals.sendPrompt(mixed, {} as Options);
+      await internals.sendPrompt(imageOnly, {} as Options);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    assert.equal(requests.length, 2);
+    assert.match(requests[0].url, /\/session\/oc-1\/prompt_async\?/);
+    assert.deepEqual(requests[0].body.parts, [
+      { type: 'text', text: '/review this' },
+      { type: 'file', mime: 'image/png', filename: 'image-1.png', url: 'data:image/png;base64,AA==' },
+    ]);
+    assert.deepEqual(requests[1].body.parts, [
+      { type: 'file', mime: 'image/gif', filename: 'image-1.gif', url: 'data:image/gif;base64,R0lGODlh' },
+    ]);
   });
 });
 

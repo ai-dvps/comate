@@ -113,21 +113,73 @@ function buildSessionMcpConfig(comateSessionId: string, taskToken: string): Reco
   };
 }
 
-function extractPromptText(message: SDKUserMessage): string {
+type OpencodePromptPart =
+  | { type: 'text'; text: string }
+  | { type: 'file'; mime: string; filename: string; url: string };
+
+const IMAGE_FILENAME_EXTENSIONS: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+};
+
+function safeImageFilename(value: unknown, mediaType: string, index: number): string {
+  const fallback = `image-${index}.${IMAGE_FILENAME_EXTENSIONS[mediaType] ?? 'bin'}`;
+  if (typeof value !== 'string') return fallback;
+  const leaf = value.split(/[\\/]/).pop()?.split('')
+    .filter((char) => char.charCodeAt(0) > 31 && char.charCodeAt(0) !== 127)
+    .join('').trim();
+  return leaf && leaf !== '.' && leaf !== '..' ? leaf.slice(0, 255) : fallback;
+}
+
+function extractPromptParts(message: SDKUserMessage): OpencodePromptPart[] {
   const content = (message as { message?: { content?: unknown } }).message?.content;
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((block) => {
-        if (block && typeof block === 'object' && (block as { type?: string }).type === 'text') {
-          return String((block as { text?: string }).text ?? '');
-        }
-        return '';
-      })
-      .filter(Boolean)
-      .join('\n');
+  if (typeof content === 'string') {
+    return content ? [{ type: 'text', text: content }] : [];
   }
-  return '';
+  if (!Array.isArray(content)) return [];
+
+  const parts: OpencodePromptPart[] = [];
+  let imageIndex = 0;
+  for (const raw of content) {
+    if (!raw || typeof raw !== 'object') continue;
+    const block = raw as {
+      type?: string;
+      text?: unknown;
+      name?: unknown;
+      source?: { type?: unknown; media_type?: unknown; data?: unknown };
+    };
+    if (block.type === 'text' && typeof block.text === 'string' && block.text) {
+      parts.push({ type: 'text', text: block.text });
+      continue;
+    }
+    if (
+      block.type !== 'image'
+      || block.source?.type !== 'base64'
+      || typeof block.source.media_type !== 'string'
+      || typeof block.source.data !== 'string'
+      || !block.source.data
+    ) continue;
+
+    imageIndex += 1;
+    const mediaType = block.source.media_type;
+    parts.push({
+      type: 'file',
+      mime: mediaType,
+      filename: safeImageFilename(block.name, mediaType, imageIndex),
+      url: `data:${mediaType};base64,${block.source.data}`,
+    });
+  }
+  return parts;
+}
+
+function extractTextOnlySlashCommand(
+  parts: readonly OpencodePromptPart[],
+): { name: string; args: string } | undefined {
+  if (parts.length !== 1 || parts[0].type !== 'text') return undefined;
+  const slash = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(parts[0].text.trim());
+  return slash ? { name: slash[1], args: slash[2] ?? '' } : undefined;
 }
 
 /** Unit-test surface for the adapter's pure translation helpers. */
@@ -135,7 +187,8 @@ export const __testables = {
   buildServeConfig,
   buildSessionMcpConfig,
   toAnthropicBaseUrl,
-  extractPromptText,
+  extractPromptParts,
+  extractTextOnlySlashCommand,
   isOpencodeDefaultTitle,
 };
 
@@ -404,8 +457,8 @@ export class OpencodeBackendDriver implements BackendDriver {
     // a success result now would tell waiters the turn completed while the
     // retry is still in flight (they can then close/abort and kill the retry).
     this.mapperState.erroredTurn = true;
-    if (this.lastPromptText) {
-      void this.sendPrompt(this.lastPromptText, options).catch((err) => {
+    if (this.lastPromptParts) {
+      void this.sendPrompt(this.lastPromptParts, options).catch((err) => {
         diagLog(`[OpencodeBackendDriver] fallback prompt failed: ${err instanceof Error ? err.message : String(err)}`);
       });
     }
@@ -413,7 +466,7 @@ export class OpencodeBackendDriver implements BackendDriver {
   }
 
   private wireModelResolved = false;
-  private lastPromptText?: string;
+  private lastPromptParts?: OpencodePromptPart[];
 
   private async bridgePermission(
     properties: Record<string, unknown>,
@@ -536,9 +589,9 @@ export class OpencodeBackendDriver implements BackendDriver {
     void (async () => {
       for await (const message of input) {
         if (this.closed) return;
-        const text = extractPromptText(message);
-        if (!text) continue;
-        this.promptQueue = this.promptQueue.then(() => this.sendPrompt(text, options));
+        const parts = extractPromptParts(message);
+        if (parts.length === 0) continue;
+        this.promptQueue = this.promptQueue.then(() => this.sendPrompt(parts, options));
         await this.promptQueue.catch((err) => {
           diagLog(`[OpencodeBackendDriver] prompt failed: ${err instanceof Error ? err.message : String(err)}`);
         });
@@ -548,17 +601,18 @@ export class OpencodeBackendDriver implements BackendDriver {
     });
   }
 
-  private async sendPrompt(text: string, options: Options): Promise<void> {
+  private async sendPrompt(parts: OpencodePromptPart[], options: Options): Promise<void> {
     if (!this.instance || !this.backendSessionId) return;
-    this.lastPromptText = text;
+    this.lastPromptParts = parts;
 
     // Slash commands execute via opencode's command endpoint (server-side
-    // template expansion) when the command is known (U7).
-    const slash = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());
-    if (slash && this.knownCommands.has(slash[1])) {
-      const executed = await this.executeBackendCommand(slash[1], slash[2] ?? '');
+    // template expansion) only for text-only command turns. Mixed/image turns
+    // must stay on prompt_async so their file parts are not discarded.
+    const slash = extractTextOnlySlashCommand(parts);
+    if (slash && this.knownCommands.has(slash.name)) {
+      const executed = await this.executeBackendCommand(slash.name, slash.args);
       if (executed) return;
-      diagLog(`[OpencodeBackendDriver] /command ${slash[1]} failed; falling back to prompt`);
+      diagLog(`[OpencodeBackendDriver] /command ${slash.name} failed; falling back to prompt`);
     }
 
     const system =
@@ -566,7 +620,7 @@ export class OpencodeBackendDriver implements BackendDriver {
     await opencodeFetch(this.instance, `/session/${this.backendSessionId}/prompt_async`, {
       method: 'POST',
       body: JSON.stringify({
-        parts: [{ type: 'text', text }],
+        parts,
         ...(this.modelID ? { model: { providerID: this.providerID, modelID: this.modelID } } : {}),
         ...(system ? { system } : {}),
       }),
