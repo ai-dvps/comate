@@ -331,6 +331,7 @@
     "isDefault": "默认",
     "tab": "智能体",
     "hooksNotWired": "hooks 脚本目前在两个智能体均不会执行",
+    "imageInputModelUnsupported": "当前选择的模型不支持图片输入",
     "scheduledGoalNoEvaluator": "该智能体的定时执行为纯 prompt，无完成性校验"
   }
 }

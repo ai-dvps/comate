@@ -58,6 +58,7 @@ export type CapabilityId =
   | 'sessionManagement'
   | 'modelSwitching'
   | 'analytics'
+  | 'imageInput'
   | 'scheduledGoalWrap';
 
 const FULL: CapabilityEntry = { state: 'full' };
@@ -75,6 +76,7 @@ const CAPABILITY_TABLE: Record<BackendId, Partial<Record<CapabilityId, Capabilit
     // consumer). Declared unavailable on both until hook execution lands as
     // its own work item (conflict-channel decision, U7).
     hooks: { state: 'unavailable', reasonKey: 'backend.hooksNotWired', evidence: 'verified' },
+    imageInput: { state: 'full', evidence: 'declared' },
   },
   opencode: {
     // Delivered and exercised (U4–U7): live E2E scripts and unit/integration
@@ -90,6 +92,7 @@ const CAPABILITY_TABLE: Record<BackendId, Partial<Record<CapabilityId, Capabilit
     browser: { state: 'full', evidence: 'verified' },
     slashCommands: { state: 'full', evidence: 'verified' },
     subagents: { state: 'full', evidence: 'verified' },
+    imageInput: { state: 'full', evidence: 'declared' },
     analytics: {
       state: 'unavailable',
       reasonKey: 'backend.analyticsNotCounted',
@@ -126,6 +129,7 @@ export const CAPABILITY_IDS: readonly CapabilityId[] = [
   'sessionManagement',
   'modelSwitching',
   'analytics',
+  'imageInput',
 ];
 
 /** Fully-resolved capability table for one backend (defaults applied). */

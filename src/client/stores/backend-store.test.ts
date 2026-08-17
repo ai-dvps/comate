@@ -2,11 +2,18 @@ import { describe, it, expect } from 'vitest'
 import { backendAvailability, backendCapability, type BackendInfo } from './backend-store'
 
 const backends: BackendInfo[] = [
-  { id: 'claude', availability: { status: 'available' }, capabilities: {} },
+  {
+    id: 'claude',
+    availability: { status: 'available' },
+    capabilities: { imageInput: { state: 'full' } },
+  },
   {
     id: 'opencode',
     availability: { status: 'unavailable', reason: 'binary missing' },
-    capabilities: { analytics: { state: 'unavailable', reasonKey: 'backend.analyticsNotCounted' } },
+    capabilities: {
+      analytics: { state: 'unavailable', reasonKey: 'backend.analyticsNotCounted' },
+      imageInput: { state: 'full' },
+    },
   },
 ]
 
@@ -21,6 +28,7 @@ describe('backendAvailability', () => {
 describe('backendCapability', () => {
   it('returns declared entries', () => {
     expect(backendCapability(backends, 'opencode', 'analytics').state).toBe('unavailable')
+    expect(backendCapability(backends, 'opencode', 'imageInput').state).toBe('full')
   })
 
   it('defaults undeclared to full on claude and unavailable elsewhere', () => {

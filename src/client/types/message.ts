@@ -58,8 +58,56 @@ export type PermissionSuggestion =
 
 export type MessageRole = 'user' | 'assistant' | 'system'
 
+export type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+
+/** Normalized image bytes submitted in one ordered user turn. */
+export interface UserTurnImage {
+  id: string
+  mediaType: ImageMediaType
+  data: string
+  width: number
+  height: number
+  name?: string
+}
+
+/** Images remain adjacent to, never embedded in, the editable text string. */
+export interface UserTurnContent {
+  text?: string
+  images: UserTurnImage[]
+}
+
+export type ImageInputValidationCode =
+  | 'unsupported_media_type'
+  | 'invalid_base64'
+  | 'media_signature_mismatch'
+  | 'invalid_dimensions'
+  | 'image_too_large'
+  | 'too_many_images'
+  | 'batch_too_large'
+  | 'model_unsupported'
+
+export interface ImageInputValidationError {
+  kind: 'image_input_validation'
+  code: ImageInputValidationCode
+  message: string
+  imageIndex?: number
+  limit?: number
+  actual?: number
+}
+
 export type MessagePart =
   | { type: 'text'; text: string }
+  | {
+      type: 'image'
+      mediaType: ImageMediaType
+      name?: string
+      width?: number
+      height?: number
+      source:
+        | { type: 'base64'; data: string }
+        | { type: 'url'; url: string }
+        | { type: 'unavailable'; reason?: string }
+    }
   | {
       type: 'tool_use'
       toolUseId: string
