@@ -189,6 +189,7 @@ describe('multimodal pending turn ownership', () => {
         { type: 'image', name: 'two.png', source: { type: 'base64', data: 'AA==' } },
       ],
     })
+    expect(historySpy).toHaveBeenCalledWith('ws-1', 's1', 'fix both')
 
     request.resolve({ sent: true })
     await request.promise
@@ -237,11 +238,11 @@ describe('multimodal pending turn ownership', () => {
     const requestSpy = vi.spyOn(wsClient, 'request').mockImplementation((type) =>
       type === 'sendMessage' ? request.promise : Promise.resolve({}),
     )
-    const historySpy = vi.spyOn(useChatStore.getState(), 'addPromptHistory').mockImplementation(() => {})
+    const historySpy = vi.spyOn(useChatStore.getState(), 'addPromptHistory')
     const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
     useChatStore.getState().setActiveSession('ws-1', 's1')
     await new Promise((resolve) => setTimeout(resolve, 0))
-    useChatStore.setState({ serverNonce: { s1: 'nonce-1' } })
+    useChatStore.setState({ serverNonce: { s1: 'nonce-1' }, promptHistory: {} })
     requestSpy.mockClear()
     useChatStore.getState().setImageDrafts('ws-1', 's1', [submitted])
 
@@ -258,6 +259,8 @@ describe('multimodal pending turn ownership', () => {
     expect(state.pendingTurns.s1).toBeUndefined()
     expect(revokeSpy).toHaveBeenCalledWith('blob:submitted')
     expect(revokeSpy).not.toHaveBeenCalledWith('blob:newer')
+    expect(historySpy).toHaveBeenCalledWith('ws-1', 's1', '')
+    expect(state.promptHistory['ws-1']).toBeUndefined()
     revokeSpy.mockRestore()
     historySpy.mockRestore()
     requestSpy.mockRestore()
@@ -486,6 +489,71 @@ describe('complete history loading', () => {
         ['history-1', 'history-2', 'live-1'],
       )
       assert.strictEqual(useChatStore.getState().historyLoadState.s1, 'loaded')
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('preserves history images and replaces a replayed optimistic turn before admission ack', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({
+      messages: [{
+        id: 'client-turn-1',
+        role: 'user',
+        parts: [
+          { type: 'text', text: 'inspect this' },
+          {
+            type: 'image',
+            mediaType: 'image/png',
+            name: 'bug.png',
+            width: 640,
+            height: 480,
+            source: { type: 'base64', data: 'iVBORw0KGgo=' },
+          },
+        ],
+        timestamp: 1,
+      }],
+      tasks: [],
+      subagents: [],
+      workflows: [],
+    })
+
+    useChatStore.setState({
+      messages: {
+        s1: [{
+          id: 'client-turn-1',
+          role: 'user',
+          parts: [{ type: 'text', text: 'inspect this' }],
+          timestamp: 2,
+        }],
+      },
+      pendingTurns: {
+        s1: {
+          clientTurnId: 'client-turn-1',
+          workspaceId: 'ws-1',
+          sessionId: 's1',
+          text: 'inspect this',
+          content: 'inspect this',
+          images: [],
+          wireImages: [],
+        },
+      },
+    })
+
+    try {
+      await useChatStore.getState().loadMessages('ws-1', 's1')
+
+      const messages = useChatStore.getState().messages.s1
+      assert.strictEqual(messages.length, 1)
+      assert.strictEqual(messages[0].id, 'client-turn-1')
+      assert.strictEqual(useChatStore.getState().pendingTurns.s1?.clientTurnId, 'client-turn-1')
+      assert.deepStrictEqual(messages[0].parts[1], {
+        type: 'image',
+        mediaType: 'image/png',
+        name: 'bug.png',
+        width: 640,
+        height: 480,
+        source: { type: 'base64', data: 'iVBORw0KGgo=' },
+      })
     } finally {
       requestSpy.mockRestore()
     }

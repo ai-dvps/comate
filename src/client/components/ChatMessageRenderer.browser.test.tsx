@@ -30,8 +30,36 @@ const thinkingMessage: RenderableMessage = {
   parts: [{ type: 'thinking', text: 'Considering the next step', isStreaming: false }],
 }
 
+const imageMessage: RenderableMessage = {
+  id: 'historical-images',
+  role: 'user',
+  parts: [
+    { type: 'image', mediaType: 'image/png', name: 'one.png', source: { type: 'base64', data: 'iVBORw0KGgo=' } },
+    { type: 'image', mediaType: 'image/webp', name: 'two.webp', source: { type: 'base64', data: 'UklGRg==' } },
+  ],
+}
+
 describe('ChatMessageRenderer browser layout', () => {
   afterEach(cleanup)
+
+  it('keeps historical thumbnails on one horizontally scrollable rail', () => {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <div style={{ width: 160 }}>
+          <ChatMessageRenderer
+            message={imageMessage}
+            resultMap={new Map()}
+            onOpenDrawer={() => {}}
+            sessionId="session-1"
+          />
+        </div>
+      </I18nextProvider>,
+    )
+
+    const rail = screen.getByTestId('historical-image-rail')
+    expect(getComputedStyle(rail).flexWrap).toBe('nowrap')
+    expect(getComputedStyle(rail).overflowX).toBe('auto')
+  })
 
   it('fills the available width at every message layer when fullWidth is enabled', () => {
     render(
