@@ -29,30 +29,9 @@ export function validateQuestionAnswers(
       return { valid: false, error: 'each pending question requires a non-empty string answer' };
     }
 
-    const answer = rawAnswer.trim();
-    if ((question.options?.length ?? 0) === 0) {
-      answers[question.question] = answer;
-      continue;
-    }
-
-    const allowed = new Set(question.options.map((option) => option.label));
-    if (!question.multiSelect) {
-      if (!allowed.has(answer)) {
-        return { valid: false, error: 'single-choice answers must match one pending option' };
-      }
-      answers[question.question] = answer;
-      continue;
-    }
-
-    const selections = answer.split(',').map((value) => value.trim()).filter(Boolean);
-    if (
-      selections.length === 0
-      || new Set(selections).size !== selections.length
-      || selections.some((selection) => !allowed.has(selection))
-    ) {
-      return { valid: false, error: 'multi-choice answers must contain unique pending options' };
-    }
-    answers[question.question] = selections.join(', ');
+    // AskUserQuestion always provides an Other choice, so answer values are
+    // opaque user text rather than an enum constrained to the listed options.
+    answers[question.question] = rawAnswer.trim();
   }
 
   return { valid: true, answers };

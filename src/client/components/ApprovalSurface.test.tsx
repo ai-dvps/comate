@@ -101,6 +101,33 @@ describe('ApprovalSurface question option highlight', () => {
     expect(onAnswerQuestion).toHaveBeenCalledWith({ 'Choose an option': 'Option A' })
   })
 
+  it('submits custom text entered through Other', async () => {
+    const user = userEvent.setup()
+    const onAnswerQuestion = vi.fn()
+    render(
+      <ApprovalSurface
+        {...baseProps}
+        onAnswerQuestion={onAnswerQuestion}
+        pendingItem={{
+          requestId: 'req-question-other',
+          questions: [
+            {
+              question: 'Choose an option',
+              options: [{ label: 'Option A' }, { label: 'Option B' }],
+              multiSelect: false,
+            },
+          ],
+        }}
+      />,
+    )
+
+    await user.click(screen.getByRole('radio', { name: 'approval.other' }))
+    await user.type(screen.getByPlaceholderText('approval.typeAnswer'), 'My custom answer')
+    await user.click(screen.getByRole('button', { name: 'approval.confirm' }))
+
+    expect(onAnswerQuestion).toHaveBeenCalledWith({ 'Choose an option': 'My custom answer' })
+  })
+
   it('does not submit an unanswered question with Cmd/Ctrl+Enter', () => {
     const onAnswerQuestion = vi.fn()
     render(
