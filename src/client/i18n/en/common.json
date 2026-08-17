@@ -96,6 +96,7 @@
     "partialFallback": "Results are partial — only some files were scanned."
   },
   "copyContent": "Copy content",
+  "markdownPreviewError": "Unable to render this Markdown preview. Restart Comate and try again.",
   "close": "Close",
   "clear": "Clear",
   "pinSideBySide": "Pin side-by-side",
