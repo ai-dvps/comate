@@ -216,6 +216,27 @@ describe('shell capabilities through the bridge', () => {
     await expect(api.revealInFileManager('/x')).rejects.toThrow(/unavailable/)
   })
 
+  it('openFolder forwards the path', async () => {
+    const openFolder = vi.fn(() => Promise.resolve())
+    installBridge({ getApiInfo: vi.fn(), openFolder })
+    const api = await importBridge()
+    await api.openFolder('/project')
+    expect(openFolder).toHaveBeenCalledWith('/project')
+  })
+
+  it('openFolder rejects an empty path before invoking the bridge', async () => {
+    const openFolder = vi.fn(() => Promise.resolve())
+    installBridge({ getApiInfo: vi.fn(), openFolder })
+    const api = await importBridge()
+    await expect(api.openFolder('')).rejects.toThrow(/path/)
+    expect(openFolder).not.toHaveBeenCalled()
+  })
+
+  it('openFolder rejects without the bridge (degraded)', async () => {
+    const api = await importBridge()
+    await expect(api.openFolder('/x')).rejects.toThrow(/unavailable/)
+  })
+
   it('openExternal forwards the URL and rejects without the bridge', async () => {
     const openUrl = vi.fn(() => Promise.resolve())
     installBridge({ getApiInfo: vi.fn(), openUrl })

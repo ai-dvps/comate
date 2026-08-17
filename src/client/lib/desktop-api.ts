@@ -71,6 +71,8 @@ export interface ComateBridge {
   setTitleBarOverlay?: (theme: 'dark' | 'light') => Promise<void>;
   updateBadgeState?: (count: number) => Promise<void>;
   revealInFileManager?: (path: string) => Promise<void>;
+  /** Open a folder in the OS file manager, showing its contents. */
+  openFolder?: (path: string) => Promise<void>;
   openUrl?: (url: string) => Promise<void>;
   prepareUpdaterRelaunch?: () => Promise<void>;
   getVersion?: () => Promise<string>;
@@ -262,6 +264,20 @@ export async function revealInFileManager(path: string): Promise<void> {
   const bridge = getBridge();
   if (!bridge?.revealInFileManager) throw unsupported('revealInFileManager');
   await bridge.revealInFileManager(path);
+}
+
+/**
+ * Open a folder in the OS file manager, showing its contents (Finder/
+ * Explorer double-click semantics, unlike revealInFileManager's
+ * parent-select). Rejects on an empty path and without the bridge.
+ */
+export async function openFolder(path: string): Promise<void> {
+  if (typeof path !== 'string' || path.length === 0) {
+    throw new Error('openFolder: path is required');
+  }
+  const bridge = getBridge();
+  if (!bridge?.openFolder) throw unsupported('openFolder');
+  await bridge.openFolder(path);
 }
 
 /**
