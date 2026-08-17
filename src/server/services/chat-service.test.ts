@@ -1345,8 +1345,8 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
 
     // With the interception branches removed, the gate treats the tool like any
     // other uncategorized tool call: an immediate policy verdict, never a
-    // pending question. (Production blocks the call earlier — disallowedTools
-    // plus the deny backstop asserted by the U1 tests.)
+    // pending question. (Production blocks the call earlier — the tool-disallow
+    // entry asserted by the U1 tests.)
     const result = await canUseTool('AskUserQuestion', {
       questions: [{ question: 'ok?', options: [{ label: 'yes' }] }],
     }, { toolUseID: 'tu-q-gone', signal: new AbortController().signal });
@@ -2885,45 +2885,24 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
 
   // ------------------------------------------------ U1 AskUserQuestion removal
 
-  it('U1: sandbox bot session removes AskUserQuestion from the tool context with a deny-rule backstop', async () => {
+  it('U1: sandbox bot session removes AskUserQuestion from the tool context', async () => {
     const { options } = await setupBotSession();
-    // Removal (R1): the tool never enters the model's tool context.
+    // Removal (R1): the tool never enters the model's tool context. This is
+    // the sole enforcement layer — the SDK contract for the tool-disallow
+    // option is absolute (removed from context and cannot be used), so no
+    // deny-rule backstop rides the permission merge.
     assert.ok(
       (options.disallowedTools ?? []).includes('AskUserQuestion'),
       `expected AskUserQuestion in disallowedTools, got ${JSON.stringify(options.disallowedTools)}`,
     );
-    // Deny-rule backstop (KTD1): rides the permission merge even with zero
-    // disabled skills — deny evaluates before allow/canUseTool and cannot be
-    // bypassed by allow rules.
-    const settings = options.settings as { permissions?: { deny: string[] } };
-    assert.ok(
-      settings.permissions?.deny.includes('AskUserQuestion'),
-      `expected AskUserQuestion deny backstop, got ${JSON.stringify(settings.permissions?.deny)}`,
-    );
   });
 
-  it('U1: legacy kill-switch bot session carries the same AskUserQuestion removal and the mirrored deny entry', async () => {
+  it('U1: legacy kill-switch bot session carries the same AskUserQuestion removal', async () => {
     const { options } = await setupBotSession({ killSwitch: true });
     assert.ok(
       (options.disallowedTools ?? []).includes('AskUserQuestion'),
       `expected AskUserQuestion in disallowedTools, got ${JSON.stringify(options.disallowedTools)}`,
     );
-    // The legacy branch mirrors the sandbox branch's backstop in its own
-    // settings while preserving the base settings (env/fastMode).
-    const settings = options.settings as { env?: unknown; permissions?: { deny: string[] } };
-    assert.ok(
-      settings.permissions?.deny.includes('AskUserQuestion'),
-      `expected mirrored AskUserQuestion deny entry, got ${JSON.stringify(settings.permissions?.deny)}`,
-    );
-    assert.ok(settings.env, 'base settings must survive the permissions merge');
-  });
-
-  it('U1: the deny-rule backstop keeps AskUserQuestion blocked alongside compiled skill deny rules', async () => {
-    const { options } = await setupBotSession({ disabledSkills: ['blocked-skill'] });
-    const settings = options.settings as { permissions?: { deny: string[] } };
-    const deny = settings.permissions?.deny ?? [];
-    assert.ok(deny.includes('Skill(blocked-skill)'), `expected the compiled skill rule, got ${JSON.stringify(deny)}`);
-    assert.ok(deny.includes('AskUserQuestion'), `expected the backstop entry, got ${JSON.stringify(deny)}`);
   });
 
   it('U1: rebuilt options still disallow AskUserQuestion after toggling the kill switch', async () => {
@@ -2949,11 +2928,6 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     assert.ok(
       (rebuilt.disallowedTools ?? []).includes('AskUserQuestion'),
       `rebuilt options must still carry the removal, got ${JSON.stringify(rebuilt.disallowedTools)}`,
-    );
-    const rebuiltSettings = rebuilt.settings as { permissions?: { deny: string[] } };
-    assert.ok(
-      rebuiltSettings.permissions?.deny.includes('AskUserQuestion'),
-      'the sandbox-branch rebuild must keep the deny backstop',
     );
   });
 
@@ -3857,9 +3831,10 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     assert.strictEqual(options.settingSources, undefined);
     assert.strictEqual(options.plugins, undefined);
     const settings = options.settings as { permissions?: { allow: string[]; ask: string[]; deny: string[] } };
-    // U1: the legacy branch carries no derived permission rules — its only
-    // permissions content is the mirrored AskUserQuestion deny backstop.
-    assert.deepStrictEqual(settings.permissions, { allow: [], ask: [], deny: ['AskUserQuestion'] });
+    // U1: the legacy branch carries no derived permission rules (the
+    // tool-context removal is the sole enforcement and lives on
+    // options.disallowedTools, asserted by the U1 tests).
+    assert.strictEqual(settings.permissions, undefined);
     // Legacy: non-whitelisted bash denies for normal.
     const denied = await canUseTool('Bash', { command: 'rm -rf /' });
     assert.strictEqual(denied.behavior, 'deny');

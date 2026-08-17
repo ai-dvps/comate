@@ -2587,20 +2587,6 @@ export class ChatService {
               workspace.settings.sensitiveFileDenylist ?? [],
             );
 
-            // U1: mirror the sandbox branch's AskUserQuestion deny entry as a
-            // silent backstop for the removal assigned at the top of the
-            // isBotSession block — deny rules cannot be bypassed by allow
-            // rules. The base options.settings ({ env, fastMode }) are kept:
-            // only the permissions key is added to the same object.
-            const legacySettings = options.settings as {
-              permissions?: BotAccessDerivation['permissionRules'];
-            };
-            legacySettings.permissions = {
-              allow: legacySettings.permissions?.allow ?? [],
-              ask: legacySettings.permissions?.ask ?? [],
-              deny: ['AskUserQuestion', ...(legacySettings.permissions?.deny ?? [])],
-            };
-
             if (persona) {
               if (persona.mode === 'append') {
                 options.systemPrompt = {
@@ -2812,18 +2798,11 @@ export class ChatService {
             // gate's evaluateSkillDisabled is the in-gate backstop; both
             // layers share the same normalization and the KTD-14 unrestricted
             // set, so they cannot disagree.
-            //
-            // U1: the AskUserQuestion deny entry rides the same merge as a
-            // silent backstop for the removal assigned at the top of the
-            // isBotSession block — deny cannot be bypassed by allow rules, so
-            // the tool stays blocked even if a future surface re-exposes the
-            // context. The merge is unconditional: with no disabled skills the
-            // backstop still lands.
             const skillDenyRules = compileSkillDenyRules(rolePolicy.disabledSkills ?? []);
-            (options.settings as { permissions?: BotAccessDerivation['permissionRules'] }).permissions = {
-              ...derivation.permissionRules,
-              deny: [...skillDenyRules, 'AskUserQuestion', ...derivation.permissionRules.deny],
-            };
+            (options.settings as { permissions?: BotAccessDerivation['permissionRules'] }).permissions =
+              skillDenyRules.length > 0
+                ? { ...derivation.permissionRules, deny: [...skillDenyRules, ...derivation.permissionRules.deny] }
+                : derivation.permissionRules;
 
             // U5 (R8/KTD-14): SDK skill context filter — unlisted skills are
             // hidden from the model and rejected by the Skill tool (a context
