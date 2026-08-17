@@ -150,6 +150,8 @@ interface SettingsPanelProps {
   presentation?: PanelPresentation
   closeRequestToken?: number
   onCloseCancelled?: () => void
+  /** Deep-link target: seeds the workspace selection and opens the workspace tab. */
+  initialWorkspaceId?: string
 }
 
 type SettingsTab = 'general' | 'appearance' | 'workspace' | 'backend' | 'providers' | 'bots'
@@ -191,6 +193,7 @@ export default function SettingsPanel({
   presentation,
   closeRequestToken = 0,
   onCloseCancelled,
+  initialWorkspaceId,
 }: SettingsPanelProps) {
   const { t } = useTranslation('settings')
   const workspaces = useWorkspaceStore((s) => s.workspaces)
@@ -267,9 +270,12 @@ export default function SettingsPanel({
     setArchiveThresholdDaysInput(String(archiveThresholdDays))
 
     if (workspaces.length > 0) {
-      setSelectedWorkspaceId(activeWorkspaceId || workspaces[0].id)
+      setSelectedWorkspaceId(initialWorkspaceId || activeWorkspaceId || workspaces[0].id)
     }
-  }, [workspaces, reopenLastWorkspace, useModifierToSubmit, autoCheckUpdates, notificationSoundsEnabled, notificationSoundsVolume, activeWorkspaceId, archiveThresholdDays])
+    if (initialWorkspaceId) {
+      setActiveTab('workspace')
+    }
+  }, [workspaces, reopenLastWorkspace, useModifierToSubmit, autoCheckUpdates, notificationSoundsEnabled, notificationSoundsVolume, activeWorkspaceId, archiveThresholdDays, initialWorkspaceId])
 
   useEffect(() => {
     setArchiveThresholdDaysInput(String(archiveThresholdDays))
