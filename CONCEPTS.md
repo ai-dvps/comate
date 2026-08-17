@@ -66,6 +66,9 @@ A distribution/install form of the app that ships without the Claude Code runtim
 ### 会话后端锁定 (session backend lock)
 A session is bound to the backend selected at its first message and cannot switch afterward, because transcripts are not portable across runtimes. When the locked backend is unavailable in the current install, the session opens read-only with a notice.
 
+### Bot 会话 (bot session)
+由远程 IM 入口（WeCom、feishu）创建的会话，判定依据是会话来源（source 为 `wecom`/`feishu`，即 `isBotSession`），与 GUI 会话和定时执行会话在权限派生、可用工具面与消息呈现路径上分流；此类会话固定运行在 claude 后端，不随后端默认值切换。
+
 ### Session Activity
 服务端维护的会话工作状态快照，统一表达 foreground turn、pending interaction、SDK background tasks、stopping 和 interruption。它是前端活跃展示、输入锁定与 runtime idle-close 判定的共同真相源；主 agent 的 `result` 只结束 foreground，不单独决定整个 Session 是否结束。
 
@@ -119,6 +122,12 @@ SkillHub 中以企业为发现入口的标准 Skill 目录。用户先浏览企�
 Tauri→Electron 壳迁移中，最后一个 Tauri 版本承担的特殊角色：其自动更新通道指向首个 Electron 安装包，把存量用户平滑带到 Electron 线；更新失败时用户可回滚到该版本安装包。Linux 无桥接版本——首个 Linux 版本即 Electron 版本。
 
 ## Prompt composer
+
+### Prompt image draft
+Prompt 编辑器中尚未被 Agent 后端接受的有序图片附件集合。它与 Prompt 文本分开，由 CoMate 按 Session 在当前应用运行期持有；切换 Session 或发送失败时保留，后端接受后清除，不跨应用重启持久化。
+
+### Backend-owned sent image
+Claude Code 或 OpenCode 已接受并写入自身 transcript 的图片消息。后端 transcript 是图片内容与历史可用性的唯一真相源；CoMate 只负责适配和展示，不为已发送图片维护持久化副本或恢复仓库。
 
 ### Prompt semantic reference
 Prompt 中能够被当前工作区确认解析的 Skill 或文件引用，分别采用 `/skill-name` 与 `@path` 形式。它的持久化、复制和提交表示仍是纯文本；编辑器可以在引用完成并解析成功后把它呈现为 Atomic prompt reference。
