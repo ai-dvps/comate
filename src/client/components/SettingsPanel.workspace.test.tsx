@@ -477,5 +477,44 @@ describe('SettingsPanel workspace tab local footer', () => {
       expect(ws1.className).toContain('text-accent');
       expect(ws2.className).not.toContain('text-accent');
     });
+
+    it('moves the selection when initialWorkspaceId arrives after mount', async () => {
+      // Settings already open without a deep link: stays on the general tab
+      // with the active workspace selected.
+      const view = renderWithI18n(<SettingsPanel isOpen onClose={vi.fn()} />);
+      expect(screen.queryByRole('button', { name: 'Workspace Two' })).not.toBeInTheDocument();
+
+      // Deep link arrives while the panel stays mounted.
+      await act(async () => {
+        view.rerender(
+          <I18nextProvider i18n={i18n}>
+            <SettingsPanel isOpen onClose={vi.fn()} initialWorkspaceId={workspace2.id} />
+          </I18nextProvider>,
+        );
+      });
+
+      const ws2 = screen.getByRole('button', { name: 'Workspace Two' });
+      const ws1 = screen.getByRole('button', { name: 'Workspace One' });
+      expect(ws2.className).toContain('text-accent');
+      expect(ws1.className).not.toContain('text-accent');
+    });
+
+    it('ignores a stale initialWorkspaceId that arrives after mount', async () => {
+      const view = renderWithI18n(<SettingsPanel isOpen onClose={vi.fn()} />);
+
+      await act(async () => {
+        view.rerender(
+          <I18nextProvider i18n={i18n}>
+            <SettingsPanel isOpen onClose={vi.fn()} initialWorkspaceId="ws-gone" />
+          </I18nextProvider>,
+        );
+      });
+
+      // Stale target: no workspace tab jump, selection unchanged.
+      expect(screen.queryByRole('button', { name: 'Workspace Two' })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: /Workspace/i }));
+      const ws1 = screen.getByRole('button', { name: 'Workspace One' });
+      expect(ws1.className).toContain('text-accent');
+    });
   });
 });

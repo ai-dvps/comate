@@ -576,6 +576,18 @@ function registerIpcHandlers(): void {
     if (typeof targetPath !== 'string' || targetPath.length === 0) {
       throw new Error('open-folder: path is required');
     }
+    // Defense in depth: shell.openPath would happily hand any renderer-supplied
+    // path to the OS (it opens files with their default app too), so gate it
+    // on the path being an existing directory.
+    let stats;
+    try {
+      stats = statSync(targetPath);
+    } catch {
+      throw new Error('open-folder: path is not accessible');
+    }
+    if (!stats.isDirectory()) {
+      throw new Error('open-folder: path is not a directory');
+    }
     const errorMessage = await shell.openPath(targetPath);
     if (errorMessage) {
       throw new Error(`open-folder: ${errorMessage}`);

@@ -51,7 +51,10 @@ const chatState = {
   fetchSessions: vi.fn(() => Promise.resolve({ ok: true })),
 }
 
-const openFolderMock = vi.fn((_path: string): Promise<void> => Promise.resolve())
+const openFolderMock = vi.fn((path: string): Promise<void> => {
+  void path
+  return Promise.resolve()
+})
 
 vi.mock('../lib/desktop-api', () => ({
   openFolder: (path: string) => openFolderMock(path),
@@ -736,6 +739,22 @@ describe('AgentCommandCenter focus-time session refresh', () => {
       vi.advanceTimersByTime(FOCUS_DEBOUNCE_MS)
     })
     expect(chatState.fetchSessions).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not cancel a pending focus refresh when a workspace is toggled', () => {
+    renderCenter()
+    vi.mocked(chatState.fetchSessions).mockClear()
+
+    fireEvent.focus(window)
+    // Toggle a workspace inside the debounce window: the armed refresh must
+    // survive and cover the workspaces expanded when it fires.
+    fireEvent.click(screen.getByRole('button', { name: 'Hidden tools' }))
+    act(() => {
+      vi.advanceTimersByTime(FOCUS_DEBOUNCE_MS)
+    })
+    expect(chatState.fetchSessions).toHaveBeenCalledTimes(1)
+    expect(chatState.fetchSessions).toHaveBeenCalledWith('ws-1')
+    expect(chatState.fetchSessions).not.toHaveBeenCalledWith('ws-2')
   })
 
   it('skips a workspace whose fetch is already in flight', async () => {
