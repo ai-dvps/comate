@@ -1004,6 +1004,33 @@ describe('PromptInput browser', () => {
     expect(screen.queryByRole('button', { name: 'Preview delayed.png' })).not.toBeInTheDocument()
   })
 
+  it('ignores a second image intake while the same draft is still normalizing', async () => {
+    chatStoreMock.getState().sessions = {
+      'ws-1': [{ id: 'session-1', backend: 'claude', providerId: 'provider-1' }],
+    }
+    let resolveNormalization: ((images: Awaited<ReturnType<typeof imageInputMock.normalizeImageBatch>>) => void) | undefined
+    imageInputMock.normalizeImageBatch.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveNormalization = resolve
+    }))
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+
+    const pasteImage = (name: string) => {
+      const transfer = new DataTransfer()
+      transfer.items.add(new File([new Uint8Array([1])], name, { type: 'image/png' }))
+      editableElement().dispatchEvent(new ClipboardEvent('paste', {
+        bubbles: true,
+        clipboardData: transfer,
+      }))
+    }
+
+    pasteImage('first.png')
+    await waitFor(() => expect(imageInputMock.normalizeImageBatch).toHaveBeenCalledTimes(1))
+    pasteImage('second.png')
+    expect(imageInputMock.normalizeImageBatch).toHaveBeenCalledTimes(1)
+    resolveNormalization?.([])
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Attach images' })).toBeEnabled())
+  })
+
   it('preserves existing images but blocks intake and send for an unsupported model', async () => {
     providerStoreMock.providers = [
       { id: 'provider-1', model: 'custom-text-model', isDefault: true },

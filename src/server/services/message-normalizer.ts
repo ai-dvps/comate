@@ -1,6 +1,7 @@
 import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 
-import type { ChatMessage, ImageMediaType, MessagePart, MessageRole, TaskItem } from '../types/message.js';
+import type { ChatMessage, MessagePart, MessageRole, TaskItem } from '../types/message.js';
+import { isImageMediaType } from '../utils/image-input-profile.js';
 
 /**
  * Track unknown SDK block types we've already warned about, to avoid log
@@ -58,24 +59,11 @@ type RawBlock =
   | RawImageBlock
   | { type: string };
 
-const IMAGE_MEDIA_TYPES = new Set<ImageMediaType>([
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'image/gif',
-]);
-
-function asImageMediaType(value: unknown): ImageMediaType | undefined {
-  return typeof value === 'string' && IMAGE_MEDIA_TYPES.has(value as ImageMediaType)
-    ? value as ImageMediaType
-    : undefined;
-}
-
 function normalizeImageBlock(block: RawImageBlock): MessagePart | undefined {
   if (!block.source || typeof block.source !== 'object') return undefined;
   const source = block.source as Record<string, unknown>;
-  const mediaType = asImageMediaType(block.mediaType ?? block.media_type ?? source.media_type);
-  if (!mediaType || typeof source.type !== 'string') return undefined;
+  const mediaType = block.mediaType ?? block.media_type ?? source.media_type;
+  if (!isImageMediaType(mediaType) || typeof source.type !== 'string') return undefined;
 
   let normalizedSource: Extract<MessagePart, { type: 'image' }>['source'];
   if (source.type === 'base64' && typeof source.data === 'string' && source.data.length > 0) {

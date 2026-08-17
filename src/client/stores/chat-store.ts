@@ -53,7 +53,6 @@ export interface PendingTurnSnapshot {
   readonly workspaceId: string
   readonly sessionId: string
   readonly text: string
-  readonly content: string
   readonly images: readonly PromptImageDraft[]
   readonly wireImages: readonly UserTurnImage[]
 }
@@ -543,6 +542,30 @@ function generateClientTurnId(): string {
 
 const DOM_CACHE_LIMIT = 5
 
+function sanitizeImageSource(
+  source: unknown,
+): Extract<MessagePart, { type: 'image' }>['source'] | null {
+  if (!source || typeof source !== 'object') return null
+  const rawSource = source as Record<string, unknown>
+  switch (rawSource.type) {
+    case 'base64':
+      return typeof rawSource.data === 'string'
+        ? { type: 'base64', data: rawSource.data }
+        : null
+    case 'url':
+      return typeof rawSource.url === 'string'
+        ? { type: 'url', url: rawSource.url }
+        : null
+    case 'unavailable':
+      return {
+        type: 'unavailable',
+        ...(typeof rawSource.reason === 'string' && { reason: rawSource.reason }),
+      }
+    default:
+      return null
+  }
+}
+
 function sanitizeMessagePart(part: unknown): MessagePart | null {
   if (!part || typeof part !== 'object') return null
 
@@ -566,18 +589,7 @@ function sanitizeMessagePart(part: unknown): MessagePart | null {
         mediaType !== 'image/webp' &&
         mediaType !== 'image/gif'
       ) return null
-      if (!p.source || typeof p.source !== 'object') return null
-      const rawSource = p.source as Record<string, unknown>
-      const source = rawSource.type === 'base64' && typeof rawSource.data === 'string'
-        ? { type: 'base64' as const, data: rawSource.data }
-        : rawSource.type === 'url' && typeof rawSource.url === 'string'
-          ? { type: 'url' as const, url: rawSource.url }
-          : rawSource.type === 'unavailable'
-            ? {
-                type: 'unavailable' as const,
-                ...(typeof rawSource.reason === 'string' && { reason: rawSource.reason }),
-              }
-            : null
+      const source = sanitizeImageSource(p.source)
       if (!source) return null
       return {
         type: 'image',
@@ -1330,7 +1342,7 @@ function dispatchPendingTurn(set: SseSetter, snapshot: PendingTurnSnapshot): voi
       workspaceId: snapshot.workspaceId,
       sessionId: snapshot.sessionId,
       clientTurnId: snapshot.clientTurnId,
-      content: snapshot.content,
+      content: snapshot.text.trim(),
       ...(snapshot.wireImages.length > 0 && { images: snapshot.wireImages }),
     })
     .then((result) => {
@@ -3504,7 +3516,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       workspaceId,
       sessionId,
       text: draft.text,
-      content,
       images: Object.freeze([...draft.images]),
       wireImages: Object.freeze(draft.images.map(toUserTurnImage)),
     })

@@ -532,7 +532,6 @@ describe('complete history loading', () => {
           workspaceId: 'ws-1',
           sessionId: 's1',
           text: 'inspect this',
-          content: 'inspect this',
           images: [],
           wireImages: [],
         },
@@ -1397,7 +1396,7 @@ describe('sendMessage subscription gating', () => {
         useChatStore.getState().pendingSend['s1'],
         useChatStore.getState().pendingTurns['s1'],
       )
-      assert.strictEqual(useChatStore.getState().pendingSend['s1']?.content, 'hello')
+      assert.strictEqual(useChatStore.getState().pendingSend['s1']?.text.trim(), 'hello')
     } finally {
       requestSpy.mockRestore()
     }
@@ -1646,7 +1645,7 @@ describe('runtime_closed WebSocket event', () => {
         useChatStore.getState().pendingSend['s1'],
         useChatStore.getState().pendingTurns['s1'],
       )
-      assert.strictEqual(useChatStore.getState().pendingSend['s1']?.content, 'second')
+      assert.strictEqual(useChatStore.getState().pendingSend['s1']?.text.trim(), 'second')
     } finally {
       requestSpy.mockRestore()
     }

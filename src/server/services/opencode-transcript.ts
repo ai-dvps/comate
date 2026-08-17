@@ -7,6 +7,7 @@
 
 import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { ImageMediaType, MessagePart } from '../types/message.js';
+import { isImageMediaType } from '../utils/image-input-profile.js';
 import { mapToolName } from './opencode-event-mapper.js';
 
 export interface OpencodeRestPart {
@@ -28,17 +29,6 @@ export interface OpencodeRestPart {
     error?: string;
     title?: string;
   };
-}
-
-const IMAGE_MEDIA_TYPES = new Set<ImageMediaType>([
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'image/gif',
-]);
-
-function isImageMediaType(value: string | undefined): value is ImageMediaType {
-  return Boolean(value && IMAGE_MEDIA_TYPES.has(value as ImageMediaType));
 }
 
 function safeDisplayName(value: string | undefined): string | undefined {
