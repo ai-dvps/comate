@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useFiles } from '../stores/files-store'
 import { revealInFileManager } from '../lib/desktop-api'
-import { ChevronRight, Folder, Loader2, X } from 'lucide-react'
+import { ChevronRight, Folder, Loader2, RefreshCw, X } from 'lucide-react'
 import { cn } from './ui/utils'
 import { getFileIcon } from '../lib/file-helpers'
 
@@ -22,6 +22,7 @@ interface TreeNodeProps {
   onFilePreview?: (path: string, name: string) => void
   onFileOpen: (path: string, name: string) => void
   onContextMenu?: (e: React.MouseEvent, nodePath: string, nodeType: 'file' | 'folder') => void
+  refreshToken: number
   level: number
 }
 
@@ -34,34 +35,63 @@ function TreeNode({
   onFilePreview,
   onFileOpen,
   onContextMenu,
+  refreshToken,
   level,
 }: TreeNodeProps) {
   const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
   const [children, setChildren] = useState<FileNode[]>([])
   const [loading, setLoading] = useState(false)
+  const requestRef = useRef<AbortController | null>(null)
+  const lastRefreshTokenRef = useRef(refreshToken)
 
   const nodePath = path ? `${path}/${node.name}` : node.name
+
+  const loadChildren = useCallback(async () => {
+    requestRef.current?.abort()
+    const controller = new AbortController()
+    requestRef.current = controller
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/files?path=${encodeURIComponent(nodePath)}`, {
+        signal: controller.signal,
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (requestRef.current === controller) {
+          setChildren(data.nodes || [])
+        }
+      }
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === 'AbortError')) {
+        console.error('Failed to load folder:', err)
+      }
+    } finally {
+      if (requestRef.current === controller) {
+        setLoading(false)
+      }
+    }
+  }, [nodePath, workspaceId])
+
+  useEffect(() => () => requestRef.current?.abort(), [])
+
+  useEffect(() => {
+    if (lastRefreshTokenRef.current === refreshToken) return
+
+    lastRefreshTokenRef.current = refreshToken
+    if (expanded) {
+      void loadChildren()
+    }
+  }, [expanded, loadChildren, refreshToken])
 
   const toggleExpand = useCallback(async () => {
     if (node.type !== 'folder') return
 
     if (!expanded && children.length === 0) {
-      setLoading(true)
-      try {
-        const res = await fetch(`/api/workspaces/${workspaceId}/files?path=${encodeURIComponent(nodePath)}`)
-        if (res.ok) {
-          const data = await res.json()
-          setChildren(data.nodes || [])
-        }
-      } catch (err) {
-        console.error('Failed to load folder:', err)
-      } finally {
-        setLoading(false)
-      }
+      await loadChildren()
     }
     setExpanded(!expanded)
-  }, [expanded, children.length, node.type, nodePath, workspaceId])
+  }, [children.length, expanded, loadChildren, node.type])
 
   if (node.type === 'folder') {
     return (
@@ -100,6 +130,7 @@ function TreeNode({
                   onFilePreview={onFilePreview}
                   onFileOpen={onFileOpen}
                   onContextMenu={onContextMenu}
+                  refreshToken={refreshToken}
                   level={level + 1}
                 />
               ))
@@ -159,8 +190,10 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFilePreview
   const [rootNodes, setRootNodes] = useState<FileNode[]>([])
   const [treeLoading, setTreeLoading] = useState(false)
   const [treeError, setTreeError] = useState<string | null>(null)
+  const [treeRefreshToken, setTreeRefreshToken] = useState(0)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; itemPath: string; itemType: 'file' | 'folder' } | null>(null)
   const prevWorkspaceIdRef = useRef<string | null>(null)
+  const rootRequestRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     setSearchQuery('')
@@ -171,35 +204,42 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFilePreview
     prevWorkspaceIdRef.current = activeWorkspaceId ?? null
   }, [activeWorkspaceId, clear])
 
-  useEffect(() => {
+  const loadRoot = useCallback(async () => {
     if (!activeWorkspaceId) {
       setRootNodes([])
       return
     }
 
+    rootRequestRef.current?.abort()
     const controller = new AbortController()
-
-    async function loadRoot() {
-      setTreeLoading(true)
-      setTreeError(null)
-      try {
-        const res = await fetch(`/api/workspaces/${activeWorkspaceId}/files`, {
-          signal: controller.signal,
-        })
-        if (!res.ok) throw new Error(t('failedToLoadFiles'))
-        const data = await res.json()
+    rootRequestRef.current = controller
+    setTreeLoading(true)
+    setTreeError(null)
+    try {
+      const res = await fetch(`/api/workspaces/${activeWorkspaceId}/files`, {
+        signal: controller.signal,
+      })
+      if (!res.ok) throw new Error(t('failedToLoadFiles'))
+      const data = await res.json()
+      if (rootRequestRef.current === controller) {
         setRootNodes(data.nodes || [])
-      } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') return
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      if (rootRequestRef.current === controller) {
         setTreeError(err instanceof Error ? err.message : t('unknownError'))
-      } finally {
+      }
+    } finally {
+      if (rootRequestRef.current === controller) {
         setTreeLoading(false)
       }
     }
-
-    loadRoot()
-    return () => controller.abort()
   }, [activeWorkspaceId, t])
+
+  useEffect(() => {
+    void loadRoot()
+    return () => rootRequestRef.current?.abort()
+  }, [loadRoot])
 
   const handleSearchChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -215,6 +255,14 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFilePreview
   )
 
   const isSearching = searchQuery.trim().length > 0
+
+  const handleRefresh = useCallback(() => {
+    setTreeRefreshToken((token) => token + 1)
+    void loadRoot()
+    if (searchQuery.trim()) {
+      search(searchQuery)
+    }
+  }, [loadRoot, search, searchQuery])
 
   useEffect(() => {
     if (!contextMenu) return
@@ -276,13 +324,13 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFilePreview
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Search input */}
-      <div className="px-3 py-2 border-b border-border/50 flex-shrink-0 relative">
+      <div className="px-3 py-2 border-b border-border/50 flex-shrink-0 flex items-center gap-1">
         <input
           type="text"
           value={searchQuery}
           onChange={handleSearchChange}
           placeholder={t('searchFiles')}
-          className="w-full bg-transparent text-xs text-text-primary placeholder:text-text-tertiary outline-none pr-6"
+          className="min-w-0 flex-1 bg-transparent text-xs text-text-primary placeholder:text-text-tertiary outline-none"
         />
         {searchQuery.length > 0 && (
           <button
@@ -291,12 +339,23 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFilePreview
               setSearchQuery('')
               clear()
             }}
-            className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded text-text-tertiary hover:text-text-primary transition-colors"
+            className="p-0.5 rounded text-text-tertiary hover:text-text-primary transition-colors"
             title={t('clear')}
+            aria-label={t('clear')}
           >
             <X className="w-3.5 h-3.5" />
           </button>
         )}
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={treeLoading}
+          className="p-0.5 rounded text-text-tertiary hover:text-text-primary transition-colors disabled:cursor-not-allowed"
+          title={t('refreshFiles')}
+          aria-label={t('refreshFiles')}
+        >
+          <RefreshCw className={cn('w-3.5 h-3.5', treeLoading && 'animate-spin')} />
+        </button>
       </div>
 
       {/* Content */}
@@ -362,6 +421,7 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFilePreview
                 onFilePreview={onFilePreview}
                 onFileOpen={onFileClick}
                 onContextMenu={handleContextMenu}
+                refreshToken={treeRefreshToken}
                 level={0}
               />
             ))}
