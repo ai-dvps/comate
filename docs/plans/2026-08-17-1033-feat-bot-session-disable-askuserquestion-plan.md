@@ -15,7 +15,7 @@ execution: code
 
 - **Objective:** In bot-initiated sessions (WeCom today, feishu when it ships), the agent can no longer call AskUserQuestion; when it needs a user decision it asks in plain text in the IM channel. GUI sessions keep AskUserQuestion unchanged.
 - **Product authority:** This contract owns the disable semantics, the removal mechanism, and the cleanup of the now-unreachable bot question paths. All other bot-session behavior is out of scope.
-- **Implementation authority:** The Planning Contract owns the enforcement mechanism (tool-context removal via SDK options, with a deny-rule backstop in both permission branches), the cleanup symbol inventory, and the sequencing gates.
+- **Implementation authority:** The Planning Contract owns the enforcement mechanism (tool-context removal via the SDK tool-disallow option — the sole enforcement layer), the cleanup symbol inventory, and the sequencing gates.
 - **Stop conditions:** Stop and re-plan if the SDK's tool-removal surface proves ineffective for built-in tools at runtime, or if cleanup discovers a consumer of the removed paths outside the inventoried question flow.
 - **Execution profile:** Three units. U1 lands the removal in the bot session option assembly (covering all three permission paths); U2 and U3 remove the WeCom and feishu question paths (removal gated on U1's tests).
 - **Tail ownership:** The implementer owns node:test suites (with `test-utils/test-env` isolation), `npm run typecheck` and `npm run lint`, the CHANGELOG entry, and committing this plan doc with the implementation.
@@ -25,7 +25,7 @@ execution: code
 
 ## Product Contract
 
-> Carried forward from the requirements-only brainstorm artifact. Revised at the planning handoff (user-directed): the disable mechanism changed from deny-with-guidance to tool-context removal, so R2's denial-message requirement is superseded by removal semantics (see Key Decisions). R4/AE4 cleanup scope was earlier extended to the parallel feishu question path, and the upgrade-settlement assumption was corrected during planning (see Dependencies / Assumptions).
+> Carried forward from the requirements-only brainstorm artifact. Revised at the planning handoff (user-directed): the disable mechanism changed from deny-with-guidance to tool-context removal, so R2's denial-message requirement is superseded by removal semantics (see Key Decisions). Revised again post-review (user-directed): the deny-rule backstop was dropped — the tool-disallow option is the sole enforcement layer; the SDK contract for it is absolute and the backstop's carrying cost exceeded its expected value. R4/AE4 cleanup scope was earlier extended to the parallel feishu question path, and the upgrade-settlement assumption was corrected during planning (see Dependencies / Assumptions).
 
 ### Summary
 
@@ -101,7 +101,7 @@ flowchart TB
 ### Dependencies / Assumptions
 
 - Verified: bot sessions always resolve to the claude backend (`src/server/services/chat-service.ts`, `resolveSessionBackend`, comment "Bot sessions always resolve to claude regardless of the app default (R14)") — makes the Open Code concern moot today.
-- Verified: the SDK exposes `disallowedTools` on the Options surface and documents that it also blocks harness-internal direct calls that bypass name lookup; deny rules cannot be bypassed by allow rules (backstop rationale). See `node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts`.
+- Verified: the SDK exposes `disallowedTools` on the Options surface and documents that it also blocks harness-internal direct calls that bypass name lookup; its contract is absolute (the tool cannot be used even where an allow rule would otherwise permit it). See `node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts`.
 - Resolved during planning: the removal is one options assignment inside the `isBotSession` block, which all three permission assemblies (sandbox, legacy kill-switch, no-botId fallback) read; U1 tests prove each path.
 - Assumption (corrected during planning): a pending question at upgrade time is settled by SDK resume over the dangling tool call — the in-process fail-closed timeout dies with the process; no migration.
 - Assumption: asking in plain text without a question tool is expected model behavior — a chat model's default, with no guidance text carried; if field behavior proves unreliable, adding system-prompt guidance is a follow-up.
@@ -128,8 +128,8 @@ flowchart TB
 
 ### Key Technical Decisions
 
-- KTD1. **AskUserQuestion is removed from the model's tool context via the SDK's tool-disallow option; a deny-rule backstop rides both permission branches** — with the tool absent, the agent never attempts it and asks in plain text as its only option: no wasted tool call, no denial round-trip, no hook-ordering constraints. The SDK documents that the disallow option also blocks harness-internal direct calls, which name-based gates miss; the deny-rule backstop cannot be bypassed by allow rules. Revised from the earlier PreToolUse-deny-hook mechanism at the planning handoff (user-directed): the hook let the model see the tool, call it, and bounce — removal is the direct route. Governs R1, R2.
-- KTD2. **One options assignment at the top of the `isBotSession` block covers all three permission assemblies** — the sandbox branch, the legacy kill-switch branch, and the no-botId migration fallback all consume the same options object, so a single tool-disallow entry protects every path. The legacy branch's canary-rollback comment is updated: rollback no longer restores the question flow, which is intended per R1. Gates U2/U3 on U1's tests.
+- KTD1. **AskUserQuestion is removed from the model's tool context via the SDK's tool-disallow option — the sole enforcement layer** — with the tool absent, the agent never attempts it and asks in plain text as its only option: no wasted tool call, no denial round-trip, no hook-ordering constraints. The SDK documents that the disallow option also blocks harness-internal direct calls and that its contract is absolute ("removed from the model's context and cannot be used, even if they would otherwise be allowed"). Revised from the earlier PreToolUse-deny-hook mechanism at the planning handoff (user-directed): the hook let the model see the tool, call it, and bounce — removal is the direct route. The deny-rule backstop initially added alongside the removal was dropped post-review (user-directed): it guarded only a hypothetical SDK contract breach, and its carrying cost (merge-shape changes in two branches, extra assertions, drift across the three assemblies) exceeded that value. Governs R1, R2.
+- KTD2. **One options assignment at the top of the `isBotSession` block covers all three permission assemblies** — the sandbox branch, the legacy kill-switch branch, and the no-botId migration fallback all consume the same options object, so a single tool-disallow entry protects every path. The legacy branch's canary-rollback comment is updated: rollback no longer restores the question flow, which is intended per R1. The permission-rule surfaces themselves (the skill-deny merge, the legacy settings) return to their pre-change shapes — no question-related entries ride them. Gates U2/U3 on U1's tests.
 - KTD4. **Upgrade settlement relies on SDK resume over the dangling tool call; no migration** — the in-process fail-closed timeout dies with the process, so an interrupted bot session resumes with a dangling AskUserQuestion tool_use; the model sees the interrupted question and, with the tool absent, re-asks in plain text. The boot-time escalation sweep settles approval escalations only (questions never create ledger rows), so it does not participate in question settlement.
 
 ### High-Level Technical Design
@@ -139,7 +139,6 @@ flowchart TB
   CALL[Agent needs a user decision] --> GATE{Session type}
   GATE -->|Bot session wecom/feishu| OPT[Options assembly in the bot branch:<br/>tool-disallow entry set once at the top]
   OPT --> MODEL[Tool set has no AskUserQuestion<br/>agent asks in plain text in IM]
-  OPT -.->|silent backstop| RULES[Deny rule in both branches'<br/>permission settings]
   GATE -->|GUI / scheduled| GUIRT[SDK default flow:<br/>canUseTool pending-question path<br/>unchanged]
 ```
 
@@ -164,10 +163,9 @@ U1 (removal) must land before U2/U3 (cleanup) — cleanup first would leave a wi
 - **Dependencies:** None.
 - **Files:** `src/server/services/chat-service.ts` (modify); `src/server/services/chat-service.test.ts` (modify).
 - **Approach:**
-  1. At the top of the `isBotSession` block in `buildSdkOptions`, add `AskUserQuestion` to the tool-disallow list on the options object — one assignment covering the sandbox branch, the legacy kill-switch branch, and the no-botId migration fallback (KTD2).
-  2. Add `AskUserQuestion` to the sandbox deny-rule merge as a silent backstop (restructuring the merge so it is not gated on `skillDenyRules` being non-empty), and mirror a minimal deny entry in the legacy branch's settings.
-  3. Update the legacy branch's canary-rollback comment: rollback no longer restores the question flow (KTD2).
-  4. Live smoke: one real bot session confirming the agent asks in plain text at a decision point.
+  1. At the top of the `isBotSession` block in `buildSdkOptions`, add `AskUserQuestion` to the tool-disallow list on the options object — one assignment covering the sandbox branch, the legacy kill-switch branch, and the no-botId migration fallback (KTD2). No permission-rule changes ride the skill-deny merge or the legacy settings.
+  2. Update the legacy branch's canary-rollback comment: rollback no longer restores the question flow (KTD2).
+  3. Live smoke: one real bot session confirming the agent asks in plain text at a decision point.
 - **Patterns to follow:** the `compileSkillDenyRules` permission merge (deny-rule merge shape); `denyBrowserToolInBotSession` (bot capability-denial precedent — non-injection as the primary control).
 - **Test scenarios:**
   - Sandbox bot session: built options carry the tool-disallow entry for AskUserQuestion. Covers AE1.
@@ -176,7 +174,7 @@ U1 (removal) must land before U2/U3 (cleanup) — cleanup first would leave a wi
   - GUI session: no tool-disallow entry for AskUserQuestion. Covers AE2.
   - Scheduled session: no entry. Covers AE3.
   - Runtime rebuild after toggling `botPermissionSandboxDisabled`: rebuilt options still carry the entry.
-  - Sandbox permissions include the deny-rule backstop; legacy settings carry the mirrored entry.
+  - The permission-rule surfaces keep their pre-change shapes (legacy settings carry no permissions; the skill-deny merge stays conditional on disabled skills).
 - **Verification:** New and updated cases in `chat-service.test.ts` green; `npm run test:server`.
 
 ### U2. WeCom question-path removal
