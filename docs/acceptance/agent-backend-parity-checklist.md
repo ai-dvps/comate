@@ -15,6 +15,7 @@ Generated from the capability declaration table (`src/server/services/agent-back
 | modelSwitching | full | verified | Provider→opencode mapping exercised in every E2E run (Kimi endpoint); `setModel` on the query handle |
 | browser | full | verified | `browser-mcp-http.test.ts`: auth, initialize, tools/list; GUI/bot injection assertions (`__tests__/browser-mcp.test.ts`) |
 | slashCommands | full | verified | Driver command endpoint routing + `getSessionBackendCommands`; discovery route is backend-aware |
+| imageInput | full on declared image-capable models | automated verified; live provider walkthrough remaining | Client normalization/admission suites; Claude native image-block tests; OpenCode `file` part and transcript fixture round trips; shared history renderer tests |
 | subagents | full | verified | `opencode-transcript.test.ts`: history translation + task/child pairing |
 | analytics | unavailable (declared) | verified | KTD-10: opencode sessions not counted in v1; noted in the analytics UI |
 | hooks | unavailable (both backends) | verified | Ground truth: hook scripts have no consumer on either backend; execution is its own work item |
@@ -28,6 +29,25 @@ Generated from the capability declaration table (`src/server/services/agent-back
 | AE3 draft select → lock | verified | U5 selector (draft pre-select, locked badge) + U2 persistence/lock at first runtime + guard tests (409 on change) |
 | AE4 approval flow on opencode | verified | Adapter E2E: approval UI payload → approve once → tool executes → file written; "always" maps to opencode's persisted rules |
 | AE5 question stepper on opencode | verified | Surface probes on the pinned binary: question.asked → reply → session continues; bridge mapping unit-tested |
+
+## Prompt image input boundaries
+
+- Supported input is PNG, JPEG, WebP, and GIF, with at most 10 images and 20 MiB of normalized base64 data per turn. Static images are proportionally constrained to 2000×2000 and targeted below 4.5 MiB of base64 data per image; GIF is passed through unchanged and must already fit. Raw inputs above 20 MiB or 40 megapixels are rejected before normalization.
+- Image intake is enabled only for a declared image-capable backend/model profile. Unknown, custom, and known text-only models remain disabled with an explanation; there is no silent text or file-reference fallback.
+- Comate owns image bytes only while a draft is unsent or awaiting admission. After admission, Claude Code or OpenCode owns the transcript copy used for reload and resume. Missing or compacted historical media renders as unavailable rather than being recovered from a private Comate archive.
+- Automated tests verify composition, normalization, atomic rejection and restoration, Claude/OpenCode provider translation, transcript normalization, optimistic reconciliation, and history rendering. A credentialed live-provider send/reload walkthrough remains an explicit release check and is not self-certified by these fixtures.
+
+### Prompt image acceptance status
+
+| Scenario | Status | Automated proof |
+|---|---|---|
+| Paste, drop, chooser, reorder, remove, preview, and image-only composition | verified | `PromptInput.browser.test.tsx`; `PromptImageRail.test.tsx`; `image-input.test.ts` |
+| Oversized static normalization and atomic invalid/oversized rejection | verified | client `image-input.test.ts`; server `image-input-validation.test.ts` |
+| Claude Code receives ordered native image blocks | verified with SDK boundary fixtures | `chat-service.test.ts`; `session-runtime.test.ts`; `server.test.ts` |
+| OpenCode receives ordered file parts and replays transcript images | verified with pinned 1.18.4 adapter fixtures | `opencode-adapter.test.ts`; `opencode-transcript.test.ts` |
+| Failed admission restores the full draft; accepted turns release draft bytes | verified | `chat-store.test.ts`; WebSocket admission tests |
+| Reloaded history is backend-owned and optimistic replay is idempotent | verified with transcript fixtures | normalizer, chat-store, adapter, and renderer suites |
+| Unsupported or unknown model disables image intake with a reason | verified | image profile, backend-store, and PromptInput suites |
 
 ## Distribution flavors
 
