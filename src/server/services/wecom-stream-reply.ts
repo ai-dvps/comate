@@ -3,7 +3,7 @@ import type { SseEvent } from '../types/message.js';
 import { debounce } from '../utils/debounce.js';
 import { getRandomAcknowledgment } from '../utils/bot-placeholder.js';
 import { splitWecomMessage } from '../utils/wecom-message-split.js';
-import { buildToolApprovalCard, buildQuestionCard, buildEscalationNoticeCard } from './wecom-template-card.js';
+import { buildToolApprovalCard, buildEscalationNoticeCard } from './wecom-template-card.js';
 import { botEscalationLedger } from './bot-escalation-ledger.js';
 import { diagLog } from '../utils/diag-logger.js';
 import { getBotToolCategory, summarizeBotToolOperation } from '../utils/bot-tool-presentation.js';
@@ -21,7 +21,6 @@ function toolStatusText(toolName: string): string {
     case 'command': return '⚙️ 正在执行命令…';
     case 'file_write': return '✏️ 正在修改文件…';
     case 'web_research': return '🌐 正在查询资料…';
-    case 'question': return '💬 正在整理需要确认的信息…';
     case 'browser': return '🌐 正在检查页面…';
     default: return '⚙️ 正在执行相关操作…';
   }
@@ -52,7 +51,7 @@ export interface StreamReplyConnection {
     replyStreamNonBlocking: (frame: WsFrame<any>, streamId: string, text: string, finish?: boolean) => Promise<unknown>;
     sendMessage: (userId: string, body: any) => Promise<unknown>;
   };
-  /** Optional callback used to send a template-card message for pending approvals/questions. */
+  /** Optional callback used to send a template-card message for pending approvals. */
   sendTemplateCard?: (card: TemplateCard) => Promise<unknown>;
 }
 
@@ -68,7 +67,7 @@ export interface StreamReplyResult {
    */
   interrupt: (message: string) => boolean;
   /**
-   * Append a resolved narrative block (e.g. a folded question/permission
+   * Append a resolved narrative block (e.g. a folded permission
    * receipt) into the passive stream WITHOUT finalizing it, so the agent's
    * continuation keeps streaming into the same bubble below the block. Mirrors
    * `interrupt` (clears the active placeholder, ensures one blank-line
@@ -564,25 +563,6 @@ export function createStreamReply(
             console.error('Failed to send WeCom approval card:', err);
             diagLog(`[WeComStreamReply ${sessionId}] send approval-card FAIL requestId=${event.requestId} err=${err.message}`);
             setPlaceholder('\n\n⚠️ 确认卡发送失败，请稍后重试或发送 /stop。', false, true);
-          },
-        );
-      } else if (event.type === 'pending_question') {
-        if (sentTemplateCards.has(event.requestId)) return;
-        sentTemplateCards.add(event.requestId);
-        setPlaceholder('\n\n⏸️ 等待你回答一个问题…', false, true);
-        const card = buildQuestionCard({
-          requestId: event.requestId,
-          sessionId,
-          questions: event.questions,
-          taskId: event.requestId,
-        });
-        diagLog(`[WeComStreamReply ${sessionId}] send question-card requestId=${event.requestId}`);
-        conn.sendTemplateCard?.(card).then(
-          () => diagLog(`[WeComStreamReply ${sessionId}] send question-card OK requestId=${event.requestId}`),
-          (err: Error) => {
-            console.error('Failed to send WeCom question card:', err);
-            diagLog(`[WeComStreamReply ${sessionId}] send question-card FAIL requestId=${event.requestId} err=${err.message}`);
-            setPlaceholder('\n\n⚠️ 问题卡发送失败，请稍后重试或发送 /stop。', false, true);
           },
         );
       } else if (event.type === 'approval_timeout') {

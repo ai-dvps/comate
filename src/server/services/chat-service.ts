@@ -14,7 +14,6 @@ import type {
   SseEvent,
   WorkflowState,
   SessionActivitySnapshot,
-  QuestionPayload,
 } from '../types/message.js';
 import { normalizeSessionMessage, scanSdkMessagesForTasks } from './message-normalizer.js';
 import { SdkClient } from './sdk-client.js';
@@ -250,28 +249,6 @@ function auditPathFromToolInput(input: Record<string, unknown>): string | undefi
     if (typeof value === 'string') return value;
   }
   return undefined;
-}
-
-/** Normalize an AskUserQuestion tool input into question payloads. */
-function mapAskUserQuestionInput(input: Record<string, unknown>): QuestionPayload[] {
-  return (input.questions as unknown[] ?? []).map((q: unknown) => {
-    const qx = q as Record<string, unknown>;
-    return {
-      question: typeof qx.question === 'string' ? qx.question : '',
-      header: typeof qx.header === 'string' ? qx.header : undefined,
-      options: Array.isArray(qx.options)
-        ? qx.options.map((o: unknown) => {
-            const ox = o as Record<string, unknown>;
-            return {
-              label: typeof ox.label === 'string' ? ox.label : '',
-              description: typeof ox.description === 'string' ? ox.description : undefined,
-              preview: typeof ox.preview === 'string' ? ox.preview : undefined,
-            };
-          })
-        : [],
-      multiSelect: qx.multiSelect === true,
-    };
-  });
 }
 
 /** Positive finite tool-input timeout, or undefined. */
@@ -2762,26 +2739,6 @@ export class ChatService {
                 }
               }
 
-              // AskUserQuestion always requires user input, regardless of policy
-              if (toolName === 'AskUserQuestion') {
-                const runtime = this.runtimes.get(session.id);
-                if (!runtime) {
-                  diagLog(
-                    `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=missing-runtime`,
-                  );
-                  return {
-                    behavior: 'deny' as const,
-                    message: "I can't do that in this workspace.",
-                  };
-                }
-                const questions = mapAskUserQuestionInput(input);
-                const timeout = extractToolTimeout(input);
-                return runtime.requestToolQuestion(sdkOptions.toolUseID, questions, input, {
-                  timeout,
-                  signal: sdkOptions.signal,
-                });
-              }
-
               if (decision === 'ask') {
                 const runtime = this.runtimes.get(session.id);
                 if (!runtime) {
@@ -3457,20 +3414,6 @@ export class ChatService {
                 }
               }
 
-              // AskUserQuestion always requires user input, regardless of policy
-              if (toolName === 'AskUserQuestion') {
-                const runtime = this.runtimes.get(session.id);
-                if (!runtime) {
-                  return denyRouted('final', 'missing-runtime');
-                }
-                const questions = mapAskUserQuestionInput(input);
-                const timeout = extractToolTimeout(input);
-                return runtime.requestToolQuestion(sdkOptions.toolUseID, questions, input, {
-                  timeout,
-                  signal: sdkOptions.signal,
-                });
-              }
-
               // ---- MCP tools: classification gating (U9, R10/KTD-20). ------
               // MCP server processes run OUTSIDE the session sandbox, so this
               // gate is the only boundary. Read-class tools fall through to
@@ -3684,25 +3627,6 @@ export class ChatService {
                 message: "I can't do that in this workspace.",
               };
             }
-          }
-
-          if (toolName === 'AskUserQuestion') {
-            const runtime = this.runtimes.get(session.id);
-            if (!runtime) {
-              diagLog(
-                `[ChatService.botDeny] session=${session.id} tool=${toolName} toolUseId=${sdkOptions?.toolUseID ?? 'none'} reason=missing-runtime`,
-              );
-              return {
-                behavior: 'deny' as const,
-                message: "I can't do that in this workspace.",
-              };
-            }
-            const questions = mapAskUserQuestionInput(input);
-            const timeout = extractToolTimeout(input);
-            return runtime.requestToolQuestion(sdkOptions.toolUseID, questions, input, {
-              timeout,
-              signal: sdkOptions.signal,
-            });
           }
 
           if (decision === 'ask') {
