@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { randomUUID } from 'crypto';
+import { randomUUID, type UUID } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
@@ -2007,6 +2007,7 @@ export class ChatService {
     isBotSession?: boolean,
     botEventHandler?: (id: number, event: SseEvent) => void,
     botUserId?: string,
+    clientTurnId?: UUID,
   ): Promise<void> {
     const runtime = await this.getOrCreateRuntime(sessionId, workspaceId, isBotSession, botEventHandler, botUserId);
 
@@ -2037,7 +2038,7 @@ export class ChatService {
     // U11 (KTD-19): a new turn resets the per-turn override-deny cap.
     this.sessionOverrideDenies.delete(sessionId);
 
-    runtime.pushMessage(runtimeContent);
+    runtime.pushMessage(runtimeContent, clientTurnId);
 
     // Runtime push is the admission boundary. Only promote/lock a draft after
     // that synchronous operation succeeds; a rejection must leave it retryable.

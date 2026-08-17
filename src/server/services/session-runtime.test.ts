@@ -248,6 +248,38 @@ describe('session-runtime activity callback', { concurrency: false }, () => {
     assert.deepEqual(queued.message.content, content);
   });
 
+  it('uses the validated client turn id as the queued SDK user message uuid', async () => {
+    const sdk = createActivitySdkClient();
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      sdk.client,
+    );
+
+    runtime.pushMessage('hello', '550e8400-e29b-41d4-a716-446655440000');
+
+    const queued = await sdk.nextInput();
+    assert.equal(queued.uuid, '550e8400-e29b-41d4-a716-446655440000');
+  });
+
+  it('generates a UUID for legacy callers without a client turn id', async () => {
+    const sdk = createActivitySdkClient();
+    runtime = SessionRuntime.open(
+      's1',
+      'ws1',
+      'nonce',
+      {} as Options,
+      sdk.client,
+    );
+
+    runtime.pushMessage('legacy caller');
+
+    const queued = await sdk.nextInput();
+    assert.match(queued.uuid, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  });
+
   it('does not invoke onActivity for each SDK message in runMessageLoop', async () => {
     const messages: SDKMessage[] = [
       { type: 'text', text: 'hello' } as SDKMessage,

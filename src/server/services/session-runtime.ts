@@ -1,5 +1,5 @@
 import type { Response } from 'express';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, type UUID } from 'node:crypto';
 import type {
   Options,
   SDKMessage,
@@ -1043,7 +1043,7 @@ export class SessionRuntime {
     this.onSubscribed?.();
   }
 
-  pushMessage(content: RuntimeUserContent): void {
+  pushMessage(content: RuntimeUserContent, clientTurnId?: UUID): void {
     if (this.stopping) {
       throw new Error('Session is stopping and cannot accept new messages.');
     }
@@ -1051,7 +1051,7 @@ export class SessionRuntime {
       throw new Error('Session is closed and cannot accept new messages.');
     }
     this.stopFenceActive = false;
-    const uuid = randomUUID();
+    const uuid = clientTurnId ?? randomUUID();
     const msg: SDKUserMessage = {
       type: 'user',
       message: { role: 'user', content },

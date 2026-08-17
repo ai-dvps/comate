@@ -706,8 +706,13 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
       onActivity?: () => void;
       modelId?: string;
     } = {},
-  ): SessionRuntime & { pushMessageCalls: unknown[]; botHandlers: Array<(id: number, event: SseEvent) => void> } {
+  ): SessionRuntime & {
+    pushMessageCalls: unknown[];
+    pushMessageClientTurnIds: Array<string | undefined>;
+    botHandlers: Array<(id: number, event: SseEvent) => void>;
+  } {
     const pushMessageCalls: unknown[] = [];
+    const pushMessageClientTurnIds: Array<string | undefined> = [];
     const botHandlers: Array<(id: number, event: SseEvent) => void> = [];
     const mock = {
       isClosed: () => false,
@@ -720,8 +725,9 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
       unsubscribe: () => {
         callbacks.onUnsubscribed?.();
       },
-      pushMessage: (message: unknown) => {
+      pushMessage: (message: unknown, clientTurnId?: string) => {
         pushMessageCalls.push(message);
+        pushMessageClientTurnIds.push(clientTurnId);
         callbacks.onActivity?.();
       },
       resolveApproval: () => {},
@@ -738,9 +744,14 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
       getBackendId: () => 'claude' as const,
       getModelId: () => callbacks.modelId ?? 'claude-sonnet-4-6',
       pushMessageCalls,
+      pushMessageClientTurnIds,
       botHandlers,
     };
-    return mock as unknown as SessionRuntime & { pushMessageCalls: unknown[]; botHandlers: Array<(id: number, event: SseEvent) => void> };
+    return mock as unknown as SessionRuntime & {
+      pushMessageCalls: unknown[];
+      pushMessageClientTurnIds: Array<string | undefined>;
+      botHandlers: Array<(id: number, event: SseEvent) => void>;
+    };
   }
 
   function setupStoreMocks(session: ChatSession = createMockSession('s1')) {
@@ -798,6 +809,24 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
     const runtime = (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.get('s1');
     const calls = (runtime as unknown as { pushMessageCalls: unknown[] }).pushMessageCalls;
     assert.deepStrictEqual(calls, ['hello world']);
+  });
+
+  it('passes the stable client turn id through to runtime admission', async () => {
+    setupStoreMocks();
+    const runtime = createMockRuntime();
+    SessionRuntime.open = () => runtime;
+
+    await service.pushMessage(
+      's1',
+      'ws-1',
+      'hello world',
+      undefined,
+      undefined,
+      undefined,
+      '550e8400-e29b-41d4-a716-446655440000',
+    );
+
+    assert.deepEqual(runtime.pushMessageClientTurnIds, ['550e8400-e29b-41d4-a716-446655440000']);
   });
 
   it('translates a validated mixed image turn into ordered Claude content blocks', async () => {

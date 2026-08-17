@@ -107,7 +107,9 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
   it('acknowledges send admission with the matching client turn id only after push resolves', async () => {
     const originalPushMessage = chatService.pushMessage.bind(chatService);
     let resolvePush: (() => void) | undefined;
-    chatService.pushMessage = async () => new Promise<void>((resolve) => {
+    let admittedClientTurnId: string | undefined;
+    chatService.pushMessage = async (...args: Parameters<typeof chatService.pushMessage>) => new Promise<void>((resolve) => {
+      admittedClientTurnId = args[6];
       resolvePush = resolve;
     });
     try {
@@ -118,7 +120,7 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
       sendRequest(ws, 'send-1', 'sendMessage', {
         workspaceId: 'ws-1',
         sessionId: 'session-1',
-        clientTurnId: 'turn-1',
+        clientTurnId: '550e8400-e29b-41d4-a716-446655440000',
         content: 'hello',
       });
       await new Promise((resolve) => setTimeout(resolve, 20));
@@ -126,7 +128,8 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
       resolvePush();
 
       const response = await responsePromise;
-      assert.deepEqual(response.payload, { sent: true, clientTurnId: 'turn-1' });
+      assert.equal(admittedClientTurnId, '550e8400-e29b-41d4-a716-446655440000');
+      assert.deepEqual(response.payload, { sent: true, clientTurnId: '550e8400-e29b-41d4-a716-446655440000' });
     } finally {
       chatService.pushMessage = originalPushMessage;
     }
@@ -159,6 +162,52 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
     }
   });
 
+  it('rejects unsafe or unbounded client turn ids before runtime push', async () => {
+    const originalPushMessage = chatService.pushMessage.bind(chatService);
+    let pushed = false;
+    chatService.pushMessage = async () => {
+      pushed = true;
+    };
+    try {
+      ws = await connect();
+      for (const [index, clientTurnId] of [
+        'turn-1',
+        'x'.repeat(65),
+        '1723980000000-abc1234',
+        '550e8400-e29b-41d4-a716-44665544 000',
+      ].entries()) {
+        const requestId = `send-unsafe-${index}`;
+        const responsePromise = waitForMessage<WsErrorResponse>(ws, (message) =>
+          'id' in message && message.id === requestId,
+        );
+        sendRequest(ws, requestId, 'sendMessage', {
+          workspaceId: 'ws-1',
+          sessionId: 'session-1',
+          clientTurnId,
+          content: 'hello',
+        });
+        const response = await responsePromise;
+        assert.equal(response.error.code, 'INVALID_SEND_MESSAGE');
+      }
+      assert.equal(pushed, false);
+
+      const uuidRequest = waitForMessage<WsResponse>(ws, (message) =>
+        'id' in message && message.id === 'send-safe-uuid',
+      );
+      sendRequest(ws, 'send-safe-uuid', 'sendMessage', {
+        workspaceId: 'ws-1',
+        sessionId: 'session-1',
+        clientTurnId: '550e8400-e29b-41d4-a716-446655440000',
+        content: 'hello',
+      });
+      const uuidResponse = await uuidRequest;
+      assert.equal(uuidResponse.ok, true);
+      assert.equal(pushed, true);
+    } finally {
+      chatService.pushMessage = originalPushMessage;
+    }
+  });
+
   it('returns structured pre-admission image validation failures without acknowledging', async () => {
     const originalPushMessage = chatService.pushMessage.bind(chatService);
     chatService.pushMessage = async () => {
@@ -181,7 +230,7 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
       sendRequest(ws, 'send-rejected', 'sendMessage', {
         workspaceId: 'ws-1',
         sessionId: 'session-1',
-        clientTurnId: 'turn-rejected',
+        clientTurnId: '550e8400-e29b-41d4-a716-446655440001',
         content: '',
         images: [{ id: 'bad', mediaType: 'image/png', data: 'AA==', width: 1, height: 1 }],
       });

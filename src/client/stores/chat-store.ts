@@ -537,6 +537,10 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
+function generateClientTurnId(): string {
+  return crypto.randomUUID()
+}
+
 const DOM_CACHE_LIMIT = 5
 
 function sanitizeMessagePart(part: unknown): MessagePart | null {
@@ -3464,7 +3468,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       : turn
     const content = draft.text.trim()
     if (!content && draft.images.length === 0) return undefined
-    const clientTurnId = generateId()
+    const clientTurnId = generateClientTurnId()
     const snapshot: PendingTurnSnapshot = Object.freeze({
       clientTurnId,
       workspaceId,
