@@ -23,7 +23,7 @@ vi.mock('../components/PromptInput', () => ({
     onApprovalModeChange,
     disabled,
   }: {
-    onSend: (content: string) => void
+    onSend: (turn: { text: string; images: unknown[] }) => void
     onBackendChange?: (backendId: 'claude' | 'opencode') => void
     onProviderChange?: (providerId: string | null) => void
     fastMode?: boolean
@@ -44,7 +44,24 @@ vi.mock('../components/PromptInput', () => ({
         <button type="button" onClick={() => onProviderChange?.('provider-2')}>Choose provider</button>
         <button type="button" onClick={() => onFastModeChange?.(!fastMode)}>Toggle fast</button>
         <button type="button" onClick={() => onApprovalModeChange?.('auto')}>Choose permission</button>
-        <button type="button" disabled={disabled || !value.trim()} onClick={() => onSend(value.trim())}>Send</button>
+        <button type="button" disabled={disabled || !value.trim()} onClick={() => onSend({ text: value, images: [] })}>Send</button>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => onSend({
+            text: '',
+            images: [{
+              id: 'image-1',
+              name: 'bug.png',
+              mediaType: 'image/png',
+              data: 'AA==',
+              width: 1,
+              height: 1,
+              blob: new Blob(['image']),
+              previewUrl: 'blob:image-1',
+            }],
+          })}
+        >Send image</button>
       </div>
     )
   },
@@ -199,12 +216,14 @@ const mockChatStore = {
   setActiveSession: vi.fn(),
   createSession: vi.fn(),
   sendMessage: vi.fn(),
+  transferDraft: vi.fn(),
   setDraft: vi.fn(),
 }
 
 vi.mock('../stores/chat-store', () => ({
   useChatStore: (selector?: (s: typeof mockChatStore) => unknown) =>
     selector ? selector(mockChatStore) : mockChatStore,
+  newChatDraftSessionId: (workspaceId: string) => `__new_chat_draft__:${JSON.stringify(workspaceId)}`,
 }))
 
 const mockContextTabStore = {
@@ -315,7 +334,13 @@ describe('App layout', () => {
         approvalMode: 'auto',
         signal: expect.any(AbortSignal),
       }))
-      expect(mockChatStore.sendMessage).toHaveBeenCalledWith('ws-1', 'session-new', 'Fix redirects')
+      expect(mockChatStore.sendMessage).toHaveBeenCalledWith('ws-1', 'session-new', { text: 'Fix redirects', images: [] })
+      expect(mockChatStore.transferDraft).toHaveBeenCalledWith(
+        'ws-1',
+        '__new_chat_draft__:"ws-1"',
+        'session-new',
+        { text: 'Fix redirects', images: [] },
+      )
     })
   })
 
@@ -335,6 +360,38 @@ describe('App layout', () => {
     expect(sessionWorkspace).toHaveClass('invisible', 'pointer-events-none')
     expect(sessionWorkspace).toHaveAttribute('aria-hidden', 'true')
     expect(sessionWorkspace).toHaveAttribute('inert')
+  })
+
+  it('creates one image-only session with the fallback title and transfers its draft', async () => {
+    mockWorkspaceStore.workspaces = [{ id: 'ws-1', name: 'Comate', folderPath: '/comate' }]
+    mockWorkspaceStore.activeWorkspaceId = 'ws-1'
+    mockWorkspaceStore.openWorkspaceIds = ['ws-1']
+    mockChatStore.createSession.mockResolvedValue({
+      ok: true,
+      session: {
+        id: 'session-image',
+        workspaceId: 'ws-1',
+        name: 'Image prompt',
+        createdAt: '',
+        updatedAt: '',
+      },
+    })
+
+    renderWithI18n(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New chat' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send image' }))
+
+    await waitFor(() => expect(mockChatStore.createSession).toHaveBeenCalledWith(
+      'ws-1',
+      expect.objectContaining({ initialPrompt: 'Image prompt' }),
+    ))
+    expect(mockChatStore.transferDraft).toHaveBeenCalledTimes(1)
+    expect(mockChatStore.sendMessage).toHaveBeenCalledTimes(1)
+    expect(mockChatStore.sendMessage).toHaveBeenCalledWith(
+      'ws-1',
+      'session-image',
+      expect.objectContaining({ text: '', images: [expect.objectContaining({ id: 'image-1' })] }),
+    )
   })
 
   it('creates a session when submitting directly from the default New Chat screen', async () => {
@@ -372,7 +429,7 @@ describe('App layout', () => {
     await waitFor(() => expect(mockChatStore.sendMessage).toHaveBeenCalledWith(
       'ws-1',
       'session-default',
-      'Start from the default screen',
+      { text: 'Start from the default screen', images: [] },
     ))
   })
 

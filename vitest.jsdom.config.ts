@@ -41,6 +41,7 @@ export default defineProject({
       'src/client/lib/prompt-references.test.ts',
       'src/client/lib/prompt-reference-state.test.ts',
       'src/client/lib/image-input.test.ts',
+      'src/client/lib/websocket-client.test.ts',
     ],
     exclude: [
       'src/client/lib/keyboard.test.ts',

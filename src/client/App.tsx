@@ -19,7 +19,12 @@ import CreateWorkspaceModal from './components/CreateWorkspaceModal'
 import ToastContainer from './components/ToastContainer'
 import { useWorkspaceStore } from './stores/workspace-store'
 import { useProviderStore } from './stores/provider-store'
-import { useChatStore, type ApprovalMode } from './stores/chat-store'
+import {
+  newChatDraftSessionId,
+  useChatStore,
+  type ApprovalMode,
+  type PromptTurnDraft,
+} from './stores/chat-store'
 import type { BackendId } from './stores/backend-store'
 import { useContextTabStore } from './stores/context-tab-store'
 import { selectSessionOpen, useBrowserPaneStore } from './stores/browser-pane-store'
@@ -60,6 +65,7 @@ function App() {
   const setActiveSession = useChatStore((s) => s.setActiveSession)
   const createSession = useChatStore((s) => s.createSession)
   const sendMessage = useChatStore((s) => s.sendMessage)
+  const transferDraft = useChatStore((s) => s.transferDraft)
   const [activeDestination, setActiveDestination] = useState<AppDestination>(null)
   const [pendingDestination, setPendingDestination] = useState<AppDestination | undefined>(undefined)
   const [newChatSubmitting, setNewChatSubmitting] = useState(false)
@@ -341,7 +347,7 @@ function App() {
 
   const handleStartNewChat = useCallback(async (
     workspaceId: string,
-    prompt: string,
+    turn: PromptTurnDraft,
     options: {
       backend?: BackendId
       providerId?: string
@@ -363,8 +369,9 @@ function App() {
       // the cleanup effect aborts this request before the session is created.
       setActiveDestination('new-chat')
       void openWorkspace(workspaceId)
+      const initialPrompt = turn.text.trim() || 'Image prompt'
       const result = await createSession(workspaceId, {
-        initialPrompt: prompt,
+        initialPrompt,
         backend: options.backend,
         providerId: options.providerId,
         fastMode: options.fastMode,
@@ -380,14 +387,20 @@ function App() {
         return
       }
       setActiveDestination(null)
-      sendMessage(workspaceId, result.session.id, prompt)
+      transferDraft(
+        workspaceId,
+        newChatDraftSessionId(workspaceId),
+        result.session.id,
+        turn,
+      )
+      sendMessage(workspaceId, result.session.id, turn)
     } finally {
       if (generation === newChatRequestGenerationRef.current) {
         newChatAbortControllerRef.current = null
         setNewChatSubmitting(false)
       }
     }
-  }, [createSession, newChatSubmitting, openWorkspace, sendMessage])
+  }, [createSession, newChatSubmitting, openWorkspace, sendMessage, transferDraft])
 
   useEffect(() => {
     if (newChatVisible) return

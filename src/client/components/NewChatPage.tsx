@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { FolderPlus, MessageSquarePlus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { BackendId } from '../stores/backend-store'
-import type { ApprovalMode } from '../stores/chat-store'
+import type { ApprovalMode, PromptTurnDraft } from '../stores/chat-store'
 import type { Workspace } from '../stores/workspace-store'
 import PromptInput from './PromptInput'
 import NewChatWorkspaceSelector from './NewChatWorkspaceSelector'
@@ -16,7 +16,7 @@ interface NewChatPageProps {
   onCreateWorkspace: () => void
   onSubmit: (
     workspaceId: string,
-    prompt: string,
+    turn: PromptTurnDraft,
     options: {
       backend?: BackendId
       providerId?: string
@@ -143,9 +143,9 @@ export default function NewChatPage({
               onFastModeChange={(fastMode) => updateComposerOptions({ fastMode })}
               approvalMode={composerOptions.approvalMode}
               onApprovalModeChange={(approvalMode) => updateComposerOptions({ approvalMode })}
-              onSend={(content) => {
+              onSend={(turn) => {
                 if (!workspaceId || isSubmitting) return
-                void onSubmit(workspaceId, content, {
+                void onSubmit(workspaceId, turn, {
                   backend: composerOptions.backendId ?? undefined,
                   providerId: composerOptions.providerId ?? undefined,
                   fastMode: composerOptions.fastMode,

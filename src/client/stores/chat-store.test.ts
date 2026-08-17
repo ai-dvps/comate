@@ -14,12 +14,37 @@ import {
   deriveInFlightBrowserToolIds,
   type SseSetter,
   mergeSessionStatusEntry,
+  newChatDraftSessionId,
   promptImageDraftKey,
 } from './chat-store'
 import { DEFAULT_TIMEOUT, wsClient } from '../lib/websocket-client'
 import { useToastStore } from './toast-store'
 import type { SubagentState, TaskItem, WorkflowState, WorkflowStatus } from '../types/message'
 import type { WsEventMessage } from '@server/websocket/types'
+import { toUserTurnImage } from '../lib/image-input'
+
+function makePromptImage(id: string) {
+  return {
+    id,
+    name: `${id}.png`,
+    mediaType: 'image/png' as const,
+    data: 'AA==',
+    width: 1,
+    height: 1,
+    blob: new Blob(['image']),
+    previewUrl: `blob:${id}`,
+  }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
 
 beforeEach(() => {
   useChatStore.setState({ historyLoadState: {} })
@@ -94,6 +119,240 @@ describe('runtime image drafts', () => {
 
     expect(useChatStore.getState().imageDrafts[promptImageDraftKey('workspace-a', 'one')]).toBeUndefined()
     expect(useChatStore.getState().imageDrafts[promptImageDraftKey('workspace-a', 'two')]).toBe(retained)
+  })
+})
+
+describe('multimodal pending turn ownership', () => {
+  const session = {
+    id: 's1',
+    workspaceId: 'ws-1',
+    name: 'Test',
+    source: 'gui' as const,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+
+  beforeEach(() => {
+    clearAllSessionSubscriptions(useChatStore.setState as unknown as SseSetter)
+    useChatStore.setState({
+      sessions: { 'ws-1': [session] },
+      messages: {},
+      drafts: {},
+      imageDrafts: {},
+      approvalQueue: {},
+      draftQueue: {},
+      pendingSend: {},
+      pendingTurns: {},
+      serverNonce: { s1: 'nonce-1' },
+      isStreaming: {},
+      sessionActivity: {},
+    })
+  })
+
+  it('freezes a mixed turn for optimistic UI and sends ordered wire images', async () => {
+    const images = [makePromptImage('one'), makePromptImage('two')]
+    const request = deferred<unknown>()
+    const requestSpy = vi.spyOn(wsClient, 'request').mockImplementation((type) =>
+      type === 'sendMessage' ? request.promise : Promise.resolve({}),
+    )
+    const historySpy = vi.spyOn(useChatStore.getState(), 'addPromptHistory').mockImplementation(() => {})
+    useChatStore.getState().setActiveSession('ws-1', 's1')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    useChatStore.setState({ serverNonce: { s1: 'nonce-1' } })
+    requestSpy.mockClear()
+    useChatStore.getState().setDraft('s1', '  fix both  ')
+    useChatStore.getState().setImageDrafts('ws-1', 's1', images)
+
+    useChatStore.getState().sendMessage('ws-1', 's1', {
+      text: '  fix both  ',
+      images,
+    })
+
+    const state = useChatStore.getState()
+    const payload = requestSpy.mock.calls.find((call) => call[0] === 'sendMessage')?.[1] as Record<string, unknown>
+    expect(payload).toMatchObject({
+      workspaceId: 'ws-1',
+      sessionId: 's1',
+      content: 'fix both',
+      images: images.map(toUserTurnImage),
+    })
+    expect(payload.clientTurnId).toEqual(expect.any(String))
+    expect(state.pendingTurns.s1?.clientTurnId).toBe(payload.clientTurnId)
+    expect(state.drafts.s1).toBeUndefined()
+    expect(state.imageDrafts[promptImageDraftKey('ws-1', 's1')]).toBeUndefined()
+    expect(state.messages.s1?.[0]).toMatchObject({
+      id: payload.clientTurnId,
+      role: 'user',
+      parts: [
+        { type: 'text', text: 'fix both' },
+        { type: 'image', name: 'one.png', source: { type: 'base64', data: 'AA==' } },
+        { type: 'image', name: 'two.png', source: { type: 'base64', data: 'AA==' } },
+      ],
+    })
+
+    request.resolve({ sent: true })
+    await request.promise
+    historySpy.mockRestore()
+    requestSpy.mockRestore()
+  })
+
+  it('restores a rejected snapshot without overwriting a newer draft', async () => {
+    const submitted = makePromptImage('submitted')
+    const newer = makePromptImage('newer')
+    const request = deferred<unknown>()
+    const requestSpy = vi.spyOn(wsClient, 'request').mockImplementation((type) =>
+      type === 'sendMessage' ? request.promise : Promise.resolve({}),
+    )
+    const historySpy = vi.spyOn(useChatStore.getState(), 'addPromptHistory').mockImplementation(() => {})
+    useChatStore.getState().setActiveSession('ws-1', 's1')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    useChatStore.setState({ serverNonce: { s1: 'nonce-1' } })
+    requestSpy.mockClear()
+    useChatStore.getState().setDraft('s1', 'submitted text')
+    useChatStore.getState().setImageDrafts('ws-1', 's1', [submitted])
+
+    const clientTurnId = useChatStore.getState().sendMessage('ws-1', 's1', {
+      text: 'submitted text',
+      images: [submitted],
+    })
+    useChatStore.getState().setDraft('s1', 'newer text')
+    useChatStore.getState().setImageDrafts('ws-1', 's1', [newer])
+    request.reject(new Error('transport failed'))
+    await expect(request.promise).rejects.toThrow('transport failed')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const state = useChatStore.getState()
+    expect(state.drafts.s1).toBe('submitted text\nnewer text')
+    expect(state.imageDrafts[promptImageDraftKey('ws-1', 's1')]).toEqual([submitted, newer])
+    expect(state.pendingTurns.s1).toBeUndefined()
+    expect(state.messages.s1?.some((message) => message.id === clientTurnId)).toBe(false)
+    historySpy.mockRestore()
+    requestSpy.mockRestore()
+  })
+
+  it('accepts only the matching snapshot and preserves a newer draft', async () => {
+    const submitted = makePromptImage('submitted')
+    const newer = makePromptImage('newer')
+    const request = deferred<unknown>()
+    const requestSpy = vi.spyOn(wsClient, 'request').mockImplementation((type) =>
+      type === 'sendMessage' ? request.promise : Promise.resolve({}),
+    )
+    const historySpy = vi.spyOn(useChatStore.getState(), 'addPromptHistory').mockImplementation(() => {})
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    useChatStore.getState().setActiveSession('ws-1', 's1')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    useChatStore.setState({ serverNonce: { s1: 'nonce-1' } })
+    requestSpy.mockClear()
+    useChatStore.getState().setImageDrafts('ws-1', 's1', [submitted])
+
+    useChatStore.getState().sendMessage('ws-1', 's1', { text: '', images: [submitted] })
+    useChatStore.getState().setDraft('s1', 'newer text')
+    useChatStore.getState().setImageDrafts('ws-1', 's1', [newer])
+    request.resolve({ sent: true })
+    await request.promise
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const state = useChatStore.getState()
+    expect(state.drafts.s1).toBe('newer text')
+    expect(state.imageDrafts[promptImageDraftKey('ws-1', 's1')]).toEqual([newer])
+    expect(state.pendingTurns.s1).toBeUndefined()
+    expect(revokeSpy).toHaveBeenCalledWith('blob:submitted')
+    expect(revokeSpy).not.toHaveBeenCalledWith('blob:newer')
+    revokeSpy.mockRestore()
+    historySpy.mockRestore()
+    requestSpy.mockRestore()
+  })
+
+  it('retains ordered images while waiting for subscription acknowledgement', async () => {
+    const images = [makePromptImage('one'), makePromptImage('two')]
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({ sent: true })
+    const historySpy = vi.spyOn(useChatStore.getState(), 'addPromptHistory').mockImplementation(() => {})
+    useChatStore.setState({ serverNonce: {} })
+
+    const clientTurnId = useChatStore.getState().sendMessage('ws-1', 's1', {
+      text: '',
+      images,
+    })
+    expect(useChatStore.getState().pendingSend.s1?.clientTurnId).toBe(clientTurnId)
+    expect(useChatStore.getState().pendingSend.s1?.images).toEqual(images)
+    expect(requestSpy.mock.calls.some((call) => call[0] === 'sendMessage')).toBe(false)
+
+    handleSseEvent(
+      useChatStore.setState as unknown as SseSetter,
+      'ws-1',
+      's1',
+      'subscription_ack',
+      { serverNonce: 'nonce-1' },
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const payload = requestSpy.mock.calls.find((call) => call[0] === 'sendMessage')?.[1] as Record<string, unknown>
+    expect(payload.clientTurnId).toBe(clientTurnId)
+    expect(payload.images).toEqual(images.map(toUserTurnImage))
+    historySpy.mockRestore()
+    requestSpy.mockRestore()
+  })
+
+  it('retains the complete turn while an approval is pending', async () => {
+    const image = makePromptImage('approval')
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({ sent: true })
+    const historySpy = vi.spyOn(useChatStore.getState(), 'addPromptHistory').mockImplementation(() => {})
+    useChatStore.getState().setActiveSession('ws-1', 's1')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    useChatStore.setState({
+      serverNonce: { s1: 'nonce-1' },
+      approvalQueue: {
+        s1: [{
+          requestId: 'approval-1',
+          toolName: 'Bash',
+          toolUseId: 'tool-1',
+          input: {},
+          inputSummary: 'Run command',
+        }],
+      },
+    })
+    requestSpy.mockClear()
+
+    const clientTurnId = useChatStore.getState().sendMessage('ws-1', 's1', {
+      text: 'after approval',
+      images: [image],
+    })
+    expect(useChatStore.getState().draftQueue.s1?.clientTurnId).toBe(clientTurnId)
+    expect(useChatStore.getState().draftQueue.s1?.images).toEqual([image])
+    expect(requestSpy).not.toHaveBeenCalled()
+
+    handleSseEvent(
+      useChatStore.setState as unknown as SseSetter,
+      'ws-1',
+      's1',
+      'approval_resolved',
+      { requestId: 'approval-1' },
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const payload = requestSpy.mock.calls.find((call) => call[0] === 'sendMessage')?.[1] as Record<string, unknown>
+    expect(payload.clientTurnId).toBe(clientTurnId)
+    expect(payload.images).toEqual([expect.objectContaining({ id: 'approval' })])
+    historySpy.mockRestore()
+    requestSpy.mockRestore()
+  })
+
+  it('transfers a workspace New Chat draft to the created session before send', () => {
+    const image = makePromptImage('new-chat')
+    const source = newChatDraftSessionId('ws-1')
+    useChatStore.getState().setDraft(source, 'draft text')
+    useChatStore.getState().setImageDrafts('ws-1', source, [image])
+
+    useChatStore.getState().transferDraft('ws-1', source, 'created', {
+      text: 'draft text',
+      images: [image],
+    })
+
+    const state = useChatStore.getState()
+    expect(state.drafts[source]).toBeUndefined()
+    expect(state.imageDrafts[promptImageDraftKey('ws-1', source)]).toBeUndefined()
+    expect(state.drafts.created).toBe('draft text')
+    expect(state.imageDrafts[promptImageDraftKey('ws-1', 'created')]).toEqual([image])
   })
 })
 
@@ -684,6 +943,7 @@ describe('bot session guards', () => {
       approvalQueue: {},
       serverNonce: {},
       pendingSend: {},
+      pendingTurns: {},
     })
   })
 
@@ -884,6 +1144,7 @@ describe('setActiveSession subscribe timeout', () => {
       approvalQueue: {},
       serverNonce: {},
       pendingSend: {},
+      pendingTurns: {},
     })
     clearAllSessionSubscriptions(useChatStore.setState as unknown as SseSetter)
   })
@@ -1064,10 +1325,11 @@ describe('sendMessage subscription gating', () => {
 
       const sendCalls = requestSpy.mock.calls.filter((call) => call[0] === 'sendMessage')
       assert.strictEqual(sendCalls.length, 0, 'must not send without a server nonce')
-      assert.deepStrictEqual(useChatStore.getState().pendingSend['s1'], {
-        workspaceId: 'ws-1',
-        content: 'hello',
-      })
+      assert.deepStrictEqual(
+        useChatStore.getState().pendingSend['s1'],
+        useChatStore.getState().pendingTurns['s1'],
+      )
+      assert.strictEqual(useChatStore.getState().pendingSend['s1']?.content, 'hello')
     } finally {
       requestSpy.mockRestore()
     }
@@ -1121,6 +1383,7 @@ describe('subscription state after disconnect', () => {
       approvalQueue: {},
       serverNonce: {},
       pendingSend: {},
+      pendingTurns: {},
     })
   })
 
@@ -1311,10 +1574,11 @@ describe('runtime_closed WebSocket event', () => {
         0,
         'must not send until the new subscription is acknowledged',
       )
-      assert.deepStrictEqual(useChatStore.getState().pendingSend['s1'], {
-        workspaceId: 'ws-1',
-        content: 'second',
-      })
+      assert.deepStrictEqual(
+        useChatStore.getState().pendingSend['s1'],
+        useChatStore.getState().pendingTurns['s1'],
+      )
+      assert.strictEqual(useChatStore.getState().pendingSend['s1']?.content, 'second')
     } finally {
       requestSpy.mockRestore()
     }
@@ -2552,6 +2816,10 @@ describe('deleteSession', () => {
       sessionStatus: { s1: { pendingCount: 1 } },
       isStreaming: { s1: true },
       lastActivityAt: { s1: Date.now() },
+      pendingTurns: {},
+      pendingSend: {},
+      draftQueue: {},
+      imageDrafts: {},
     })
   })
 
@@ -2595,6 +2863,106 @@ describe('deleteSession', () => {
     } finally {
       fetchFn.mockRestore()
       vi.unstubAllGlobals()
+    }
+  })
+
+  it('releases a pending turn once and ignores its late acknowledgement', async () => {
+    const sendRequest = deferred<unknown>()
+    const requestSpy = vi.spyOn(wsClient, 'request').mockImplementation((type) =>
+      type === 'sendMessage' ? sendRequest.promise : Promise.resolve({}),
+    )
+    const fetchFn = vi.fn(() => Promise.resolve({ ok: true })) as unknown as Mock & typeof fetch
+    vi.stubGlobal('fetch', fetchFn)
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    const historySpy = vi.spyOn(useChatStore.getState(), 'addPromptHistory').mockImplementation(() => {})
+    const image = makePromptImage('pending-delete')
+
+    try {
+      useChatStore.getState().setActiveSession('ws-1', 's1')
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      useChatStore.setState({ serverNonce: { s1: 'nonce-1' } })
+      useChatStore.getState().setImageDrafts('ws-1', 's1', [image])
+      useChatStore.getState().sendMessage('ws-1', 's1', { text: '', images: [image] })
+
+      await useChatStore.getState().deleteSession('ws-1', 's1')
+
+      const state = useChatStore.getState()
+      expect(state.pendingTurns.s1).toBeUndefined()
+      expect(state.pendingSend.s1).toBeUndefined()
+      expect(state.draftQueue.s1).toBeUndefined()
+      expect(revokeSpy).toHaveBeenCalledTimes(1)
+      expect(revokeSpy).toHaveBeenCalledWith('blob:pending-delete')
+
+      sendRequest.resolve({ sent: true })
+      await sendRequest.promise
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(revokeSpy).toHaveBeenCalledTimes(1)
+      expect(useChatStore.getState().imageDrafts[promptImageDraftKey('ws-1', 's1')]).toBeUndefined()
+    } finally {
+      historySpy.mockRestore()
+      revokeSpy.mockRestore()
+      requestSpy.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
+describe('workspace cleanup pending turns', () => {
+  it('releases workspace pending turns once and never restores a late rejection', async () => {
+    const sendRequest = deferred<unknown>()
+    const requestSpy = vi.spyOn(wsClient, 'request').mockImplementation((type) =>
+      type === 'sendMessage' ? sendRequest.promise : Promise.resolve({}),
+    )
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    const historySpy = vi.spyOn(useChatStore.getState(), 'addPromptHistory').mockImplementation(() => {})
+    const image = makePromptImage('pending-workspace')
+    useChatStore.setState({
+      sessions: {
+        'ws-clean': [{
+          id: 'clean-session',
+          workspaceId: 'ws-clean',
+          name: 'Clean',
+          source: 'gui',
+          createdAt: '',
+          updatedAt: '',
+        }],
+      },
+      pendingTurns: {},
+      pendingSend: {},
+      draftQueue: {},
+      drafts: {},
+      imageDrafts: {},
+      approvalQueue: {},
+      serverNonce: {},
+    })
+
+    try {
+      useChatStore.getState().setActiveSession('ws-clean', 'clean-session')
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      useChatStore.setState({ serverNonce: { 'clean-session': 'nonce-1' } })
+      useChatStore.getState().setImageDrafts('ws-clean', 'clean-session', [image])
+      useChatStore.getState().sendMessage('ws-clean', 'clean-session', { text: 'submitted', images: [image] })
+
+      useChatStore.getState().cleanupWorkspace('ws-clean')
+
+      const state = useChatStore.getState()
+      expect(state.pendingTurns['clean-session']).toBeUndefined()
+      expect(state.pendingSend['clean-session']).toBeUndefined()
+      expect(state.draftQueue['clean-session']).toBeUndefined()
+      expect(revokeSpy).toHaveBeenCalledTimes(1)
+
+      sendRequest.reject(new Error('late transport failure'))
+      await expect(sendRequest.promise).rejects.toThrow('late transport failure')
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(revokeSpy).toHaveBeenCalledTimes(1)
+      expect(useChatStore.getState().drafts['clean-session']).toBeUndefined()
+      expect(useChatStore.getState().imageDrafts[promptImageDraftKey('ws-clean', 'clean-session')]).toBeUndefined()
+    } finally {
+      historySpy.mockRestore()
+      revokeSpy.mockRestore()
+      requestSpy.mockRestore()
     }
   })
 })

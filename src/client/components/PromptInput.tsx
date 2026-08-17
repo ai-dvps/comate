@@ -7,7 +7,13 @@ import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
 import HistoryPicker, { type HistoryPickerHandle } from './HistoryPicker'
 import { useCommands, type SlashCommandDto } from '../stores/commands-store'
-import { promptImageDraftKey, useChatStore, type ApprovalMode } from '../stores/chat-store'
+import {
+  newChatDraftSessionId,
+  promptImageDraftKey,
+  useChatStore,
+  type ApprovalMode,
+  type PromptTurnDraft,
+} from '../stores/chat-store'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { usePromptReferenceValidation } from '../hooks/usePromptReferenceValidation'
 import { shouldSubmitOnEnter } from '../lib/keyboard'
@@ -125,7 +131,7 @@ function getBackgroundTaskStopKey(sessionId: string, taskId: string): string {
 
 interface PromptInputCommonProps {
   workspaceId: string
-  onSend: (content: string) => void
+  onSend: (turn: PromptTurnDraft) => void
   disabled?: boolean
 }
 
@@ -157,8 +163,6 @@ interface NewChatPromptInputProps extends PromptInputCommonProps {
 }
 
 type PromptInputProps = SessionPromptInputProps | NewChatPromptInputProps
-
-const NEW_CHAT_DRAFT_KEY = '__new_chat_draft__'
 
 interface PromptUndoSnapshot {
   value: string
@@ -195,7 +199,7 @@ function chipProjectionMatches(
 export default function PromptInput(props: PromptInputProps) {
   const isNewChat = props.mode === 'new-chat'
   const workspaceId = props.workspaceId
-  const sessionId = isNewChat ? NEW_CHAT_DRAFT_KEY : props.sessionId
+  const sessionId = isNewChat ? newChatDraftSessionId(workspaceId) : props.sessionId
   const onSend = props.onSend
   const onStop = isNewChat ? undefined : props.onStop
   const onRefresh = isNewChat ? undefined : props.onRefresh
@@ -216,6 +220,7 @@ export default function PromptInput(props: PromptInputProps) {
   const setDraft = useChatStore((s) => s.setDraft)
   const imageDraftKey = promptImageDraftKey(workspaceId, sessionId)
   const images = useChatStore((s) => s.imageDrafts?.[imageDraftKey] ?? [])
+  const hasPendingTurn = useChatStore((s) => Boolean(s.pendingTurns?.[sessionId]))
   const setImageDrafts = useChatStore((s) => s.setImageDrafts)
   const stopBackgroundTask = useChatStore((s) => s.stopBackgroundTask)
   const isRestarting = useChatStore((s) => isNewChat ? false : s.isRestartingRuntime[sessionId] ?? false)
@@ -223,7 +228,7 @@ export default function PromptInput(props: PromptInputProps) {
   const backgroundTasks = activity?.backgroundTasks ?? []
   const backgroundTaskCount = backgroundTasks.length
   const isForegroundActive = isStreaming && activity?.phase !== 'background'
-  const isComposerLocked = isForegroundActive || isInterrupting
+  const isComposerLocked = (isForegroundActive && !hasPendingTurn) || isInterrupting
   const {
     commands,
     loading: commandsLoading,
@@ -243,11 +248,6 @@ export default function PromptInput(props: PromptInputProps) {
   useEffect(() => {
     void fetchCommands()
   }, [fetchCommands])
-
-  useEffect(() => {
-    if (!isNewChat) return
-    return () => setDraft(NEW_CHAT_DRAFT_KEY, '')
-  }, [isNewChat, setDraft])
 
   const [stopPopoverOpen, setStopPopoverOpen] = useState(false)
   const [stoppingBackgroundTaskIds, setStoppingBackgroundTaskIds] = useState<Set<string>>(
@@ -733,7 +733,7 @@ export default function PromptInput(props: PromptInputProps) {
         return
       }
 
-      onSend(trimmed)
+      onSend({ text: sendInput, images })
       // New Chat owns the draft until session creation succeeds, so recoverable
       // creation failures can leave the user's prompt intact for retry.
       if (!isNewChat) resetInput()
@@ -1298,7 +1298,7 @@ export default function PromptInput(props: PromptInputProps) {
     !isNewChat && !!sessionBackend && backendAvailability(backends, sessionBackend)?.status === 'unavailable'
 
   const hasDraftContent = input.trim().length > 0 || images.length > 0
-  const canSend = hasDraftContent && (hasSession || isNewChat) && !isComposerLocked && !isRestarting && !disabled && !lockedBackendUnavailable && !imageBusy && (images.length === 0 || imageInputAvailable)
+  const canSend = hasDraftContent && (hasSession || isNewChat) && !hasPendingTurn && !isComposerLocked && !isRestarting && !disabled && !lockedBackendUnavailable && !imageBusy && (images.length === 0 || imageInputAvailable)
   const canClear = input.length > 0 || images.length > 0
   const toolbarVisibility = getToolbarVisibility(contentWidth)
   const showSubmitHint = contentWidth !== undefined && contentWidth >= 720

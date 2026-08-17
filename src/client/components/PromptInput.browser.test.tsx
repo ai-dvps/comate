@@ -52,6 +52,7 @@ const chatStoreMock = vi.hoisted(() => {
     imageDrafts: {} as Record<string, { id: string; name: string; mediaType: 'image/png'; data: string; width: number; height: number; blob: Blob; previewUrl: string }[]>,
     messages: {} as Record<string, { id: string; role: 'user' | 'assistant' | 'system'; parts: { type: string; text?: string }[]; timestamp: number }[]>,
     promptHistory: {} as Record<string, string[]>,
+    pendingTurns: {} as Record<string, unknown>,
     isRestartingRuntime: {} as Record<string, boolean>,
     sessionActivity: {} as Record<string, SessionActivitySnapshot>,
     stopBackgroundTask: vi.fn(() => Promise.resolve()),
@@ -109,6 +110,8 @@ const chatStoreMock = vi.hoisted(() => {
 
 vi.mock('../stores/chat-store', () => ({
   useChatStore: chatStoreMock.useChatStore,
+  newChatDraftSessionId: (workspaceId: string) =>
+    `__new_chat_draft__:${JSON.stringify(workspaceId)}`,
   promptImageDraftKey: (workspaceId: string, sessionId: string) =>
     `${JSON.stringify(workspaceId)}:${JSON.stringify(sessionId)}`,
 }))
@@ -267,6 +270,7 @@ describe('PromptInput browser', () => {
     chatStoreMock.getState().imageDrafts = {}
     chatStoreMock.getState().messages = {}
     chatStoreMock.getState().promptHistory = {}
+    chatStoreMock.getState().pendingTurns = {}
     chatStoreMock.getState().isRestartingRuntime = {}
     chatStoreMock.getState().sessionActivity = {}
     filesMock.results = []
@@ -470,7 +474,7 @@ describe('PromptInput browser', () => {
     await editableLocator().fill('Start from this prompt')
     await page.getByTitle('Send').click()
 
-    await waitFor(() => expect(onSend).toHaveBeenCalledWith('Start from this prompt'))
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith({ text: 'Start from this prompt', images: [] }))
     expect(editableElement().textContent).toBe('Start from this prompt')
     expect(screen.getByRole('button', { name: /Skills/i })).toBeEnabled()
     expect(screen.getByRole('button', { name: /Files/i })).toBeEnabled()
@@ -482,7 +486,7 @@ describe('PromptInput browser', () => {
     expect(inputCardElement()).not.toHaveClass('border', 'shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)]')
   })
 
-  it('clears only the private New Chat draft when its composer unmounts', async () => {
+  it('keeps the workspace-scoped New Chat draft when its composer unmounts', async () => {
     const newChat = renderWithI18n(
       <PromptInput
         workspaceId="ws-1"
@@ -502,7 +506,7 @@ describe('PromptInput browser', () => {
     await editableLocator().fill('Temporary new chat draft')
     expect(Object.values(chatStoreMock.getState().drafts)).toContain('Temporary new chat draft')
     newChat.unmount()
-    expect(Object.values(chatStoreMock.getState().drafts)).not.toContain('Temporary new chat draft')
+    expect(Object.values(chatStoreMock.getState().drafts)).toContain('Temporary new chat draft')
 
     chatStoreMock.getState().drafts[DEFAULT_PROPS.sessionId] = 'Existing session draft'
     const session = renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
@@ -628,7 +632,18 @@ describe('PromptInput browser', () => {
     await waitFor(() => expect(editableElement().textContent).toBe('send me'))
     await userEvent.keyboard('{Enter}')
 
-    await waitFor(() => expect(DEFAULT_PROPS.onSend).toHaveBeenCalledWith('send me'))
+    await waitFor(() => expect(DEFAULT_PROPS.onSend).toHaveBeenCalledWith({ text: 'send me', images: [] }))
+  })
+
+  it('keeps the editor available for a newer draft while admission is pending', async () => {
+    chatStoreMock.getState().pendingTurns['session-1'] = { clientTurnId: 'pending-1' }
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} isStreaming />)
+
+    expect(editableElement()).toHaveAttribute('contenteditable', 'true')
+    await editableLocator().fill('next draft')
+
+    expect(chatStoreMock.getState().drafts['session-1']).toBe('next draft')
+    expect(screen.getByTitle('Send')).toBeDisabled()
   })
 
   it('sends repeatedly with Cmd+Enter when macOS omits the Enter keyup event', async () => {
@@ -652,7 +667,7 @@ describe('PromptInput browser', () => {
       }))
     })
 
-    await waitFor(() => expect(DEFAULT_PROPS.onSend).toHaveBeenCalledWith('first message'))
+    await waitFor(() => expect(DEFAULT_PROPS.onSend).toHaveBeenCalledWith({ text: 'first message', images: [] }))
 
     await input.fill('second message')
     act(() => {
@@ -664,7 +679,7 @@ describe('PromptInput browser', () => {
       }))
     })
 
-    await waitFor(() => expect(DEFAULT_PROPS.onSend).toHaveBeenCalledWith('second message'))
+    await waitFor(() => expect(DEFAULT_PROPS.onSend).toHaveBeenCalledWith({ text: 'second message', images: [] }))
   })
 
   it('inserts a newline with Shift+Enter', async () => {
@@ -706,7 +721,7 @@ describe('PromptInput browser', () => {
 
     await waitFor(() => expect(chatStoreMock.getState().drafts['session-1']).toBe('你好'))
     el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, isComposing: false }))
-    await waitFor(() => expect(DEFAULT_PROPS.onSend).toHaveBeenCalledWith('你好'))
+    await waitFor(() => expect(DEFAULT_PROPS.onSend).toHaveBeenCalledWith({ text: '你好', images: [] }))
   })
 
   it('opens command picker and inserts a slash command', async () => {
@@ -922,7 +937,7 @@ describe('PromptInput browser', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Preview screen.png' })).toBeInTheDocument())
     await page.getByTitle('Send').click()
 
-    await waitFor(() => expect(DEFAULT_PROPS.onSend).toHaveBeenCalledWith(''))
+    await waitFor(() => expect(DEFAULT_PROPS.onSend).toHaveBeenCalledWith(expect.objectContaining({ text: '', images: expect.any(Array) })))
   })
 
   it('adds dropped images while preserving dropped plain text semantics', async () => {
@@ -1103,7 +1118,7 @@ describe('PromptInput browser', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Send' }))
 
-    expect(DEFAULT_PROPS.onSend).toHaveBeenCalledWith('Answer the main agent')
+    expect(DEFAULT_PROPS.onSend).toHaveBeenCalledWith({ text: 'Answer the main agent', images: [] })
   })
 
   it('uses the generic label for an unknown background task type', () => {
@@ -1596,7 +1611,7 @@ describe('PromptInput browser', () => {
     expect(onSend).not.toHaveBeenCalled()
 
     await page.getByTitle('Send').click()
-    await waitFor(() => expect(onSend).toHaveBeenCalledWith('@src/app.ts'))
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith({ text: '@src/app.ts ', images: [] }))
   })
 
   it('deletes a whole chip at its edge and restores it with undo', async () => {
