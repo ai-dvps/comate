@@ -1,5 +1,6 @@
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import type { Server } from 'http';
+import type { UUID } from 'node:crypto';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import { chatService } from '../services/chat-service.js';
 import { todoRunEvents, type TodoRunEvent } from '../services/todo-execution-service.js';
@@ -39,7 +40,15 @@ class WsRequestValidationError extends Error {
   readonly code = 'INVALID_SEND_MESSAGE';
 }
 
-function parseSendMessagePayload(payload: unknown): SendMessagePayload {
+const UUID_CLIENT_TURN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isSafeClientTurnId(value: string): value is UUID {
+  return UUID_CLIENT_TURN_ID.test(value);
+}
+
+type ValidatedSendMessagePayload = Omit<SendMessagePayload, 'clientTurnId'> & { clientTurnId: UUID };
+
+function parseSendMessagePayload(payload: unknown): ValidatedSendMessagePayload {
   if (!payload || typeof payload !== 'object') {
     throw new WsRequestValidationError('Send message payload must be an object');
   }
@@ -50,8 +59,8 @@ function parseSendMessagePayload(payload: unknown): SendMessagePayload {
   if (typeof candidate.sessionId !== 'string' || candidate.sessionId.trim().length === 0) {
     throw new WsRequestValidationError('sessionId is required');
   }
-  if (typeof candidate.clientTurnId !== 'string' || candidate.clientTurnId.trim().length === 0) {
-    throw new WsRequestValidationError('clientTurnId is required');
+  if (typeof candidate.clientTurnId !== 'string' || !isSafeClientTurnId(candidate.clientTurnId)) {
+    throw new WsRequestValidationError('clientTurnId is invalid');
   }
   if (typeof candidate.content !== 'string') {
     throw new WsRequestValidationError('content must be a string');
@@ -62,7 +71,13 @@ function parseSendMessagePayload(payload: unknown): SendMessagePayload {
   if (candidate.content.trim().length === 0 && (!candidate.images || candidate.images.length === 0)) {
     throw new WsRequestValidationError('A message requires text or at least one image');
   }
-  return candidate as SendMessagePayload;
+  return {
+    workspaceId: candidate.workspaceId,
+    sessionId: candidate.sessionId,
+    clientTurnId: candidate.clientTurnId,
+    content: candidate.content,
+    ...(candidate.images === undefined ? {} : { images: candidate.images }),
+  };
 }
 
 interface ClientContext {
@@ -334,6 +349,10 @@ export class ComateWebSocketServer {
       sessionId,
       workspaceId,
       images && images.length > 0 ? { text: content, images } : content,
+      undefined,
+      undefined,
+      undefined,
+      clientTurnId,
     );
     this.sendOk(ctx.socket, req.id, { sent: true, clientTurnId });
   }

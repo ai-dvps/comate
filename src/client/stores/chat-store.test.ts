@@ -176,7 +176,7 @@ describe('multimodal pending turn ownership', () => {
       content: 'fix both',
       images: images.map(toUserTurnImage),
     })
-    expect(payload.clientTurnId).toEqual(expect.any(String))
+    expect(payload.clientTurnId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
     expect(state.pendingTurns.s1?.clientTurnId).toBe(payload.clientTurnId)
     expect(state.drafts.s1).toBeUndefined()
     expect(state.imageDrafts[promptImageDraftKey('ws-1', 's1')]).toBeUndefined()
