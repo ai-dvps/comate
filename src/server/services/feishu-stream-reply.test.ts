@@ -395,7 +395,7 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
     assert.strictEqual(failedRequestId, 'req-failed');
   });
 
-  it('posts a question card on pending_question', async () => {
+  it('U3: ignores pending_question events — no question card is posted (AE4)', async () => {
     const reply = createReply();
     const { handler } = await reply.start();
 
@@ -410,9 +410,15 @@ describe('FeishuStreamReply', { concurrency: false }, () => {
         },
       ],
     } as SseEvent);
+    await sleep(20);
 
     const card = findPostedCard((c) => c.body?.elements?.[0]?.content === '需要你的回答');
-    assert.ok(card, 'question card should be posted');
+    assert.strictEqual(card, undefined, 'the question card builder path must be gone');
+    assert.strictEqual(
+      postedCards.filter((call) => JSON.stringify(call).includes('需要你的回答')).length,
+      0,
+      'no card message may carry question-card content',
+    );
   });
 
   it('sends a timeout card on approval_timeout', async () => {

@@ -702,11 +702,9 @@ export class FeishuBotService {
           this.setActiveWorkspace(workspaceId, botId, actorUserId),
         beforeDecisionResolve: (sessionId, decision) => {
           this.activeStreamReplies.get(sessionId)?.setStatus(
-            decision === 'question'
-              ? '\n\n已收到你的回答，继续处理…'
-              : decision === 'deny'
-                ? '\n\n已记录你的拒绝，继续处理…'
-                : '\n\n已确认，继续处理…',
+            decision === 'deny'
+              ? '\n\n已记录你的拒绝，继续处理…'
+              : '\n\n已确认，继续处理…',
           );
         },
       });
@@ -1068,28 +1066,6 @@ export class FeishuBotService {
       console.error('[FeishuBotService] failed to get or create session:', err);
       await this.safePostText(thread, '⚠️ 创建会话失败，请稍后重试。');
       return;
-    }
-
-    const runtime = chatService.getRuntimeIfExists(sessionId);
-    const pendingFreeText = runtime?.getPendingFreeTextQuestion?.();
-    const answer = text.trim();
-    if (runtime && pendingFreeText && answer) {
-      const question = pendingFreeText.questions[0];
-      const resolved = runtime.resolveApproval(pendingFreeText.requestId, {
-        behavior: 'allow',
-        updatedInput: {
-          questions: pendingFreeText.questions,
-          answers: { [question.question]: answer },
-        },
-      });
-      if (resolved) {
-        feishuCardActionHandler.unregisterQuestion(pendingFreeText.requestId);
-        this.activeStreamReplies.get(sessionId)?.setStatus('\n\n已收到你的回答，继续处理…');
-        diagLog(
-          `[FeishuBotService] resolved free-text question sessionId=${sessionId} requestId=${pendingFreeText.requestId}`,
-        );
-        return;
-      }
     }
 
     const larkClient = this.getActiveConnection()?.larkClient;

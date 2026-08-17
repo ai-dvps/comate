@@ -2670,7 +2670,7 @@ describe('session-runtime pending approval fresh-subscription replay (U6, KTD-23
   });
 });
 
-describe('session-runtime free-text question routing', { concurrency: false }, () => {
+describe('session-runtime question payload guards', { concurrency: false }, () => {
   let runtime: SessionRuntime | undefined;
 
   afterEach(async () => {
@@ -2709,41 +2709,6 @@ describe('session-runtime free-text question routing', { concurrency: false }, (
     assert.strictEqual(result.behavior, 'deny');
     assert.match(result.message ?? '', /requires at least one question/i);
     assert.strictEqual(runtime.getPendingCardState('empty'), undefined);
-    assert.strictEqual(runtime.getPendingFreeTextQuestion(), undefined);
-  });
-
-  it('exposes one pending free-text question and clears it after settlement', async () => {
-    runtime = openRuntime();
-    const questions = [{ question: 'Which branch?', options: [], multiSelect: false }];
-    const pending = runtime.requestToolQuestion('free-text', questions, {});
-
-    assert.deepStrictEqual(runtime.getPendingFreeTextQuestion(), {
-      requestId: 'free-text',
-      questions,
-    });
-
-    assert.strictEqual(runtime.resolveApproval('free-text', {
-      behavior: 'allow',
-      updatedInput: { answers: { 'Which branch?': 'main' } },
-    }), true);
-    assert.strictEqual((await pending).behavior, 'allow');
-    assert.strictEqual(runtime.getPendingFreeTextQuestion(), undefined);
-    assert.strictEqual(runtime.getPendingCardState('free-text'), undefined);
-  });
-
-  it('does not expose an option-based question as free text', async () => {
-    runtime = openRuntime();
-    const pending = runtime.requestToolQuestion(
-      'options',
-      [{ question: 'Proceed?', options: [{ label: 'Yes' }], multiSelect: false }],
-      {},
-    );
-
-    assert.strictEqual(runtime.getPendingFreeTextQuestion(), undefined);
-    assert.strictEqual(runtime.getPendingCardState('options')?.type, 'question');
-
-    runtime.resolveApproval('options', { behavior: 'deny', message: 'No' });
-    await pending;
   });
 
   it('fails closed for multiple questions containing free text', async () => {
@@ -2773,31 +2738,18 @@ describe('session-runtime free-text question routing', { concurrency: false }, (
       {},
     );
 
-    assert.strictEqual(runtime.getPendingFreeTextQuestion(), undefined);
     assert.strictEqual(runtime.getPendingCardState('multiple-options')?.type, 'question');
 
     runtime.resolveApproval('multiple-options', { behavior: 'allow', updatedInput: {} });
     assert.strictEqual((await pending).behavior, 'allow');
   });
 
-  it('only exposes a free-text question when exactly one such pending exists', async () => {
-    runtime = openRuntime();
-    const firstQuestions = [{ question: 'First?', options: [], multiSelect: false }];
-    const secondQuestions = [{ question: 'Second?', options: [], multiSelect: false }];
-    const first = runtime.requestToolQuestion('first', firstQuestions, {});
-    const second = runtime.requestToolQuestion('second', secondQuestions, {});
-
-    assert.strictEqual(runtime.getPendingFreeTextQuestion(), undefined);
-
-    runtime.resolveApproval('first', { behavior: 'deny', message: 'Cancelled' });
-    await first;
-    assert.deepStrictEqual(runtime.getPendingFreeTextQuestion(), {
-      requestId: 'second',
-      questions: secondQuestions,
-    });
-
-    runtime.resolveApproval('second', { behavior: 'deny', message: 'Cancelled' });
-    await second;
-    assert.strictEqual(runtime.getPendingFreeTextQuestion(), undefined);
+  it('U3: no longer exposes getPendingFreeTextQuestion (channel reroute removed)', () => {
+    const proto = SessionRuntime.prototype as unknown as Record<string, unknown>;
+    assert.strictEqual(
+      proto.getPendingFreeTextQuestion,
+      undefined,
+      'getPendingFreeTextQuestion must be gone',
+    );
   });
 });
