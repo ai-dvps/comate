@@ -437,4 +437,45 @@ describe('SettingsPanel workspace tab local footer', () => {
     expect(screen.getByDisplayValue('Workspace One Updated')).toBeInTheDocument();
     expect(mockUpdateWorkspace).not.toHaveBeenCalled();
   });
+
+  describe('settings deep-link seeding', () => {
+    it('seeds the workspace selection from initialWorkspaceId and lands on the workspace tab', async () => {
+      await act(async () => {
+        renderWithI18n(<SettingsPanel isOpen onClose={vi.fn()} initialWorkspaceId={workspace2.id} />);
+      });
+
+      // The deep link lands directly on the workspace tab, so the workspace
+      // list renders without clicking the tab first.
+      const ws2 = screen.getByRole('button', { name: 'Workspace Two' });
+      const ws1 = screen.getByRole('button', { name: 'Workspace One' });
+      expect(ws2.className).toContain('text-accent');
+      expect(ws1.className).not.toContain('text-accent');
+    });
+
+    it('falls back to the active workspace when the seeded id no longer exists', async () => {
+      await act(async () => {
+        renderWithI18n(<SettingsPanel isOpen onClose={vi.fn()} initialWorkspaceId="ws-gone" />);
+      });
+
+      const ws1 = screen.getByRole('button', { name: 'Workspace One' });
+      const ws2 = screen.getByRole('button', { name: 'Workspace Two' });
+      expect(ws1.className).toContain('text-accent');
+      expect(ws2.className).not.toContain('text-accent');
+    });
+
+    it('defaults to the active workspace and general tab without initialWorkspaceId', async () => {
+      await act(async () => {
+        renderWithI18n(<SettingsPanel isOpen onClose={vi.fn()} />);
+      });
+
+      // Still on the general tab: the workspace list is not rendered yet.
+      expect(screen.queryByRole('button', { name: 'Workspace Two' })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: /Workspace/i }));
+
+      const ws1 = screen.getByRole('button', { name: 'Workspace One' });
+      const ws2 = screen.getByRole('button', { name: 'Workspace Two' });
+      expect(ws1.className).toContain('text-accent');
+      expect(ws2.className).not.toContain('text-accent');
+    });
+  });
 });

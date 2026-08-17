@@ -73,6 +73,10 @@ function App() {
   const newChatOpen = activeDestination === 'new-chat'
   const newChatVisible = newChatOpen || (!activeWorkspace && activePanel === null)
   const [settingsCloseRequestToken, setSettingsCloseRequestToken] = useState(0)
+  // Deep-link target: opening settings scoped to a specific workspace (sidebar
+  // context menu). Cleared on generic opens and on panel close so the next
+  // plain settings open falls back to the active workspace.
+  const [settingsWorkspaceTargetId, setSettingsWorkspaceTargetId] = useState<string | null>(null)
   const requestDestination = useCallback((destination: AppDestination) => {
     if (activeDestination === 'settings' && destination !== 'settings') {
       setPendingDestination(destination)
@@ -82,10 +86,18 @@ function App() {
     setActiveDestination(destination)
     return true
   }, [activeDestination])
-  const openPanel = useCallback((panel: ManagementDestination) => requestDestination(panel), [requestDestination])
+  const openPanel = useCallback((panel: ManagementDestination) => {
+    if (panel === 'settings') setSettingsWorkspaceTargetId(null)
+    return requestDestination(panel)
+  }, [requestDestination])
+  const openSettingsForWorkspace = useCallback((workspaceId: string) => {
+    openPanel('settings')
+    setSettingsWorkspaceTargetId(workspaceId)
+  }, [openPanel])
   const closePanel = useCallback(() => {
     setActiveDestination(pendingDestination ?? null)
     setPendingDestination(undefined)
+    setSettingsWorkspaceTargetId(null)
   }, [pendingDestination])
   const openNewChat = useCallback(() => {
     setNewChatError(null)
@@ -616,6 +628,7 @@ function App() {
             onOpenTodos={() => openPanel('todos')}
             onOpenAnalytics={() => openPanel('analytics')}
             onOpenSettings={() => openPanel('settings')}
+            onOpenSettingsForWorkspace={openSettingsForWorkspace}
             onOpenCapabilities={() => openPanel('capabilities')}
             onActivateWork={() => requestDestination(null)}
             activeDestination={newChatVisible ? 'new-chat' : activeDestination ?? 'work'}
@@ -685,6 +698,7 @@ function App() {
               <ManagementWorkspace
                 destination={activePanel}
                 workspaceId={activeWorkspaceId ?? undefined}
+                settingsWorkspaceId={settingsWorkspaceTargetId ?? undefined}
                 onClose={closePanel}
                 settingsCloseRequestToken={settingsCloseRequestToken}
                 onSettingsCloseCancelled={() => {

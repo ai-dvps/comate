@@ -16,6 +16,8 @@ interface ManagementWorkspaceProps {
   onClose: () => void
   settingsCloseRequestToken?: number
   onSettingsCloseCancelled?: () => void
+  /** Deep-link target for the settings destination: seeds the workspace selection. */
+  settingsWorkspaceId?: string
 }
 
 export default function ManagementWorkspace({
@@ -24,6 +26,7 @@ export default function ManagementWorkspace({
   onClose,
   settingsCloseRequestToken,
   onSettingsCloseCancelled,
+  settingsWorkspaceId,
 }: ManagementWorkspaceProps) {
   const { t } = useTranslation('common')
   const [capabilityType, setCapabilityType] = useState<'plugins' | 'skills'>('plugins')
@@ -65,6 +68,7 @@ export default function ManagementWorkspace({
             presentation="embedded"
             closeRequestToken={settingsCloseRequestToken}
             onCloseCancelled={onSettingsCloseCancelled}
+            initialWorkspaceId={settingsWorkspaceId}
           />
         ) : null}
         {destination === 'capabilities' && workspaceId && capabilityType === 'plugins' ? (

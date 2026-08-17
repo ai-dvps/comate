@@ -46,6 +46,7 @@ interface AgentCommandCenterProps {
   onOpenTodos: () => void
   onOpenAnalytics: () => void
   onOpenSettings: () => void
+  onOpenSettingsForWorkspace?: (workspaceId: string) => void
   onOpenCapabilities: () => void
   onActivateWork?: () => boolean
   activeDestination?: 'work' | 'new-chat' | 'todos' | 'analytics' | 'settings' | 'capabilities'
