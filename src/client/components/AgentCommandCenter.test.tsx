@@ -201,6 +201,52 @@ describe('AgentCommandCenter', () => {
     expect(workspaceState.openWorkspace).not.toHaveBeenCalled()
   })
 
+  it('reorders a collapsed Workspace after Session activity without changing its UI state', () => {
+    chatState.sessions['ws-2'] = [{
+      id: 'session-hidden',
+      workspaceId: 'ws-2',
+      name: 'Background task',
+      createdAt: '2026-08-13T00:00:00.000Z',
+      updatedAt: '2026-08-13T00:00:00.000Z',
+    }]
+    const center = () => (
+      <AgentCommandCenter
+        width={288}
+        onWidthChange={vi.fn()}
+        onCreateWorkspace={vi.fn()}
+        onOpenTodos={vi.fn()}
+        onOpenAnalytics={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onOpenCapabilities={vi.fn()}
+      />
+    )
+    const view = renderCommandCenter(center())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Hidden tools' }))
+    chatState.lastActivityAt = { 'session-hidden': Date.parse('2026-08-15T00:00:00.000Z') }
+    view.rerender(<I18nextProvider i18n={i18n}>{center()}</I18nextProvider>)
+
+    const hiddenWorkspace = screen.getByRole('region', { name: 'Hidden tools' })
+    const olderSelectedWorkspace = screen.getByRole('region', { name: 'Comate' })
+    expect(
+      hiddenWorkspace.compareDocumentPosition(olderSelectedWorkspace)
+      & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Expand Hidden tools' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Search workspaces and sessions' }))
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search workspaces and sessions' }), {
+      target: { value: 'Needs' },
+    })
+    expect(
+      hiddenWorkspace.compareDocumentPosition(olderSelectedWorkspace)
+      & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
   it('opens Analytics and Settings from the user account menu', () => {
     const onOpenAnalytics = vi.fn()
     const onOpenSettings = vi.fn()

@@ -27,6 +27,8 @@ import {
 } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { getSessionDisplayName } from '../lib/session-filter'
+import { compareSessionActivity } from '../lib/session-sort'
+import { sortWorkspacesByActivity } from '../lib/workspace-sort'
 import { openFolder } from '../lib/desktop-api'
 import { useToastStore } from '../stores/toast-store'
 import { useChatStore, type ChatSession } from '../stores/chat-store'
@@ -151,6 +153,10 @@ export default function AgentCommandCenter({
   const workspaceIds = useMemo(
     () => workspaces.map((workspace) => workspace.id),
     [workspaces],
+  )
+  const sortedWorkspaces = useMemo(
+    () => sortWorkspacesByActivity(workspaces, sessions, lastActivityAt),
+    [lastActivityAt, sessions, workspaces],
   )
   const wecomStatuses = useChannelStatuses(workspaceIds, '/bot/status')
   const feishuStatuses = useChannelStatuses(workspaceIds, '/feishu/status')
@@ -511,21 +517,13 @@ export default function AgentCommandCenter({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
-          {workspaces.map((workspace) => {
+          {sortedWorkspaces.map((workspace) => {
             const workspaceSessions = sessions[workspace.id] ?? []
             const matchingSessions = workspaceSessions
               .filter((session) => !normalizedQuery
                 || getSessionDisplayName(session).toLowerCase().includes(normalizedQuery)
                 || workspace.name.toLowerCase().includes(normalizedQuery))
-              .sort((left, right) => {
-                const leftActivity = lastActivityAt[left.id]
-                  ?? left.lastModified
-                  ?? Date.parse(left.updatedAt)
-                const rightActivity = lastActivityAt[right.id]
-                  ?? right.lastModified
-                  ?? Date.parse(right.updatedAt)
-                return rightActivity - leftActivity
-              })
+              .sort((left, right) => compareSessionActivity(left, right, lastActivityAt))
             const visibleCount = visibleSessionCounts[workspace.id] ?? 5
             const visibleSessions = matchingSessions.slice(0, visibleCount)
             const hasMoreSessions = visibleSessions.length < matchingSessions.length
