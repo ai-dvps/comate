@@ -235,7 +235,6 @@ function humanizeToolName(toolName: string): string {
     case 'command': return '执行命令';
     case 'file_write': return '修改文件';
     case 'web_research': return '查询资料';
-    case 'question': return '回答问题';
     case 'browser': return '操作浏览器';
     default: return '执行操作';
   }
