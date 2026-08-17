@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Sidebar workspace rows now have a right-click context menu** — Right-clicking a workspace offers Edit Workspace (opens Settings scoped to that workspace), Open Folder (reveals the workspace folder in the OS file manager), and Reload Sessions (refreshes that workspace's session list); expanded workspaces also refresh their session lists when the window regains focus.
+
 ### Changed
 
 - **Prompt references are now atomic chips** — Resolved Skills and files appear as lightweight, non-editable chips that can be deleted as a whole and reinserted with `/` or `@`; references that become invalid remain atomic and show a warning state.

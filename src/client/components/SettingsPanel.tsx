@@ -150,6 +150,8 @@ interface SettingsPanelProps {
   presentation?: PanelPresentation
   closeRequestToken?: number
   onCloseCancelled?: () => void
+  /** Deep-link target: seeds the workspace selection and opens the workspace tab. */
+  initialWorkspaceId?: string
 }
 
 type SettingsTab = 'general' | 'appearance' | 'workspace' | 'backend' | 'providers' | 'bots'
@@ -191,6 +193,7 @@ export default function SettingsPanel({
   presentation,
   closeRequestToken = 0,
   onCloseCancelled,
+  initialWorkspaceId,
 }: SettingsPanelProps) {
   const { t } = useTranslation('settings')
   const workspaces = useWorkspaceStore((s) => s.workspaces)
@@ -267,9 +270,26 @@ export default function SettingsPanel({
     setArchiveThresholdDaysInput(String(archiveThresholdDays))
 
     if (workspaces.length > 0) {
-      setSelectedWorkspaceId(activeWorkspaceId || workspaces[0].id)
+      setSelectedWorkspaceId(initialWorkspaceId || activeWorkspaceId || workspaces[0].id)
     }
-  }, [workspaces, reopenLastWorkspace, useModifierToSubmit, autoCheckUpdates, notificationSoundsEnabled, notificationSoundsVolume, activeWorkspaceId, archiveThresholdDays])
+    if (initialWorkspaceId) {
+      setActiveTab('workspace')
+    }
+  }, [workspaces, reopenLastWorkspace, useModifierToSubmit, autoCheckUpdates, notificationSoundsEnabled, notificationSoundsVolume, activeWorkspaceId, archiveThresholdDays, initialWorkspaceId])
+
+  // Re-seed the selection when the deep-link target changes after mount
+  // (e.g. "Edit Workspace" triggered while settings is already open). The
+  // mount-once effect above stays authoritative for the initial render.
+  const lastSeededInitialWorkspaceIdRef = useRef(initialWorkspaceId)
+  useEffect(() => {
+    const target = initialWorkspaceId
+    if (!target || target === lastSeededInitialWorkspaceIdRef.current) return
+    // Stale target: leave the selection to the deletion-sync guard below.
+    if (!workspaces.some((w) => w.id === target)) return
+    lastSeededInitialWorkspaceIdRef.current = target
+    setSelectedWorkspaceId(target)
+    setActiveTab('workspace')
+  }, [initialWorkspaceId, workspaces])
 
   useEffect(() => {
     setArchiveThresholdDaysInput(String(archiveThresholdDays))
