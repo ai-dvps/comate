@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { ImageOff, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -16,7 +16,11 @@ function imageUrl(image: HistoricalImage): string | undefined {
 
 export default function HistoricalImageRail({ images }: { images: HistoricalImage[] }) {
   const { t } = useTranslation('chat')
-  const [preview, setPreview] = useState<HistoricalImage | null>(null)
+  const preparedImages = useMemo(
+    () => images.map((image) => ({ image, src: imageUrl(image) })),
+    [images],
+  )
+  const [preview, setPreview] = useState<(typeof preparedImages)[number] | null>(null)
   const previewTriggerRef = useRef<HTMLButtonElement | null>(null)
 
   const closePreview = () => {
@@ -31,13 +35,13 @@ export default function HistoricalImageRail({ images }: { images: HistoricalImag
         className="flex max-w-full flex-nowrap gap-2 overflow-x-auto py-1"
         aria-label={t('imageInput.attachments')}
       >
-        {images.map((image, index) => {
-          const src = imageUrl(image)
+        {preparedImages.map(({ image, src }, index) => {
           const name = image.name ?? `${t('imageInput.image')} ${index + 1}`
+          const key = `${image.sourceMessageId ?? 'message'}:${image.sourcePartIndex ?? index}`
           if (!src) {
             return (
               <div
-                key={`${image.sourcePartIndex ?? index}-unavailable`}
+                key={key}
                 role="status"
                 aria-label={name}
                 className="flex h-20 w-24 flex-none flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border bg-surface px-2 text-center text-xs text-text-tertiary"
@@ -51,12 +55,12 @@ export default function HistoricalImageRail({ images }: { images: HistoricalImag
           }
           return (
             <button
-              key={`${image.sourcePartIndex ?? index}-${src}`}
+              key={key}
               type="button"
               aria-label={t('imageInput.preview', { name })}
               onClick={(event) => {
                 previewTriggerRef.current = event.currentTarget
-                setPreview(image)
+                setPreview({ image, src })
               }}
               className="h-20 w-24 flex-none overflow-hidden rounded-lg border border-border bg-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             >
@@ -65,11 +69,11 @@ export default function HistoricalImageRail({ images }: { images: HistoricalImag
           )
         })}
       </div>
-      {preview && imageUrl(preview) && (
+      {preview && (
         <div
           role="dialog"
           aria-modal="true"
-          aria-label={preview.name ?? t('imageInput.previewTitle')}
+          aria-label={preview.image.name ?? t('imageInput.previewTitle')}
           tabIndex={-1}
           onKeyDown={(event) => {
             if (event.key === 'Escape') closePreview()
@@ -81,8 +85,8 @@ export default function HistoricalImageRail({ images }: { images: HistoricalImag
           ref={(element) => element?.focus()}
         >
           <img
-            src={imageUrl(preview)}
-            alt={preview.name ?? t('imageInput.previewTitle')}
+            src={preview.src}
+            alt={preview.image.name ?? t('imageInput.previewTitle')}
             className="max-h-full max-w-full object-contain"
           />
           <button

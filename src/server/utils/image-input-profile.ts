@@ -1,4 +1,7 @@
 import type { BackendId } from '../services/agent-backends.js';
+import type { ImageMediaType } from '../types/message.js';
+
+export type { ImageMediaType } from '../types/message.js';
 
 export const IMAGE_MEDIA_TYPES = [
   'image/png',
@@ -7,7 +10,9 @@ export const IMAGE_MEDIA_TYPES = [
   'image/gif',
 ] as const;
 
-export type ImageMediaType = (typeof IMAGE_MEDIA_TYPES)[number];
+export function isImageMediaType(value: unknown): value is ImageMediaType {
+  return typeof value === 'string' && IMAGE_MEDIA_TYPES.includes(value as ImageMediaType);
+}
 
 export interface ImageInputLimits {
   allowedMediaTypes: readonly ImageMediaType[];

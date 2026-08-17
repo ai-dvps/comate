@@ -284,6 +284,7 @@ export default function PromptInput(props: PromptInputProps) {
   const filePickerHandleRef = useRef<FilePickerHandle>(null)
   const historyPickerHandleRef = useRef<HistoryPickerHandle>(null)
   const imageFileInputRef = useRef<HTMLInputElement>(null)
+  const imageIntakeKeysRef = useRef<Set<string>>(new Set())
   const prevInputRef = useRef('')
   const referenceDraftSourceRef = useRef<string>()
   const committedReferencesRef = useRef<CommittedPromptReference[]>([])
@@ -866,6 +867,8 @@ export default function PromptInput(props: PromptInputProps) {
       }))
       return
     }
+    if (imageIntakeKeysRef.current.has(operationKey)) return
+    imageIntakeKeysRef.current.add(operationKey)
 
     const existingImages = useChatStore.getState().imageDrafts[operationKey] ?? []
     setImageErrors((current) => {
@@ -897,6 +900,7 @@ export default function PromptInput(props: PromptInputProps) {
         [operationKey]: t(`imageInput.errors.${code}`),
       }))
     } finally {
+      imageIntakeKeysRef.current.delete(operationKey)
       setImageBusyKeys((current) => {
         const next = new Set(current)
         next.delete(operationKey)
