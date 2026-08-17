@@ -69,6 +69,9 @@ A session is bound to the backend selected at its first message and cannot switc
 ### Session Activity
 服务端维护的会话工作状态快照，统一表达 foreground turn、pending interaction、SDK background tasks、stopping 和 interruption。它是前端活跃展示、输入锁定与 runtime idle-close 判定的共同真相源；主 agent 的 `result` 只结束 foreground，不单独决定整个 Session 是否结束。
 
+### Workspace Activity
+Workspace 内所有 Session 的有效活动新近度聚合。它沿用 Session Activity 的用户关注语义，包括运行或处理中、未读完成和待用户处理，并以最新一次有效活动决定 Workspace 在全局列表中的顺序；选中、打开或展开 Workspace 不产生新的活动权重。
+
 ### New Chat
 不预先创建会话、直接从第一条 prompt 开始对话的应用级流程：用户选择工作区并输入首条 prompt，发送时才创建会话并由服务端从 prompt 派生标题。它是唯一走“服务端派生标题”的建会话路径，因此会触到手动输入标题的建会话路径永远不会执行的服务端代码。
 
