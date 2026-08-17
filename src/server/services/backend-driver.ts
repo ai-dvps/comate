@@ -22,6 +22,12 @@ import type { BackendId } from './agent-backends.js';
 
 export interface BackendDriver {
   readonly backendId: BackendId;
+  /**
+   * Register a turn before it enters the shared input iterator. Backends with
+   * an asynchronous transport boundary resolve only after that transport has
+   * accepted the turn; synchronous backends can omit this hook.
+   */
+  prepareAdmission?(clientTurnId: string): Promise<void>;
   createStreamingQuery(
     input: AsyncIterable<SDKUserMessage>,
     options: Options,

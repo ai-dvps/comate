@@ -48,6 +48,7 @@ type AppDestination = ManagementDestination | 'new-chat' | null
 
 function App() {
   const { t } = useTranslation('common')
+  const { t: tChat } = useTranslation('chat')
   useTheme()
   useBadgeSync()
   useNotificationSounds()
@@ -369,7 +370,7 @@ function App() {
       // the cleanup effect aborts this request before the session is created.
       setActiveDestination('new-chat')
       void openWorkspace(workspaceId)
-      const initialPrompt = turn.text.trim() || 'Image prompt'
+      const initialPrompt = turn.text.trim() || tChat('imageOnlySessionTitle')
       const result = await createSession(workspaceId, {
         initialPrompt,
         backend: options.backend,
@@ -400,7 +401,7 @@ function App() {
         setNewChatSubmitting(false)
       }
     }
-  }, [createSession, newChatSubmitting, openWorkspace, sendMessage, transferDraft])
+  }, [createSession, newChatSubmitting, openWorkspace, sendMessage, tChat, transferDraft])
 
   useEffect(() => {
     if (newChatVisible) return

@@ -92,7 +92,11 @@ export function resolveImageInputProfile(
 ): ImageInputProfile {
   const normalizedModel = model?.trim().toLowerCase();
   const knownModels = backend === 'claude' ? CLAUDE_IMAGE_MODELS : OPENCODE_IMAGE_MODELS;
-  const enabled = normalizedModel !== undefined && knownModels.has(normalizedModel);
+  const baseModel = normalizedModel?.replace(/-\d{8}$/, '');
+  const enabled = normalizedModel !== undefined && (
+    knownModels.has(normalizedModel) ||
+    (baseModel !== normalizedModel && baseModel !== undefined && CLAUDE_IMAGE_MODELS.has(baseModel))
+  );
   return {
     enabled,
     ...(!enabled && { reasonKey: 'backend.imageInputModelUnsupported' }),

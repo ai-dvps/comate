@@ -1004,6 +1004,77 @@ describe('PromptInput browser', () => {
     expect(screen.queryByRole('button', { name: 'Preview delayed.png' })).not.toBeInTheDocument()
   })
 
+  it('releases a late image result instead of repopulating a cleared draft', async () => {
+    chatStoreMock.getState().sessions = {
+      'ws-1': [{ id: 'session-1', backend: 'claude', providerId: 'provider-1' }],
+    }
+    chatStoreMock.setDraft('session-1', 'clear this')
+    let resolveNormalization: ((images: Awaited<ReturnType<typeof imageInputMock.normalizeImageBatch>>) => void) | undefined
+    imageInputMock.normalizeImageBatch.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveNormalization = resolve
+    }))
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const input = new File([new Uint8Array([1])], 'late.png', { type: 'image/png' })
+    const transfer = new DataTransfer()
+    transfer.items.add(input)
+    editableElement().dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      clipboardData: transfer,
+    }))
+    await waitFor(() => expect(imageInputMock.normalizeImageBatch).toHaveBeenCalledTimes(1))
+
+    await userEvent.click(screen.getByTitle('Clear'))
+    const lateImage = {
+      id: 'late',
+      name: 'late.png',
+      mediaType: 'image/png' as const,
+      data: 'AA==',
+      width: 100,
+      height: 50,
+      blob: input,
+      previewUrl: 'blob:late',
+    }
+    await act(async () => resolveNormalization?.([lateImage]))
+
+    expect(chatStoreMock.getState().imageDrafts['"ws-1":"session-1"']).toBeUndefined()
+    expect(imageInputMock.releasePromptImage).toHaveBeenCalledWith(lateImage)
+  })
+
+  it('releases a late image result after the composer is disposed', async () => {
+    chatStoreMock.getState().sessions = {
+      'ws-1': [{ id: 'session-1', backend: 'claude', providerId: 'provider-1' }],
+    }
+    let resolveNormalization: ((images: Awaited<ReturnType<typeof imageInputMock.normalizeImageBatch>>) => void) | undefined
+    imageInputMock.normalizeImageBatch.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveNormalization = resolve
+    }))
+    const view = renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const input = new File([new Uint8Array([1])], 'disposed.png', { type: 'image/png' })
+    const transfer = new DataTransfer()
+    transfer.items.add(input)
+    editableElement().dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      clipboardData: transfer,
+    }))
+    await waitFor(() => expect(imageInputMock.normalizeImageBatch).toHaveBeenCalledTimes(1))
+    view.unmount()
+
+    const lateImage = {
+      id: 'disposed',
+      name: 'disposed.png',
+      mediaType: 'image/png' as const,
+      data: 'AA==',
+      width: 100,
+      height: 50,
+      blob: input,
+      previewUrl: 'blob:disposed',
+    }
+    await act(async () => resolveNormalization?.([lateImage]))
+
+    expect(chatStoreMock.getState().imageDrafts['"ws-1":"session-1"']).toBeUndefined()
+    expect(imageInputMock.releasePromptImage).toHaveBeenCalledWith(lateImage)
+  })
+
   it('ignores a second image intake while the same draft is still normalizing', async () => {
     chatStoreMock.getState().sessions = {
       'ws-1': [{ id: 'session-1', backend: 'claude', providerId: 'provider-1' }],

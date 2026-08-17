@@ -174,6 +174,14 @@ function extractPromptParts(message: SDKUserMessage): OpencodePromptPart[] {
   return parts;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function encodeComateMessageId(clientTurnId: string): string | undefined {
+  return UUID_RE.test(clientTurnId)
+    ? `msg_comate_${clientTurnId.replace(/-/g, '').toLowerCase()}`
+    : undefined;
+}
+
 function extractTextOnlySlashCommand(
   parts: readonly OpencodePromptPart[],
 ): { name: string; args: string } | undefined {
@@ -188,6 +196,7 @@ export const __testables = {
   buildSessionMcpConfig,
   toAnthropicBaseUrl,
   extractPromptParts,
+  encodeComateMessageId,
   extractTextOnlySlashCommand,
   isOpencodeDefaultTitle,
 };
@@ -203,6 +212,10 @@ export class OpencodeBackendDriver implements BackendDriver {
   private toolRegistry = new Map<string, { tool: string; input: unknown }>();
   private abort = new AbortController();
   private promptQueue: Promise<void> = Promise.resolve();
+  private pendingAdmissions = new Map<
+    string,
+    { resolve: () => void; reject: (error: unknown) => void }
+  >();
   private closed = false;
 
   constructor(private readonly deps: OpencodeAdapterDeps) {
@@ -211,6 +224,16 @@ export class OpencodeBackendDriver implements BackendDriver {
     // Strip claude-code alias suffixes (e.g. `glm-5.2[1m]`) before they reach
     // the opencode backend, which does not accept them as model ids.
     this.modelID = stripModelSuffix(deps.provider.model ?? '');
+  }
+
+  prepareAdmission(clientTurnId: string): Promise<void> {
+    if (this.closed) return Promise.reject(new Error('OpenCode session is closed'));
+    if (this.pendingAdmissions.has(clientTurnId)) {
+      return Promise.reject(new Error(`OpenCode turn ${clientTurnId} is already pending admission`));
+    }
+    return new Promise<void>((resolve, reject) => {
+      this.pendingAdmissions.set(clientTurnId, { resolve, reject });
+    });
   }
 
   createStreamingQuery(
@@ -229,6 +252,8 @@ export class OpencodeBackendDriver implements BackendDriver {
       close: () => {
         this.closed = true;
         this.abort.abort();
+        this.lastPrompt = undefined;
+        this.rejectPendingAdmissions(new Error('OpenCode session closed before prompt admission'));
         // Per-session serve lifecycle maps 1:1 onto the runtime (KTD-6).
         void opencodeServerManager.stopServer(this.deps.comateSessionId);
       },
@@ -270,6 +295,7 @@ export class OpencodeBackendDriver implements BackendDriver {
       yield* this.streamEvents();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      this.rejectPendingAdmissions(err);
       diagLog(`[OpencodeBackendDriver] run error: ${message}`);
       yield {
         type: 'result',
@@ -430,6 +456,10 @@ export class OpencodeBackendDriver implements BackendDriver {
       return;
     }
 
+    if (event.type === 'session.error' || (event.type === 'session.idle' && !this.mapperState.erroredTurn)) {
+      this.lastPrompt = undefined;
+    }
+
     for (const message of mapOpencodeEvent(event, this.mapperState)) {
       this.pushEvent(message);
     }
@@ -457,8 +487,9 @@ export class OpencodeBackendDriver implements BackendDriver {
     // a success result now would tell waiters the turn completed while the
     // retry is still in flight (they can then close/abort and kill the retry).
     this.mapperState.erroredTurn = true;
-    if (this.lastPromptParts) {
-      void this.sendPrompt(this.lastPromptParts, options).catch((err) => {
+    if (this.lastPrompt) {
+      void this.sendPrompt(this.lastPrompt.parts, options, this.lastPrompt.messageID).catch((err) => {
+        this.lastPrompt = undefined;
         diagLog(`[OpencodeBackendDriver] fallback prompt failed: ${err instanceof Error ? err.message : String(err)}`);
       });
     }
@@ -466,7 +497,12 @@ export class OpencodeBackendDriver implements BackendDriver {
   }
 
   private wireModelResolved = false;
-  private lastPromptParts?: OpencodePromptPart[];
+  private lastPrompt?: { parts: OpencodePromptPart[]; messageID?: string };
+
+  private rejectPendingAdmissions(error: unknown): void {
+    for (const admission of this.pendingAdmissions.values()) admission.reject(error);
+    this.pendingAdmissions.clear();
+  }
 
   private async bridgePermission(
     properties: Record<string, unknown>,
@@ -591,19 +627,40 @@ export class OpencodeBackendDriver implements BackendDriver {
         if (this.closed) return;
         const parts = extractPromptParts(message);
         if (parts.length === 0) continue;
-        this.promptQueue = this.promptQueue.then(() => this.sendPrompt(parts, options));
-        await this.promptQueue.catch((err) => {
-          diagLog(`[OpencodeBackendDriver] prompt failed: ${err instanceof Error ? err.message : String(err)}`);
-        });
+        const clientTurnId = message.uuid;
+        const messageID = typeof clientTurnId === 'string'
+          ? encodeComateMessageId(clientTurnId)
+          : undefined;
+        const admission = typeof clientTurnId === 'string'
+          ? this.pendingAdmissions.get(clientTurnId)
+          : undefined;
+        this.promptQueue = this.promptQueue
+          .catch(() => {})
+          .then(() => this.sendPrompt(parts, options, messageID));
+        await this.promptQueue.then(
+          () => admission?.resolve(),
+          (err) => {
+            this.lastPrompt = undefined;
+            admission?.reject(err);
+            diagLog(`[OpencodeBackendDriver] prompt failed: ${err instanceof Error ? err.message : String(err)}`);
+          },
+        );
+        if (typeof clientTurnId === 'string') this.pendingAdmissions.delete(clientTurnId);
       }
     })().catch((err) => {
       diagLog(`[OpencodeBackendDriver] input consumption error: ${err instanceof Error ? err.message : String(err)}`);
     });
   }
 
-  private async sendPrompt(parts: OpencodePromptPart[], options: Options): Promise<void> {
-    if (!this.instance || !this.backendSessionId) return;
-    this.lastPromptParts = parts;
+  private async sendPrompt(
+    parts: OpencodePromptPart[],
+    options: Options,
+    messageID?: string,
+  ): Promise<void> {
+    if (!this.instance || !this.backendSessionId) {
+      throw new Error('OpenCode session is not ready for prompt admission');
+    }
+    this.lastPrompt = { parts, ...(messageID ? { messageID } : {}) };
 
     // Slash commands execute via opencode's command endpoint (server-side
     // template expansion) only for text-only command turns. Mixed/image turns
@@ -617,14 +674,18 @@ export class OpencodeBackendDriver implements BackendDriver {
 
     const system =
       typeof options.systemPrompt === 'string' ? options.systemPrompt : undefined;
-    await opencodeFetch(this.instance, `/session/${this.backendSessionId}/prompt_async`, {
+    const response = await opencodeFetch(this.instance, `/session/${this.backendSessionId}/prompt_async`, {
       method: 'POST',
       body: JSON.stringify({
         parts,
+        ...(messageID ? { messageID } : {}),
         ...(this.modelID ? { model: { providerID: this.providerID, modelID: this.modelID } } : {}),
         ...(system ? { system } : {}),
       }),
     });
+    if (!response.ok) {
+      throw new Error(`OpenCode prompt admission failed with HTTP ${response.status}`);
+    }
   }
 
   /** Session operations parity (R8): fork creates a sibling remote session. */

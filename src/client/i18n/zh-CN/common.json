@@ -126,6 +126,7 @@
   },
   "modelFallback": "模型已回退：{{originalModel}} → {{fallbackModel}}",
   "failedToSend": "发送失败",
+  "admissionAcknowledgementMismatch": "服务器确认与已提交的消息不匹配",
   "networkError": "网络错误",
   "subscriptionFailed": "订阅失败",
   "noResponseBody": "无响应体",

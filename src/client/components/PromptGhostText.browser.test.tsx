@@ -77,6 +77,8 @@ const chatStoreMock = vi.hoisted(() => {
 
 vi.mock('../stores/chat-store', () => ({
   useChatStore: chatStoreMock.useChatStore,
+  newChatDraftSessionId: (workspaceId: string) => `new:${workspaceId}`,
+  promptImageDraftKey: (workspaceId: string, sessionId: string) => `${workspaceId}:${sessionId}`,
 }))
 
 vi.mock('../stores/commands-store', () => ({

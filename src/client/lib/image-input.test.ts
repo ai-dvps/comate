@@ -110,6 +110,18 @@ describe('normalizeImageBatch', () => {
     )
   })
 
+  it('requests a near-target decode size for oversized static images', async () => {
+    const platform = runtime()
+
+    await normalizeImageBatch([pngFile(4000, 2000)], { runtime: platform })
+
+    expect(platform.decode).toHaveBeenCalledWith(
+      expect.any(Blob),
+      { width: 4000, height: 2000 },
+      { width: 2000, height: 1000 },
+    )
+  })
+
   it('passes a compliant GIF through unchanged after a real decode', async () => {
     const platform = runtime()
     const input = gifFile(320, 180)

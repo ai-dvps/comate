@@ -2026,6 +2026,7 @@ export class ChatService {
         ...(text ? [{ type: 'text' as const, text }] : []),
         ...images.map((image) => ({
           type: 'image' as const,
+          ...(image.name ? { name: image.name } : {}),
           source: {
             type: 'base64' as const,
             media_type: image.mediaType,
@@ -2035,13 +2036,15 @@ export class ChatService {
       ];
     }
 
-    // U11 (KTD-19): a new turn resets the per-turn override-deny cap.
+    await runtime.pushMessage(runtimeContent, clientTurnId);
+
+    // U11 (KTD-19): only an admitted new turn resets the per-turn
+    // override-deny cap.
     this.sessionOverrideDenies.delete(sessionId);
 
-    runtime.pushMessage(runtimeContent, clientTurnId);
-
-    // Runtime push is the admission boundary. Only promote/lock a draft after
-    // that synchronous operation succeeds; a rejection must leave it retryable.
+    // The runtime admission promise resolves at the concrete backend boundary
+    // (for OpenCode, only after prompt_async accepts the request). A rejection
+    // must leave the draft retryable.
     // Once admitted, housekeeping failures must not turn the accepted turn into
     // a client-visible send failure that encourages duplicate resubmission.
     const localSession = workspaceStore.getLocalSession(sessionId);

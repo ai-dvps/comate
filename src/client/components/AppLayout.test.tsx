@@ -263,7 +263,7 @@ function renderWithI18n(ui: React.ReactElement) {
 }
 
 describe('App layout', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     cleanup()
     vi.clearAllMocks()
     mockWorkspaceStore.openWorkspace.mockReset()
@@ -275,6 +275,7 @@ describe('App layout', () => {
     vi.mocked(isWindows).mockResolvedValue(false)
     vi.mocked(isWindowMaximized).mockResolvedValue(false)
     vi.mocked(onWindowMaximizedChange).mockReturnValue(() => {})
+    await i18n.changeLanguage('en')
   })
 
   it('clips the root container vertically to prevent the whole page from scrolling', async () => {
@@ -392,6 +393,32 @@ describe('App layout', () => {
       'session-image',
       expect.objectContaining({ text: '', images: [expect.objectContaining({ id: 'image-1' })] }),
     )
+  })
+
+  it('localizes the image-only session title', async () => {
+    await i18n.changeLanguage('zh-CN')
+    mockWorkspaceStore.workspaces = [{ id: 'ws-1', name: 'Comate', folderPath: '/comate' }]
+    mockWorkspaceStore.activeWorkspaceId = 'ws-1'
+    mockWorkspaceStore.openWorkspaceIds = ['ws-1']
+    mockChatStore.createSession.mockResolvedValue({
+      ok: true,
+      session: {
+        id: 'session-image-zh',
+        workspaceId: 'ws-1',
+        name: '图片提示',
+        createdAt: '',
+        updatedAt: '',
+      },
+    })
+
+    renderWithI18n(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New chat' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send image' }))
+
+    await waitFor(() => expect(mockChatStore.createSession).toHaveBeenCalledWith(
+      'ws-1',
+      expect.objectContaining({ initialPrompt: '图片提示' }),
+    ))
   })
 
   it('creates a session when submitting directly from the default New Chat screen', async () => {

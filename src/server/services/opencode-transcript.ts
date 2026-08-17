@@ -83,20 +83,18 @@ function imagePartFromOpencode(part: OpencodeRestPart): MessagePart | undefined 
     };
   }
 
-  try {
-    const url = new URL(part.url);
-    if ((url.protocol === 'http:' || url.protocol === 'https:') && !url.username && !url.password) {
-      return {
-        type: 'image',
-        mediaType,
-        ...(name && { name }),
-        source: { type: 'url', url: part.url },
-      };
-    }
-  } catch {
-    // Fall through to the explicit unavailable state.
-  }
+  // Never mount backend-supplied remote URLs in history: doing so would turn
+  // transcript viewing into an unsolicited network request to that origin.
   return unavailableImagePart(mediaType, name, 'Backend transcript image URL is unavailable.');
+}
+
+const COMATE_MESSAGE_ID_RE =
+  /^msg_comate_([0-9a-f]{8})([0-9a-f]{4})([1-8][0-9a-f]{3})([89ab][0-9a-f]{3})([0-9a-f]{12})$/i;
+
+function decodeComateMessageId(messageId: string): string {
+  const match = COMATE_MESSAGE_ID_RE.exec(messageId);
+  if (!match) return messageId;
+  return match.slice(1).join('-').toLowerCase();
 }
 
 export interface OpencodeRestMessage {
@@ -159,7 +157,7 @@ export function opencodeMessagesToSessionMessages(
 
     if (content.length > 0 || msg.info.role === 'user') {
       out.push({
-        uuid: msg.info.id,
+        uuid: msg.info.role === 'user' ? decodeComateMessageId(msg.info.id) : msg.info.id,
         type: msg.info.role === 'user' ? 'user' : 'assistant',
         parent_tool_use_id: null,
         session_id: '',

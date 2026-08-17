@@ -13,6 +13,7 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
   let server: http.Server;
   let wsUrl: string;
   let ws: WebSocket;
+  let webSocketServer: ComateWebSocketServer;
   let lastRuntimeCloseCallback: ((sessionId: string) => void) | undefined;
   let originalSetOnRuntimeClose: typeof chatService.setOnRuntimeClose;
 
@@ -24,10 +25,10 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
       lastRuntimeCloseCallback = cb;
     };
 
-    const wss = new ComateWebSocketServer();
+    webSocketServer = new ComateWebSocketServer();
     server = http.createServer();
     await new Promise<void>((resolve) => server.listen(0, resolve));
-    wss.attach(server);
+    webSocketServer.attach(server);
 
     const address = server.address();
     const port = typeof address === 'object' && address ? address.port : 0;
@@ -135,7 +136,124 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
     }
   });
 
-  it('rejects malformed send payloads without a partial runtime push', async () => {
+  it('accepts the legacy text-only payload and assigns its transcript identity at the server boundary', async () => {
+    const originalPushMessage = chatService.pushMessage.bind(chatService);
+    let admittedClientTurnId: string | undefined;
+    chatService.pushMessage = async (...args: Parameters<typeof chatService.pushMessage>) => {
+      admittedClientTurnId = args[6];
+    };
+    try {
+      ws = await connect();
+      const responsePromise = waitForMessage<WsResponse>(ws, (message) =>
+        'id' in message && message.id === 'send-legacy',
+      );
+      sendRequest(ws, 'send-legacy', 'sendMessage', {
+        workspaceId: 'ws-1',
+        sessionId: 'session-1',
+        content: 'legacy text',
+      });
+
+      const response = await responsePromise;
+      assert.match(admittedClientTurnId ?? '', /^[0-9a-f-]{36}$/i);
+      assert.deepEqual(response.payload, { sent: true, clientTurnId: admittedClientTurnId });
+    } finally {
+      chatService.pushMessage = originalPushMessage;
+    }
+  });
+
+  it('deduplicates a retry with the same client turn id while admission is delayed', async () => {
+    const originalPushMessage = chatService.pushMessage.bind(chatService);
+    let resolvePush: (() => void) | undefined;
+    let pushCount = 0;
+    chatService.pushMessage = async () => new Promise<void>((resolve) => {
+      pushCount += 1;
+      resolvePush = resolve;
+    });
+    try {
+      ws = await connect();
+      const payload = {
+        workspaceId: 'ws-1',
+        sessionId: 'session-1',
+        clientTurnId: '550e8400-e29b-41d4-a716-446655440099',
+        content: 'slow admission',
+      };
+      const firstResponse = waitForMessage<WsResponse>(ws, (message) =>
+        'id' in message && message.id === 'send-slow-1',
+      );
+      const retryResponse = waitForMessage<WsResponse>(ws, (message) =>
+        'id' in message && message.id === 'send-slow-2',
+      );
+      sendRequest(ws, 'send-slow-1', 'sendMessage', payload);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      sendRequest(ws, 'send-slow-2', 'sendMessage', payload);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      assert.equal(pushCount, 1);
+      resolvePush?.();
+      const [first, retry] = await Promise.all([firstResponse, retryResponse]);
+      assert.deepEqual(first.payload, { sent: true, clientTurnId: payload.clientTurnId });
+      assert.deepEqual(retry.payload, first.payload);
+      assert.equal(pushCount, 1);
+      const admissions = (webSocketServer as unknown as {
+        sendAdmissions: Map<string, { settled: boolean }>;
+      }).sendAdmissions;
+      assert.equal(admissions.get(payload.clientTurnId)?.settled, true);
+    } finally {
+      chatService.pushMessage = originalPushMessage;
+    }
+  });
+
+  it('keeps the admission dedupe registry bounded without evicting recent identities', async () => {
+    const originalPushMessage = chatService.pushMessage.bind(chatService);
+    let pushed = false;
+    chatService.pushMessage = async () => {
+      pushed = true;
+    };
+    try {
+      const admissions = (webSocketServer as unknown as {
+        sendAdmissions: Map<string, {
+          workspaceId: string;
+          sessionId: string;
+          fingerprint: string;
+          promise: Promise<void>;
+          settled: boolean;
+          createdAt: number;
+        }>;
+      }).sendAdmissions;
+      for (let index = 0; index < 1000; index += 1) {
+        admissions.set(`recent-${index}`, {
+          workspaceId: 'ws-1',
+          sessionId: 'session-1',
+          fingerprint: `fingerprint-${index}`,
+          promise: Promise.resolve(),
+          settled: true,
+          createdAt: Date.now(),
+        });
+      }
+
+      ws = await connect();
+      const responsePromise = waitForMessage<WsErrorResponse>(ws, (message) =>
+        'id' in message && message.id === 'send-at-capacity',
+      );
+      sendRequest(ws, 'send-at-capacity', 'sendMessage', {
+        workspaceId: 'ws-1',
+        sessionId: 'session-1',
+        clientTurnId: '550e8400-e29b-41d4-a716-446655440098',
+        content: 'new distinct turn',
+      });
+
+      const response = await responsePromise;
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'SEND_ADMISSION_BUSY');
+      assert.equal(response.error.retryable, true);
+      assert.equal(admissions.size, 1000);
+      assert.equal(pushed, false);
+    } finally {
+      chatService.pushMessage = originalPushMessage;
+    }
+  });
+
+  it('rejects image payloads without a client turn id and without a partial runtime push', async () => {
     const originalPushMessage = chatService.pushMessage.bind(chatService);
     let pushed = false;
     chatService.pushMessage = async () => {
@@ -150,7 +268,7 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
         workspaceId: 'ws-1',
         sessionId: 'session-1',
         content: '',
-        images: [],
+        images: [{ id: 'image', mediaType: 'image/png', data: 'AA==', width: 1, height: 1 }],
       });
 
       const response = await responsePromise;

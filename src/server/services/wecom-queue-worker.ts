@@ -170,7 +170,7 @@ export class WeComQueueWorker {
     runtime.cancelIdleClose();
 
     const directive = formatProactiveDirective(entry);
-    runtime.pushMessage(directive);
+    await runtime.pushMessage(directive);
 
     // Grace period: give the agent time to process and send before marking delivered
     const timeout = setTimeout(() => {

@@ -10,6 +10,7 @@ import {
 describe('resolveImageInputProfile', () => {
   it('enables known image-capable Claude and OpenCode models', () => {
     assert.equal(resolveImageInputProfile('claude', 'claude-sonnet-4-6').enabled, true);
+    assert.equal(resolveImageInputProfile('claude', 'claude-sonnet-4-5-20250929').enabled, true);
     assert.equal(resolveImageInputProfile('opencode', 'gpt-5.4').enabled, true);
     assert.equal(resolveImageInputProfile('opencode', 'gemini-2.5-pro').enabled, true);
   });
@@ -17,6 +18,8 @@ describe('resolveImageInputProfile', () => {
   it('conservatively rejects missing, known text-only, and unknown custom models', () => {
     assert.equal(resolveImageInputProfile('claude', undefined).enabled, false);
     assert.equal(resolveImageInputProfile('claude', 'claude-2.1').enabled, false);
+    assert.equal(resolveImageInputProfile('claude', 'claude-sonnet-4-5-latest').enabled, false);
+    assert.equal(resolveImageInputProfile('claude', 'custom-claude-sonnet-4-5-20250929').enabled, false);
     const custom = resolveImageInputProfile('opencode', 'private-vision-proxy');
     assert.equal(custom.enabled, false);
     assert.equal(custom.reasonKey, 'backend.imageInputModelUnsupported');

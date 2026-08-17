@@ -126,6 +126,7 @@
   },
   "modelFallback": "Model fallback: {{originalModel}} → {{fallbackModel}}",
   "failedToSend": "Failed to send",
+  "admissionAcknowledgementMismatch": "The server acknowledgement did not match the submitted message",
   "networkError": "Network error",
   "subscriptionFailed": "Subscription failed",
   "noResponseBody": "No response body",
