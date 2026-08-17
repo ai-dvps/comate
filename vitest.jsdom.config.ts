@@ -40,6 +40,7 @@ export default defineProject({
       'src/client/lib/conversation-view.test.ts',
       'src/client/lib/prompt-references.test.ts',
       'src/client/lib/prompt-reference-state.test.ts',
+      'src/client/lib/image-input.test.ts',
     ],
     exclude: [
       'src/client/lib/keyboard.test.ts',

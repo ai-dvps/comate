@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import React from 'react'
-import { act, render, screen, waitFor, cleanup } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, cleanup } from '@testing-library/react'
 import { page, userEvent } from '@vitest/browser/context'
 import { I18nextProvider } from 'react-i18next'
 import PromptInput from './PromptInput'
@@ -47,8 +47,9 @@ const chatStoreMock = vi.hoisted(() => {
   type Listener = () => void
   const listeners = new Set<Listener>()
   const state = {
-    sessions: {} as Record<string, { id: string; backend?: string }[]>,
+    sessions: {} as Record<string, { id: string; backend?: string; providerId?: string }[]>,
     drafts: {} as Record<string, string>,
+    imageDrafts: {} as Record<string, { id: string; name: string; mediaType: 'image/png'; data: string; width: number; height: number; blob: Blob; previewUrl: string }[]>,
     messages: {} as Record<string, { id: string; role: 'user' | 'assistant' | 'system'; parts: { type: string; text?: string }[]; timestamp: number }[]>,
     promptHistory: {} as Record<string, string[]>,
     isRestartingRuntime: {} as Record<string, boolean>,
@@ -60,6 +61,12 @@ const chatStoreMock = vi.hoisted(() => {
       } else {
         state.drafts[sessionId] = content
       }
+      notify()
+    }),
+    setImageDrafts: vi.fn((workspaceId: string, sessionId: string, images: typeof state.imageDrafts[string]) => {
+      const key = `${JSON.stringify(workspaceId)}:${JSON.stringify(sessionId)}`
+      if (images.length === 0) delete state.imageDrafts[key]
+      else state.imageDrafts[key] = images
       notify()
     }),
   }
@@ -87,6 +94,7 @@ const chatStoreMock = vi.hoisted(() => {
       return () => listeners.delete(listener)
     },
     setDraft: state.setDraft,
+    setImageDrafts: state.setImageDrafts,
     setMessages: (sessionId: string, messages: typeof state.messages[string]) => {
       state.messages[sessionId] = messages
       notify()
@@ -101,7 +109,60 @@ const chatStoreMock = vi.hoisted(() => {
 
 vi.mock('../stores/chat-store', () => ({
   useChatStore: chatStoreMock.useChatStore,
+  promptImageDraftKey: (workspaceId: string, sessionId: string) =>
+    `${JSON.stringify(workspaceId)}:${JSON.stringify(sessionId)}`,
 }))
+
+const backendStoreMock = vi.hoisted(() => ({
+  backends: [
+    { id: 'claude', availability: { status: 'available' }, capabilities: { imageInput: { state: 'full' } } },
+    { id: 'opencode', availability: { status: 'available' }, capabilities: { imageInput: { state: 'full' } } },
+  ],
+  fetchBackends: vi.fn(),
+}))
+
+vi.mock('../stores/backend-store', () => ({
+  useBackendStore: (selector: (state: typeof backendStoreMock) => unknown) => selector(backendStoreMock),
+  backendAvailability: (backends: typeof backendStoreMock.backends, id: string) =>
+    backends.find((backend) => backend.id === id)?.availability,
+  backendCapability: (backends: typeof backendStoreMock.backends, id: string, capability: string) =>
+    backends.find((backend) => backend.id === id)?.capabilities[capability as 'imageInput']
+      ?? { state: 'unavailable', reasonKey: 'backend.capabilityUndeclared' },
+}))
+
+const providerStoreMock = vi.hoisted(() => ({
+  providers: [
+    { id: 'provider-1', model: 'claude-sonnet-4-6', isDefault: true },
+  ],
+  fetchProviders: vi.fn(),
+}))
+
+vi.mock('../stores/provider-store', () => ({
+  useProviderStore: (selector: (state: typeof providerStoreMock) => unknown) => selector(providerStoreMock),
+}))
+
+const imageInputMock = vi.hoisted(() => ({
+  normalizeImageBatch: vi.fn(async (files: File[]) => files.map((file, index) => ({
+    id: `image-${index}`,
+    name: file.name,
+    mediaType: 'image/png' as const,
+    data: 'AA==',
+    width: 100,
+    height: 50,
+    blob: file,
+    previewUrl: `blob:${file.name}`,
+  }))),
+  releasePromptImage: vi.fn(),
+}))
+
+vi.mock('../lib/image-input', () => {
+  class ImageInputError extends Error {
+    constructor(public code: string, message: string) {
+      super(message)
+    }
+  }
+  return { ...imageInputMock, ImageInputError }
+})
 
 const workspaceAwareControlsMock = vi.hoisted(() => ({
   commandWorkspaceIds: [] as string[],
@@ -203,6 +264,7 @@ describe('PromptInput browser', () => {
     cleanup()
     chatStoreMock.getState().sessions = {}
     chatStoreMock.getState().drafts = {}
+    chatStoreMock.getState().imageDrafts = {}
     chatStoreMock.getState().messages = {}
     chatStoreMock.getState().promptHistory = {}
     chatStoreMock.getState().isRestartingRuntime = {}
@@ -214,6 +276,19 @@ describe('PromptInput browser', () => {
     workspaceAwareControlsMock.providerWorkspaceIds = []
     appSettingsMock.useModifierToSubmit = false
     toolbarControlMock.forceWideControls = false
+    providerStoreMock.providers = [
+      { id: 'provider-1', model: 'claude-sonnet-4-6', isDefault: true },
+    ]
+    imageInputMock.normalizeImageBatch.mockImplementation(async (files: File[]) => files.map((file, index) => ({
+      id: `image-${index}`,
+      name: file.name,
+      mediaType: 'image/png' as const,
+      data: 'AA==',
+      width: 100,
+      height: 50,
+      blob: file,
+      previewUrl: `blob:${file.name}`,
+    })))
     vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { paths: string[] }
       return {
@@ -812,6 +887,131 @@ describe('PromptInput browser', () => {
     el.dispatchEvent(paste)
 
     await waitFor(() => expect(el.textContent).toBe('plain text'))
+  })
+
+  it('adds pasted images beside plain text without embedding them in the editor', async () => {
+    chatStoreMock.getState().sessions = {
+      'ws-1': [{ id: 'session-1', backend: 'claude', providerId: 'provider-1' }],
+    }
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const el = editableElement()
+    const image = new File([new Uint8Array([1])], 'screen.png', { type: 'image/png' })
+    const transfer = new DataTransfer()
+    transfer.setData('text/plain', 'fix this')
+    transfer.items.add(image)
+
+    el.dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      clipboardData: transfer,
+    }))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Preview screen.png' })).toBeInTheDocument())
+    expect(extractPlainText(el)).toBe('fix this')
+    expect(el.querySelector('img')).not.toBeInTheDocument()
+  })
+
+  it('supports chooser intake and an image-only send', async () => {
+    chatStoreMock.getState().sessions = {
+      'ws-1': [{ id: 'session-1', backend: 'claude', providerId: 'provider-1' }],
+    }
+    const { container } = renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const chooser = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    const image = new File([new Uint8Array([1])], 'screen.png', { type: 'image/png' })
+
+    fireEvent.change(chooser, { target: { files: [image] } })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Preview screen.png' })).toBeInTheDocument())
+    await page.getByTitle('Send').click()
+
+    await waitFor(() => expect(DEFAULT_PROPS.onSend).toHaveBeenCalledWith(''))
+  })
+
+  it('adds dropped images while preserving dropped plain text semantics', async () => {
+    chatStoreMock.getState().sessions = {
+      'ws-1': [{ id: 'session-1', backend: 'claude', providerId: 'provider-1' }],
+    }
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const image = new File([new Uint8Array([1])], 'dropped.png', { type: 'image/png' })
+    const transfer = new DataTransfer()
+    transfer.setData('text/plain', 'compare this')
+    transfer.items.add(image)
+
+    editableElement().dispatchEvent(new DragEvent('drop', {
+      bubbles: true,
+      dataTransfer: transfer,
+    }))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Preview dropped.png' })).toBeInTheDocument())
+    expect(extractPlainText(editableElement())).toBe('compare this')
+  })
+
+  it('keeps async intake attached to its originating session after a switch', async () => {
+    chatStoreMock.getState().sessions = {
+      'ws-1': [
+        { id: 'session-1', backend: 'claude', providerId: 'provider-1' },
+        { id: 'session-2', backend: 'claude', providerId: 'provider-1' },
+      ],
+    }
+    let resolveNormalization: ((images: Awaited<ReturnType<typeof imageInputMock.normalizeImageBatch>>) => void) | undefined
+    imageInputMock.normalizeImageBatch.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveNormalization = resolve
+    }))
+    const view = renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const image = new File([new Uint8Array([1])], 'delayed.png', { type: 'image/png' })
+    const transfer = new DataTransfer()
+    transfer.items.add(image)
+    editableElement().dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      clipboardData: transfer,
+    }))
+
+    view.rerender(
+      <I18nextProvider i18n={i18n}>
+        <div style={{ width: '800px' }}>
+          <PromptInput {...DEFAULT_PROPS} sessionId="session-2" />
+        </div>
+      </I18nextProvider>,
+    )
+    resolveNormalization?.([{
+      id: 'delayed',
+      name: 'delayed.png',
+      mediaType: 'image/png',
+      data: 'AA==',
+      width: 100,
+      height: 50,
+      blob: image,
+      previewUrl: 'blob:delayed',
+    }])
+
+    await waitFor(() => expect(
+      chatStoreMock.getState().imageDrafts['"ws-1":"session-1"'],
+    ).toHaveLength(1))
+    expect(chatStoreMock.getState().imageDrafts['"ws-1":"session-2"']).toBeUndefined()
+    expect(screen.queryByRole('button', { name: 'Preview delayed.png' })).not.toBeInTheDocument()
+  })
+
+  it('preserves existing images but blocks intake and send for an unsupported model', async () => {
+    providerStoreMock.providers = [
+      { id: 'provider-1', model: 'custom-text-model', isDefault: true },
+    ]
+    chatStoreMock.getState().sessions = {
+      'ws-1': [{ id: 'session-1', backend: 'claude', providerId: 'provider-1' }],
+    }
+    chatStoreMock.getState().imageDrafts['"ws-1":"session-1"'] = [{
+      id: 'kept',
+      name: 'kept.png',
+      mediaType: 'image/png',
+      data: 'AA==',
+      width: 100,
+      height: 50,
+      blob: new Blob(),
+      previewUrl: 'blob:kept',
+    }]
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+
+    expect(screen.getByRole('button', { name: 'Preview kept.png' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Attach images' })).toBeDisabled()
+    expect(screen.getByTitle('Send')).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent('does not support image input')
   })
 
   it('replaces selected text when pasting', async () => {

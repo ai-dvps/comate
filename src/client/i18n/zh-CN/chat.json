@@ -315,6 +315,26 @@
     "multiSelect": "多选",
     "optionFallback": "选项 {{number}}"
   },
+  "imageInput": {
+    "attachments": "图片附件",
+    "attach": "添加图片",
+    "preview": "预览 {{name}}",
+    "closePreview": "关闭图片预览",
+    "remove": "移除 {{name}}",
+    "moveLeft": "将 {{name}} 左移",
+    "moveRight": "将 {{name}} 右移",
+    "processing": "正在处理图片",
+    "errors": {
+      "unsupported_media_type": "不支持这种图片格式。",
+      "invalid_base64": "无法读取这张图片。",
+      "media_signature_mismatch": "图片格式与文件内容不一致。",
+      "invalid_dimensions": "图片已损坏或尺寸不安全。",
+      "image_too_large": "图片过大且无法压缩到限制以内。",
+      "too_many_images": "添加的图片数量过多。",
+      "batch_too_large": "本批图片的总大小超过限制。",
+      "model_unsupported": "当前选择的模型不支持图片输入。"
+    }
+  },
   "backend": {
     "selectorTitle": "智能体",
     "claude": "Claude Code",
