@@ -71,6 +71,28 @@ describe('context-tab-store', () => {
     expect(global.fetch).toHaveBeenCalledTimes(2)
   })
 
+  it('opens supported videos with a stream URL instead of treating them as generic binary files', async () => {
+    global.fetch = vi.fn(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        content: null,
+        isBinary: true,
+        mimeType: 'video/mp4',
+      }),
+    })) as unknown as typeof global.fetch
+    const store = useContextTabStore.getState()
+    store.setContext('ws-1', 'session-a')
+
+    await store.openFile('ws-1', 'media/demo clip.mp4', 'demo clip.mp4')
+
+    expect(useContextTabStore.getState().openTabs[0]).toMatchObject({
+      type: 'file',
+      path: 'media/demo clip.mp4',
+      isBinary: true,
+      videoUrl: '/api/workspaces/ws-1/files/media?path=media%2Fdemo%20clip.mp4',
+    })
+  })
+
   it('ignores a stale File preview that resolves after a newer path', async () => {
     const resolvers = new Map<string, (value: unknown) => void>()
     global.fetch = vi.fn((url) => new Promise((resolve) => {

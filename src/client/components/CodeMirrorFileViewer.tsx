@@ -60,7 +60,7 @@ export default function CodeMirrorFileViewer({
           </span>
         </div>
 
-        {!tab.isBinary && !tab.imageDataUrl && (
+        {!tab.isBinary && !tab.imageDataUrl && !tab.videoUrl && (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -77,7 +77,17 @@ export default function CodeMirrorFileViewer({
       </div>
 
       <div className={cn('flex-1 overflow-auto', isMarkdown(tab.name) && 'p-0')} data-testid="file-viewer-content">
-        {tab.imageDataUrl ? (
+        {tab.videoUrl ? (
+          <div className="flex items-center justify-center h-full p-4 bg-black/90">
+            <video
+              src={tab.videoUrl}
+              controls
+              preload="metadata"
+              aria-label={t('videoPreviewLabel', { name: tab.name })}
+              className="max-w-full max-h-full"
+            />
+          </div>
+        ) : tab.imageDataUrl ? (
           <div className="flex items-center justify-center h-full p-4 bg-surface/50">
             <img
               src={tab.imageDataUrl}
