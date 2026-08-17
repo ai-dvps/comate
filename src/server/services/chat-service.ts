@@ -2453,6 +2453,20 @@ export class ChatService {
     };
 
     if (isBotSession) {
+      // Bot sessions (wecom/feishu today) never get AskUserQuestion: the tool
+      // is removed from the model's context entirely, so a decision request
+      // can only surface as plain text in the IM channel. Removal over
+      // denial — with the tool absent there is no call to waste and no
+      // guidance text needed. One assignment covers all three permission
+      // assemblies below (sandbox branch, legacy kill-switch branch, and the
+      // no-botId migration fallback) — they share this options object.
+      // disallowedTools also blocks harness-internal direct calls, not just
+      // model-emitted tool_use blocks.
+      options.disallowedTools = [
+        ...(options.disallowedTools ?? []),
+        'AskUserQuestion',
+      ];
+
       // Sanitize the child process environment for bot sessions: remove WeCom
       // and non-Anthropic cloud credentials. Anthropic provider keys are kept
       // because the SDK child needs them to call the API.
@@ -2571,6 +2585,9 @@ export class ChatService {
             // ==============================================================
             // LEGACY permission model (runtime kill switch, U3 Operational
             // Notes): prior behavior preserved verbatim for canary rollback.
+            // U1 exception: AskUserQuestion stays removed here too — rolling
+            // back the permission model no longer restores the question flow
+            // (intended; plain-text IM questions replace it).
             // ==============================================================
             // The legacy cross-user read check enumerates the workspace's
             // known user dirs — rebuild the path context with them (the
@@ -2592,6 +2609,20 @@ export class ChatService {
               isAdminOrOwnerForContext,
               workspace.settings.sensitiveFileDenylist ?? [],
             );
+
+            // U1: mirror the sandbox branch's AskUserQuestion deny entry as a
+            // silent backstop for the removal assigned at the top of the
+            // isBotSession block — deny rules cannot be bypassed by allow
+            // rules. The base options.settings ({ env, fastMode }) are kept:
+            // only the permissions key is added to the same object.
+            const legacySettings = options.settings as {
+              permissions?: BotAccessDerivation['permissionRules'];
+            };
+            legacySettings.permissions = {
+              allow: legacySettings.permissions?.allow ?? [],
+              ask: legacySettings.permissions?.ask ?? [],
+              deny: ['AskUserQuestion', ...(legacySettings.permissions?.deny ?? [])],
+            };
 
             if (persona) {
               if (persona.mode === 'append') {
@@ -2824,11 +2855,18 @@ export class ChatService {
             // gate's evaluateSkillDisabled is the in-gate backstop; both
             // layers share the same normalization and the KTD-14 unrestricted
             // set, so they cannot disagree.
+            //
+            // U1: the AskUserQuestion deny entry rides the same merge as a
+            // silent backstop for the removal assigned at the top of the
+            // isBotSession block — deny cannot be bypassed by allow rules, so
+            // the tool stays blocked even if a future surface re-exposes the
+            // context. The merge is unconditional: with no disabled skills the
+            // backstop still lands.
             const skillDenyRules = compileSkillDenyRules(rolePolicy.disabledSkills ?? []);
-            (options.settings as { permissions?: BotAccessDerivation['permissionRules'] }).permissions =
-              skillDenyRules.length > 0
-                ? { ...derivation.permissionRules, deny: [...skillDenyRules, ...derivation.permissionRules.deny] }
-                : derivation.permissionRules;
+            (options.settings as { permissions?: BotAccessDerivation['permissionRules'] }).permissions = {
+              ...derivation.permissionRules,
+              deny: [...skillDenyRules, 'AskUserQuestion', ...derivation.permissionRules.deny],
+            };
 
             // U5 (R8/KTD-14): SDK skill context filter — unlisted skills are
             // hidden from the model and rejected by the Skill tool (a context

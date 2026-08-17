@@ -1078,6 +1078,58 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
     assert.strictEqual(capturedOptions.env.WECOM_USER_ID, undefined);
   });
 
+  it('bot session without a botId binding (migration fallback) removes AskUserQuestion', async () => {
+    workspaceStore.getSessionUsers = () => [];
+    workspaceStore.getBotUser = () => null;
+    // captureBotOptions' mock session has no botId and no source, so the
+    // options assembly lands on the legacy workspace-scoped fallback.
+    const options = await captureBotOptions({ wecomBotEnabled: true }, 'feishu-user-1');
+    assert.ok(
+      (options.disallowedTools ?? []).includes('AskUserQuestion'),
+      `expected AskUserQuestion in disallowedTools, got ${JSON.stringify(options.disallowedTools)}`,
+    );
+  });
+
+  it('GUI session keeps AskUserQuestion available', async () => {
+    const mockWorkspace = createMockWorkspace('ws-1');
+    workspaceStore.get = async () => mockWorkspace;
+    workspaceStore.getLocalSession = () => createMockSession('s1');
+    workspaceStore.getDefaultProvider = () => createMockProvider();
+
+    let capturedOptions: Options | undefined;
+    SessionRuntime.open = (...args: unknown[]) => {
+      capturedOptions = args[3] as Options;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime('s1', 'ws-1', false);
+    assert.ok(capturedOptions, 'options must be captured');
+    assert.ok(
+      !(capturedOptions.disallowedTools ?? []).includes('AskUserQuestion'),
+      `GUI sessions must keep AskUserQuestion, got ${JSON.stringify(capturedOptions.disallowedTools)}`,
+    );
+  });
+
+  it('scheduled session keeps AskUserQuestion available', async () => {
+    const mockWorkspace = createMockWorkspace('ws-1');
+    workspaceStore.get = async () => mockWorkspace;
+    workspaceStore.getLocalSession = () => ({ ...createMockSession('s1'), source: 'scheduled' });
+    workspaceStore.getDefaultProvider = () => createMockProvider();
+
+    let capturedOptions: Options | undefined;
+    SessionRuntime.open = (...args: unknown[]) => {
+      capturedOptions = args[3] as Options;
+      return createMockRuntime();
+    };
+
+    await service.getOrCreateRuntime('s1', 'ws-1', false);
+    assert.ok(capturedOptions, 'options must be captured');
+    assert.ok(
+      !(capturedOptions.disallowedTools ?? []).includes('AskUserQuestion'),
+      `scheduled sessions must keep AskUserQuestion, got ${JSON.stringify(capturedOptions.disallowedTools)}`,
+    );
+  });
+
   it('bot session with policy denying Shell: canUseTool returns deny for Bash with generic message', async () => {
     const canUseTool = await captureBotCanUseTool({
       wecomBotEnabled: true,
@@ -2898,6 +2950,80 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     assert.deepStrictEqual(fsx.allowWrite, ['/']);
   });
 
+  // ------------------------------------------------ U1 AskUserQuestion removal
+
+  it('U1: sandbox bot session removes AskUserQuestion from the tool context with a deny-rule backstop', async () => {
+    const { options } = await setupBotSession();
+    // Removal (R1): the tool never enters the model's tool context.
+    assert.ok(
+      (options.disallowedTools ?? []).includes('AskUserQuestion'),
+      `expected AskUserQuestion in disallowedTools, got ${JSON.stringify(options.disallowedTools)}`,
+    );
+    // Deny-rule backstop (KTD1): rides the permission merge even with zero
+    // disabled skills — deny evaluates before allow/canUseTool and cannot be
+    // bypassed by allow rules.
+    const settings = options.settings as { permissions?: { deny: string[] } };
+    assert.ok(
+      settings.permissions?.deny.includes('AskUserQuestion'),
+      `expected AskUserQuestion deny backstop, got ${JSON.stringify(settings.permissions?.deny)}`,
+    );
+  });
+
+  it('U1: legacy kill-switch bot session carries the same AskUserQuestion removal and the mirrored deny entry', async () => {
+    const { options } = await setupBotSession({ killSwitch: true });
+    assert.ok(
+      (options.disallowedTools ?? []).includes('AskUserQuestion'),
+      `expected AskUserQuestion in disallowedTools, got ${JSON.stringify(options.disallowedTools)}`,
+    );
+    // The legacy branch mirrors the sandbox branch's backstop in its own
+    // settings while preserving the base settings (env/fastMode).
+    const settings = options.settings as { env?: unknown; permissions?: { deny: string[] } };
+    assert.ok(
+      settings.permissions?.deny.includes('AskUserQuestion'),
+      `expected mirrored AskUserQuestion deny entry, got ${JSON.stringify(settings.permissions?.deny)}`,
+    );
+    assert.ok(settings.env, 'base settings must survive the permissions merge');
+  });
+
+  it('U1: the deny-rule backstop keeps AskUserQuestion blocked alongside compiled skill deny rules', async () => {
+    const { options } = await setupBotSession({ disabledSkills: ['blocked-skill'] });
+    const settings = options.settings as { permissions?: { deny: string[] } };
+    const deny = settings.permissions?.deny ?? [];
+    assert.ok(deny.includes('Skill(blocked-skill)'), `expected the compiled skill rule, got ${JSON.stringify(deny)}`);
+    assert.ok(deny.includes('AskUserQuestion'), `expected the backstop entry, got ${JSON.stringify(deny)}`);
+  });
+
+  it('U1: rebuilt options still disallow AskUserQuestion after toggling the kill switch', async () => {
+    const { options, sessionId, workspaceId, openCalls } = await setupBotSession({ killSwitch: true });
+    assert.ok(
+      (options.disallowedTools ?? []).includes('AskUserQuestion'),
+      'the legacy branch build must carry the removal',
+    );
+
+    // Rebuild = close + recreate (performRebuild's shape), with the kill
+    // switch cleared so the rebuild lands on the sandbox branch instead.
+    await service.closeRuntime(sessionId);
+    const workspace = await workspaceStore.get(workspaceId);
+    assert.ok(workspace, 'workspace must exist');
+    await workspaceStore.update(workspaceId, {
+      settings: { ...workspace.settings, botPermissionSandboxDisabled: false },
+    });
+    await service.getOrCreateRuntime(sessionId, workspaceId, true, undefined, 'user-1');
+
+    assert.strictEqual(openCalls.length, 2, 'a fresh runtime must have been created');
+    const rebuilt = openCalls[1];
+    assert.ok(rebuilt.sandbox, 'the rebuild must have taken the sandbox branch after the toggle');
+    assert.ok(
+      (rebuilt.disallowedTools ?? []).includes('AskUserQuestion'),
+      `rebuilt options must still carry the removal, got ${JSON.stringify(rebuilt.disallowedTools)}`,
+    );
+    const rebuiltSettings = rebuilt.settings as { permissions?: { deny: string[] } };
+    assert.ok(
+      rebuiltSettings.permissions?.deny.includes('AskUserQuestion'),
+      'the sandbox-branch rebuild must keep the deny backstop',
+    );
+  });
+
   // ------------------------------------------------------- U12 capability
 
   it('injects the per-session capability token and wecom context into the bot session env (U12)', async () => {
@@ -3797,8 +3923,10 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     assert.strictEqual(options.sandbox, undefined);
     assert.strictEqual(options.settingSources, undefined);
     assert.strictEqual(options.plugins, undefined);
-    const settings = options.settings as { permissions?: unknown };
-    assert.strictEqual(settings.permissions, undefined);
+    const settings = options.settings as { permissions?: { allow: string[]; ask: string[]; deny: string[] } };
+    // U1: the legacy branch carries no derived permission rules — its only
+    // permissions content is the mirrored AskUserQuestion deny backstop.
+    assert.deepStrictEqual(settings.permissions, { allow: [], ask: [], deny: ['AskUserQuestion'] });
     // Legacy: non-whitelisted bash denies for normal.
     const denied = await canUseTool('Bash', { command: 'rm -rf /' });
     assert.strictEqual(denied.behavior, 'deny');
