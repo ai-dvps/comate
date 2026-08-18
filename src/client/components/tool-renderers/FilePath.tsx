@@ -25,7 +25,7 @@ export default function FilePath({
   const truncatedText = truncateStart(displayText, maxDisplayLength)
 
   const handleClick = () => {
-    if (!clickable || !relativePath || relativePath === '.') return
+    if (!clickable || !relativePath) return
     const name = basename(relativePath)
     onOpenFile(relativePath, name)
   }

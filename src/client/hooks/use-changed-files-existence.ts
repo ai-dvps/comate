@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getRelativePath } from '../components/tool-renderers/path-utils'
+import {
+  readTtlCache,
+  resolveExistingWorkspacePaths,
+  workspacePathKey,
+  writeTtlCache,
+  type TtlCacheEntry,
+} from '../lib/workspace-file-resolution'
 
 export interface UseChangedFilesExistenceOptions {
   workspaceId: string
@@ -11,50 +18,21 @@ export interface UseChangedFilesExistenceOptions {
   enabled: boolean
 }
 
-interface ExistenceCacheEntry {
-  exists: boolean
-  expiresAt: number
-}
+const RESOLVE_DEBOUNCE_MS = 150
+const EXISTENCE_CACHE_TTL_MS = 5000
 
 interface PathCheck {
   absolute: string
   relative: string
 }
 
-const RESOLVE_DEBOUNCE_MS = 150
-const EXISTENCE_CACHE_TTL_MS = 5000
-const RESOLVE_TIMEOUT_MS = 10_000
-
-const existenceCache = new Map<string, ExistenceCacheEntry>()
-
-function cacheKey(workspaceId: string, relativePath: string): string {
-  return `${workspaceId}\0${relativePath}`
-}
+const existenceCache = new Map<string, TtlCacheEntry<boolean>>()
 
 function cachedExistence(
   workspaceId: string,
   relativePath: string,
 ): boolean | undefined {
-  const cached = existenceCache.get(cacheKey(workspaceId, relativePath))
-  if (!cached || cached.expiresAt <= Date.now()) return undefined
-  return cached.exists
-}
-
-async function resolveExistingPaths(
-  workspaceId: string,
-  relativePaths: string[],
-  signal?: AbortSignal,
-): Promise<Set<string>> {
-  const res = await fetch(`/api/workspaces/${workspaceId}/files/resolve`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ paths: relativePaths }),
-    signal: signal ?? AbortSignal.timeout(RESOLVE_TIMEOUT_MS),
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  const data = (await res.json()) as { paths?: unknown }
-  if (!Array.isArray(data.paths)) throw new Error('Invalid response')
-  return new Set(data.paths.filter((p): p is string => typeof p === 'string'))
+  return readTtlCache(existenceCache, workspacePathKey(workspaceId, relativePath))
 }
 
 function setsEqual(a: Set<string>, b: Set<string>): boolean {
@@ -123,7 +101,7 @@ export function useChangedFilesExistence({
     const controller = new AbortController()
     const generation = ++requestGenerationRef.current
     const timer = setTimeout(() => {
-      void resolveExistingPaths(
+      void resolveExistingWorkspacePaths(
         workspaceId,
         unresolved.map((check) => check.relative),
         controller.signal,
@@ -135,13 +113,14 @@ export function useChangedFilesExistence({
           ) {
             return
           }
-          const expiresAt = Date.now() + EXISTENCE_CACHE_TTL_MS
-          for (const check of unresolved) {
-            existenceCache.set(cacheKey(workspaceId, check.relative), {
-              exists: existing.has(check.relative),
-              expiresAt,
-            })
-          }
+          writeTtlCache(
+            existenceCache,
+            unresolved.map((check) => [
+              workspacePathKey(workspaceId, check.relative),
+              existing.has(check.relative),
+            ]),
+            EXISTENCE_CACHE_TTL_MS,
+          )
           setMissing((current) => {
             const next = new Set(current)
             for (const check of unresolved) {

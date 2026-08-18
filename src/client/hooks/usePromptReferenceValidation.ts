@@ -5,6 +5,13 @@ import {
   type PromptReferenceValidationStatus,
   type ValidatedPromptReference,
 } from '../lib/prompt-references'
+import {
+  readTtlCache,
+  resolveExistingWorkspacePaths,
+  workspacePathKey,
+  writeTtlCache,
+  type TtlCacheEntry,
+} from '../lib/workspace-file-resolution'
 
 interface CommandName {
   name: string
@@ -28,32 +35,23 @@ interface UsePromptReferenceValidationResult {
   refresh: (commandsOverride?: CommandName[]) => Promise<PromptReferenceRefreshResult>
 }
 
-interface CacheEntry {
-  valid: boolean
-  expiresAt: number
-}
+const VALIDATION_DEBOUNCE_MS = 150
+const CACHE_TTL_MS = 5000
 
 interface FileResolution {
   key: string
   statuses: Map<string, Exclude<PromptReferenceValidationStatus, 'pending'>>
 }
 
-const VALIDATION_DEBOUNCE_MS = 150
-const CACHE_TTL_MS = 5000
-const REFRESH_TIMEOUT_MS = 10_000
-const validationCache = new Map<string, CacheEntry>()
-
-function cacheKey(workspaceId: string, path: string): string {
-  return `${workspaceId}\0${path}`
-}
+const validationCache = new Map<string, TtlCacheEntry<boolean>>()
 
 function confirmedCachedStatus(
   workspaceId: string,
   path: string,
 ): Exclude<PromptReferenceValidationStatus, 'pending'> | undefined {
-  const cached = validationCache.get(cacheKey(workspaceId, path))
-  if (!cached || cached.expiresAt <= Date.now()) return undefined
-  return cached.valid ? 'valid' : 'invalid'
+  const valid = readTtlCache(validationCache, workspacePathKey(workspaceId, path))
+  if (valid === undefined) return undefined
+  return valid ? 'valid' : 'invalid'
 }
 
 async function resolveFilePaths(
@@ -61,19 +59,7 @@ async function resolveFilePaths(
   paths: string[],
   signal?: AbortSignal,
 ): Promise<Map<string, 'valid' | 'invalid'>> {
-  const res = await fetch(`/api/workspaces/${workspaceId}/files/resolve`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ paths }),
-    signal: signal ?? AbortSignal.timeout(REFRESH_TIMEOUT_MS),
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  const data = (await res.json()) as { paths?: unknown }
-  if (!Array.isArray(data.paths)) throw new Error('Invalid response')
-
-  const validPaths = new Set(
-    data.paths.filter((path): path is string => typeof path === 'string'),
-  )
+  const validPaths = await resolveExistingWorkspacePaths(workspaceId, paths, signal)
   const statuses = new Map<string, 'valid' | 'invalid'>()
   for (const path of paths) {
     const status = validPaths.has(path) ? 'valid' : 'invalid'
@@ -86,13 +72,14 @@ function cacheFileStatuses(
   workspaceId: string,
   statuses: Map<string, 'valid' | 'invalid'>,
 ): void {
-  const expiresAt = Date.now() + CACHE_TTL_MS
-  for (const [path, status] of statuses) {
-    validationCache.set(cacheKey(workspaceId, path), {
-      valid: status === 'valid',
-      expiresAt,
-    })
-  }
+  writeTtlCache(
+    validationCache,
+    [...statuses].map(([path, status]) => [
+      workspacePathKey(workspaceId, path),
+      status === 'valid',
+    ]),
+    CACHE_TTL_MS,
+  )
 }
 
 function validReferences(
@@ -257,7 +244,7 @@ export function usePromptReferenceValidation({
 
     const generation = ++requestGenerationRef.current
     for (const path of filePaths) {
-      validationCache.delete(cacheKey(workspaceId, path))
+      validationCache.delete(workspacePathKey(workspaceId, path))
     }
 
     try {
