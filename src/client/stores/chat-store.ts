@@ -17,6 +17,7 @@ import type {
 import { diagLog } from '../utils/diag-logger'
 import { getInitialSettings } from '../hooks/use-app-settings'
 import { isBotSession } from '../lib/session-filter'
+import { normalizePath } from '../components/tool-renderers/path-utils'
 import { useToastStore } from './toast-store'
 import { useScheduledTaskStore } from './scheduled-task-store'
 import type { SchedulerRunEventPayload } from '../lib/scheduled-task-events'
@@ -1193,6 +1194,146 @@ function scanMessagesForTasks(messages: ChatMessage[]): TaskItem[] {
   }
 
   return tasks
+}
+
+/**
+ * One session-scoped record of a file touched by the Edit/Write/MultiEdit/
+ * NotebookEdit tools (plan KTD2). `path` is a normalized absolute path —
+ * workspace membership and relativization are the panel layer's job (KTD6).
+ * `status` is the stream-derived status only; the deleted leg is detected
+ * separately by the existence overlay (KTD4).
+ */
+export interface TouchedFileEntry {
+  path: string
+  status: 'created' | 'modified'
+  /** Last-touch time in ms; message timestamp or parent subagent end/start. */
+  lastTouchedAt: number
+}
+
+const FILE_TOOL_NAMES = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
+
+function fileToolInputPath(toolName: string, input: unknown): string | undefined {
+  if (!FILE_TOOL_NAMES.has(toolName)) return undefined
+  if (!input || typeof input !== 'object') return undefined
+  const record = input as Record<string, unknown>
+  const rawPath = record.file_path ?? record.notebook_path
+  return typeof rawPath === 'string' && rawPath.length > 0 ? rawPath : undefined
+}
+
+/**
+ * KTD5: prefer structured tool-result metadata when present. Write results may
+ * carry a `type: 'create' | 'update'` marker; Edit-family results may carry a
+ * null `originalFile` for files the edit created. Returns undefined when no
+ * usable marker exists so the caller falls back to the first-seen heuristic.
+ */
+function touchedFileStatusFromResult(
+  toolUseResult: unknown,
+): TouchedFileEntry['status'] | undefined {
+  if (!toolUseResult || typeof toolUseResult !== 'object') return undefined
+  const record = toolUseResult as Record<string, unknown>
+  if (record.type === 'create') return 'created'
+  if (record.type === 'update') return 'modified'
+  if (record.originalFile === null) return 'created'
+  if (typeof record.originalFile === 'string') return 'modified'
+  return undefined
+}
+
+interface ScannedTouchedFile extends TouchedFileEntry {
+  /** Monotonic record order, used to break lastTouchedAt ties by scan order. */
+  seq: number
+}
+
+interface TouchedFileScan {
+  entries: Map<string, ScannedTouchedFile>
+  nextSeq: number
+}
+
+function recordTouchedFile(
+  scan: TouchedFileScan,
+  toolName: string,
+  rawPath: string,
+  timestamp: number,
+  toolUseResult: unknown,
+): void {
+  const path = normalizePath(rawPath)
+  const metadataStatus = touchedFileStatusFromResult(toolUseResult)
+  const existing = scan.entries.get(path)
+  // Heuristic fallback (KTD5): a first-seen Write counts as created; every
+  // other touch (Edit/MultiEdit/NotebookEdit, or a re-Write) counts as
+  // modified. Created stays sticky on later modifications.
+  const status: TouchedFileEntry['status'] =
+    metadataStatus ?? (existing === undefined && toolName === 'Write' ? 'created' : 'modified')
+  const seq = scan.nextSeq++
+  if (existing) {
+    existing.lastTouchedAt = Math.max(existing.lastTouchedAt, timestamp)
+    existing.seq = seq
+    if (existing.status !== 'created') existing.status = status
+  } else {
+    scan.entries.set(path, { path, status, lastTouchedAt: timestamp, seq })
+  }
+}
+
+/**
+ * Pure derivation of a session's touched files from loaded session data,
+ * mirroring the `scanMessagesForTasks` idiom (KTD1). Walks tool-use parts for
+ * the four file tools in the merged main-channel messages and the merged
+ * subagent state; a tool use counts only when its correlated tool result
+ * exists and carries no error (KTD2 — approval rejections, never-decided
+ * approvals, and failed edits never enter the list). Subagent messages carry
+ * no timestamp, so their touches take the parent subagent's end-or-start time
+ * (KTD3); subagent tool results carry no structured metadata under the current
+ * event contract, so the heuristic always applies to them (KTD5).
+ */
+export function scanMessagesForTouchedFiles(
+  messages: ChatMessage[],
+  subagents: SubagentState[],
+): TouchedFileEntry[] {
+  const scan: TouchedFileScan = { entries: new Map(), nextSeq: 0 }
+
+  const pendingFileUses = new Map<string, { toolName: string; path: string }>()
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (!part) continue
+      if (part.type === 'tool_use') {
+        const path = fileToolInputPath(part.toolName, part.input)
+        if (path) pendingFileUses.set(part.toolUseId, { toolName: part.toolName, path })
+      } else if (part.type === 'tool_result') {
+        const use = pendingFileUses.get(part.toolUseId)
+        if (!use) continue
+        pendingFileUses.delete(part.toolUseId)
+        if (part.isError) continue
+        recordTouchedFile(scan, use.toolName, use.path, message.timestamp, part.toolUseResult)
+      }
+    }
+  }
+
+  for (const subagent of subagents) {
+    const timestamp = subagent.endTime ?? subagent.startTime
+    const pendingSubUses = new Map<string, { toolName: string; path: string }>()
+    for (const message of subagent.messages) {
+      for (const part of message.parts) {
+        if (!part) continue
+        if (part.type === 'tool_use') {
+          const path = fileToolInputPath(part.toolName, part.input)
+          if (path) pendingSubUses.set(part.toolUseId, { toolName: part.toolName, path })
+        } else if (part.type === 'tool_result') {
+          const use = pendingSubUses.get(part.toolUseId)
+          if (!use) continue
+          pendingSubUses.delete(part.toolUseId)
+          if (part.isError) continue
+          recordTouchedFile(scan, use.toolName, use.path, timestamp, undefined)
+        }
+      }
+    }
+  }
+
+  return Array.from(scan.entries.values())
+    .sort((a, b) => b.lastTouchedAt - a.lastTouchedAt || b.seq - a.seq)
+    .map((entry) => ({
+      path: entry.path,
+      status: entry.status,
+      lastTouchedAt: entry.lastTouchedAt,
+    }))
 }
 
 function isSessionActive(state: ChatState, sessionId: string): boolean {

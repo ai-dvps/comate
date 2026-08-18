@@ -69,6 +69,9 @@ A session is bound to the backend selected at its first message and cannot switc
 ### Bot 会话 (bot session)
 由远程 IM 入口（WeCom、feishu）创建的会话，判定依据是会话来源（source 为 `wecom`/`feishu`，即 `isBotSession`），与 GUI 会话和定时执行会话在权限派生、可用工具面与消息呈现路径上分流；此类会话固定运行在 claude 后端，不随后端默认值切换。
 
+### 子代理事件通道 (subagent event channel)
+由 Task 工具派生的子代理所产生的 SDK 消息因携带 parent_tool_use_id 而被服务端分流，不进入主会话的 tool_use 事件流；而是经独立的 subagent_delta 事件送达客户端，并在历史加载时由专门的重建逻辑还原。派生会话级状态（如任务列表、会话变更文件）时，主通道和该通道是两个独立的采集点，漏掉任一都会静默丢失子代理的工具调用。
+
 ### Session Activity
 服务端维护的会话工作状态快照，统一表达 foreground turn、pending interaction、SDK background tasks、stopping 和 interruption。它是前端活跃展示、输入锁定与 runtime idle-close 判定的共同真相源；主 agent 的 `result` 只结束 foreground，不单独决定整个 Session 是否结束。
 
@@ -117,6 +120,9 @@ SkillHub 中以企业为发现入口的标准 Skill 目录。用户先浏览企�
 
 ### Typed context tab
 桌面端右侧工作区中带有内容类型和归属范围的标签页。Browser tab 归属于 Session，File 与 Changes tab 归属于 Workspace；File 和 Changes 各自在内容右侧携带可收起的导航列表。
+
+### 会话变更文件 (session changed files)
+聊天视图右侧浮动 Task 面板下方的浮动卡片，按会话派生 agent 通过文件工具（Edit/Write/MultiEdit/NotebookEdit）触碰过的文件（新增/修改/删除），供一眼感知与一键打开。它与工作区范围的 Changes tab 是不同表面：不依赖 git 状态、不含 bash 改动、从持久化会话历史重建（重启与历史会话仍可见），且不提供 review/diff 动作。
 
 ### 桥接版本 (bridge release)
 Tauri→Electron 壳迁移中，最后一个 Tauri 版本承担的特殊角色：其自动更新通道指向首个 Electron 安装包，把存量用户平滑带到 Electron 线；更新失败时用户可回滚到该版本安装包。Linux 无桥接版本——首个 Linux 版本即 Electron 版本。
