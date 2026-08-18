@@ -321,7 +321,7 @@
   },
   "imageInput": {
     "attachments": "Image attachments",
-    "attach": "Attach images",
+    "attach": "Image",
     "preview": "Preview {{name}}",
     "image": "Image",
     "previewTitle": "Image preview",

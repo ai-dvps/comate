@@ -318,7 +318,7 @@
   },
   "imageInput": {
     "attachments": "图片附件",
-    "attach": "添加图片",
+    "attach": "图片",
     "preview": "预览 {{name}}",
     "image": "图片",
     "previewTitle": "图片预览",
