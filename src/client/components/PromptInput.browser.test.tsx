@@ -6,7 +6,7 @@ import { I18nextProvider } from 'react-i18next'
 import PromptInput from './PromptInput'
 import i18n from '../i18n'
 import type { SessionActivitySnapshot } from '../types/message'
-import { extractPlainText, setCaretOffset } from '../lib/contenteditable'
+import { extractPlainText, setCaretOffset, setSelectionOffsets } from '../lib/contenteditable'
 
 const ACTIVITY_LAYOUT_STYLES = `
   .mx-auto { margin-inline: auto; }
@@ -754,7 +754,15 @@ describe('PromptInput browser', () => {
     })
 
     await userEvent.keyboard('{Enter}')
-    await waitFor(() => expect(editableElement().textContent).toBe('@src/main.ts '))
+    await waitFor(() => {
+      const chip = editableElement().querySelector<HTMLElement>(
+        '[data-prompt-reference-chip]',
+      )
+      expect(editableElement().textContent).toBe('@main.ts ')
+      expect(chip?.textContent).toBe('@main.ts')
+      expect(chip?.getAttribute('aria-label')).toBe('@src/main.ts')
+      expect(extractPlainText(editableElement())).toBe('@src/main.ts ')
+    })
   })
 
   it('inserts a file path when clicking a picker item after typing @', async () => {
@@ -772,7 +780,48 @@ describe('PromptInput browser', () => {
     })
 
     await userEvent.click(screen.getByText('src/main.ts'))
-    await waitFor(() => expect(editableElement().textContent).toBe('check @src/main.ts '))
+    await waitFor(() => {
+      expect(editableElement().textContent).toBe('check @main.ts ')
+      expect(extractPlainText(editableElement())).toBe('check @src/main.ts ')
+    })
+  })
+
+  it('reveals the full path in an instant tooltip when hovering a file chip', async () => {
+    filesMock.results = [{ path: 'src/main.ts' }]
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const input = editableLocator()
+
+    await input.fill('check @')
+    await waitFor(() => expect(screen.getByText('src/main.ts')).toBeInTheDocument(), {
+      timeout: 1000,
+    })
+    await userEvent.click(screen.getByText('src/main.ts'))
+    const el = editableElement()
+    const chip = await waitFor(() => {
+      const found = el.querySelector<HTMLElement>('[data-prompt-reference-chip]')
+      expect(found).toHaveTextContent('@main.ts')
+      return found!
+    })
+
+    chip.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    const tooltip = await waitFor(() => {
+      const found = screen.getByRole('tooltip')
+      expect(found).toHaveTextContent('@src/main.ts')
+      return found
+    })
+    // Portaled to <body> with fixed positioning so no clipping ancestor
+    // (e.g. the collapsing editor wrapper) can obscure it.
+    expect(tooltip.parentElement).toBe(document.body)
+    expect(tooltip.className).toContain('fixed')
+    // The horizontal clamp is computed inline (Tailwind is not loaded in
+    // browser tests, so geometry from class-based sizing is unreliable).
+    expect(tooltip.style.left).toBe('140px')
+    expect(tooltip.style.transform).toContain('-50%')
+
+    chip.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }))
+    await waitFor(() =>
+      expect(screen.queryByRole('tooltip')).not.toBeInTheDocument(),
+    )
   })
 
   it('does not recall history with ArrowUp when input is empty', async () => {
@@ -887,6 +936,39 @@ describe('PromptInput browser', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Preview screen.png' })).toBeInTheDocument())
     expect(extractPlainText(el)).toBe('fix this')
     expect(el.querySelector('img')).not.toBeInTheDocument()
+  })
+
+  it('allows image paste in New Chat before a backend is explicitly chosen', async () => {
+    // Regression: the image gate must resolve the effective default backend
+    // (like BackendSelector does) instead of treating an unchosen backend as
+    // 'backend.capabilityUndeclared' ("Not available on this agent").
+    renderWithI18n(
+      <PromptInput
+        workspaceId="ws-1"
+        mode="new-chat"
+        backendId={null}
+        onBackendChange={vi.fn()}
+        providerId={null}
+        onProviderChange={vi.fn()}
+        fastMode={false}
+        onFastModeChange={vi.fn()}
+        approvalMode="manual"
+        onApprovalModeChange={vi.fn()}
+        onSend={vi.fn()}
+      />,
+    )
+    const el = editableElement()
+    const image = new File([new Uint8Array([1])], 'screen.png', { type: 'image/png' })
+    const transfer = new DataTransfer()
+    transfer.items.add(image)
+
+    el.dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      clipboardData: transfer,
+    }))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Preview screen.png' })).toBeInTheDocument())
+    expect(screen.queryByText('Not available on this agent')).not.toBeInTheDocument()
   })
 
   it('supports chooser intake and an image-only send', async () => {
@@ -1618,7 +1700,7 @@ describe('PromptInput browser', () => {
           editableElement().querySelectorAll('[data-prompt-reference-chip]'),
           (chip) => chip.textContent,
         ),
-      ).toEqual(['/commit', '@src/app.ts'])
+      ).toEqual(['/commit', '@app.ts'])
     })
   })
 
@@ -1642,7 +1724,7 @@ describe('PromptInput browser', () => {
     await waitFor(() => {
       expect(
         editableElement().querySelector('[data-prompt-reference-chip]'),
-      ).toHaveTextContent('@src/app.ts')
+      ).toHaveTextContent('@app.ts')
     })
 
     fileStillExists = false
@@ -1655,7 +1737,7 @@ describe('PromptInput browser', () => {
       expect(chip).toHaveAttribute('aria-invalid', 'true')
       return chip!
     })
-    expect(invalidChip.title).toContain('@src/app.ts')
+    expect(invalidChip.getAttribute('aria-label')).toContain('@src/app.ts')
     expect(onSend).not.toHaveBeenCalled()
 
     await page.getByTitle('Send').click()
@@ -1683,5 +1765,73 @@ describe('PromptInput browser', () => {
         editableElement().querySelector('[data-prompt-reference-chip]'),
       ).toHaveTextContent('/commit')
     })
+  })
+
+  it('copies the full path when a selection spans a file chip', async () => {
+    filesMock.results = [{ path: 'src/main.ts' }]
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const input = editableLocator()
+
+    await input.fill('@')
+    await waitFor(() => expect(screen.getByText('src/main.ts')).toBeInTheDocument(), {
+      timeout: 1000,
+    })
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => {
+      expect(
+        editableElement().querySelector('[data-prompt-reference-chip]'),
+      ).toHaveTextContent('@main.ts')
+    })
+
+    const el = editableElement()
+    act(() => setSelectionOffsets(el, 0, extractPlainText(el).length))
+    const data = new DataTransfer()
+    const copyEvent = new ClipboardEvent('copy', {
+      bubbles: true,
+      cancelable: true,
+    })
+    Object.defineProperty(copyEvent, 'clipboardData', { value: data })
+    el.dispatchEvent(copyEvent)
+
+    expect(copyEvent.defaultPrevented).toBe(true)
+    expect(data.getData('text/plain')).toBe('@src/main.ts ')
+  })
+
+  it('cuts a selection ending at a file chip edge as the whole reference', async () => {
+    filesMock.results = [{ path: 'src/main.ts' }]
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const input = editableLocator()
+
+    await input.fill('check @')
+    await waitFor(() => expect(screen.getByText('src/main.ts')).toBeInTheDocument(), {
+      timeout: 1000,
+    })
+    await userEvent.click(screen.getByText('src/main.ts'))
+    await waitFor(() => {
+      expect(
+        editableElement().querySelector('[data-prompt-reference-chip]'),
+      ).toHaveTextContent('@main.ts')
+    })
+
+    // Select "check @src/main.ts" — the chip's plain-text range is atomic, so
+    // offsets inside it snap to its edges and the cut removes it whole.
+    const el = editableElement()
+    act(() => setSelectionOffsets(el, 0, 'check @src/main.ts'.length))
+    const data = new DataTransfer()
+    const cutEvent = new ClipboardEvent('cut', {
+      bubbles: true,
+      cancelable: true,
+    })
+    Object.defineProperty(cutEvent, 'clipboardData', { value: data })
+    el.dispatchEvent(cutEvent)
+
+    expect(cutEvent.defaultPrevented).toBe(true)
+    expect(data.getData('text/plain')).toBe('check @src/main.ts')
+    await waitFor(() => expect(extractPlainText(el)).toBe(' '))
+    await waitFor(() =>
+      expect(
+        editableElement().querySelector('[data-prompt-reference-chip]'),
+      ).toBeNull(),
+    )
   })
 })

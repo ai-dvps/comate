@@ -327,6 +327,26 @@ export function getSelectionAnchorFocusOffsets(
 }
 
 /**
+ * Plain-text model value of the current selection, or null when the selection
+ * is collapsed or lives outside the element. Reference chips render a
+ * shortened label, so clipboard writes must use this instead of the rendered
+ * selection string.
+ */
+export function getSelectionPlainText(element: HTMLElement): string | null {
+  const selection = window.getSelection()
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+    return null
+  }
+  const range = selection.getRangeAt(0)
+  if (!element.contains(range.commonAncestorContainer)) return null
+  const [start, end] = getSelectionOffsets(element)
+  return extractPlainText(element).slice(
+    Math.min(start, end),
+    Math.max(start, end),
+  )
+}
+
+/**
  * Place the caret at a specific character offset within the `contentEditable`
  * element. If the offset is out of range, the caret is placed at the end.
  */
