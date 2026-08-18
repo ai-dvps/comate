@@ -74,6 +74,10 @@ describe('Electron CSP allows required remote content', () => {
       imgSrcMatch[1].split(/\s+/).includes('data:'),
       `img-src must allow data URLs used by workspace image previews; got: ${imgSrcMatch[1]}`,
     );
+    assert.ok(
+      imgSrcMatch[1].split(/\s+/).includes('blob:'),
+      `img-src must allow Blob URLs used by prompt image previews; got: ${imgSrcMatch[1]}`,
+    );
 
     const mediaSrcMatch = /media-src\s+([^;]+)/.exec(csp);
     assert.ok(mediaSrcMatch, `CSP is missing media-src directive: ${csp}`);
