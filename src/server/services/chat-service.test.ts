@@ -861,23 +861,26 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
     ]]);
   });
 
-  it('rejects an unsupported image profile before runtime push', async () => {
+  it('admits image turns without inferring capability from a custom model name', async () => {
     setupStoreMocks();
     const runtime = createMockRuntime({ modelId: 'test-model' });
     SessionRuntime.open = () => {
       return runtime;
     };
 
-    await assert.rejects(
-      () => service.pushMessage('s1', 'ws-1', {
-        text: '',
-        images: [{ id: 'image', mediaType: 'image/png', data: 'AA==', width: 1, height: 1 }],
-      }),
-      (error: unknown) =>
-        error instanceof Error &&
-        (error as { details?: { code?: string } }).details?.code === 'model_unsupported',
-    );
-    assert.deepEqual(runtime.pushMessageCalls, []);
+    const bytes = Buffer.alloc(33);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes);
+    bytes.writeUInt32BE(13, 8);
+    bytes.write('IHDR', 12, 'ascii');
+    bytes.writeUInt32BE(1, 16);
+    bytes.writeUInt32BE(1, 20);
+
+    await service.pushMessage('s1', 'ws-1', {
+      text: '',
+      images: [{ id: 'image', mediaType: 'image/png', data: bytes.toString('base64'), width: 1, height: 1 }],
+    });
+
+    assert.equal(runtime.pushMessageCalls.length, 1);
   });
 
   it('keeps a draft unpromoted when runtime admission synchronously rejects the image turn', async () => {

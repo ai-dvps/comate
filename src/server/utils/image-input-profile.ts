@@ -42,28 +42,6 @@ export const DEFAULT_IMAGE_INPUT_LIMITS: ImageInputLimits = Object.freeze({
   preserveAnimatedGif: true,
 });
 
-const CLAUDE_IMAGE_MODELS = new Set([
-  'claude-sonnet-4',
-  'claude-sonnet-4-5',
-  'claude-sonnet-4-6',
-  'claude-sonnet-4-7',
-  'claude-opus-4',
-  'claude-opus-4-5',
-  'claude-opus-4-6',
-  'claude-opus-4-7',
-  'claude-opus-4-8',
-  'claude-haiku-4-5',
-  'claude-haiku-4-6',
-]);
-
-const OPENCODE_IMAGE_MODELS = new Set([
-  ...CLAUDE_IMAGE_MODELS,
-  'gpt-5.4',
-  'gpt-5.5',
-  'gemini-2.5-pro',
-  'gemini-2.5-flash',
-]);
-
 export function mergeImageInputLimits(
   base: ImageInputLimits,
   override: Partial<ImageInputLimits>,
@@ -87,16 +65,14 @@ export function mergeImageInputLimits(
 
 export function resolveImageInputProfile(
   backend: BackendId,
-  model?: string,
+  _model?: string,
   stricterLimits?: Partial<ImageInputLimits>,
 ): ImageInputProfile {
-  const normalizedModel = model?.trim().toLowerCase();
-  const knownModels = backend === 'claude' ? CLAUDE_IMAGE_MODELS : OPENCODE_IMAGE_MODELS;
-  const baseModel = normalizedModel?.replace(/-\d{8}$/, '');
-  const enabled = normalizedModel !== undefined && (
-    knownModels.has(normalizedModel) ||
-    (baseModel !== normalizedModel && baseModel !== undefined && CLAUDE_IMAGE_MODELS.has(baseModel))
-  );
+  // Claude Code and OpenCode expose image transport at the backend boundary,
+  // but neither provides reliable modality metadata for every configured or
+  // proxied model. Do not turn an unfamiliar provider model name into a false
+  // negative; provider rejection remains the authoritative capability signal.
+  const enabled = backend === 'claude' || backend === 'opencode';
   return {
     enabled,
     ...(!enabled && { reasonKey: 'backend.imageInputModelUnsupported' }),
