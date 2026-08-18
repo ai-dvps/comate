@@ -1,4 +1,6 @@
-import { FileCode, FileJson, FileText, File } from 'lucide-react'
+import { FileAudio, FileCode, FileJson, FileText, File } from 'lucide-react'
+
+const AUDIO_ICON_EXTENSIONS = new Set(['wav', 'mp3', 'm4a', 'aac', 'flac', 'oga', 'ogg', 'opus', 'weba'])
 
 export function getFileIcon(name: string) {
   const ext = name.split('.').pop()?.toLowerCase()
@@ -7,6 +9,9 @@ export function getFileIcon(name: string) {
   }
   if (ext === 'json') {
     return <FileJson className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />
+  }
+  if (AUDIO_ICON_EXTENSIONS.has(ext ?? '')) {
+    return <FileAudio className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" />
   }
   if (ext === 'md' || ext === 'txt') {
     return <FileText className="w-3.5 h-3.5 text-text-secondary flex-shrink-0" />

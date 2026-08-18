@@ -37,6 +37,17 @@ const VIDEO_MIME_TYPES: Record<string, string> = {
   '.webm': 'video/webm',
 };
 
+const AUDIO_MIME_TYPES: Record<string, string> = {
+  '.aac': 'audio/aac',
+  '.flac': 'audio/flac',
+  '.m4a': 'audio/mp4',
+  '.mp3': 'audio/mpeg',
+  '.oga': 'audio/ogg',
+  '.opus': 'audio/ogg',
+  '.wav': 'audio/wav',
+  '.weba': 'audio/webm',
+};
+
 const MAX_IMAGE_PREVIEW_BYTES = 20 * 1024 * 1024;
 const MAX_RESOLVE_PATHS = 64;
 const MAX_RESOLVE_PATH_LENGTH = 4096;
@@ -257,9 +268,10 @@ router.get('/media', async (req, res) => {
       return;
     }
 
-    const mimeType = VIDEO_MIME_TYPES[path.extname(targetPath).toLowerCase()];
+    const extension = path.extname(targetPath).toLowerCase();
+    const mimeType = VIDEO_MIME_TYPES[extension] ?? AUDIO_MIME_TYPES[extension];
     if (!mimeType) {
-      res.status(415).json({ error: 'Unsupported video format' });
+      res.status(415).json({ error: 'Unsupported media format' });
       return;
     }
 
@@ -304,9 +316,9 @@ router.get('/media', async (req, res) => {
     if (req.aborted || res.destroyed) {
       return;
     }
-    console.error('Failed to stream video:', error);
+    console.error('Failed to stream media:', error);
     if (!res.headersSent) {
-      res.status(500).json({ error: 'Failed to stream video' });
+      res.status(500).json({ error: 'Failed to stream media' });
     } else {
       res.destroy(error instanceof Error ? error : undefined);
     }
@@ -348,6 +360,18 @@ router.get('/content', async (req, res) => {
         path: relativePath,
         content: null,
         mimeType: videoMimeType,
+        isBinary: true,
+        size: fileStat.size,
+      });
+      return;
+    }
+
+    const audioMimeType = AUDIO_MIME_TYPES[extension];
+    if (audioMimeType) {
+      res.json({
+        path: relativePath,
+        content: null,
+        mimeType: audioMimeType,
         isBinary: true,
         size: fileStat.size,
       });

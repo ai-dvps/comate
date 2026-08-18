@@ -93,6 +93,28 @@ describe('context-tab-store', () => {
     })
   })
 
+  it('opens supported audio with a stream URL instead of treating them as generic binary files', async () => {
+    global.fetch = vi.fn(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        content: null,
+        isBinary: true,
+        mimeType: 'audio/wav',
+      }),
+    })) as unknown as typeof global.fetch
+    const store = useContextTabStore.getState()
+    store.setContext('ws-1', 'session-a')
+
+    await store.openFile('ws-1', 'media/tone.wav', 'tone.wav')
+
+    expect(useContextTabStore.getState().openTabs[0]).toMatchObject({
+      type: 'file',
+      path: 'media/tone.wav',
+      isBinary: true,
+      audioUrl: '/api/workspaces/ws-1/files/media?path=media%2Ftone.wav',
+    })
+  })
+
   it('ignores a stale File preview that resolves after a newer path', async () => {
     const resolvers = new Map<string, (value: unknown) => void>()
     global.fetch = vi.fn((url) => new Promise((resolve) => {

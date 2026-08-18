@@ -98,6 +98,8 @@
   "copyContent": "复制内容",
   "videoPreviewLabel": "视频预览：{{name}}",
   "videoPreviewError": "无法播放此视频。文件可能已损坏或使用了不支持的编解码器。",
+  "audioPreviewLabel": "音频预览：{{name}}",
+  "audioPreviewError": "无法播放此音频。文件可能已损坏或使用了不支持的编解码器。",
   "markdownPreviewError": "无法渲染此 Markdown 预览。请重启 Comate 后重试。",
   "close": "关闭",
   "clear": "清除",
