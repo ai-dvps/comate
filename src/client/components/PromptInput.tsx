@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { Activity, ArrowUp, X, Square, Loader2, RefreshCw, User, History, ImagePlus } from 'lucide-react'
@@ -36,6 +37,7 @@ import {
   getCaretOffset,
   getSelectionAnchorFocusOffsets,
   getSelectionOffsets,
+  getSelectionPlainText,
   replaceText,
   setCaretOffset,
   setSelectionOffsets,
@@ -271,6 +273,12 @@ export default function PromptInput(props: PromptInputProps) {
   >([])
   const [imageBusyKeys, setImageBusyKeys] = useState<Set<string>>(() => new Set())
   const [imageErrors, setImageErrors] = useState<Record<string, string>>({})
+  const [referenceTooltip, setReferenceTooltip] = useState<{
+    text: string
+    left: number
+    top: number
+    above: boolean
+  } | null>(null)
 
   const editableRef = useRef<HTMLDivElement>(null)
   const isComposingRef = useRef(false)
@@ -301,16 +309,23 @@ export default function PromptInput(props: PromptInputProps) {
     ? undefined
     : s.sessions[workspaceId]?.find((item) => item.id === sessionId))
   const sessionBackend = session?.backend
-  const activeBackend = isNewChat ? props.backendId : sessionBackend
-  const activeProviderId = isNewChat ? props.providerId : session?.providerId ?? null
   const backends = useBackendStore((s) => s.backends)
+  const defaultBackend = useBackendStore((s) => s.defaultBackend)
+  // Mirror BackendSelector's effective-backend resolution (U5/R4): a new chat
+  // or draft without a locked backend runs on the app-level default backend,
+  // so capability gates must evaluate against that backend rather than the raw
+  // unset value — otherwise image intake is wrongly disabled with
+  // 'backend.capabilityUndeclared' even though the session will run on a
+  // fully-capable backend.
+  const activeBackend = (isNewChat ? props.backendId : sessionBackend) ?? defaultBackend ?? 'claude'
+  const activeProviderId = isNewChat ? props.providerId : session?.providerId ?? null
   const fetchBackends = useBackendStore((s) => s.fetchBackends)
   const providers = useProviderStore((s) => s.providers)
   const fetchProviders = useProviderStore((s) => s.fetchProviders)
   const activeProvider = activeProviderId
     ? providers.find((provider) => provider.id === activeProviderId)
     : providers.find((provider) => provider.isDefault)
-  const imageBackendCapability = backendCapability(backends, activeBackend ?? undefined, 'imageInput')
+  const imageBackendCapability = backendCapability(backends, activeBackend, 'imageInput')
   const normalizedActiveBackend = activeBackend === 'claude' || activeBackend === 'opencode'
     ? activeBackend
     : null
@@ -454,6 +469,72 @@ export default function PromptInput(props: PromptInputProps) {
     }
     setCommittedReferences(next)
   }, [candidates, input])
+
+  // File chips render a shortened basename; hovering one reveals the full
+  // reference (or its resolution failure) in an instant tooltip. Chips are
+  // imperative DOM, so this is hover delegation rather than a Radix tooltip.
+  useEffect(() => {
+    const editor = editableRef.current
+    const host = editor?.parentElement
+    if (!editor || !host) return
+
+    const hide = () => setReferenceTooltip(null)
+
+    const show = (target: HTMLElement) => {
+      const label =
+        target.getAttribute('aria-label') ?? target.dataset.referenceText
+      const shortened = target.dataset.referenceText !== target.textContent
+      const invalid = target.dataset.referenceStatus === 'invalid'
+      if (!label || (!shortened && !invalid)) return
+      const chipRect = target.getBoundingClientRect()
+      const hostRect = host.getBoundingClientRect()
+      // Viewport coordinates: the tooltip is portaled to <body> with
+      // position: fixed, so it escapes every clipping ancestor (the
+      // collapsing editor wrapper clips anything outside its box).
+      const above = chipRect.top > 30
+      const halfWidth = Math.min(Math.max(hostRect.width / 2, 80), 140)
+      const minLeft = hostRect.left + halfWidth
+      setReferenceTooltip({
+        text: label,
+        above,
+        left: Math.min(
+          Math.max(chipRect.left + chipRect.width / 2, minLeft),
+          Math.max(hostRect.right - halfWidth, minLeft),
+        ),
+        top: above ? chipRect.top : chipRect.bottom,
+      })
+    }
+
+    const chipUnder = (node: EventTarget | null): HTMLElement | null =>
+      node instanceof Element
+        ? node.closest<HTMLElement>('[data-prompt-reference-chip]')
+        : null
+
+    const onMouseOver = (e: MouseEvent) => {
+      const chip = chipUnder(e.target)
+      if (chip) show(chip)
+      else hide()
+    }
+    const onMouseOut = (e: MouseEvent) => {
+      if (!chipUnder(e.target)) return
+      if (!chipUnder(e.relatedTarget)) hide()
+    }
+
+    editor.addEventListener('mouseover', onMouseOver)
+    editor.addEventListener('mouseout', onMouseOut)
+    editor.addEventListener('mouseleave', hide)
+    editor.addEventListener('input', hide)
+    // Fixed-position tooltips go stale whenever any scrollable ancestor
+    // (editor, chat panel, window) scrolls the chip out from under them.
+    window.addEventListener('scroll', hide, { capture: true, passive: true })
+    return () => {
+      editor.removeEventListener('mouseover', onMouseOver)
+      editor.removeEventListener('mouseout', onMouseOut)
+      editor.removeEventListener('mouseleave', hide)
+      editor.removeEventListener('input', hide)
+      window.removeEventListener('scroll', hide, { capture: true })
+    }
+  }, [])
 
   // Reconcile only structural/status changes or external draft replacement.
   // Ordinary native input already owns the current DOM and is not rebuilt.
@@ -957,6 +1038,19 @@ export default function PromptInput(props: PromptInputProps) {
     void handleImageFiles(imageFilesFromTransfer(e.dataTransfer))
   }
 
+  const deleteModelRange = (start: number, end: number): void => {
+    flushUndoGroup()
+    pushUndoState(input, start)
+    const value = `${input.slice(0, start)}${input.slice(end)}`
+    handleInputChange(value, start, {
+      skipInputSideEffects: true,
+    })
+    requestAnimationFrame(() => {
+      const current = editableRef.current
+      if (current) setCaretOffset(current, start)
+    })
+  }
+
   const deletePromptReferenceAtSelection = (
     direction: 'backward' | 'forward',
   ): boolean => {
@@ -971,17 +1065,35 @@ export default function PromptInput(props: PromptInputProps) {
     )
     if (!deletion) return false
 
-    flushUndoGroup()
-    pushUndoState(input, start)
-    const value = `${input.slice(0, deletion.start)}${input.slice(deletion.end)}`
-    handleInputChange(value, deletion.start, {
-      skipInputSideEffects: true,
-    })
-    requestAnimationFrame(() => {
-      const current = editableRef.current
-      if (current) setCaretOffset(current, deletion.start)
-    })
+    deleteModelRange(deletion.start, deletion.end)
     return true
+  }
+
+  // Chips render a shortened basename label while the plain-text model keeps
+  // the full path, so clipboard writes must come from the model, not the
+  // rendered selection string.
+  const handleCopy = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    const text = editableRef.current
+      ? getSelectionPlainText(editableRef.current)
+      : null
+    if (text === null) return
+    e.preventDefault()
+    e.clipboardData.setData('text/plain', text)
+  }
+
+  const handleCut = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    const el = editableRef.current
+    const text = el === null ? null : getSelectionPlainText(el)
+    if (el === null || text === null) return
+    e.preventDefault()
+    e.clipboardData.setData('text/plain', text)
+    const [rawStart, rawEnd] = getSelectionOffsets(el)
+    const start = Math.min(rawStart, rawEnd)
+    const end = Math.max(rawStart, rawEnd)
+    const deletion =
+      getPromptReferenceDeletionRange(el, start, end, 'backward') ??
+      { start, end }
+    deleteModelRange(deletion.start, deletion.end)
   }
 
   const handleBeforeInput = (e: React.FormEvent<HTMLDivElement>) => {
@@ -1591,6 +1703,8 @@ export default function PromptInput(props: PromptInputProps) {
                     onFocus={handleFocus}
                     onBlur={handleBlur}
                     onPaste={handlePaste}
+                    onCopy={handleCopy}
+                    onCut={handleCut}
                     onDrop={handleDrop}
                     onBeforeInput={handleBeforeInput}
                     className={`prompt-input-editor relative z-10 w-full bg-transparent border-0 px-4 py-3 text-text-primary focus:outline-none focus:ring-0 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words ${!editableEnabled ? 'opacity-50' : ''}`}
@@ -1601,6 +1715,24 @@ export default function PromptInput(props: PromptInputProps) {
                     argumentHint={argumentHint}
                     lastInsertedCommand={lastInsertedCommand}
                   />
+                  {referenceTooltip &&
+                    createPortal(
+                      <div
+                        role="tooltip"
+                        className="pointer-events-none fixed z-50 w-fit max-w-[min(28rem,90vw)] select-none rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-primary shadow-md"
+                        style={{
+                          left: referenceTooltip.left,
+                          top: referenceTooltip.top,
+                          overflowWrap: 'anywhere',
+                          transform: referenceTooltip.above
+                            ? 'translate(-50%, calc(-100% - 4px))'
+                            : 'translate(-50%, 4px)',
+                        }}
+                      >
+                        {referenceTooltip.text}
+                      </div>,
+                      document.body,
+                    )}
                 </div>
               </div>
             </div>

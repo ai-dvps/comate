@@ -3,6 +3,7 @@ import '../index.css'
 import {
   extractPlainText,
   getCaretOffset,
+  getSelectionPlainText,
   setCaretOffset,
   setSelectionOffsets,
 } from './contenteditable'
@@ -53,7 +54,13 @@ describe('prompt reference chip projection', () => {
 
     expect(extractPlainText(element)).toBe(text)
     expect(element.querySelectorAll('[data-prompt-reference-chip]')).toHaveLength(2)
-    expect(element.querySelector('[data-reference-status="invalid"]')).not.toBeNull()
+    const invalid = element.querySelector<HTMLElement>(
+      '[data-reference-status="invalid"]',
+    )
+    expect(invalid).not.toBeNull()
+    // File chips display the basename; the model and title keep the path.
+    expect(invalid!.textContent).toBe('@app.ts')
+    expect(invalid!.getAttribute('aria-label')).toContain('@src/app.ts')
   })
 
   it('renders reference text without interpreting markup', () => {
@@ -66,7 +73,7 @@ describe('prompt reference chip projection', () => {
     expect(element.textContent).toBe(text)
   })
 
-  it('aligns the chip glyph box with surrounding text', () => {
+  it('aligns the chip box with the surrounding line box', () => {
     const text = 'before /review after'
     const element = editor()
     element.style.fontSize = '16px'
@@ -87,14 +94,49 @@ describe('prompt reference chip projection', () => {
     expect(style.paddingBottom).toBe('0px')
     expect(getComputedStyle(reference!, '::before').content).toBe('none')
 
-    const textRange = document.createRange()
-    textRange.setStart(element.firstChild!, 0)
-    textRange.setEnd(element.firstChild!, 'before'.length)
-    const textHeight = textRange.getBoundingClientRect().height
+    // The chip is an inline-block, so its box is exactly one line tall and
+    // must not inflate or shift the surrounding single-line editor.
     const chipHeight = reference!.getBoundingClientRect().height
+    const editorHeight = element.getBoundingClientRect().height
+    expect(Math.abs(chipHeight - 24)).toBeLessThanOrEqual(1)
+    expect(Math.abs(editorHeight - 24)).toBeLessThanOrEqual(1)
+  })
 
-    expect(chipHeight).toBeLessThan(24)
-    expect(Math.abs(chipHeight - textHeight)).toBeLessThan(1)
+  it('shows file chips as basenames while the text model keeps full paths', () => {
+    const reference =
+      '@src/client/components/tool-renderers/a-very-long-tool-renderer-component-name.tsx'
+    const text = `${reference} tail`
+    const element = editor()
+    element.style.fontSize = '16px'
+    element.style.lineHeight = '24px'
+    element.style.width = '320px'
+
+    projectPromptReferenceChips(element, text, [
+      chip(text, reference, 'file'),
+    ])
+
+    const rendered = element.querySelector<HTMLElement>(
+      '[data-prompt-reference-chip]',
+    )
+    expect(rendered).not.toBeNull()
+    // Display shows only the basename; the model and tooltip keep the path.
+    expect(rendered!.textContent).toBe(
+      '@a-very-long-tool-renderer-component-name.tsx',
+    )
+    expect(rendered!.dataset.referenceText).toBe(reference)
+    expect(rendered!.getAttribute('aria-label')).toBe(reference)
+    expect(extractPlainText(element)).toBe(text)
+
+    // Copying a selection spanning the chip must yield the model text, not
+    // the shortened rendered label.
+    setSelectionOffsets(element, 0, text.length)
+    expect(getSelectionPlainText(element)).toBe(text)
+
+    // Pathological basenames still cap their width instead of stretching.
+    const style = getComputedStyle(rendered!)
+    expect(style.textOverflow).toBe('ellipsis')
+    expect(style.overflowX).toBe('hidden')
+    expect(rendered!.clientWidth).toBeLessThanOrEqual(320 * 0.6 + 1)
   })
 
   it('normalizes requested caret offsets inside a chip to its nearest edge', () => {

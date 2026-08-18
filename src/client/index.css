@@ -141,14 +141,21 @@
   }
 
   .prompt-reference-chip {
-    display: inline;
+    /* Visual truncation only: the DOM text stays the full reference, so
+       plain-text extraction, undo, and atomic deletion are unaffected. */
+    display: inline-block;
+    max-width: min(18rem, 60%);
+    overflow: hidden;
+    text-overflow: ellipsis;
     padding-inline: 0.35em;
     border-radius: 0.3em;
     font-weight: 600;
     line-height: inherit;
     letter-spacing: -0.01em;
     white-space: nowrap;
-    vertical-align: baseline;
+    /* overflow: hidden makes an inline-block's baseline its bottom edge, so
+       baseline alignment would lift the chip above the text line. */
+    vertical-align: bottom;
     cursor: default;
   }
 

@@ -40,6 +40,23 @@ function isProjectableChip(
   )
 }
 
+/**
+ * Visible label for file chips: keep the '@' trigger, show only the basename.
+ * The plain-text model keeps the full path via `dataset.referenceText`, which
+ * `extractPlainText` prefers over the shortened DOM text.
+ */
+function fileChipDisplayLabel(text: string): string {
+  const trigger = text.startsWith('@') ? '@' : ''
+  const path = trigger ? text.slice(1) : text
+  const lastSeparator = Math.max(
+    path.lastIndexOf('/'),
+    path.lastIndexOf('\\'),
+  )
+  if (lastSeparator === -1) return text
+  const basename = path.slice(lastSeparator + 1)
+  return basename ? `${trigger}${basename}` : text
+}
+
 function createChipElement(
   chip: PromptReferenceChip,
   options: ProjectPromptReferenceChipsOptions,
@@ -57,7 +74,11 @@ function createChipElement(
       ? 'prompt-reference-chip--skill'
       : 'prompt-reference-chip--file'
   element.className = `prompt-reference-chip ${kindClass}`
-  element.textContent = chip.text
+  element.textContent =
+    chip.kind === 'file' ? fileChipDisplayLabel(chip.text) : chip.text
+  // The full reference feeds both screen readers and the hover tooltip.
+  // Invalid chips override this below with their resolution-failure label.
+  element.setAttribute('aria-label', chip.text)
 
   if (chip.status === 'invalid') {
     element.classList.add('prompt-reference-chip--invalid')
