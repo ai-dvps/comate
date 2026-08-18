@@ -15,14 +15,11 @@ describe('resolveImageInputProfile', () => {
     assert.equal(resolveImageInputProfile('opencode', 'gemini-2.5-pro').enabled, true);
   });
 
-  it('conservatively rejects missing, known text-only, and unknown custom models', () => {
-    assert.equal(resolveImageInputProfile('claude', undefined).enabled, false);
-    assert.equal(resolveImageInputProfile('claude', 'claude-2.1').enabled, false);
-    assert.equal(resolveImageInputProfile('claude', 'claude-sonnet-4-5-latest').enabled, false);
-    assert.equal(resolveImageInputProfile('claude', 'custom-claude-sonnet-4-5-20250929').enabled, false);
-    const custom = resolveImageInputProfile('opencode', 'private-vision-proxy');
-    assert.equal(custom.enabled, false);
-    assert.equal(custom.reasonKey, 'backend.imageInputModelUnsupported');
+  it('does not infer image capability from provider model names', () => {
+    assert.equal(resolveImageInputProfile('claude', undefined).enabled, true);
+    assert.equal(resolveImageInputProfile('claude', 'glm-5.3[1m]').enabled, true);
+    assert.equal(resolveImageInputProfile('claude', 'custom-text-model').enabled, true);
+    assert.equal(resolveImageInputProfile('opencode', 'private-vision-proxy').enabled, true);
   });
 
   it('uses the conservative v1 limits', () => {

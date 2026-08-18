@@ -1102,7 +1102,7 @@ describe('PromptInput browser', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Attach images' })).toBeEnabled())
   })
 
-  it('preserves existing images but blocks intake and send for an unsupported model', async () => {
+  it('does not block image controls based on an unrecognized provider model name', async () => {
     providerStoreMock.providers = [
       { id: 'provider-1', model: 'custom-text-model', isDefault: true },
     ]
@@ -1122,9 +1122,9 @@ describe('PromptInput browser', () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
 
     expect(screen.getByRole('button', { name: 'Preview kept.png' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Attach images' })).toBeDisabled()
-    expect(screen.getByTitle('Send')).toBeDisabled()
-    expect(screen.getByRole('alert')).toHaveTextContent('does not support image input')
+    expect(screen.getByRole('button', { name: 'Attach images' })).toBeEnabled()
+    expect(screen.getByTitle('Send')).toBeEnabled()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('replaces selected text when pasting', async () => {
