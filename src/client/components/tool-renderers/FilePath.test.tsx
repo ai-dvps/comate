@@ -57,7 +57,7 @@ describe('FilePath', () => {
     expect(onOpenFile).toHaveBeenCalledWith('src/components/Button.tsx', 'Button.tsx')
   })
 
-  it('does not open file on plain click', async () => {
+  it('opens file on plain click', async () => {
     const onOpenFile = vi.fn()
     renderWithContext(<FilePath path="/workspace/src/components/Button.tsx" />, {
       workspacePath: '/workspace',
@@ -65,7 +65,7 @@ describe('FilePath', () => {
     })
 
     await userEvent.click(screen.getByText('src/components/Button.tsx'))
-    expect(onOpenFile).not.toHaveBeenCalled()
+    expect(onOpenFile).toHaveBeenCalledWith('src/components/Button.tsx', 'Button.tsx')
   })
 
   it('passes the relative path, not the absolute path, to onOpenFile', async () => {
@@ -81,9 +81,11 @@ describe('FilePath', () => {
     expect(onOpenFile.mock.calls[0][1]).toBe('utils.ts')
   })
 
-  it('copies relative path when copy button is clicked inside workspace', async () => {
+  it('copies relative path when copy button is clicked inside workspace without opening the file', async () => {
+    const onOpenFile = vi.fn()
     renderWithContext(<FilePath path="/workspace/src/components/Button.tsx" />, {
       workspacePath: '/workspace',
+      onOpenFile,
     })
 
     const copyButton = screen.getByRole('button', { name: 'Copy path' })
@@ -91,6 +93,7 @@ describe('FilePath', () => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
       'src/components/Button.tsx',
     )
+    expect(onOpenFile).not.toHaveBeenCalled()
   })
 
   it('falls back to absolute path when copy button is clicked outside workspace', async () => {
@@ -126,23 +129,16 @@ describe('FilePath', () => {
     expect(pathEl).toHaveAttribute('title', '/workspace/src/components/Button.tsx')
   })
 
-  it('shows pointer cursor and underline only while a modifier key is held', () => {
+  it('shows an at-rest clickable affordance without hover or modifier state', () => {
     renderWithContext(<FilePath path="/workspace/src/components/Button.tsx" />, {
       workspacePath: '/workspace',
     })
 
     const pathEl = screen.getByText('src/components/Button.tsx')
-    expect(pathEl).toHaveClass('cursor-default')
-    expect(pathEl).not.toHaveClass('cursor-pointer')
-    expect(pathEl).not.toHaveClass('hover:underline')
-
-    fireEvent.keyDown(document, { metaKey: true })
     expect(pathEl).toHaveClass('cursor-pointer')
-    expect(pathEl).toHaveClass('hover:underline')
-
-    fireEvent.keyUp(document, { metaKey: false })
-    expect(pathEl).not.toHaveClass('cursor-pointer')
-    expect(pathEl).not.toHaveClass('hover:underline')
+    expect(pathEl).toHaveClass('underline')
+    expect(pathEl).toHaveClass('underline-offset-2')
+    expect(pathEl).not.toHaveClass('cursor-default')
   })
 
   it('strips trailing slashes', () => {
@@ -161,7 +157,7 @@ describe('FilePath', () => {
     expect(screen.getByText('src/components/Button.tsx')).toBeInTheDocument()
   })
 
-  it('renders absolute text and is not clickable when path is outside workspace', async () => {
+  it('renders absolute text without the clickable affordance and does not open when path is outside workspace', async () => {
     const onOpenFile = vi.fn()
     renderWithContext(<FilePath path="/etc/passwd" />, {
       workspacePath: '/workspace',
@@ -171,6 +167,10 @@ describe('FilePath', () => {
     const pathEl = screen.getByText('/etc/passwd')
     expect(pathEl).toBeInTheDocument()
     expect(pathEl).toHaveAttribute('title', '/etc/passwd')
+    expect(pathEl.tagName.toLowerCase()).toBe('span')
+    expect(pathEl).toHaveClass('cursor-default')
+    expect(pathEl).not.toHaveClass('cursor-pointer')
+    expect(pathEl).not.toHaveClass('underline')
 
     await userEvent.click(pathEl)
     expect(onOpenFile).not.toHaveBeenCalled()

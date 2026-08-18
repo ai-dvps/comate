@@ -1,31 +1,7 @@
 import { Copy } from 'lucide-react'
-import { useEffect, useState } from 'react'
 import { useToolRendererContext } from './use-tool-renderer-context'
 import { cn } from '../ui/utils'
 import { basename, getPathDisplayInfo, truncateStart } from './path-utils'
-
-function useModifierActive(): boolean {
-  const [active, setActive] = useState(false)
-
-  useEffect(() => {
-    const update = (e: KeyboardEvent | MouseEvent) => {
-      setActive(e.metaKey || e.ctrlKey)
-    }
-    const reset = () => setActive(false)
-
-    document.addEventListener('keydown', update)
-    document.addEventListener('keyup', update)
-    window.addEventListener('blur', reset)
-
-    return () => {
-      document.removeEventListener('keydown', update)
-      document.removeEventListener('keyup', update)
-      window.removeEventListener('blur', reset)
-    }
-  }, [])
-
-  return active
-}
 
 export interface FilePathProps {
   path: string
@@ -41,18 +17,15 @@ export default function FilePath({
   maxDisplayLength = 40,
 }: FilePathProps) {
   const { workspacePath, onOpenFile } = useToolRendererContext()
-  const modifierActive = useModifierActive()
 
   const { displayText, displayAbsolute, relativePath } = getPathDisplayInfo(path, workspacePath)
   const directoryLike = isDirectory || /[\\/]$/.test(path)
   const clickable = relativePath !== null && !directoryLike && relativePath !== '.'
-  const showClickable = clickable && modifierActive
 
   const truncatedText = truncateStart(displayText, maxDisplayLength)
 
-  const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+  const handleClick = () => {
     if (!clickable || !relativePath || relativePath === '.') return
-    if (!e.metaKey && !e.ctrlKey) return
     const name = basename(relativePath)
     onOpenFile(relativePath, name)
   }
@@ -74,8 +47,8 @@ export default function FilePath({
       onClick={handleClick}
       className={cn(
         baseClasses,
+        'cursor-pointer underline underline-offset-2 decoration-text-tertiary/50 hover:text-accent hover:decoration-current',
         'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
-        showClickable && 'cursor-pointer hover:underline',
         className,
       )}
       title={displayAbsolute}
