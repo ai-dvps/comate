@@ -477,6 +477,7 @@ export interface ChatState {
   lastActivityAt: Record<string, number>
   tasks: Record<string, TaskItem[]>
   pendingTaskCreates: Record<string, Record<string, PendingTaskCreate>>
+  touchedFiles: Record<string, TouchedFileEntry[]>
   autoApprovedTools: Record<string, Record<string, 'auto' | 'readonly'>>
   totalMessageCount: Record<string, number>
   lastTurnUsage: Record<string, TurnUsage>
@@ -1248,6 +1249,24 @@ interface TouchedFileScan {
   nextSeq: number
 }
 
+/**
+ * Shared status resolution for one touch (KTD5): structured result metadata
+ * wins when present; otherwise the heuristic — a first-seen Write counts as
+ * created, every other touch (Edit/MultiEdit/NotebookEdit, or a re-Write)
+ * counts as modified.
+ */
+function resolveTouchedFileStatus(
+  toolName: string,
+  toolUseResult: unknown,
+  existing: TouchedFileEntry | undefined,
+): TouchedFileEntry['status'] {
+  const metadataStatus = touchedFileStatusFromResult(toolUseResult)
+  return (
+    metadataStatus ??
+    (existing === undefined && toolName === 'Write' ? 'created' : 'modified')
+  )
+}
+
 function recordTouchedFile(
   scan: TouchedFileScan,
   toolName: string,
@@ -1256,17 +1275,13 @@ function recordTouchedFile(
   toolUseResult: unknown,
 ): void {
   const path = normalizePath(rawPath)
-  const metadataStatus = touchedFileStatusFromResult(toolUseResult)
   const existing = scan.entries.get(path)
-  // Heuristic fallback (KTD5): a first-seen Write counts as created; every
-  // other touch (Edit/MultiEdit/NotebookEdit, or a re-Write) counts as
-  // modified. Created stays sticky on later modifications.
-  const status: TouchedFileEntry['status'] =
-    metadataStatus ?? (existing === undefined && toolName === 'Write' ? 'created' : 'modified')
+  const status = resolveTouchedFileStatus(toolName, toolUseResult, existing)
   const seq = scan.nextSeq++
   if (existing) {
     existing.lastTouchedAt = Math.max(existing.lastTouchedAt, timestamp)
     existing.seq = seq
+    // Created stays sticky on later modifications.
     if (existing.status !== 'created') existing.status = status
   } else {
     scan.entries.set(path, { path, status, lastTouchedAt: timestamp, seq })
@@ -1334,6 +1349,112 @@ export function scanMessagesForTouchedFiles(
       status: entry.status,
       lastTouchedAt: entry.lastTouchedAt,
     }))
+}
+
+/**
+ * Live-accumulation counterpart to the scanner's per-touch merge (U2): folds
+ * one successful file-tool touch into a session's existing entry list, reusing
+ * the scanner's path normalization, status resolution, sticky-created rule,
+ * and ordering (lastTouchedAt desc; among equal timestamps the most recently
+ * recorded touch sorts first, mirroring the scanner's seq tie-break).
+ */
+export function mergeTouchedFileEntry(
+  entries: TouchedFileEntry[],
+  toolName: string,
+  rawPath: string,
+  timestamp: number,
+  toolUseResult: unknown,
+): TouchedFileEntry[] {
+  const path = normalizePath(rawPath)
+  const existing = entries.find((entry) => entry.path === path)
+  const status = resolveTouchedFileStatus(toolName, toolUseResult, existing)
+  const merged: TouchedFileEntry = existing
+    ? {
+        path,
+        status: existing.status === 'created' ? 'created' : status,
+        lastTouchedAt: Math.max(existing.lastTouchedAt, timestamp),
+      }
+    : { path, status, lastTouchedAt: timestamp }
+  const rest = entries.filter((entry) => entry.path !== path)
+  const insertAt = rest.findIndex((entry) => entry.lastTouchedAt <= merged.lastTouchedAt)
+  if (insertAt === -1) return [...rest, merged]
+  return [...rest.slice(0, insertAt), merged, ...rest.slice(insertAt)]
+}
+
+/**
+ * U2 live main-channel accumulation: on a successful tool_result, join the
+ * matching tool_use part by toolUseId and fold the touch into the session's
+ * touched-files list at accumulation time (KTD3). Callers must invoke this
+ * only after the reconnect-replay early-return so replayed results never
+ * double-record.
+ */
+function accumulateTouchedFileFromToolResult(
+  state: ChatState,
+  sessionId: string,
+  toolUseId: string,
+  isError: boolean,
+  toolUseResult: unknown,
+): Partial<ChatState> {
+  if (isError) return {}
+  const messages = state.messages[sessionId] || []
+  for (const message of messages) {
+    const part = message.parts.find(
+      (p): p is Extract<MessagePart, { type: 'tool_use' }> =>
+        p?.type === 'tool_use' && p.toolUseId === toolUseId,
+    )
+    if (!part) continue
+    const rawPath = fileToolInputPath(part.toolName, part.input)
+    if (!rawPath) return {}
+    const entries = state.touchedFiles[sessionId] || []
+    return {
+      touchedFiles: {
+        ...state.touchedFiles,
+        [sessionId]: mergeTouchedFileEntry(
+          entries,
+          part.toolName,
+          rawPath,
+          Date.now(),
+          toolUseResult,
+        ),
+      },
+    }
+  }
+  return {}
+}
+
+/**
+ * U2 live subagent-channel accumulation: join the earlier tool_use delta by
+ * toolUseId within the subagent's messages. Subagent results carry no
+ * structured metadata under the current event contract, so the heuristic
+ * always applies to them (KTD5).
+ */
+function accumulateSubagentTouchedFileFromResult(
+  state: ChatState,
+  sessionId: string,
+  parentToolUseId: string,
+  toolUseId: string,
+  isError: boolean,
+): Partial<ChatState> {
+  if (isError) return {}
+  const subagent = findSubagent(state, sessionId, parentToolUseId)
+  if (!subagent) return {}
+  for (const message of subagent.messages) {
+    const part = message.parts.find(
+      (p): p is Extract<SubagentPart, { type: 'tool_use' }> =>
+        p?.type === 'tool_use' && p.toolUseId === toolUseId,
+    )
+    if (!part) continue
+    const rawPath = fileToolInputPath(part.toolName, part.input)
+    if (!rawPath) return {}
+    const entries = state.touchedFiles[sessionId] || []
+    return {
+      touchedFiles: {
+        ...state.touchedFiles,
+        [sessionId]: mergeTouchedFileEntry(entries, part.toolName, rawPath, Date.now(), undefined),
+      },
+    }
+  }
+  return {}
 }
 
 function isSessionActive(state: ChatState, sessionId: string): boolean {
@@ -1940,6 +2061,13 @@ export function handleSseEvent(
               [sessionId]: replacedMessages,
             },
             ...removeInFlightBrowserTool(state, sessionId, toolUseId),
+            ...accumulateTouchedFileFromToolResult(
+              state,
+              sessionId,
+              toolUseId,
+              isError,
+              toolUseResult,
+            ),
           }
         }
         const newMessages: ChatMessage[] = [
@@ -1966,6 +2094,13 @@ export function handleSseEvent(
             [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
           },
           ...removeInFlightBrowserTool(state, sessionId, toolUseId),
+          ...accumulateTouchedFileFromToolResult(
+            state,
+            sessionId,
+            toolUseId,
+            isError,
+            toolUseResult,
+          ),
         }
         const pendingCreates = state.pendingTaskCreates[sessionId]
         if (pendingCreates && pendingCreates[toolUseId]) {
@@ -2636,14 +2771,21 @@ export function handleSseEvent(
           typeof delta.toolUseId === 'string' ? delta.toolUseId : ''
         const output = typeof delta.output === 'string' ? delta.output : ''
         const isError = delta.isError === true
-        set((state) =>
-          updateSubagentMessage(state, sessionId, parentToolUseId, {
+        set((state) => ({
+          ...updateSubagentMessage(state, sessionId, parentToolUseId, {
             type: 'tool_result',
             toolUseId,
             output,
             isError,
           }),
-        )
+          ...accumulateSubagentTouchedFileFromResult(
+            state,
+            sessionId,
+            parentToolUseId,
+            toolUseId,
+            isError,
+          ),
+        }))
       } else {
         console.warn('Unknown subagent_delta kind:', kind)
       }
@@ -3014,6 +3156,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   lastActivityAt: {},
   tasks: {},
   pendingTaskCreates: {},
+  touchedFiles: {},
   autoApprovedTools: {},
   totalMessageCount: {},
   lastTurnUsage: {},
@@ -3397,6 +3540,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           subagents: withoutSession(state.subagents),
           tasks: withoutSession(state.tasks),
           pendingTaskCreates: withoutSession(state.pendingTaskCreates),
+          touchedFiles: withoutSession(state.touchedFiles),
           autoApprovedTools: withoutSession(state.autoApprovedTools),
           totalMessageCount: withoutSession(state.totalMessageCount),
           lastTurnUsage: withoutSession(state.lastTurnUsage),
@@ -3545,13 +3689,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
             mergedSubagents.set(s.parentToolUseId, s)
           }
         }
+        const mergedSubagentList = Array.from(mergedSubagents.values())
 
         return {
           messages: { ...state.messages, [sessionId]: combined },
           isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false },
           historyLoadState: { ...state.historyLoadState, [sessionId]: 'loaded' },
           tasks: { ...state.tasks, [sessionId]: Array.from(taskMap.values()) },
-          subagents: { ...state.subagents, [sessionId]: Array.from(mergedSubagents.values()) },
+          subagents: { ...state.subagents, [sessionId]: mergedSubagentList },
+          // KTD3: wholesale replace from a rescan over the merged state —
+          // combined history+live messages and merged subagents — so live
+          // touches that raced the load survive the rebuild.
+          touchedFiles: {
+            ...state.touchedFiles,
+            [sessionId]: scanMessagesForTouchedFiles(combined, mergedSubagentList),
+          },
           totalMessageCount: {
             ...state.totalMessageCount,
             [sessionId]: Math.max(
@@ -3824,6 +3976,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete newTasks[sessionId]
       const newPendingTaskCreates = { ...state.pendingTaskCreates }
       delete newPendingTaskCreates[sessionId]
+      const newTouchedFiles = { ...state.touchedFiles }
+      delete newTouchedFiles[sessionId]
       const newLastTurnUsage = { ...state.lastTurnUsage }
       delete newLastTurnUsage[sessionId]
       const newSessionUsage = { ...state.sessionUsage }
@@ -3850,6 +4004,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         subagents: newSubagents,
         tasks: newTasks,
         pendingTaskCreates: newPendingTaskCreates,
+        touchedFiles: newTouchedFiles,
         lastTurnUsage: newLastTurnUsage,
         sessionUsage: newSessionUsage,
         contextUsage: newContextUsage,
