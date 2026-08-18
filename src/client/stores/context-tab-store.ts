@@ -16,6 +16,7 @@ export interface FileContextTab {
   isBinary: boolean
   imageDataUrl?: string
   videoUrl?: string
+  audioUrl?: string
   preview: boolean
 }
 
@@ -260,10 +261,12 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
         && typeof data.content === 'string'
         ? `data:${data.mimeType};base64,${data.content}`
         : undefined
-      const videoPath = data.mimeType?.startsWith('video/')
+      const mediaPath = (data.mimeType?.startsWith('video/') || data.mimeType?.startsWith('audio/'))
         ? `/api/workspaces/${workspaceId}/files/media?path=${encodeURIComponent(path)}`
         : undefined
-      const videoUrl = videoPath ? `${await getApiBase()}${videoPath}` : undefined
+      const mediaUrl = mediaPath ? `${await getApiBase()}${mediaPath}` : undefined
+      const videoUrl = data.mimeType?.startsWith('video/') ? mediaUrl : undefined
+      const audioUrl = data.mimeType?.startsWith('audio/') ? mediaUrl : undefined
       if (abortControllers.get(key) !== controller) return
       const tab: FileContextTab = {
         type: 'file',
@@ -271,10 +274,11 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
         workspaceId,
         path,
         name,
-        content: imageDataUrl || videoUrl ? '' : typeof data.content === 'string' ? data.content : '',
+        content: imageDataUrl || videoUrl || audioUrl ? '' : typeof data.content === 'string' ? data.content : '',
         isBinary: data.isBinary === true,
         imageDataUrl,
         videoUrl,
+        audioUrl,
         preview,
       }
       set((state) => {

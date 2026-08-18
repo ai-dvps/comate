@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { Copy, FileWarning } from 'lucide-react'
+import { Copy, FileAudio, FileWarning } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { cn } from './ui/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
@@ -26,8 +26,9 @@ export default function CodeMirrorFileViewer({
   const absolutePath = getPathDisplayInfo(tab.path, workspacePath).displayAbsolute
   const language = useMemo(() => getCodeMirrorLanguage(tab.name), [tab.name])
   const fontSize = fontSizeValue(chatFontSize)
-  const [failedVideoUrl, setFailedVideoUrl] = useState<string>()
-  const videoLoadFailed = Boolean(tab.videoUrl && failedVideoUrl === tab.videoUrl)
+  const [failedMediaUrl, setFailedMediaUrl] = useState<string>()
+  const videoLoadFailed = Boolean(tab.videoUrl && failedMediaUrl === tab.videoUrl)
+  const audioLoadFailed = Boolean(tab.audioUrl && failedMediaUrl === tab.audioUrl)
 
   const handleCopy = useCallback(async () => {
     try {
@@ -62,7 +63,7 @@ export default function CodeMirrorFileViewer({
           </span>
         </div>
 
-        {!tab.isBinary && !tab.imageDataUrl && !tab.videoUrl && (
+        {!tab.isBinary && !tab.imageDataUrl && !tab.videoUrl && !tab.audioUrl && (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -85,7 +86,7 @@ export default function CodeMirrorFileViewer({
               src={tab.videoUrl}
               controls
               preload="metadata"
-              onError={() => setFailedVideoUrl(tab.videoUrl)}
+              onError={() => setFailedMediaUrl(tab.videoUrl)}
               aria-label={t('videoPreviewLabel', { name: tab.name })}
               className="max-w-full max-h-full"
             />
@@ -94,6 +95,29 @@ export default function CodeMirrorFileViewer({
           <div className="flex flex-col items-center justify-center h-full gap-3 px-6 text-center text-text-secondary">
             <FileWarning className="w-8 h-8" />
             <p className="text-sm">{t('videoPreviewError')}</p>
+          </div>
+        ) : tab.audioUrl && !audioLoadFailed ? (
+          <div className="flex flex-col items-center justify-center h-full gap-4 px-6 bg-surface/50">
+            <FileAudio className="w-10 h-10 text-text-secondary" aria-hidden="true" />
+            <span
+              className="text-sm font-mono text-text-secondary break-all text-center max-w-full"
+              title={tab.name}
+            >
+              {tab.name}
+            </span>
+            <audio
+              src={tab.audioUrl}
+              controls
+              preload="metadata"
+              onError={() => setFailedMediaUrl(tab.audioUrl)}
+              aria-label={t('audioPreviewLabel', { name: tab.name })}
+              className="w-full max-w-xl"
+            />
+          </div>
+        ) : audioLoadFailed ? (
+          <div className="flex flex-col items-center justify-center h-full gap-3 px-6 text-center text-text-secondary">
+            <FileWarning className="w-8 h-8" />
+            <p className="text-sm">{t('audioPreviewError')}</p>
           </div>
         ) : tab.imageDataUrl ? (
           <div className="flex items-center justify-center h-full p-4 bg-surface/50">

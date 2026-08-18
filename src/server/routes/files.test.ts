@@ -213,6 +213,27 @@ describe('files routes', { concurrency: false }, () => {
     });
   });
 
+  it('GET /content returns audio metadata without loading the audio into JSON', async () => {
+    const audio = Buffer.from('audio-bytes');
+    await writeFile(path.join(tempDir, 'tone.wav'), audio);
+    const workspace = await workspaceStore.create({ name: 'test-ws', folderPath: tempDir });
+    const handler = await importContentHandler();
+    const res = createMockRes();
+
+    await handler(
+      { params: { id: workspace.id }, query: { path: 'tone.wav' } },
+      res,
+    );
+
+    assert.deepStrictEqual(res.jsonBody, {
+      path: 'tone.wav',
+      content: null,
+      mimeType: 'audio/wav',
+      isBinary: true,
+      size: audio.length,
+    });
+  });
+
   it('GET /media streams byte ranges for supported workspace videos', async () => {
     const video = Buffer.from('0123456789');
     await writeFile(path.join(tempDir, 'clip.webm'), video);
@@ -235,6 +256,55 @@ describe('files routes', { concurrency: false }, () => {
       assert.strictEqual(response.headers.get('content-range'), 'bytes 2-5/10');
       assert.strictEqual(response.headers.get('content-type'), 'video/webm');
       assert.strictEqual(Buffer.from(await response.arrayBuffer()).toString(), '2345');
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('GET /media streams byte ranges for supported workspace audio', async () => {
+    const audio = Buffer.from('0123456789');
+    await writeFile(path.join(tempDir, 'track.mp3'), audio);
+    const workspace = await workspaceStore.create({ name: 'test-ws', folderPath: tempDir });
+    const { default: fileRoutes } = await import('./files.js');
+    const app = express();
+    app.use('/api/workspaces/:id/files', fileRoutes);
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(
+        `http://127.0.0.1:${port}/api/workspaces/${workspace.id}/files/media?path=track.mp3`,
+        { headers: { Range: 'bytes=2-5' } },
+      );
+
+      assert.strictEqual(response.status, 206);
+      assert.strictEqual(response.headers.get('accept-ranges'), 'bytes');
+      assert.strictEqual(response.headers.get('content-range'), 'bytes 2-5/10');
+      assert.strictEqual(response.headers.get('content-type'), 'audio/mpeg');
+      assert.strictEqual(Buffer.from(await response.arrayBuffer()).toString(), '2345');
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('GET /media rejects unsupported media formats', async () => {
+    await writeFile(path.join(tempDir, 'song.wma'), Buffer.from('not-really-wma'));
+    const workspace = await workspaceStore.create({ name: 'test-ws', folderPath: tempDir });
+    const { default: fileRoutes } = await import('./files.js');
+    const app = express();
+    app.use('/api/workspaces/:id/files', fileRoutes);
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(
+        `http://127.0.0.1:${port}/api/workspaces/${workspace.id}/files/media?path=song.wma`,
+      );
+
+      assert.strictEqual(response.status, 415);
+      assert.deepStrictEqual(await response.json(), { error: 'Unsupported media format' });
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }

@@ -98,6 +98,8 @@
   "copyContent": "Copy content",
   "videoPreviewLabel": "Video preview: {{name}}",
   "videoPreviewError": "Unable to play this video. The file may be corrupt or use an unsupported codec.",
+  "audioPreviewLabel": "Audio preview: {{name}}",
+  "audioPreviewError": "Unable to play this audio. The file may be corrupt or use an unsupported codec.",
   "markdownPreviewError": "Unable to render this Markdown preview. Restart Comate and try again.",
   "close": "Close",
   "clear": "Clear",
