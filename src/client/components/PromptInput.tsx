@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Activity, ArrowUp, X, Square, Loader2, SlashSquare, Paperclip, RefreshCw, User, History, ImagePlus } from 'lucide-react'
+import { Activity, ArrowUp, X, Square, Loader2, RefreshCw, User, History, ImagePlus } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
@@ -98,13 +98,11 @@ function getBackgroundTaskTypeLabel(type: string, t: TFunction): string {
 
 const TOOLBAR_BREAKPOINTS = [
   { width: 680, hidden: [] as string[] },
-  { width: 600, hidden: ['skills'] },
-  { width: 520, hidden: ['skills', 'files'] },
-  { width: 440, hidden: ['skills', 'files', 'history'] },
-  { width: 380, hidden: ['skills', 'files', 'history', 'provider'] },
-  { width: 330, hidden: ['skills', 'files', 'history', 'provider', 'fast'] },
-  { width: 280, hidden: ['skills', 'files', 'history', 'provider', 'fast', 'approval'] },
-  { width: 220, hidden: ['skills', 'files', 'history', 'provider', 'fast', 'approval', 'clear'] },
+  { width: 440, hidden: ['history'] },
+  { width: 380, hidden: ['history', 'provider'] },
+  { width: 330, hidden: ['history', 'provider', 'fast'] },
+  { width: 280, hidden: ['history', 'provider', 'fast', 'approval'] },
+  { width: 220, hidden: ['history', 'provider', 'fast', 'approval', 'clear'] },
 ]
 
 function getToolbarVisibility(width: number | undefined) {
@@ -115,8 +113,6 @@ function getToolbarVisibility(width: number | undefined) {
           TOOLBAR_BREAKPOINTS[TOOLBAR_BREAKPOINTS.length - 1].hidden),
   )
   return {
-    showSkills: !hidden.has('skills'),
-    showFiles: !hidden.has('files'),
     showHistory: !hidden.has('history'),
     showProvider: !hidden.has('provider'),
     showFast: !hidden.has('fast'),
@@ -1291,35 +1287,6 @@ export default function PromptInput(props: PromptInputProps) {
     })
   }
 
-  const handleCommandsClick = () => {
-    if (pickerOpen) {
-      setPickerOpen(false)
-      setSlashTriggerStart(null)
-      return
-    }
-    setFilePickerOpen(false)
-    setHistoryPickerOpen(false)
-    setFileTriggerStart(null)
-    setSlashTriggerStart(null)
-    setPickerSource('button')
-    setPickerFilter('')
-    setPickerOpen(true)
-  }
-
-  const handleFilesClick = () => {
-    if (filePickerOpen) {
-      setFilePickerOpen(false)
-      setFileTriggerStart(null)
-      return
-    }
-    setPickerOpen(false)
-    setHistoryPickerOpen(false)
-    setFilePickerSource('button')
-    setFilePickerFilter('')
-    setFileTriggerStart(null)
-    setFilePickerOpen(true)
-  }
-
   const handleHistoryClick = () => {
     if (historyPickerOpen) {
       setHistoryPickerOpen(false)
@@ -1342,8 +1309,6 @@ export default function PromptInput(props: PromptInputProps) {
   const toolbarVisibility = getToolbarVisibility(contentWidth)
   const showSubmitHint = contentWidth !== undefined && contentWidth >= 720
   const {
-    showSkills,
-    showFiles,
     showHistory,
     showProvider,
     showFast,
@@ -1351,8 +1316,6 @@ export default function PromptInput(props: PromptInputProps) {
     showClear,
   } = toolbarVisibility
 
-  const commandsDisabled = disabled || isComposerLocked || isRestarting
-  const filesDisabled = disabled || isComposerLocked || isRestarting || !workspaceId
   const imageIntakeDisabled = disabled || isComposerLocked || isRestarting || imageBusy || !imageInputAvailable
   const historyDisabled = disabled || isComposerLocked || isRestarting || !hasSession || isNewChat
   const imageRailError = imageErrors[imageDraftKey]
@@ -1669,18 +1632,7 @@ export default function PromptInput(props: PromptInputProps) {
                   hideFilterInput={pickerSource === 'slash'}
                   refetchOnOpen
                   contentWidth={contentWidth}
-                  anchor={
-                    <button
-                      type="button"
-                      onClick={handleCommandsClick}
-                      disabled={commandsDisabled}
-                      className={showSkills ? 'inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-chrome-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed' : 'hidden'}
-                      title={t('skills')}
-                    >
-                      <SlashSquare className="w-3 h-3" />
-                      <span className="hidden sm:inline">{t('skills')}</span>
-                    </button>
-                  }
+                  anchor={<span className="hidden" />}
                 />
                 <FilePicker
                   ref={filePickerHandleRef}
@@ -1697,18 +1649,7 @@ export default function PromptInput(props: PromptInputProps) {
                   hideFilterInput={filePickerSource === 'at'}
                   refetchOnOpen
                   contentWidth={contentWidth}
-                  anchor={
-                    <button
-                      type="button"
-                      onClick={handleFilesClick}
-                      disabled={filesDisabled}
-                      className={showFiles ? 'inline-flex items-center gap-1 px-2 py-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-chrome-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed' : 'hidden'}
-                      title={t('files')}
-                    >
-                      <Paperclip className="w-3 h-3" />
-                      <span className="hidden sm:inline">{t('files')}</span>
-                    </button>
-                  }
+                  anchor={<span className="hidden" />}
                 />
                 {isNewChat ? historyButton : (
                   <HistoryPicker

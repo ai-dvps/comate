@@ -434,23 +434,19 @@ describe('PromptInput browser', () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
     expect(screen.getByRole('textbox')).toBeInTheDocument()
     expect(screen.getByTestId('provider-selector')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Skills/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Files/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Skills/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Files/i })).not.toBeInTheDocument()
   })
 
   it('renders toolbar controls and Send in the same bottom row', () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
     const card = inputCardElement()
-    const skillsButton = screen.getByRole('button', { name: /Skills/i })
-    const filesButton = screen.getByRole('button', { name: /Files/i })
     const historyButton = screen.getByRole('button', { name: /History/i })
     const sendButton = screen.getByTitle('Send')
 
-    expect(card).toContainElement(skillsButton)
-    expect(card).toContainElement(filesButton)
     expect(card).toContainElement(historyButton)
     expect(card).toContainElement(sendButton)
-    expect(skillsButton.compareDocumentPosition(sendButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(historyButton.compareDocumentPosition(sendButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('uses the same composer for New Chat with workspace-aware controls and preserves its draft after send', async () => {
@@ -476,8 +472,8 @@ describe('PromptInput browser', () => {
 
     await waitFor(() => expect(onSend).toHaveBeenCalledWith({ text: 'Start from this prompt', images: [] }))
     expect(editableElement().textContent).toBe('Start from this prompt')
-    expect(screen.getByRole('button', { name: /Skills/i })).toBeEnabled()
-    expect(screen.getByRole('button', { name: /Files/i })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: /Skills/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Files/i })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /History/i })).toBeDisabled()
     expect(screen.getByTestId('provider-selector')).toHaveAttribute('data-mode', 'new-chat')
     expect(screen.getByTitle('Agent')).toBeInTheDocument()
@@ -515,7 +511,7 @@ describe('PromptInput browser', () => {
     expect(chatStoreMock.getState().drafts[DEFAULT_PROPS.sessionId]).toBe('Existing session draft')
   })
 
-  it('rebinds Skills, Files, and Provider controls when the New Chat workspace changes', async () => {
+  it('rebinds command, file, and provider controls when the New Chat workspace changes', async () => {
     function WorkspaceHarness() {
       const [workspaceId, setWorkspaceId] = React.useState('ws-1')
       return (
@@ -575,8 +571,9 @@ describe('PromptInput browser', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Skills/i })).toHaveClass('hidden')
-      expect(screen.getByRole('button', { name: /Files/i })).toHaveClass('hidden')
+      expect(screen.getByRole('button', { name: /History/i })).toHaveClass('hidden')
+      expect(screen.queryByRole('button', { name: /Skills/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Files/i })).not.toBeInTheDocument()
       expect(screen.getByTestId('provider-selector')).toBeInTheDocument()
       expect(screen.getByTitle('Agent')).toBeInTheDocument()
       expect(screen.getByTestId('fast-mode-toggle')).toBeInTheDocument()
@@ -607,8 +604,9 @@ describe('PromptInput browser', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Skills/i })).not.toHaveClass('hidden')
-      expect(screen.getByRole('button', { name: /Files/i })).not.toHaveClass('hidden')
+      expect(screen.getByRole('button', { name: /History/i })).not.toHaveClass('hidden')
+      expect(screen.queryByRole('button', { name: /Skills/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Files/i })).not.toBeInTheDocument()
       expect(screen.getByTestId('provider-selector')).toBeInTheDocument()
       expect(screen.queryByText(/(Cmd|Ctrl)\+Enter/)).not.toBeInTheDocument()
     })
@@ -775,40 +773,6 @@ describe('PromptInput browser', () => {
 
     await userEvent.click(screen.getByText('src/main.ts'))
     await waitFor(() => expect(editableElement().textContent).toBe('check @src/main.ts '))
-  })
-
-  it('inserts a file path when selecting from the Files button picker', async () => {
-    filesMock.results = [
-      { path: 'src/main.ts' },
-      { path: 'src/util.ts' },
-    ]
-
-    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
-    await userEvent.click(screen.getByRole('button', { name: /Files/i }))
-    await waitFor(() => expect(screen.getByText('src/main.ts')).toBeInTheDocument(), {
-      timeout: 1000,
-    })
-
-    await userEvent.click(screen.getByText('src/main.ts'))
-    await waitFor(() => expect(editableElement().textContent).toBe('@src/main.ts '))
-  })
-
-  it('inserts a file path at the existing caret when using the Files button picker', async () => {
-    filesMock.results = [{ path: 'src/main.ts' }]
-
-    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
-    const input = editableLocator()
-
-    await input.fill('check ')
-    await userEvent.click(screen.getByRole('button', { name: /Files/i }))
-    await waitFor(() => expect(screen.getByText('src/main.ts')).toBeInTheDocument(), {
-      timeout: 1000,
-    })
-
-    await userEvent.click(screen.getByText('src/main.ts'))
-    await waitFor(() =>
-      expect(editableElement().textContent).toBe('check @src/main.ts '),
-    )
   })
 
   it('does not recall history with ArrowUp when input is empty', async () => {
@@ -1099,7 +1063,7 @@ describe('PromptInput browser', () => {
     pasteImage('second.png')
     expect(imageInputMock.normalizeImageBatch).toHaveBeenCalledTimes(1)
     resolveNormalization?.([])
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Attach images' })).toBeEnabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Image' })).toBeEnabled())
   })
 
   it('does not block image controls based on an unrecognized provider model name', async () => {
@@ -1122,7 +1086,7 @@ describe('PromptInput browser', () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
 
     expect(screen.getByRole('button', { name: 'Preview kept.png' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Attach images' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Image' })).toBeEnabled()
     expect(screen.getByTitle('Send')).toBeEnabled()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
@@ -1370,13 +1334,14 @@ describe('PromptInput browser', () => {
   it('sizes the command picker popover to the input card width', async () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
     const card = inputCardElement()
+    const input = editableLocator()
 
-    await userEvent.click(screen.getByRole('button', { name: /Skills/i }))
+    await input.fill('/')
     await waitFor(() =>
-      expect(screen.getByPlaceholderText(/Search commands/i)).toBeInTheDocument(),
+      expect(screen.getByText('/commit')).toBeInTheDocument(),
     )
 
-    const popover = popoverForPlaceholder(/Search commands/i)
+    const popover = screen.getByRole('dialog')
     expect(popover.offsetWidth).toBe(card.offsetWidth)
     expect(popover.getBoundingClientRect().left).toBeCloseTo(
       card.getBoundingClientRect().left,
@@ -1388,13 +1353,14 @@ describe('PromptInput browser', () => {
     filesMock.results = [{ path: 'src/main.ts' }]
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
     const card = inputCardElement()
+    const input = editableLocator()
 
-    await userEvent.click(screen.getByRole('button', { name: /Files/i }))
+    await input.fill('@')
     await waitFor(() =>
-      expect(screen.getByPlaceholderText(/Search files/i)).toBeInTheDocument(),
+      expect(screen.getByText('src/main.ts')).toBeInTheDocument(),
     )
 
-    const popover = popoverForPlaceholder(/Search files/i)
+    const popover = screen.getByRole('dialog')
     expect(popover.offsetWidth).toBe(card.offsetWidth)
     expect(popover.getBoundingClientRect().left).toBeCloseTo(
       card.getBoundingClientRect().left,
@@ -1475,14 +1441,10 @@ describe('PromptInput browser', () => {
     await waitFor(() => expect(editableElement().textContent).toBe(''))
   })
 
-  const LEFT_CONTROLS = ['skills', 'files', 'history']
+  const LEFT_CONTROLS = ['history']
 
   function queryControl(name: string) {
     switch (name) {
-      case 'skills':
-        return screen.queryByRole('button', { name: /Skills/i })
-      case 'files':
-        return screen.queryByRole('button', { name: /Files/i })
       case 'history':
         return screen.queryByRole('button', { name: /History/i })
       case 'provider':
@@ -1513,50 +1475,38 @@ describe('PromptInput browser', () => {
     {
       label: 'wide',
       width: 800,
-      visible: ['skills', 'files', 'history', 'provider', 'fast', 'approval', 'clear'],
+      visible: ['history', 'provider', 'fast', 'approval', 'clear'],
       hidden: [] as string[],
     },
     {
-      label: 'skills-collapsed',
-      width: 600,
-      visible: ['files', 'history', 'provider', 'fast', 'approval', 'clear'],
-      hidden: ['skills'],
-    },
-    {
-      label: 'skills-and-files-collapsed',
-      width: 520,
-      visible: ['history', 'provider', 'fast', 'approval', 'clear'],
-      hidden: ['skills', 'files'],
-    },
-    {
-      label: 'left-controls-collapsed',
+      label: 'history-collapsed',
       width: 440,
       visible: ['provider', 'fast', 'approval', 'clear'],
-      hidden: ['skills', 'files', 'history'],
+      hidden: ['history'],
     },
     {
       label: 'provider-collapsed',
       width: 380,
       visible: ['fast', 'approval', 'clear'],
-      hidden: ['skills', 'files', 'history', 'provider'],
+      hidden: ['history', 'provider'],
     },
     {
       label: 'fast-collapsed',
-      width: 340,
+      width: 330,
       visible: ['approval', 'clear'],
-      hidden: ['skills', 'files', 'history', 'provider', 'fast'],
+      hidden: ['history', 'provider', 'fast'],
     },
     {
       label: 'approval-collapsed',
-      width: 290,
+      width: 280,
       visible: ['clear'],
-      hidden: ['skills', 'files', 'history', 'provider', 'fast', 'approval'],
+      hidden: ['history', 'provider', 'fast', 'approval'],
     },
     {
       label: 'minimal',
       width: 230,
       visible: [] as string[],
-      hidden: ['skills', 'files', 'history', 'provider', 'fast', 'approval', 'clear'],
+      hidden: ['history', 'provider', 'fast', 'approval', 'clear'],
     },
   ])(
     'responsive toolbar at $label width ($width px)',
@@ -1632,10 +1582,10 @@ describe('PromptInput browser', () => {
     expect(stopRect.left).toBeGreaterThanOrEqual(cardRect.left)
   })
 
-  it('keeps slash and at triggers working when toolbar buttons are hidden', async () => {
+  it('keeps slash and at triggers working when toolbar controls are collapsed', async () => {
     renderAtWidth(230)
     await waitFor(() =>
-      expect(screen.queryByRole('button', { name: /Skills/i })).toHaveClass('hidden'),
+      expect(screen.queryByRole('button', { name: /History/i })).toHaveClass('hidden'),
     )
 
     const input = editableLocator()
