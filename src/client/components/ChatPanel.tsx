@@ -11,6 +11,7 @@ import ApprovalSurface, { CHAT_ABOUT_THIS_MESSAGE } from './ApprovalSurface'
 import DetailDrawer from './DetailDrawer'
 import type { DrawerView } from './detail-drawer-view'
 import TaskPanel from './TaskPanel'
+import ChangedFilesPanel from './ChangedFilesPanel'
 import StatusBar from './StatusBar'
 import MessageSearchBar from './MessageSearchBar'
 import WorkflowFloatingPanel from './WorkflowFloatingPanel'
@@ -405,6 +406,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
                 onOpenWorkflow={(runId: string) => handleOpenDrawerView({ kind: 'workflow', runId })}
               />
               <TaskPanel sessionId={activeSessionId} />
+              <ChangedFilesPanel sessionId={activeSessionId} />
             </div>
           )}
 
