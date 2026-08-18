@@ -1,5 +1,5 @@
 import type { Provider } from '../models/provider.js';
-import { providerUsageStore, type UsageSummary, type UsageStatus } from './provider-usage-store.js';
+import type { UsageSummary, UsageStatus } from './provider-usage-types.js';
 import { store as sqliteStoreSingleton } from '../storage/sqlite-store.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
 import { diagLog } from '../utils/diag-logger.js';
@@ -133,14 +133,13 @@ function parseUsageSummary(body: unknown): UsageSummary | null {
 }
 
 export class KimiUsageService {
-  constructor(
-    private readonly sqlite: SqliteStore,
-    private readonly usage = providerUsageStore,
-  ) {}
+  constructor(private readonly sqlite: SqliteStore) {}
 
   /**
-   * Resolve Kimi coding-plan usage for a provider. Server-side only; the
-   * response never carries the token or account fields.
+   * Resolve Kimi coding-plan usage for a provider. Always queries the billing
+   * endpoint live — no server-side cache, so the summary reflects the
+   * provider's current quota. Server-side only; the response never carries the
+   * token or account fields.
    *
    * Status semantics: `unsupported` (not a Kimi coding-plan provider),
    * `idle` (coding-plan provider, no captured token yet), `relogin` (token
@@ -151,11 +150,6 @@ export class KimiUsageService {
     const provider = this.sqlite.getProvider(providerId);
     if (!provider || !isKimiCodingPlanProvider(provider)) {
       return { status: 'unsupported' };
-    }
-
-    const cached = this.usage.getCachedUsage(providerId);
-    if (cached && !this.usage.isStale(cached)) {
-      return { status: 'ready', summary: cached, lastUpdated: cached.lastUpdated };
     }
 
     const token = readKimiBearerToken(this.sqlite);
@@ -196,7 +190,6 @@ export class KimiUsageService {
       if (!summary) {
         return { status: 'no-plan' };
       }
-      this.usage.setCachedUsage(providerId, summary);
       return { status: 'ready', summary, lastUpdated: summary.lastUpdated };
     } catch (err) {
       diagLog('Kimi usage query failed', {
@@ -207,5 +200,5 @@ export class KimiUsageService {
   }
 }
 
-/** Process singleton sharing the ProviderUsageStore caches. */
+/** Process singleton. */
 export const kimiUsageService = new KimiUsageService(sqliteStoreSingleton);

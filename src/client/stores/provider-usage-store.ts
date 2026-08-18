@@ -24,7 +24,7 @@ export interface UsageState {
   summary: UsageSummary | null
   status: UsageStatus
   /** Client-side timestamp of the last fetch (throttle); the summary's own
-   * lastUpdated is the server cache time. */
+   * lastUpdated is when the server fetched the quota live. */
   lastUpdated: number | null
 }
 
@@ -38,7 +38,7 @@ export interface UsageLoginState {
 }
 
 const API_BASE = '/api/providers'
-/** Avoid refetching on every render/open; the server holds the 24h cache. */
+/** Avoid refetching on every render/open; the server always fetches live. */
 const CLIENT_FETCH_THROTTLE_MS = 10_000
 
 /**

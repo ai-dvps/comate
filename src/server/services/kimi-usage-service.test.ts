@@ -3,7 +3,6 @@ import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { SqliteStore } from '../storage/sqlite-store.js';
-import { ProviderUsageStore } from './provider-usage-store.js';
 import { KimiUsageService, KIMI_GET_USAGES_URL, KIMI_SITE_KEY } from './kimi-usage-service.js';
 
 type FetchImpl = typeof fetch;
@@ -36,15 +35,13 @@ const REAL_USAGE = {
 
 describe('KimiUsageService', () => {
   let sqlite: SqliteStore;
-  let usage: ProviderUsageStore;
   let svc: KimiUsageService;
   let realFetch: FetchImpl;
   let fetchedUrls: string[];
 
   beforeEach(() => {
     sqlite = new SqliteStore(':memory:');
-    usage = new ProviderUsageStore();
-    svc = new KimiUsageService(sqlite, usage);
+    svc = new KimiUsageService(sqlite);
     realFetch = global.fetch;
     fetchedUrls = [];
   });
@@ -157,5 +154,16 @@ describe('KimiUsageService', () => {
     trackFetch(() => jsonResponse(200, REAL_USAGE));
     await svc.runUsageCheck(id);
     assert.equal(fetchedUrls[0], KIMI_GET_USAGES_URL);
+  });
+
+  test('consecutive checks re-fetch live data (no server-side cache)', async () => {
+    const id = makeProvider('https://api.kimi.com/coding');
+    seedBearer(makeJwt(Math.floor(Date.now() / 1000) + 1e6));
+    trackFetch(() => jsonResponse(200, REAL_USAGE));
+    const first = await svc.runUsageCheck(id);
+    const second = await svc.runUsageCheck(id);
+    assert.equal(first.status, 'ready');
+    assert.equal(second.status, 'ready');
+    assert.equal(fetchedUrls.length, 2);
   });
 });

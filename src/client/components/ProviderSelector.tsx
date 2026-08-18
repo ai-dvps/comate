@@ -125,8 +125,9 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
   }, [fetchProviders, providers.length])
 
   // On open, fetch usage for each Kimi coding-plan provider (on-demand; the
-  // client throttle + server 24h cache prevent over-fetching). Never auto-open
-  // the login modal — that only happens on explicit click (R3).
+  // client throttle prevents over-fetching, and the server always fetches
+  // live). Never auto-open the login modal — that only happens on explicit
+  // click (R3).
   useEffect(() => {
     if (!open) return
     for (const provider of providers) {

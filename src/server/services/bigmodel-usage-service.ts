@@ -1,5 +1,5 @@
 import type { Provider } from '../models/provider.js';
-import { providerUsageStore, type UsageSummary, type UsageStatus } from './provider-usage-store.js';
+import type { UsageSummary, UsageStatus } from './provider-usage-types.js';
 import { store as sqliteStoreSingleton } from '../storage/sqlite-store.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
 import { asRecord, asNum } from './kimi-usage-service.js';
@@ -81,20 +81,13 @@ function readBigModelBearer(sqlite: SqliteStore): string | null {
 }
 
 export class BigModelUsageService {
-  constructor(
-    private readonly sqlite: SqliteStore = sqliteStoreSingleton,
-    private readonly cache = providerUsageStore,
-  ) {}
+  /** Always queries the quota endpoint live — no server-side cache. */
+  constructor(private readonly sqlite: SqliteStore = sqliteStoreSingleton) {}
 
   async runUsageCheck(providerId: string): Promise<UsageResult> {
     const provider = this.sqlite.getProvider(providerId);
     if (!provider || !isBigModelProvider(provider)) {
       return { status: 'unsupported' };
-    }
-
-    const cached = this.cache.getCachedUsage(providerId);
-    if (cached && !this.cache.isStale(cached)) {
-      return { status: 'ready', summary: cached, lastUpdated: cached.lastUpdated };
     }
 
     const token = readBigModelBearer(this.sqlite);
@@ -129,7 +122,6 @@ export class BigModelUsageService {
       if (!summary) {
         return { status: 'no-plan' };
       }
-      this.cache.setCachedUsage(providerId, summary);
       return { status: 'ready', summary, lastUpdated: summary.lastUpdated };
     } catch (err) {
       diagLog('BigModel usage query failed', {
