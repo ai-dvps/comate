@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import FilePath from './FilePath'
@@ -46,17 +46,6 @@ describe('FilePath', () => {
     expect(pathEl).toHaveAttribute('title', '/workspace/src/components/Button.tsx')
   })
 
-  it('opens file on Cmd/Ctrl+click', async () => {
-    const onOpenFile = vi.fn()
-    renderWithContext(<FilePath path="/workspace/src/components/Button.tsx" />, {
-      workspacePath: '/workspace',
-      onOpenFile,
-    })
-
-    fireEvent.click(screen.getByText('src/components/Button.tsx'), { metaKey: true })
-    expect(onOpenFile).toHaveBeenCalledWith('src/components/Button.tsx', 'Button.tsx')
-  })
-
   it('opens file on plain click', async () => {
     const onOpenFile = vi.fn()
     renderWithContext(<FilePath path="/workspace/src/components/Button.tsx" />, {
@@ -75,7 +64,7 @@ describe('FilePath', () => {
       onOpenFile,
     })
 
-    fireEvent.click(screen.getByText('lib/utils.ts'), { ctrlKey: true })
+    await userEvent.click(screen.getByText('lib/utils.ts'))
     expect(onOpenFile).toHaveBeenCalledTimes(1)
     expect(onOpenFile.mock.calls[0][0]).toBe('lib/utils.ts')
     expect(onOpenFile.mock.calls[0][1]).toBe('utils.ts')

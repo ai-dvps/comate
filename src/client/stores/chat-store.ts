@@ -1048,20 +1048,37 @@ function mutateToolUsePart(
   return {}
 }
 
+type ToolUsePart = Extract<MessagePart | SubagentPart, { type: 'tool_use' }>
+
+/**
+ * Backward scan for a tool_use part by toolUseId. Backward because parts are
+ * appended chronologically and a result arrives right after its use, so the
+ * match lives near the end (same precedent as mutateToolUsePart). toolUseIds
+ * are unique per invocation, so scan direction cannot change which part is
+ * found.
+ */
+function findToolUsePart(
+  messages: ReadonlyArray<{
+    parts: ReadonlyArray<MessagePart | SubagentPart | null | undefined>
+  }>,
+  toolUseId: string,
+): ToolUsePart | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const part = messages[i].parts.find(
+      (p): p is ToolUsePart =>
+        p?.type === 'tool_use' && p.toolUseId === toolUseId,
+    )
+    if (part) return part
+  }
+  return undefined
+}
+
 function findToolName(
   state: ChatState,
   sessionId: string,
   toolUseId: string,
 ): string | undefined {
-  const msgs = state.messages[sessionId] || []
-  for (const m of msgs) {
-    const part = m.parts.find(
-      (p): p is Extract<MessagePart, { type: 'tool_use' }> =>
-        p?.type === 'tool_use' && p.toolUseId === toolUseId,
-    )
-    if (part) return part.toolName
-  }
-  return undefined
+  return findToolUsePart(state.messages[sessionId] || [], toolUseId)?.toolName
 }
 
 /**
@@ -1358,7 +1375,7 @@ export function scanMessagesForTouchedFiles(
  * and ordering (lastTouchedAt desc; among equal timestamps the most recently
  * recorded touch sorts first, mirroring the scanner's seq tie-break).
  */
-export function mergeTouchedFileEntry(
+function mergeTouchedFileEntry(
   entries: TouchedFileEntry[],
   toolName: string,
   rawPath: string,
@@ -1375,18 +1392,48 @@ export function mergeTouchedFileEntry(
         lastTouchedAt: Math.max(existing.lastTouchedAt, timestamp),
       }
     : { path, status, lastTouchedAt: timestamp }
-  const rest = entries.filter((entry) => entry.path !== path)
+  const rest = existing ? entries.filter((entry) => entry.path !== path) : entries
   const insertAt = rest.findIndex((entry) => entry.lastTouchedAt <= merged.lastTouchedAt)
   if (insertAt === -1) return [...rest, merged]
   return [...rest.slice(0, insertAt), merged, ...rest.slice(insertAt)]
 }
 
 /**
- * U2 live main-channel accumulation: on a successful tool_result, join the
- * matching tool_use part by toolUseId and fold the touch into the session's
- * touched-files list at accumulation time (KTD3). Callers must invoke this
- * only after the reconnect-replay early-return so replayed results never
- * double-record.
+ * U2 live accumulation shared body: join the matching tool_use part by
+ * toolUseId within the given message list and fold the touch into the
+ * session's touched-files list at accumulation time (KTD3).
+ */
+function accumulateTouchedFileFromMessages(
+  state: ChatState,
+  sessionId: string,
+  messages: ReadonlyArray<{
+    parts: ReadonlyArray<MessagePart | SubagentPart | null | undefined>
+  }>,
+  toolUseId: string,
+  toolUseResult: unknown,
+): Partial<ChatState> {
+  const part = findToolUsePart(messages, toolUseId)
+  if (!part) return {}
+  const rawPath = fileToolInputPath(part.toolName, part.input)
+  if (!rawPath) return {}
+  const entries = state.touchedFiles[sessionId] || []
+  return {
+    touchedFiles: {
+      ...state.touchedFiles,
+      [sessionId]: mergeTouchedFileEntry(
+        entries,
+        part.toolName,
+        rawPath,
+        Date.now(),
+        toolUseResult,
+      ),
+    },
+  }
+}
+
+/**
+ * U2 live main-channel accumulation. Callers must invoke this only after the
+ * reconnect-replay early-return so replayed results never double-record.
  */
 function accumulateTouchedFileFromToolResult(
   state: ChatState,
@@ -1396,30 +1443,13 @@ function accumulateTouchedFileFromToolResult(
   toolUseResult: unknown,
 ): Partial<ChatState> {
   if (isError) return {}
-  const messages = state.messages[sessionId] || []
-  for (const message of messages) {
-    const part = message.parts.find(
-      (p): p is Extract<MessagePart, { type: 'tool_use' }> =>
-        p?.type === 'tool_use' && p.toolUseId === toolUseId,
-    )
-    if (!part) continue
-    const rawPath = fileToolInputPath(part.toolName, part.input)
-    if (!rawPath) return {}
-    const entries = state.touchedFiles[sessionId] || []
-    return {
-      touchedFiles: {
-        ...state.touchedFiles,
-        [sessionId]: mergeTouchedFileEntry(
-          entries,
-          part.toolName,
-          rawPath,
-          Date.now(),
-          toolUseResult,
-        ),
-      },
-    }
-  }
-  return {}
+  return accumulateTouchedFileFromMessages(
+    state,
+    sessionId,
+    state.messages[sessionId] || [],
+    toolUseId,
+    toolUseResult,
+  )
 }
 
 /**
@@ -1438,23 +1468,13 @@ function accumulateSubagentTouchedFileFromResult(
   if (isError) return {}
   const subagent = findSubagent(state, sessionId, parentToolUseId)
   if (!subagent) return {}
-  for (const message of subagent.messages) {
-    const part = message.parts.find(
-      (p): p is Extract<SubagentPart, { type: 'tool_use' }> =>
-        p?.type === 'tool_use' && p.toolUseId === toolUseId,
-    )
-    if (!part) continue
-    const rawPath = fileToolInputPath(part.toolName, part.input)
-    if (!rawPath) return {}
-    const entries = state.touchedFiles[sessionId] || []
-    return {
-      touchedFiles: {
-        ...state.touchedFiles,
-        [sessionId]: mergeTouchedFileEntry(entries, part.toolName, rawPath, Date.now(), undefined),
-      },
-    }
-  }
-  return {}
+  return accumulateTouchedFileFromMessages(
+    state,
+    sessionId,
+    subagent.messages,
+    toolUseId,
+    undefined,
+  )
 }
 
 function isSessionActive(state: ChatState, sessionId: string): boolean {
