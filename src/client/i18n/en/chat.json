@@ -216,6 +216,7 @@
   "workflowSubagentCountWithRunning": "{{completed}}/{{total}} done, {{running}} running",
   "workflowPanelTitle": "Workflows",
   "taskPanelTitle": "Tasks",
+  "openFileFailed": "Failed to open {{name}}",
   "workflowDetailPhases": "Phases",
   "workflowDetailSubagents": "Subagents",
   "workflowDetailTokens_one": "{{count}} token",
