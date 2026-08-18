@@ -3,7 +3,6 @@ import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { SqliteStore } from '../storage/sqlite-store.js';
-import { ProviderUsageStore } from './provider-usage-store.js';
 import { BigModelUsageService, BIGMODEL_SITE_KEY } from './bigmodel-usage-service.js';
 
 type FetchImpl = typeof fetch;
@@ -38,17 +37,17 @@ const REAL_RESPONSE = {
 
 describe('BigModelUsageService', () => {
   let sqlite: SqliteStore;
-  let usage: ProviderUsageStore;
   let svc: BigModelUsageService;
   let realFetch: FetchImpl;
   let fetchHeaders: Record<string, string> | undefined;
+  let fetchedUrls: string[];
 
   beforeEach(() => {
     sqlite = new SqliteStore(':memory:');
-    usage = new ProviderUsageStore();
-    svc = new BigModelUsageService(sqlite, usage);
+    svc = new BigModelUsageService(sqlite);
     realFetch = global.fetch;
     fetchHeaders = undefined;
+    fetchedUrls = [];
   });
 
   afterEach(() => {
@@ -66,6 +65,7 @@ describe('BigModelUsageService', () => {
 
   function trackFetch(responder: (url: string) => Response): void {
     global.fetch = (((url: string, init?: RequestInit) => {
+      fetchedUrls.push(url);
       fetchHeaders = init?.headers as Record<string, string> | undefined;
       return Promise.resolve(responder(url));
     }) as unknown) as FetchImpl;
@@ -133,5 +133,16 @@ describe('BigModelUsageService', () => {
     global.fetch = (() => Promise.reject(new Error('network'))) as unknown as FetchImpl;
     const result = await svc.runUsageCheck(id);
     assert.equal(result.status, 'error');
+  });
+
+  test('consecutive checks re-fetch live data (no server-side cache)', async () => {
+    const id = makeProvider('https://open.bigmodel.cn/api/anthropic');
+    seedBearer('bm-token');
+    trackFetch(() => jsonResponse(200, REAL_RESPONSE));
+    const first = await svc.runUsageCheck(id);
+    const second = await svc.runUsageCheck(id);
+    assert.equal(first.status, 'ready');
+    assert.equal(second.status, 'ready');
+    assert.equal(fetchedUrls.length, 2);
   });
 });

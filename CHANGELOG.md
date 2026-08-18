@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Provider coding-plan usage is now fetched live on every check** — Kimi and BigModel quota summaries no longer come from a one-hour server-side cache, so opening the provider selector or pressing Refresh always reflects the provider's current usage; a short client-side throttle still avoids redundant requests within ten seconds.
 - **Bot sessions now ask questions as plain chat text** — WeCom and Feishu bot sessions no longer offer the agent the structured AskUserQuestion tool, so a decision request surfaces as a plain text message the user answers by replying; the now-unreachable WeCom and Feishu question cards, card-answer routing, and free-text question interception are removed, while GUI sessions keep the structured question flow unchanged.
 - **Workspaces now follow recent Session activity** — The Workspace list moves the Workspace with the newest effective Session activity to the top, including running work, unread completions, and pending user interactions, while preserving expansion and selection state.
 - **Prompt references are now atomic chips** — Resolved Skills and files appear as lightweight, non-editable chips that can be deleted as a whole and reinserted with `/` or `@`; references that become invalid remain atomic and show a warning state. File chips display only the basename and reveal the full path in an instant hover tooltip, while the prompt text, copy, and cut keep the complete `@path` reference.
