@@ -120,6 +120,23 @@ describe('browser-pane-store', () => {
     expect(useBrowserPaneStore.getState().hasOpened).toBe(true)
   })
 
+  it('merges into the latest persisted map so a stale writer cannot clobber other keys', () => {
+    // The detached browser window shares this localStorage origin and its
+    // store booted earlier; dumping this window's in-memory map would erase
+    // keys the other window wrote since boot.
+    const store = useBrowserPaneStore.getState()
+    store.setPaneOpen('sess-A', true)
+    // The other window (or a newer boot) rewrote the map meanwhile.
+    localStorage.setItem(
+      'browser-pane-open-by-session',
+      JSON.stringify({ 'sess-A': false, 'sess-B': true }),
+    )
+    store.setPaneOpen('sess-C', true)
+    expect(
+      JSON.parse(localStorage.getItem('browser-pane-open-by-session')!),
+    ).toEqual({ 'sess-A': false, 'sess-B': true, 'sess-C': true })
+  })
+
   // -- 展开/收起 is independent per session -----------------------------------
 
   it('keeps the pane open state independent per session', () => {
@@ -177,6 +194,94 @@ describe('browser-pane-store', () => {
     wsClientMock.emitEvent(browserStateEvent('sess-other', 'handoff_pending', 4002))
     expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-1')).toBe(false)
     expect(selectHandoffPending(useBrowserPaneStore.getState(), 'sess-other')).toBe(true)
+  })
+
+  // -- agent browser (re)birth: auto-open (empty-state copy's promise) --------
+
+  it('auto-opens the pane when the agent browser comes alive for the active session', async () => {
+    const store = useBrowserPaneStore.getState()
+    store.setActiveSession('ws1', 'sess-1')
+    await waitFor(() =>
+      expect(wsClientMock.request).toHaveBeenCalledWith('subscribeBrowserState', {
+        workspaceId: 'ws1',
+        sessionId: 'sess-1',
+      }),
+    )
+    // Channel hydration: no browser yet, pane stays closed.
+    wsClientMock.emitEvent(browserStateEvent('sess-1', 'none'))
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-1')).toBe(false)
+
+    // The first MCP browser tool call spawns the view → agent_in_control.
+    wsClientMock.emitEvent(browserStateEvent('sess-1', 'agent_in_control', 4001))
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-1')).toBe(true)
+  })
+
+  it('does not auto-open when hydration replays an already-live browser', () => {
+    useBrowserPaneStore.getState().setActiveSession('ws1', 'sess-1')
+    // First event for this session IS the hydration: a live browser the user
+    // already knows about — the persisted per-session open state decides.
+    wsClientMock.emitEvent(browserStateEvent('sess-1', 'agent_in_control', 4001))
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-1')).toBe(false)
+  })
+
+  it('does not auto-open for a browser coming alive on a background session', () => {
+    useBrowserPaneStore.getState().setActiveSession('ws1', 'sess-1')
+    wsClientMock.emitEvent(browserStateEvent('sess-other', 'none'))
+    wsClientMock.emitEvent(browserStateEvent('sess-other', 'agent_in_control', 4002))
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-other')).toBe(false)
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-1')).toBe(false)
+  })
+
+  it('never re-opens the pane on live-to-live transitions after the user closed it', async () => {
+    const store = useBrowserPaneStore.getState()
+    store.setActiveSession('ws1', 'sess-1')
+    wsClientMock.emitEvent(browserStateEvent('sess-1', 'none'))
+    wsClientMock.emitEvent(browserStateEvent('sess-1', 'agent_in_control', 4001))
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-1')).toBe(true)
+
+    // The user explicitly closes the pane while the agent keeps driving.
+    store.setPaneOpen('sess-1', false)
+    // Takeover → handback cycles are live→live: the manual close wins.
+    wsClientMock.emitEvent(browserStateEvent('sess-1', 'user_in_control', 4001))
+    wsClientMock.emitEvent(browserStateEvent('sess-1', 'agent_in_control', 4001))
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-1')).toBe(false)
+  })
+
+  it('re-opens the pane when a lost session browser rebuilds on the next tool call', () => {
+    const store = useBrowserPaneStore.getState()
+    store.setActiveSession('ws1', 'sess-1')
+    wsClientMock.emitEvent(browserStateEvent('sess-1', 'none'))
+    wsClientMock.emitEvent(browserStateEvent('sess-1', 'agent_in_control', 4001))
+    wsClientMock.emitEvent(browserStateEvent('sess-1', 'session_lost'))
+    store.setPaneOpen('sess-1', false)
+
+    // session_lost → live is a (re)birth, not a live→live transition.
+    wsClientMock.emitEvent(browserStateEvent('sess-1', 'agent_in_control', 4002))
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-1')).toBe(true)
+  })
+
+  it('auto-opens when hydration catches the browser mid-spawn and the ready event lands', () => {
+    useBrowserPaneStore.getState().setActiveSession('ws1', 'sess-1')
+    // Mid-spawn hydration: agent_in_control but no port yet (the shell is
+    // still creating the view). Hydration must not auto-open by itself.
+    wsClientMock.emitEvent(browserStateEvent('sess-1', 'agent_in_control'))
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-1')).toBe(false)
+
+    // The ready emit arrives live→live but carries the first known port.
+    wsClientMock.emitEvent(browserStateEvent('sess-1', 'agent_in_control', 4001))
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-1')).toBe(true)
+  })
+
+  it('does not re-open on a live→live transition while the port is already known', () => {
+    const store = useBrowserPaneStore.getState()
+    store.setActiveSession('ws1', 'sess-1')
+    wsClientMock.emitEvent(browserStateEvent('sess-1', 'none'))
+    wsClientMock.emitEvent(browserStateEvent('sess-1', 'agent_in_control', 4001))
+    store.setPaneOpen('sess-1', false)
+    // Handback: live→live with the same known port — the manual close wins.
+    wsClientMock.emitEvent(browserStateEvent('sess-1', 'user_in_control', 4001))
+    wsClientMock.emitEvent(browserStateEvent('sess-1', 'agent_in_control', 4001))
+    expect(selectSessionOpen(useBrowserPaneStore.getState(), 'sess-1')).toBe(false)
   })
 
   // -- AE3: follow the active session ---------------------------------------

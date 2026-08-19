@@ -358,7 +358,11 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
         openBySession: { ...state.openBySession, [sessionId]: open },
         ...(open ? { hasOpened: true } : {}),
       }))
-      writePersistedOpenBySession(get().openBySession)
+      // Merge into the LATEST persisted map rather than dumping this window's
+      // in-memory one: the detached browser window shares this localStorage
+      // origin, and its boot-time-stale map would otherwise clobber keys the
+      // main window changed since (and vice versa). Last writer wins per key.
+      writePersistedOpenBySession({ ...readPersistedOpenBySession(), [sessionId]: open })
     },
 
     setWidth: (width: number) => {
@@ -482,6 +486,7 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
 
     _applyBrowserState: (sessionId, data) => {
       const next = data.state
+      const previous = getSessionState(get(), sessionId)
       patchSession(sessionId, {
         controlState: next,
         hydrated: true,
@@ -498,8 +503,29 @@ export const useBrowserPaneStore = create<BrowserPaneState>((set, get) => {
         // A moving state machine supersedes a stale idle prompt.
         idlePrompt: false,
       })
+      if (sessionId !== get().activeSessionId) return
       // handoff → header badge + auto-expand (R1/R5).
-      if (next === 'handoff_pending' && sessionId === get().activeSessionId) {
+      if (next === 'handoff_pending') {
+        get().setPaneOpen(sessionId, true)
+        return
+      }
+      // Browser (re)birth → auto-open — the empty-state copy's promise ("One
+      // opens automatically when Claude works on a web task."). Only a
+      // non-live → live transition observed AFTER the channel's hydration
+      // counts: hydration replaying an already-live browser respects the
+      // persisted per-session open state, and live→live transitions
+      // (takeover/handback) never fight the user's manual close.
+      const becameLive =
+        previous.hydrated && !isLiveControlState(previous.controlState) && isLiveControlState(next)
+      // Mid-spawn window: hydration can catch the session in agent_in_control
+      // without a port (view still being created); the ready emit then arrives
+      // as live→live. Treat "first known port" as the birth signal too.
+      const becameReady =
+        previous.hydrated &&
+        isLiveControlState(next) &&
+        data.port !== undefined &&
+        previous.port === null
+      if (becameLive || becameReady) {
         get().setPaneOpen(sessionId, true)
       }
     },
