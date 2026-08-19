@@ -318,8 +318,7 @@ function startBackgroundPolling(
             if (st.lastTurnStartedAt !== undefined) {
               const stored = state.lastActivityAt[sid]
               if (
-                stored !== undefined &&
-                st.lastTurnStartedAt > stored &&
+                isGenuineTurnKeyAdvance(stored, st.lastTurnStartedAt) &&
                 workspaceSessions.some(
                   (session) => session.id === sid && session.isArchived,
                 )
@@ -3174,19 +3173,68 @@ function subscribeToSession(
 }
 
 /**
+ * Session ids whose unarchive PUT (KTD5) has fired but not yet settled. While
+ * an id is pending, a sessions refetch must not re-archive the local row from
+ * a server value that has not caught up yet.
+ */
+const pendingUnarchiveSessionIds = new Set<string>()
+
+/**
+ * Restore the local archived flag after a failed unarchive persist, in
+ * whichever workspace array currently holds the session.
+ */
+function restoreSessionArchivedFlag(sessionId: string): void {
+  useChatStore.setState((state) => {
+    for (const [workspaceId, sessions] of Object.entries(state.sessions)) {
+      if (!sessions.some((session) => session.id === sessionId)) continue
+      return {
+        sessions: {
+          ...state.sessions,
+          [workspaceId]: sessions.map((session) =>
+            session.id === sessionId ? { ...session, isArchived: true } : session,
+          ),
+        },
+      }
+    }
+    return {}
+  })
+}
+
+/**
+ * KTD5 advance gate: a genuine turn-key advance is an incoming key strictly
+ * greater than the stored key, with a stored key present — the first-boot
+ * seed (no stored key) never qualifies. Each writer pairs this with its own
+ * archived-flag source.
+ */
+function isGenuineTurnKeyAdvance(stored: number | undefined, incoming: number): boolean {
+  return stored !== undefined && incoming > stored
+}
+
+/**
  * Persist the unarchive side effect of an observed turn-start advance (KTD5).
  * Callers flip the local sessions list and decide when the gate holds (a
  * genuine server-carried key advance over the stored value; the first-boot
- * seed never qualifies); this only fires the best-effort server write.
+ * seed never qualifies); this only fires the best-effort server write. The id
+ * stays in pendingUnarchiveSessionIds until the write settles; on failure the
+ * local row is re-archived so the session does not sit unarchived until the
+ * next turn.
  */
 function persistSessionUnarchive(workspaceId: string, sessionId: string): void {
+  pendingUnarchiveSessionIds.add(sessionId)
   fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ isArchived: false }),
-  }).catch((err) => {
-    console.warn('Failed to clear archived state on activity:', err)
   })
+    .then((res) => {
+      if (!res.ok) throw new Error(`request failed with status ${res.status}`)
+      pendingUnarchiveSessionIds.delete(sessionId)
+    })
+    .catch((err) => {
+      console.warn('Failed to clear archived state on activity:', err)
+      restoreSessionArchivedFlag(sessionId)
+      pendingUnarchiveSessionIds.delete(sessionId)
+    })
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -3270,7 +3318,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // an archived session; the first-boot seed (no stored key) never
             // does.
             const stored = state.lastActivityAt[session.id]
-            if (stored !== undefined && serverKey > stored && session.isArchived) {
+            if (isGenuineTurnKeyAdvance(stored, serverKey) && session.isArchived) {
               unarchiveSessionIds.push(session.id)
             }
             nextLastActivityAt[session.id] = serverKey
@@ -3288,14 +3336,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
           }
         }
         const unarchiveSet = new Set(unarchiveSessionIds)
+        // While an unarchive PUT is still in flight the server row is stale;
+        // hold the local unarchived state for those sessions instead of
+        // re-archiving them from this refetch.
+        const holdUnarchived = (session: ChatSession): boolean =>
+          unarchiveSet.has(session.id) ||
+          (session.isArchived === true && pendingUnarchiveSessionIds.has(session.id))
         return {
           sessions: {
             ...state.sessions,
-            [workspaceId]: unarchiveSet.size > 0
-              ? fetchedSessions.map((s) =>
-                  unarchiveSet.has(s.id) ? { ...s, isArchived: false } : s,
-                )
-              : fetchedSessions,
+            [workspaceId]: fetchedSessions.map((session) =>
+              holdUnarchived(session) ? { ...session, isArchived: false } : session,
+            ),
           },
           lastActivityAt: nextLastActivityAt,
         }
@@ -3868,8 +3920,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete nextPromptHistory[workspaceId]
       const nextBackgroundSessions = { ...state.backgroundSessions }
       delete nextBackgroundSessions[workspaceId]
-      const nextWorkspaceKeys = { ...state.workspaceLastTurnStartedAt }
-      delete nextWorkspaceKeys[workspaceId]
+      // workspaceLastTurnStartedAt is deliberately kept: the map is bounded by
+      // workspace count, authoritatively re-seeded by fetchWorkspaces/poll,
+      // and a lingering entry for a deleted workspace is never read.
       const keyPrefix = `${JSON.stringify(workspaceId)}:`
       const nextImageDrafts = { ...state.imageDrafts }
       const releasedPreviewUrls = new Set<string>()
@@ -3896,7 +3949,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return {
         promptHistory: nextPromptHistory,
         backgroundSessions: nextBackgroundSessions,
-        workspaceLastTurnStartedAt: nextWorkspaceKeys,
         imageDrafts: nextImageDrafts,
         pendingTurns: nextPendingTurns,
         pendingSend: withoutWorkspaceTurns(state.pendingSend),
@@ -4002,8 +4054,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const storedActivityKey = state.lastActivityAt[sessionId]
       unarchiveOnSend =
         session?.isArchived === true &&
-        storedActivityKey !== undefined &&
-        optimisticTurnStartedAt > storedActivityKey
+        isGenuineTurnKeyAdvance(storedActivityKey, optimisticTurnStartedAt)
       const nextSessions = workspaceSessions.map((s) =>
         s.id === sessionId
           ? { ...s, isDraft: false, ...(unarchiveOnSend ? { isArchived: false } : {}) }

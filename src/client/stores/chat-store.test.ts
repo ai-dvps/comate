@@ -21,6 +21,7 @@ import {
 } from './chat-store'
 import { compareSessionActivity } from '../lib/session-sort'
 import { sortWorkspacesByActivity } from '../lib/workspace-sort'
+import { useWorkspaceStore } from './workspace-store'
 import {
   DEFAULT_TIMEOUT,
   WebSocketRequestTimeoutError,
@@ -3932,11 +3933,27 @@ describe('activity ordering writers (turn-start keyed; KTD2/KTD3/KTD5)', () => {
     }
   }
 
-  function stubSessionListFetch(rowsByWorkspace: Record<string, ChatSession[]>) {
+  function stubSessionListFetch(
+    rowsByWorkspace: Record<string, ChatSession[]>,
+    options: {
+      workspaces?: Array<Record<string, unknown>>
+      createdWorkspace?: Record<string, unknown>
+      putImplementation?: () => Promise<unknown>
+    } = {},
+  ) {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (init?.method === 'PUT') return { ok: true, json: async () => ({}) }
       const url = String(input)
+      if (init?.method === 'PUT') {
+        if (options.putImplementation) return options.putImplementation()
+        return { ok: true, json: async () => ({}) }
+      }
+      if (init?.method === 'POST' && /\/api\/workspaces\/?$/.test(url)) {
+        return { ok: true, json: async () => ({ workspace: options.createdWorkspace }) }
+      }
       if (url.includes('/prompt-history')) return { ok: true, json: async () => ({ prompts: [] }) }
+      if (/\/api\/workspaces\/?$/.test(url)) {
+        return { ok: true, json: async () => ({ workspaces: options.workspaces ?? [] }) }
+      }
       const match = /\/api\/workspaces\/([^/]+)\/sessions/.exec(url)
       const rows = match ? (rowsByWorkspace[match[1]] ?? []) : []
       return { ok: true, json: async () => ({ sessions: rows }) }
@@ -3956,6 +3973,16 @@ describe('activity ordering writers (turn-start keyed; KTD2/KTD3/KTD5)', () => {
     return [...(state.sessions[workspaceId] ?? [])]
       .sort((a, b) => compareSessionActivity(a, b, state.lastActivityAt))
       .map((session) => session.id)
+  }
+
+  function sortedWorkspaceIds(): string[] {
+    const state = useChatStore.getState()
+    return sortWorkspacesByActivity(
+      useWorkspaceStore.getState().workspaces,
+      state.sessions,
+      state.workspaceLastTurnStartedAt,
+      state.lastActivityAt,
+    ).map((workspace) => workspace.id)
   }
 
   const idlePollStatus = (lastTurnStartedAt: number) => ({
@@ -4123,18 +4150,29 @@ describe('activity ordering writers (turn-start keyed; KTD2/KTD3/KTD5)', () => {
   })
 
   it('AE5: a restart re-seeds the same order from server-carried keys', async () => {
-    stubSessionListFetch({
-      'ws-re': [
-        orderingSession('re-s1', 'ws-re', { lastTurnStartedAt: 1000 }),
-        orderingSession('re-s2', 'ws-re', { lastTurnStartedAt: 3000 }),
-        orderingSession('re-s3', 'ws-re', { lastTurnStartedAt: 2000 }),
-      ],
-    })
+    stubSessionListFetch(
+      {
+        'ws-re': [
+          orderingSession('re-s1', 'ws-re', { lastTurnStartedAt: 1000 }),
+          orderingSession('re-s2', 'ws-re', { lastTurnStartedAt: 3000 }),
+          orderingSession('re-s3', 'ws-re', { lastTurnStartedAt: 2000 }),
+        ],
+      },
+      {
+        workspaces: [
+          { id: 'ws-re', lastTurnStartedAt: 3000 },
+          { id: 'ws-re-other', lastTurnStartedAt: 4000 },
+        ],
+      },
+    )
 
     try {
+      await useWorkspaceStore.getState().fetchWorkspaces()
       await useChatStore.getState().fetchSessions('ws-re')
       const beforeRestart = sortedSessionIds('ws-re')
       assert.deepStrictEqual(beforeRestart, ['re-s2', 're-s3', 're-s1'])
+      const workspaceOrderBefore = sortedWorkspaceIds()
+      assert.deepStrictEqual(workspaceOrderBefore, ['ws-re-other', 'ws-re'])
 
       // Simulated restart: in-memory maps vanish; the next boot re-seeds from
       // the keys carried by the server rows.
@@ -4143,11 +4181,19 @@ describe('activity ordering writers (turn-start keyed; KTD2/KTD3/KTD5)', () => {
         lastActivityAt: {},
         workspaceLastTurnStartedAt: {},
       })
+      await useWorkspaceStore.getState().fetchWorkspaces()
       await useChatStore.getState().fetchSessions('ws-re')
 
       assert.deepStrictEqual(sortedSessionIds('ws-re'), beforeRestart)
+      assert.deepStrictEqual(sortedWorkspaceIds(), workspaceOrderBefore)
     } finally {
       useChatStore.getState().cleanupWorkspace('ws-re')
+      useWorkspaceStore.setState({
+        workspaces: [],
+        activeWorkspaceId: null,
+        isLoading: false,
+        error: null,
+      })
     }
   })
 
@@ -4437,5 +4483,163 @@ describe('activity ordering writers (turn-start keyed; KTD2/KTD3/KTD5)', () => {
     // KTD3: a later server-carried value overwrites, even downward.
     useChatStore.getState().seedWorkspaceActivityKeys([{ id: 'wk-1', lastTurnStartedAt: 50 }])
     assert.strictEqual(useChatStore.getState().workspaceLastTurnStartedAt['wk-1'], 50)
+  })
+
+  it('cleanupWorkspace keeps the workspace ordering key, leaving positions unchanged', () => {
+    useChatStore.getState().seedWorkspaceActivityKeys([
+      { id: 'wk-gone', lastTurnStartedAt: 1234 },
+      { id: 'wk-stay', lastTurnStartedAt: 99 },
+    ])
+
+    useChatStore.getState().cleanupWorkspace('wk-gone')
+
+    // The map is bounded by workspace count and re-seeded by the next
+    // fetchWorkspaces/poll; a lingering entry for a deleted workspace is never
+    // read, and the surviving workspace's position is unchanged.
+    const keys = useChatStore.getState().workspaceLastTurnStartedAt
+    assert.strictEqual(keys['wk-gone'], 1234)
+    assert.strictEqual(keys['wk-stay'], 99)
+    const sorted = sortWorkspacesByActivity([{ id: 'wk-stay' }, { id: 'wk-gone' }], {}, keys, {})
+    assert.deepStrictEqual(
+      sorted.map((workspace) => workspace.id),
+      ['wk-gone', 'wk-stay'],
+    )
+  })
+
+  it('restores the archived flag locally when the unarchive PUT rejects', async () => {
+    stubSessionListFetch({
+      'ws-putfail': [
+        orderingSession('pf-s1', 'ws-putfail', { isArchived: true, lastTurnStartedAt: 1000 }),
+      ],
+    })
+
+    try {
+      await useChatStore.getState().fetchSessions('ws-putfail')
+      assert.strictEqual(useChatStore.getState().sessions['ws-putfail'][0].isArchived, true)
+
+      // A genuine advance flips the local row and fires the persist PUT, which
+      // then fails: the local archived flag is restored.
+      const fetchMock = stubSessionListFetch(
+        {
+          'ws-putfail': [
+            orderingSession('pf-s1', 'ws-putfail', { isArchived: true, lastTurnStartedAt: 5000 }),
+          ],
+        },
+        { putImplementation: () => Promise.reject(new Error('network down')) },
+      )
+      await useChatStore.getState().fetchSessions('ws-putfail')
+      assert.strictEqual(useChatStore.getState().sessions['ws-putfail'][0].isArchived, false)
+
+      // Flush the rejected PUT's catch handler.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      assert.strictEqual(useChatStore.getState().sessions['ws-putfail'][0].isArchived, true)
+      assert.strictEqual(putCalls(fetchMock).length, 1)
+    } finally {
+      useChatStore.getState().cleanupWorkspace('ws-putfail')
+    }
+  })
+
+  it('does not re-archive a session when a refetch lands while the unarchive PUT is pending', async () => {
+    stubSessionListFetch({
+      'ws-pend': [
+        orderingSession('pd-s1', 'ws-pend', { isArchived: true, lastTurnStartedAt: 1000 }),
+      ],
+    })
+
+    try {
+      await useChatStore.getState().fetchSessions('ws-pend')
+      assert.strictEqual(useChatStore.getState().sessions['ws-pend'][0].isArchived, true)
+
+      // The advance unarchives locally while the persist PUT hangs in flight.
+      const putInFlight = deferred<{ ok: boolean; json: () => Promise<unknown> }>()
+      stubSessionListFetch(
+        {
+          'ws-pend': [
+            orderingSession('pd-s1', 'ws-pend', { isArchived: true, lastTurnStartedAt: 5000 }),
+          ],
+        },
+        { putImplementation: () => putInFlight.promise },
+      )
+      await useChatStore.getState().fetchSessions('ws-pend')
+      assert.strictEqual(useChatStore.getState().sessions['ws-pend'][0].isArchived, false)
+
+      // A refetch carrying the stale (still-archived) server row at the same
+      // key must not re-archive the session before the PUT settles.
+      stubSessionListFetch({
+        'ws-pend': [
+          orderingSession('pd-s1', 'ws-pend', { isArchived: true, lastTurnStartedAt: 5000 }),
+        ],
+      })
+      await useChatStore.getState().fetchSessions('ws-pend')
+      assert.strictEqual(useChatStore.getState().sessions['ws-pend'][0].isArchived, false)
+
+      putInFlight.resolve({ ok: true, json: async () => ({}) })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    } finally {
+      useChatStore.getState().cleanupWorkspace('ws-pend')
+    }
+  })
+
+  it('fetchWorkspaces seeds the workspace ordering map from server-carried keys (R5)', async () => {
+    stubSessionListFetch(
+      {},
+      {
+        workspaces: [
+          { id: 'wk-a', lastTurnStartedAt: 500 },
+          { id: 'wk-b', lastTurnStartedAt: 9000 },
+          { id: 'wk-c' },
+        ],
+      },
+    )
+
+    try {
+      await useWorkspaceStore.getState().fetchWorkspaces()
+
+      assert.deepStrictEqual(useChatStore.getState().workspaceLastTurnStartedAt, {
+        'wk-a': 500,
+        'wk-b': 9000,
+      })
+      assert.deepStrictEqual(sortedWorkspaceIds(), ['wk-b', 'wk-a', 'wk-c'])
+    } finally {
+      useWorkspaceStore.setState({
+        workspaces: [],
+        activeWorkspaceId: null,
+        isLoading: false,
+        error: null,
+      })
+    }
+  })
+
+  it('createWorkspace seeds the creation-initialized ordering key (R6)', async () => {
+    stubSessionListFetch(
+      {},
+      {
+        createdWorkspace: {
+          id: 'wk-new',
+          name: 'Fresh',
+          folderPath: '/tmp/fresh',
+          createdAt: new Date(100).toISOString(),
+          lastTurnStartedAt: 4242,
+        },
+      },
+    )
+
+    try {
+      const workspace = await useWorkspaceStore.getState().createWorkspace({
+        name: 'Fresh',
+        folderPath: '/tmp/fresh',
+      })
+
+      assert.strictEqual(workspace?.id, 'wk-new')
+      assert.strictEqual(useChatStore.getState().workspaceLastTurnStartedAt['wk-new'], 4242)
+    } finally {
+      useWorkspaceStore.setState({
+        workspaces: [],
+        activeWorkspaceId: null,
+        isLoading: false,
+        error: null,
+      })
+    }
   })
 })
