@@ -65,13 +65,27 @@ function ChangedFileRow({ row, effectiveStatus, onOpen }: ChangedFileRowProps) {
       </span>
       <span
         className={cn(
-          'truncate font-mono min-w-0 flex-1',
-          deleted ? 'text-text-tertiary line-through' : 'text-text-primary',
+          'flex min-w-0 flex-1 items-baseline font-mono',
+          deleted ? 'text-text-tertiary' : 'text-text-primary',
         )}
-        title={row.absolutePath}
+        title={row.relativePath}
       >
-        {row.directory && <span className="text-text-tertiary">{row.directory}</span>}
-        {row.fileName}
+        <span className={cn('shrink-0', deleted && 'line-through')}>
+          {row.fileName}
+        </span>
+        {row.directory && (
+          <span
+            className={cn(
+              // Basename keeps priority; the directory yields space and
+              // truncates from the left (RTL trick) so the parent segment —
+              // the useful disambiguator — survives.
+              'ms-1 min-w-0 truncate text-text-tertiary [direction:rtl] [text-align:left]',
+              deleted && 'line-through',
+            )}
+          >
+            {row.directory}
+          </span>
+        )}
       </span>
       <button
         type="button"

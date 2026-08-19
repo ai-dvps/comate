@@ -115,6 +115,23 @@ describe('ChangedFilesPanel', () => {
     expect(within(rows[1]).getByText('lib/deep/')).toHaveClass('text-text-tertiary')
   })
 
+  it('keeps the basename visible and shows the full relative path on hover', () => {
+    mockChatStore.touchedFiles.s1 = [
+      entry('/ws/src/client/components/tool-renderers/FilePath.tsx', 'modified', 100),
+    ]
+    const { container } = render(panelElement('s1'))
+
+    const pathSpan = container.querySelector('li span[title$="FilePath.tsx"]')
+    expect(pathSpan).toHaveAttribute(
+      'title',
+      'src/client/components/tool-renderers/FilePath.tsx',
+    )
+    const fileNameEl = screen.getByText('FilePath.tsx')
+    expect(fileNameEl).toHaveClass('shrink-0')
+    const dirEl = screen.getByText('src/client/components/tool-renderers/')
+    expect(dirEl.className).toContain('[direction:rtl]')
+  })
+
   it('drops stored paths outside the workspace folder (KTD6)', () => {
     mockChatStore.touchedFiles.s1 = [
       entry('/ws/src/a.ts'),
