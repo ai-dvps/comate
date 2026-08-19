@@ -507,19 +507,48 @@ describe('chat-service idle-close', { concurrency: false }, () => {
 
     await service.getOrCreateRuntime('s1', 'ws-1');
 
-    assert.deepStrictEqual(service.getSessionsStatus('ws-1'), {
-      s1: {
-        pendingCount: 2,
-        pendingKind: 'question',
-        isProcessing: true,
-        activity: {
-          phase: 'background',
-          active: true,
-          backgroundTasks: [{ id: 'bg-1', type: 'agent', description: 'Research' }],
+    assert.deepStrictEqual(await service.getSessionsStatus('ws-1'), {
+      statuses: {
+        s1: {
+          pendingCount: 2,
+          pendingKind: 'question',
+          isProcessing: true,
+          activity: {
+            phase: 'background',
+            active: true,
+            backgroundTasks: [{ id: 'bg-1', type: 'agent', description: 'Research' }],
+          },
         },
       },
     });
-    assert.deepStrictEqual(service.getSessionsStatus('other-ws'), {});
+    assert.deepStrictEqual(await service.getSessionsStatus('other-ws'), { statuses: {} });
+  });
+
+  it('U3: status payload carries the stamped session and workspace ordering keys', async () => {
+    // Real store rows (isolated test DB) — the poll payload must surface the
+    // persisted turn-start keys stamped by U2's helper.
+    workspaceStore.resetData();
+    const workspace = await workspaceStore.create({ name: 'WS', folderPath: '/tmp/u3-poll-payload' });
+    const session = workspaceStore.createLocalSession(workspace.id, 'S1');
+    assert.strictEqual(typeof session.lastTurnStartedAt, 'number');
+
+    const runtime = {
+      ...createMockRuntime(),
+      getStatus: () => ({
+        pendingCount: 0,
+        isProcessing: false,
+        workspaceId: workspace.id,
+        activity: { phase: 'idle' as const, active: false, backgroundTasks: [] },
+      }),
+    } as unknown as SessionRuntime;
+    (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.set(session.id, runtime);
+
+    const stampMs = 1_800_000_000_000;
+    workspaceStore.stampTurnStarted(session.id, workspace.id, stampMs);
+
+    const result = await service.getSessionsStatus(workspace.id);
+    assert.strictEqual(result.statuses[session.id]?.lastTurnStartedAt, stampMs);
+    assert.strictEqual(result.workspaceLastTurnStartedAt, stampMs);
   });
 
   it('onSubscribed cancels idle timer', async () => {
@@ -3127,9 +3156,9 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     };
   }
 
-  async function waitForCondition(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
+  async function waitForCondition(predicate: () => boolean | Promise<boolean>, timeoutMs = 5000): Promise<void> {
     const start = Date.now();
-    while (!predicate()) {
+    while (!(await predicate())) {
       if (Date.now() - start > timeoutMs) {
         throw new Error('timed out waiting for condition');
       }
@@ -3486,22 +3515,22 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     });
     botService.addMember(botId, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
     const sdkOptions = { toolUseID: 'toolu_u8_badge', signal: new AbortController().signal };
-    const pendingCountFor = (n: number): boolean =>
-      service.getSessionsStatus(workspaceId)[sessionId]?.pendingCount === n;
+    const pendingCountFor = async (n: number): Promise<boolean> =>
+      (await service.getSessionsStatus(workspaceId)).statuses[sessionId]?.pendingCount === n;
     const pending = canUseTool('Bash', { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true }, sdkOptions);
     await waitForCondition(() => pendingCountFor(1));
 
     // The desktop session-list pending indicator reads exactly this surface:
     // the bot session shows a pending approval (needs-me badge).
-    const status = service.getSessionsStatus(workspaceId);
-    assert.strictEqual(status[sessionId]?.pendingCount, 1, 'pending approval is visible for the bot session');
+    const status = await service.getSessionsStatus(workspaceId);
+    assert.strictEqual(status.statuses[sessionId]?.pendingCount, 1, 'pending approval is visible for the bot session');
 
     settleApproval({ behavior: 'allow' });
     const result = await pending;
     assert.strictEqual(result.behavior, 'allow');
     await waitForCondition(() => pendingCountFor(0));
     assert.strictEqual(
-      service.getSessionsStatus(workspaceId)[sessionId]?.pendingCount ?? 0,
+      (await service.getSessionsStatus(workspaceId)).statuses[sessionId]?.pendingCount ?? 0,
       0,
       'indicator clears once the approval is handled',
     );

@@ -2086,15 +2086,26 @@ export class ChatService {
     }
   }
 
-  getSessionsStatus(workspaceId: string): Record<
-    string,
-    {
-      pendingCount: number;
-      pendingKind?: 'approval' | 'question';
-      isProcessing: boolean;
-      activity: SessionActivitySnapshot;
-    }
-  > {
+  /**
+   * U3 (KTD1/KTD3): the status poll is the propagation path for background
+   * turn starts, so the payload carries the server-persisted ordering keys —
+   * per-session `lastTurnStartedAt` for live runtimes plus the workspace-level
+   * key — letting the client overwrite both ordering maps authoritatively
+   * within one poll tick.
+   */
+  async getSessionsStatus(workspaceId: string): Promise<{
+    statuses: Record<
+      string,
+      {
+        pendingCount: number;
+        pendingKind?: 'approval' | 'question';
+        isProcessing: boolean;
+        activity: SessionActivitySnapshot;
+        lastTurnStartedAt?: number;
+      }
+    >;
+    workspaceLastTurnStartedAt?: number;
+  }> {
     const statuses: Record<
       string,
       {
@@ -2102,20 +2113,29 @@ export class ChatService {
         pendingKind?: 'approval' | 'question';
         isProcessing: boolean;
         activity: SessionActivitySnapshot;
+        lastTurnStartedAt?: number;
       }
     > = {};
     for (const [sessionId, runtime] of this.runtimes) {
       const status = runtime.getStatus();
       if (status.workspaceId === workspaceId) {
+        const lastTurnStartedAt = workspaceStore.getLocalSession(sessionId)?.lastTurnStartedAt;
         statuses[sessionId] = {
           pendingCount: status.pendingCount,
           ...(status.pendingKind !== undefined && { pendingKind: status.pendingKind }),
           isProcessing: status.isProcessing,
           activity: status.activity ?? this.runtimeActivity(runtime),
+          ...(lastTurnStartedAt !== undefined && { lastTurnStartedAt }),
         };
       }
     }
-    return statuses;
+    const workspace = await workspaceStore.get(workspaceId);
+    return {
+      statuses,
+      ...(workspace?.lastTurnStartedAt !== undefined && {
+        workspaceLastTurnStartedAt: workspace.lastTurnStartedAt,
+      }),
+    };
   }
 
   // Legacy message streaming (preserved during migration; removed after U5)

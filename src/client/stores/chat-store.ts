@@ -275,7 +275,11 @@ function startBackgroundPolling(
             pendingKind?: PendingInteractionKind
             isProcessing?: boolean
             activity: SessionActivitySnapshot
+            // U3 (KTD1/KTD3): server-persisted turn-start ordering keys on the
+            // poll payload; the poll writer applies them authoritatively (U4).
+            lastTurnStartedAt?: number
           }>
+          workspaceLastTurnStartedAt?: number
         }
         const statuses = result.statuses ?? {}
         set((state) => {
@@ -371,6 +375,13 @@ export interface ChatSession {
   updatedAt: string
   summary?: string
   lastModified?: number
+  /**
+   * Server-persisted MRU ordering key (epoch ms of the last turn start,
+   * activity sort position stability KTD1). Carried by list/create payloads
+   * and the status poll; server-carried values are authoritative (KTD3).
+   * Ordering writers are rewired to it in U4.
+   */
+  lastTurnStartedAt?: number
   firstPrompt?: string
   gitBranch?: string
   customTitle?: string

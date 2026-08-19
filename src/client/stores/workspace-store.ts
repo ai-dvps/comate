@@ -18,6 +18,13 @@ export interface Workspace {
   createdAt: string;
   updatedAt: string;
   lastOpenedAt?: string;
+  /**
+   * Server-persisted MRU ordering key (epoch ms of the last turn start in any
+   * session of this workspace, activity sort position stability KTD1).
+   * Server-carried values are authoritative (KTD3); ordering writers are
+   * rewired to it in U4.
+   */
+  lastTurnStartedAt?: number;
 }
 
 interface WorkspaceState {
