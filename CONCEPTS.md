@@ -22,6 +22,11 @@ The set of runtime dependencies vendored alongside the Vendored Steel build prod
 
 ## Browser API automation
 
+### 浏览器面板 (browser pane)
+聊天右侧承载内嵌浏览器画面的可收起面板，按会话独立记忆展开/收起状态；在 Typed context tab 体系中是归属于 Session 的 Browser tab 的内容表面。
+
+它是原生浏览器视图的唯一宿主表面：视图只有在面板挂载并向壳上报自身矩形区域后才变为可见，因此任何"浏览器自动出现"的交互都必须显式触发面板展开（handoff 待决与浏览器诞生/崩溃重建时面板自动展开）。面板收起时保持挂载（keep-alive），不卸载浏览器画面；弹出为 独立浏览器窗口 时面板显示占位，收回时恢复。
+
 ### 独立浏览器窗口 (detached browser window)
 内嵌浏览器从聊天右侧面板移出的 OS 级窗口。它固定归属于弹出时的聊天会话，主窗口保留原尺寸占位；关闭窗口只把同一浏览器画面移回原面板，不关闭浏览器会话。
 
