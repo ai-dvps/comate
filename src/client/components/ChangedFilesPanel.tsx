@@ -65,17 +65,16 @@ function ChangedFileRow({ row, effectiveStatus, onOpen }: ChangedFileRowProps) {
       </span>
       <span
         className={cn(
-          'flex min-w-0 flex-1 items-baseline font-mono',
+          'flex min-w-0 flex-1 flex-wrap items-baseline font-mono',
           deleted ? 'text-text-tertiary' : 'text-text-primary',
         )}
         title={row.relativePath}
       >
         <span
           className={cn(
-            // Basename gets priority but must still shrink and truncate —
-            // shrink-0 here overflowed the row on long names and produced a
-            // horizontal scrollbar. RTL truncation keeps the extension visible.
-            'min-w-0 truncate [direction:rtl] [text-align:left]',
+            // Basename is never truncated: it keeps its full text and wraps
+            // to another line when it exceeds the row (max-w-full + wrap).
+            'max-w-full shrink-0 [overflow-wrap:anywhere]',
             deleted && 'line-through',
           )}
         >
@@ -84,7 +83,7 @@ function ChangedFileRow({ row, effectiveStatus, onOpen }: ChangedFileRowProps) {
         {row.directory && (
           <span
             className={cn(
-              // Basename keeps priority; the directory yields space and
+              // The directory yields space, wraps under a long basename, and
               // truncates from the left (RTL trick) so the parent segment —
               // the useful disambiguator — survives.
               'ms-1 min-w-0 truncate text-text-tertiary [direction:rtl] [text-align:left]',
