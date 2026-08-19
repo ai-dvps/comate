@@ -145,6 +145,13 @@ export interface Workspace {
   createdAt: string;
   updatedAt: string;
   lastOpenedAt: string | null;
+  /**
+   * Server-persisted MRU ordering key (activity sort position stability, KTD1):
+   * epoch ms of the last turn start in any of this workspace's sessions.
+   * Initialized at creation, stamped when a session in this workspace admits a
+   * turn; the client treats server-carried values as authoritative.
+   */
+  lastTurnStartedAt?: number;
 }
 
 export interface CreateWorkspaceInput {
