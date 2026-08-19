@@ -2000,6 +2000,23 @@ export class ChatService {
     );
   }
 
+  /**
+   * U2 (KTD1/R2): stamp the turn-start ordering keys of a session and its
+   * workspace. This is post-admission housekeeping: a stamp failure must never
+   * fail an admitted turn (a rejecting promise would let a client retry
+   * re-admit the same message), so errors are logged and swallowed — a missed
+   * stamp only leaves the key one turn stale until the next turn start.
+   */
+  stampTurnStarted(sessionId: string, workspaceId: string): void {
+    try {
+      workspaceStore.stampTurnStarted(sessionId, workspaceId);
+    } catch (error) {
+      diagLog(
+        `[ChatService] admitted turn ${sessionId} but turn-start stamp failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   async pushMessage(
     sessionId: string,
     workspaceId: string,
@@ -2037,6 +2054,11 @@ export class ChatService {
     }
 
     await runtime.pushMessage(runtimeContent, clientTurnId);
+
+    // U2 (KTD1/R2): an admitted turn is the only event that advances the
+    // ordering keys. Stamp exactly once, right after admission succeeds — a
+    // rejected admission (e.g. busy error) must not stamp.
+    this.stampTurnStarted(sessionId, workspaceId);
 
     // U11 (KTD-19): only an admitted new turn resets the per-turn
     // override-deny cap.

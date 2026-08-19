@@ -2362,6 +2362,28 @@ export class SqliteStore {
     return result.changes > 0;
   }
 
+  /**
+   * U2 (KTD1/R2): advance the turn-start ordering keys of a session and its
+   * workspace to `atMs` (defaults to now). One UPDATE per table inside a single
+   * transaction; `updated_at` is deliberately untouched so the stamp only moves
+   * the ordering key. The MAX guard keeps each key monotonically non-decreasing
+   * even under wall-clock regression, so a late writer can never move an item
+   * backwards; COALESCE heals NULL keys left by a downgraded binary. Missing
+   * rows are no-ops. Returns the timestamp that was applied.
+   */
+  stampTurnStarted(sessionId: string, workspaceId: string, atMs: number = Date.now()): number {
+    const stamp = this.db.transaction(() => {
+      this.db.prepare(`
+        UPDATE sessions SET last_turn_started_at = MAX(COALESCE(last_turn_started_at, 0), ?) WHERE id = ?
+      `).run(atMs, sessionId);
+      this.db.prepare(`
+        UPDATE workspaces SET last_turn_started_at = MAX(COALESCE(last_turn_started_at, 0), ?) WHERE id = ?
+      `).run(atMs, workspaceId);
+    });
+    stamp();
+    return atMs;
+  }
+
   syncSdkSession(session: ChatSession): void {
     // KTD4: transcript discovery initializes the ordering key from the
     // pre-upgrade client comparator expression (lastModified ?? Date.parse(createdAt)),

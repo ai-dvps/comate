@@ -172,6 +172,11 @@ export class WeComQueueWorker {
     const directive = formatProactiveDirective(entry);
     await runtime.pushMessage(directive);
 
+    // U2 (KTD1/R2): a proactive dispatch is a turn start — stamp the ordering
+    // keys through the same post-admission helper chatService.pushMessage uses.
+    // Runs only after admission succeeds; a rejected admission must not stamp.
+    chatService.stampTurnStarted(sessionId, entry.workspaceId);
+
     // Grace period: give the agent time to process and send before marking delivered
     const timeout = setTimeout(() => {
       this.inFlight.delete(entry.id);

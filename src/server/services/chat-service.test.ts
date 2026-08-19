@@ -952,6 +952,198 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
   });
 });
 
+describe('chat-service pushMessage turn-start stamping (U2, KTD1/R2)', { concurrency: false }, () => {
+  let service: ChatService;
+  const originalOpen = SessionRuntime.open;
+  const originalGetDefaultProvider = workspaceStore.getDefaultProvider.bind(workspaceStore);
+  const originalStampTurnStarted = workspaceStore.stampTurnStarted.bind(workspaceStore);
+
+  // Fixed past sentinel: a real stamp is distinguishable from the creation
+  // initializer without depending on wall-clock granularity.
+  const PAST_KEY = 1_700_000_000_000;
+
+  const createdSessionIds: string[] = [];
+  const createdWorkspaceIds: string[] = [];
+
+  class StampMockSdkClient extends SdkClient {
+    override async getSessionInfo(): Promise<SDKSessionInfo | undefined> {
+      // No SDK session: getSession falls back to the local row, so no
+      // syncSdkSession upsert fires and the stored key is only moved by the stamp.
+      return undefined;
+    }
+    override async listSessions(): Promise<SDKSessionInfo[]> {
+      return [];
+    }
+    override async listSubagents(): Promise<string[]> {
+      return [];
+    }
+    override async getSessionMessages(): Promise<SessionMessage[]> {
+      return [];
+    }
+    override async getSubagentMessages(): Promise<SessionMessage[]> {
+      return [];
+    }
+    override async renameSession(): Promise<void> {}
+    override async forkSession(): Promise<{ sessionId: string }> {
+      return { sessionId: 'fork-s1' };
+    }
+  }
+
+  class StampTestChatService extends ChatService {
+    constructor() {
+      super(new StampMockSdkClient());
+    }
+    protected override async testClaudeBinary(): Promise<void> {
+      // no-op to avoid spawning the real Claude binary in tests
+    }
+  }
+
+  function createStampMockRuntime(rejectAdmission?: Error): SessionRuntime & { pushMessageCalls: unknown[] } {
+    const pushMessageCalls: unknown[] = [];
+    const mock = {
+      isClosed: () => false,
+      getStatus: () => ({ pendingCount: 0, isProcessing: false, workspaceId: 'ws-1' }),
+      close: () => Promise.resolve(),
+      subscribe: () => {},
+      unsubscribe: () => {},
+      pushMessage: (message: unknown) => {
+        if (rejectAdmission) {
+          return Promise.reject(rejectAdmission);
+        }
+        pushMessageCalls.push(message);
+        return Promise.resolve();
+      },
+      resolveApproval: () => {},
+      interrupt: () => Promise.resolve(),
+      addBotEventHandler: () => {},
+      clearBotEventHandlers: () => {},
+      removeBotEventHandler: () => {},
+      setApprovalMode: () => {},
+      getApprovalMode: () => 'manual' as const,
+      getBackendId: () => 'claude' as const,
+      getModelId: () => 'claude-sonnet-4-6',
+      pushMessageCalls,
+    };
+    return mock as unknown as SessionRuntime & { pushMessageCalls: unknown[] };
+  }
+
+  async function setupRealRows(): Promise<{ ws: Workspace; session: ChatSession }> {
+    const ws = await workspaceStore.create({ name: 'Stamp WS', folderPath: '/tmp/stamp-ws' });
+    const session = workspaceStore.createLocalSession(ws.id, 'Stamp Session');
+    createdWorkspaceIds.push(ws.id);
+    createdSessionIds.push(session.id);
+    const raw = workspaceStore as unknown as {
+      db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } };
+    };
+    raw.db.prepare('UPDATE sessions SET last_turn_started_at = ? WHERE id = ?').run(PAST_KEY, session.id);
+    raw.db.prepare('UPDATE workspaces SET last_turn_started_at = ? WHERE id = ?').run(PAST_KEY, ws.id);
+    return { ws, session };
+  }
+
+  const sessionKey = (id: string) => workspaceStore.getLocalSession(id)?.lastTurnStartedAt;
+  const workspaceKey = async (id: string) => (await workspaceStore.get(id))?.lastTurnStartedAt;
+
+  beforeEach(() => {
+    service = new StampTestChatService();
+    workspaceStore.getDefaultProvider = () => createMockProvider();
+  });
+
+  afterEach(async () => {
+    await service.closeAllRuntimes();
+    SessionRuntime.open = originalOpen;
+    workspaceStore.getDefaultProvider = originalGetDefaultProvider;
+    workspaceStore.stampTurnStarted = originalStampTurnStarted;
+    for (const id of createdSessionIds.splice(0)) {
+      workspaceStore.deleteLocalSession(id);
+    }
+    for (const id of createdWorkspaceIds.splice(0)) {
+      await workspaceStore.delete(id);
+    }
+  });
+
+  it('stamps the session row and its workspace row on an admitted GUI send', async () => {
+    const { ws, session } = await setupRealRows();
+    SessionRuntime.open = () => createStampMockRuntime();
+
+    const before = Date.now();
+    await service.pushMessage(session.id, ws.id, 'hello');
+    const after = Date.now();
+
+    const sKey = sessionKey(session.id);
+    const wKey = await workspaceKey(ws.id);
+    assert.ok(sKey !== undefined && sKey > PAST_KEY && sKey >= before && sKey <= after, `session key ${sKey} stamped within [${before}, ${after}]`);
+    assert.ok(wKey !== undefined && wKey > PAST_KEY && wKey >= before && wKey <= after, `workspace key ${wKey} stamped within [${before}, ${after}]`);
+  });
+
+  it('stamps on an admitted bot-session turn (WeCom / Feishu / scheduler entry path)', async () => {
+    const { ws, session } = await setupRealRows();
+    SessionRuntime.open = () => createStampMockRuntime();
+    const handler = (() => {}) as (id: number, event: SseEvent) => void;
+
+    await service.pushMessage(session.id, ws.id, 'bot turn', true, handler);
+
+    assert.ok(sessionKey(session.id)! > PAST_KEY, 'bot turn stamps the session key');
+    assert.ok((await workspaceKey(ws.id))! > PAST_KEY, 'bot turn stamps the workspace key');
+  });
+
+  it('leaves both keys unchanged when admission rejects', async () => {
+    const { ws, session } = await setupRealRows();
+    let stampCalled = false;
+    workspaceStore.stampTurnStarted = (...args: Parameters<typeof workspaceStore.stampTurnStarted>) => {
+      stampCalled = true;
+      return originalStampTurnStarted(...args);
+    };
+    SessionRuntime.open = () => createStampMockRuntime(new Error('busy: a turn is already running'));
+
+    await assert.rejects(() => service.pushMessage(session.id, ws.id, 'hello'), /busy/);
+
+    assert.strictEqual(stampCalled, false, 'a failed admission must not stamp');
+    assert.strictEqual(sessionKey(session.id), PAST_KEY);
+    assert.strictEqual(await workspaceKey(ws.id), PAST_KEY);
+  });
+
+  it('a stamp write failure after admission neither fails the send nor moves the keys', async () => {
+    const { ws, session } = await setupRealRows();
+    const { logs, restore } = collectDiagLogs();
+    workspaceStore.stampTurnStarted = () => {
+      throw new Error('disk I/O error');
+    };
+    const runtime = createStampMockRuntime();
+    SessionRuntime.open = () => runtime;
+
+    try {
+      await service.pushMessage(session.id, ws.id, 'hello');
+    } finally {
+      restore();
+    }
+
+    assert.deepStrictEqual(runtime.pushMessageCalls, ['hello'], 'the turn was admitted');
+    assert.strictEqual(sessionKey(session.id), PAST_KEY);
+    assert.strictEqual(await workspaceKey(ws.id), PAST_KEY);
+    assert.ok(
+      logs.some((line) => line.includes('turn-start stamp failed') && line.includes('disk I/O error')),
+      'the stamp failure is logged via diagLog',
+    );
+  });
+
+  it('two turns in sequence produce monotonically non-decreasing keys', async () => {
+    const { ws, session } = await setupRealRows();
+    SessionRuntime.open = () => createStampMockRuntime();
+
+    await service.pushMessage(session.id, ws.id, 'first');
+    const s1 = sessionKey(session.id)!;
+    const w1 = (await workspaceKey(ws.id))!;
+
+    await service.pushMessage(session.id, ws.id, 'second');
+    const s2 = sessionKey(session.id)!;
+    const w2 = (await workspaceKey(ws.id))!;
+
+    assert.ok(s2 >= s1, `session key ${s2} >= ${s1}`);
+    assert.ok(w2 >= w1, `workspace key ${w2} >= ${w1}`);
+    assert.ok(s1 > PAST_KEY && w1 > PAST_KEY, 'both turns stamped');
+  });
+});
+
 describe('chat-service canUseTool policy gating', { concurrency: false }, () => {
   let service: ChatService;
   const originalOpen = SessionRuntime.open;
