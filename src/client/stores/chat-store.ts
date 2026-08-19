@@ -17,6 +17,7 @@ import type {
 import { diagLog } from '../utils/diag-logger'
 import { getInitialSettings } from '../hooks/use-app-settings'
 import { isBotSession } from '../lib/session-filter'
+import { normalizePath } from '../components/tool-renderers/path-utils'
 import { useToastStore } from './toast-store'
 import { useScheduledTaskStore } from './scheduled-task-store'
 import type { SchedulerRunEventPayload } from '../lib/scheduled-task-events'
@@ -476,6 +477,7 @@ export interface ChatState {
   lastActivityAt: Record<string, number>
   tasks: Record<string, TaskItem[]>
   pendingTaskCreates: Record<string, Record<string, PendingTaskCreate>>
+  touchedFiles: Record<string, TouchedFileEntry[]>
   autoApprovedTools: Record<string, Record<string, 'auto' | 'readonly'>>
   totalMessageCount: Record<string, number>
   lastTurnUsage: Record<string, TurnUsage>
@@ -1046,20 +1048,37 @@ function mutateToolUsePart(
   return {}
 }
 
+type ToolUsePart = Extract<MessagePart | SubagentPart, { type: 'tool_use' }>
+
+/**
+ * Backward scan for a tool_use part by toolUseId. Backward because parts are
+ * appended chronologically and a result arrives right after its use, so the
+ * match lives near the end (same precedent as mutateToolUsePart). toolUseIds
+ * are unique per invocation, so scan direction cannot change which part is
+ * found.
+ */
+function findToolUsePart(
+  messages: ReadonlyArray<{
+    parts: ReadonlyArray<MessagePart | SubagentPart | null | undefined>
+  }>,
+  toolUseId: string,
+): ToolUsePart | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const part = messages[i].parts.find(
+      (p): p is ToolUsePart =>
+        p?.type === 'tool_use' && p.toolUseId === toolUseId,
+    )
+    if (part) return part
+  }
+  return undefined
+}
+
 function findToolName(
   state: ChatState,
   sessionId: string,
   toolUseId: string,
 ): string | undefined {
-  const msgs = state.messages[sessionId] || []
-  for (const m of msgs) {
-    const part = m.parts.find(
-      (p): p is Extract<MessagePart, { type: 'tool_use' }> =>
-        p?.type === 'tool_use' && p.toolUseId === toolUseId,
-    )
-    if (part) return part.toolName
-  }
-  return undefined
+  return findToolUsePart(state.messages[sessionId] || [], toolUseId)?.toolName
 }
 
 /**
@@ -1193,6 +1212,269 @@ function scanMessagesForTasks(messages: ChatMessage[]): TaskItem[] {
   }
 
   return tasks
+}
+
+/**
+ * One session-scoped record of a file touched by the Edit/Write/MultiEdit/
+ * NotebookEdit tools (plan KTD2). `path` is a normalized absolute path —
+ * workspace membership and relativization are the panel layer's job (KTD6).
+ * `status` is the stream-derived status only; the deleted leg is detected
+ * separately by the existence overlay (KTD4).
+ */
+export interface TouchedFileEntry {
+  path: string
+  status: 'created' | 'modified'
+  /** Last-touch time in ms; message timestamp or parent subagent end/start. */
+  lastTouchedAt: number
+}
+
+const FILE_TOOL_NAMES = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
+
+function fileToolInputPath(toolName: string, input: unknown): string | undefined {
+  if (!FILE_TOOL_NAMES.has(toolName)) return undefined
+  if (!input || typeof input !== 'object') return undefined
+  const record = input as Record<string, unknown>
+  const rawPath = record.file_path ?? record.notebook_path
+  return typeof rawPath === 'string' && rawPath.length > 0 ? rawPath : undefined
+}
+
+/**
+ * KTD5: prefer structured tool-result metadata when present. Write results may
+ * carry a `type: 'create' | 'update'` marker; Edit-family results may carry a
+ * null `originalFile` for files the edit created. Returns undefined when no
+ * usable marker exists so the caller falls back to the first-seen heuristic.
+ */
+function touchedFileStatusFromResult(
+  toolUseResult: unknown,
+): TouchedFileEntry['status'] | undefined {
+  if (!toolUseResult || typeof toolUseResult !== 'object') return undefined
+  const record = toolUseResult as Record<string, unknown>
+  if (record.type === 'create') return 'created'
+  if (record.type === 'update') return 'modified'
+  if (record.originalFile === null) return 'created'
+  if (typeof record.originalFile === 'string') return 'modified'
+  return undefined
+}
+
+interface ScannedTouchedFile extends TouchedFileEntry {
+  /** Monotonic record order, used to break lastTouchedAt ties by scan order. */
+  seq: number
+}
+
+interface TouchedFileScan {
+  entries: Map<string, ScannedTouchedFile>
+  nextSeq: number
+}
+
+/**
+ * Shared status resolution for one touch (KTD5): structured result metadata
+ * wins when present; otherwise the heuristic — a first-seen Write counts as
+ * created, every other touch (Edit/MultiEdit/NotebookEdit, or a re-Write)
+ * counts as modified.
+ */
+function resolveTouchedFileStatus(
+  toolName: string,
+  toolUseResult: unknown,
+  existing: TouchedFileEntry | undefined,
+): TouchedFileEntry['status'] {
+  const metadataStatus = touchedFileStatusFromResult(toolUseResult)
+  return (
+    metadataStatus ??
+    (existing === undefined && toolName === 'Write' ? 'created' : 'modified')
+  )
+}
+
+function recordTouchedFile(
+  scan: TouchedFileScan,
+  toolName: string,
+  rawPath: string,
+  timestamp: number,
+  toolUseResult: unknown,
+): void {
+  const path = normalizePath(rawPath)
+  const existing = scan.entries.get(path)
+  const status = resolveTouchedFileStatus(toolName, toolUseResult, existing)
+  const seq = scan.nextSeq++
+  if (existing) {
+    existing.lastTouchedAt = Math.max(existing.lastTouchedAt, timestamp)
+    existing.seq = seq
+    // Created stays sticky on later modifications.
+    if (existing.status !== 'created') existing.status = status
+  } else {
+    scan.entries.set(path, { path, status, lastTouchedAt: timestamp, seq })
+  }
+}
+
+/**
+ * Pure derivation of a session's touched files from loaded session data,
+ * mirroring the `scanMessagesForTasks` idiom (KTD1). Walks tool-use parts for
+ * the four file tools in the merged main-channel messages and the merged
+ * subagent state; a tool use counts only when its correlated tool result
+ * exists and carries no error (KTD2 — approval rejections, never-decided
+ * approvals, and failed edits never enter the list). Subagent messages carry
+ * no timestamp, so their touches take the parent subagent's end-or-start time
+ * (KTD3); subagent tool results carry no structured metadata under the current
+ * event contract, so the heuristic always applies to them (KTD5).
+ */
+export function scanMessagesForTouchedFiles(
+  messages: ChatMessage[],
+  subagents: SubagentState[],
+): TouchedFileEntry[] {
+  const scan: TouchedFileScan = { entries: new Map(), nextSeq: 0 }
+
+  const pendingFileUses = new Map<string, { toolName: string; path: string }>()
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (!part) continue
+      if (part.type === 'tool_use') {
+        const path = fileToolInputPath(part.toolName, part.input)
+        if (path) pendingFileUses.set(part.toolUseId, { toolName: part.toolName, path })
+      } else if (part.type === 'tool_result') {
+        const use = pendingFileUses.get(part.toolUseId)
+        if (!use) continue
+        pendingFileUses.delete(part.toolUseId)
+        if (part.isError) continue
+        recordTouchedFile(scan, use.toolName, use.path, message.timestamp, part.toolUseResult)
+      }
+    }
+  }
+
+  for (const subagent of subagents) {
+    const timestamp = subagent.endTime ?? subagent.startTime
+    const pendingSubUses = new Map<string, { toolName: string; path: string }>()
+    for (const message of subagent.messages) {
+      for (const part of message.parts) {
+        if (!part) continue
+        if (part.type === 'tool_use') {
+          const path = fileToolInputPath(part.toolName, part.input)
+          if (path) pendingSubUses.set(part.toolUseId, { toolName: part.toolName, path })
+        } else if (part.type === 'tool_result') {
+          const use = pendingSubUses.get(part.toolUseId)
+          if (!use) continue
+          pendingSubUses.delete(part.toolUseId)
+          if (part.isError) continue
+          recordTouchedFile(scan, use.toolName, use.path, timestamp, undefined)
+        }
+      }
+    }
+  }
+
+  return Array.from(scan.entries.values())
+    .sort((a, b) => b.lastTouchedAt - a.lastTouchedAt || b.seq - a.seq)
+    .map((entry) => ({
+      path: entry.path,
+      status: entry.status,
+      lastTouchedAt: entry.lastTouchedAt,
+    }))
+}
+
+/**
+ * Live-accumulation counterpart to the scanner's per-touch merge (U2): folds
+ * one successful file-tool touch into a session's existing entry list, reusing
+ * the scanner's path normalization, status resolution, sticky-created rule,
+ * and ordering (lastTouchedAt desc; among equal timestamps the most recently
+ * recorded touch sorts first, mirroring the scanner's seq tie-break).
+ */
+function mergeTouchedFileEntry(
+  entries: TouchedFileEntry[],
+  toolName: string,
+  rawPath: string,
+  timestamp: number,
+  toolUseResult: unknown,
+): TouchedFileEntry[] {
+  const path = normalizePath(rawPath)
+  const existing = entries.find((entry) => entry.path === path)
+  const status = resolveTouchedFileStatus(toolName, toolUseResult, existing)
+  const merged: TouchedFileEntry = existing
+    ? {
+        path,
+        status: existing.status === 'created' ? 'created' : status,
+        lastTouchedAt: Math.max(existing.lastTouchedAt, timestamp),
+      }
+    : { path, status, lastTouchedAt: timestamp }
+  const rest = existing ? entries.filter((entry) => entry.path !== path) : entries
+  const insertAt = rest.findIndex((entry) => entry.lastTouchedAt <= merged.lastTouchedAt)
+  if (insertAt === -1) return [...rest, merged]
+  return [...rest.slice(0, insertAt), merged, ...rest.slice(insertAt)]
+}
+
+/**
+ * U2 live accumulation shared body: join the matching tool_use part by
+ * toolUseId within the given message list and fold the touch into the
+ * session's touched-files list at accumulation time (KTD3).
+ */
+function accumulateTouchedFileFromMessages(
+  state: ChatState,
+  sessionId: string,
+  messages: ReadonlyArray<{
+    parts: ReadonlyArray<MessagePart | SubagentPart | null | undefined>
+  }>,
+  toolUseId: string,
+  toolUseResult: unknown,
+): Partial<ChatState> {
+  const part = findToolUsePart(messages, toolUseId)
+  if (!part) return {}
+  const rawPath = fileToolInputPath(part.toolName, part.input)
+  if (!rawPath) return {}
+  const entries = state.touchedFiles[sessionId] || []
+  return {
+    touchedFiles: {
+      ...state.touchedFiles,
+      [sessionId]: mergeTouchedFileEntry(
+        entries,
+        part.toolName,
+        rawPath,
+        Date.now(),
+        toolUseResult,
+      ),
+    },
+  }
+}
+
+/**
+ * U2 live main-channel accumulation. Callers must invoke this only after the
+ * reconnect-replay early-return so replayed results never double-record.
+ */
+function accumulateTouchedFileFromToolResult(
+  state: ChatState,
+  sessionId: string,
+  toolUseId: string,
+  isError: boolean,
+  toolUseResult: unknown,
+): Partial<ChatState> {
+  if (isError) return {}
+  return accumulateTouchedFileFromMessages(
+    state,
+    sessionId,
+    state.messages[sessionId] || [],
+    toolUseId,
+    toolUseResult,
+  )
+}
+
+/**
+ * U2 live subagent-channel accumulation: join the earlier tool_use delta by
+ * toolUseId within the subagent's messages. Subagent results carry no
+ * structured metadata under the current event contract, so the heuristic
+ * always applies to them (KTD5).
+ */
+function accumulateSubagentTouchedFileFromResult(
+  state: ChatState,
+  sessionId: string,
+  parentToolUseId: string,
+  toolUseId: string,
+  isError: boolean,
+): Partial<ChatState> {
+  if (isError) return {}
+  const subagent = findSubagent(state, sessionId, parentToolUseId)
+  if (!subagent) return {}
+  return accumulateTouchedFileFromMessages(
+    state,
+    sessionId,
+    subagent.messages,
+    toolUseId,
+    undefined,
+  )
 }
 
 function isSessionActive(state: ChatState, sessionId: string): boolean {
@@ -1799,6 +2081,13 @@ export function handleSseEvent(
               [sessionId]: replacedMessages,
             },
             ...removeInFlightBrowserTool(state, sessionId, toolUseId),
+            ...accumulateTouchedFileFromToolResult(
+              state,
+              sessionId,
+              toolUseId,
+              isError,
+              toolUseResult,
+            ),
           }
         }
         const newMessages: ChatMessage[] = [
@@ -1825,6 +2114,13 @@ export function handleSseEvent(
             [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
           },
           ...removeInFlightBrowserTool(state, sessionId, toolUseId),
+          ...accumulateTouchedFileFromToolResult(
+            state,
+            sessionId,
+            toolUseId,
+            isError,
+            toolUseResult,
+          ),
         }
         const pendingCreates = state.pendingTaskCreates[sessionId]
         if (pendingCreates && pendingCreates[toolUseId]) {
@@ -2495,14 +2791,21 @@ export function handleSseEvent(
           typeof delta.toolUseId === 'string' ? delta.toolUseId : ''
         const output = typeof delta.output === 'string' ? delta.output : ''
         const isError = delta.isError === true
-        set((state) =>
-          updateSubagentMessage(state, sessionId, parentToolUseId, {
+        set((state) => ({
+          ...updateSubagentMessage(state, sessionId, parentToolUseId, {
             type: 'tool_result',
             toolUseId,
             output,
             isError,
           }),
-        )
+          ...accumulateSubagentTouchedFileFromResult(
+            state,
+            sessionId,
+            parentToolUseId,
+            toolUseId,
+            isError,
+          ),
+        }))
       } else {
         console.warn('Unknown subagent_delta kind:', kind)
       }
@@ -2873,6 +3176,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   lastActivityAt: {},
   tasks: {},
   pendingTaskCreates: {},
+  touchedFiles: {},
   autoApprovedTools: {},
   totalMessageCount: {},
   lastTurnUsage: {},
@@ -3256,6 +3560,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           subagents: withoutSession(state.subagents),
           tasks: withoutSession(state.tasks),
           pendingTaskCreates: withoutSession(state.pendingTaskCreates),
+          touchedFiles: withoutSession(state.touchedFiles),
           autoApprovedTools: withoutSession(state.autoApprovedTools),
           totalMessageCount: withoutSession(state.totalMessageCount),
           lastTurnUsage: withoutSession(state.lastTurnUsage),
@@ -3404,13 +3709,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
             mergedSubagents.set(s.parentToolUseId, s)
           }
         }
+        const mergedSubagentList = Array.from(mergedSubagents.values())
 
         return {
           messages: { ...state.messages, [sessionId]: combined },
           isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false },
           historyLoadState: { ...state.historyLoadState, [sessionId]: 'loaded' },
           tasks: { ...state.tasks, [sessionId]: Array.from(taskMap.values()) },
-          subagents: { ...state.subagents, [sessionId]: Array.from(mergedSubagents.values()) },
+          subagents: { ...state.subagents, [sessionId]: mergedSubagentList },
+          // KTD3: wholesale replace from a rescan over the merged state —
+          // combined history+live messages and merged subagents — so live
+          // touches that raced the load survive the rebuild.
+          touchedFiles: {
+            ...state.touchedFiles,
+            [sessionId]: scanMessagesForTouchedFiles(combined, mergedSubagentList),
+          },
           totalMessageCount: {
             ...state.totalMessageCount,
             [sessionId]: Math.max(
@@ -3683,6 +3996,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete newTasks[sessionId]
       const newPendingTaskCreates = { ...state.pendingTaskCreates }
       delete newPendingTaskCreates[sessionId]
+      const newTouchedFiles = { ...state.touchedFiles }
+      delete newTouchedFiles[sessionId]
       const newLastTurnUsage = { ...state.lastTurnUsage }
       delete newLastTurnUsage[sessionId]
       const newSessionUsage = { ...state.sessionUsage }
@@ -3709,6 +4024,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         subagents: newSubagents,
         tasks: newTasks,
         pendingTaskCreates: newPendingTaskCreates,
+        touchedFiles: newTouchedFiles,
         lastTurnUsage: newLastTurnUsage,
         sessionUsage: newSessionUsage,
         contextUsage: newContextUsage,

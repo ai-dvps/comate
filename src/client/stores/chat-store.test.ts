@@ -12,6 +12,7 @@ import {
   clearAllSessionSubscriptions,
   CREATE_SESSION_TIMEOUT_MS,
   deriveInFlightBrowserToolIds,
+  scanMessagesForTouchedFiles,
   type SseSetter,
   mergeSessionStatusEntry,
   newChatDraftSessionId,
@@ -23,7 +24,15 @@ import {
   wsClient,
 } from '../lib/websocket-client'
 import { useToastStore } from './toast-store'
-import type { SubagentState, TaskItem, WorkflowState, WorkflowStatus } from '../types/message'
+import type {
+  ChatMessage,
+  MessagePart,
+  SubagentPart,
+  SubagentState,
+  TaskItem,
+  WorkflowState,
+  WorkflowStatus,
+} from '../types/message'
 import type { WsEventMessage } from '@server/websocket/types'
 import { toUserTurnImage } from '../lib/image-input'
 import zhCommon from '../i18n/zh-CN/common.json'
@@ -2560,6 +2569,802 @@ describe('task scanning and filtering', () => {
 
     const state = useChatStore.getState()
     assert.strictEqual(state.pendingTaskCreates['s1']?.['tool-create-internal'], undefined)
+  })
+})
+
+describe('touched-files scanning', () => {
+  function makeTouchMessage(opts: {
+    timestamp: number
+    toolUseId: string
+    toolName: string
+    input: unknown
+    isError?: boolean
+    toolUseResult?: unknown
+    omitResult?: boolean
+  }): ChatMessage {
+    const parts: MessagePart[] = [
+      {
+        type: 'tool_use',
+        toolUseId: opts.toolUseId,
+        toolName: opts.toolName,
+        input: opts.input,
+        state: 'complete',
+      },
+    ]
+    if (!opts.omitResult) {
+      parts.push({
+        type: 'tool_result',
+        toolUseId: opts.toolUseId,
+        output: opts.isError ? 'tool failed' : 'ok',
+        isError: opts.isError === true,
+        ...(opts.toolUseResult !== undefined && { toolUseResult: opts.toolUseResult }),
+      })
+    }
+    return {
+      id: `m-${opts.toolUseId}`,
+      role: 'assistant',
+      parts,
+      timestamp: opts.timestamp,
+    }
+  }
+
+  function makeSubagentWithTouch(opts: {
+    parentToolUseId: string
+    startTime: number
+    endTime?: number
+    toolUseId: string
+    toolName: string
+    input: unknown
+    isError?: boolean
+    omitResult?: boolean
+  }): SubagentState {
+    const parts: SubagentPart[] = [
+      { type: 'tool_use', toolUseId: opts.toolUseId, toolName: opts.toolName, input: opts.input },
+    ]
+    if (!opts.omitResult) {
+      parts.push({
+        type: 'tool_result',
+        toolUseId: opts.toolUseId,
+        output: opts.isError ? 'tool failed' : 'ok',
+        isError: opts.isError === true,
+      })
+    }
+    return {
+      parentToolUseId: opts.parentToolUseId,
+      description: 'agent',
+      state: opts.endTime !== undefined ? 'completed' : 'running',
+      startTime: opts.startTime,
+      ...(opts.endTime !== undefined && { endTime: opts.endTime }),
+      toolCount: 1,
+      progressHint: '',
+      messages: [{ id: 'sm-1', role: 'assistant', parts }],
+    }
+  }
+
+  it('dedupes three Edit results for one path into a single modified entry (AE1)', () => {
+    const messages = [10, 20, 30].map((timestamp, i) =>
+      makeTouchMessage({
+        timestamp,
+        toolUseId: `edit-${i}`,
+        toolName: 'Edit',
+        input: { file_path: '/ws/src/a.ts', old_string: `${i}`, new_string: `${i + 1}` },
+      }),
+    )
+
+    const entries = scanMessagesForTouchedFiles(messages, [])
+
+    assert.deepStrictEqual(entries, [
+      { path: '/ws/src/a.ts', status: 'modified', lastTouchedAt: 30 },
+    ])
+  })
+
+  it('marks a Write with create metadata as created and keeps created sticky after a later Edit', () => {
+    const messages = [
+      makeTouchMessage({
+        timestamp: 10,
+        toolUseId: 'w1',
+        toolName: 'Write',
+        input: { file_path: '/ws/new.ts', content: 'x' },
+        toolUseResult: { type: 'create', filePath: '/ws/new.ts', content: 'x' },
+      }),
+      makeTouchMessage({
+        timestamp: 20,
+        toolUseId: 'e1',
+        toolName: 'Edit',
+        input: { file_path: '/ws/new.ts', old_string: 'x', new_string: 'y' },
+      }),
+    ]
+
+    const entries = scanMessagesForTouchedFiles(messages, [])
+
+    assert.deepStrictEqual(entries, [
+      { path: '/ws/new.ts', status: 'created', lastTouchedAt: 20 },
+    ])
+  })
+
+  it('treats a first-seen Write with update metadata as modified', () => {
+    const messages = [
+      makeTouchMessage({
+        timestamp: 10,
+        toolUseId: 'w1',
+        toolName: 'Write',
+        input: { file_path: '/ws/rewrite.ts', content: 'x' },
+        toolUseResult: { type: 'update', filePath: '/ws/rewrite.ts', content: 'x' },
+      }),
+    ]
+
+    const entries = scanMessagesForTouchedFiles(messages, [])
+
+    assert.deepStrictEqual(entries, [
+      { path: '/ws/rewrite.ts', status: 'modified', lastTouchedAt: 10 },
+    ])
+  })
+
+  it('reads Edit creations from a null originalFile marker in the result metadata', () => {
+    const messages = [
+      makeTouchMessage({
+        timestamp: 10,
+        toolUseId: 'e1',
+        toolName: 'Edit',
+        input: { file_path: '/ws/created-by-edit.ts', old_string: '', new_string: 'x' },
+        toolUseResult: { filePath: '/ws/created-by-edit.ts', originalFile: null, structuredPatch: [] },
+      }),
+      makeTouchMessage({
+        timestamp: 20,
+        toolUseId: 'e2',
+        toolName: 'Edit',
+        input: { file_path: '/ws/edited.ts', old_string: 'a', new_string: 'b' },
+        toolUseResult: { filePath: '/ws/edited.ts', originalFile: 'a', structuredPatch: [] },
+      }),
+    ]
+
+    const entries = scanMessagesForTouchedFiles(messages, [])
+
+    assert.deepStrictEqual(entries, [
+      { path: '/ws/edited.ts', status: 'modified', lastTouchedAt: 20 },
+      { path: '/ws/created-by-edit.ts', status: 'created', lastTouchedAt: 10 },
+    ])
+  })
+
+  it('falls back to the heuristic without metadata: first-seen Write is created, first-seen Edit is modified', () => {
+    const messages = [
+      makeTouchMessage({
+        timestamp: 10,
+        toolUseId: 'w1',
+        toolName: 'Write',
+        input: { file_path: '/ws/fresh.ts', content: 'x' },
+      }),
+      makeTouchMessage({
+        timestamp: 20,
+        toolUseId: 'e1',
+        toolName: 'Edit',
+        input: { file_path: '/ws/existing.ts', old_string: 'a', new_string: 'b' },
+      }),
+    ]
+
+    const entries = scanMessagesForTouchedFiles(messages, [])
+
+    assert.deepStrictEqual(entries, [
+      { path: '/ws/existing.ts', status: 'modified', lastTouchedAt: 20 },
+      { path: '/ws/fresh.ts', status: 'created', lastTouchedAt: 10 },
+    ])
+  })
+
+  it('produces no entry when the tool result carries an error', () => {
+    const messages = [
+      makeTouchMessage({
+        timestamp: 10,
+        toolUseId: 'e1',
+        toolName: 'Edit',
+        input: { file_path: '/ws/a.ts', old_string: 'missing', new_string: 'b' },
+        isError: true,
+      }),
+    ]
+
+    assert.deepStrictEqual(scanMessagesForTouchedFiles(messages, []), [])
+  })
+
+  it('produces no entry when the tool use has no result (approval never decided)', () => {
+    const messages = [
+      makeTouchMessage({
+        timestamp: 10,
+        toolUseId: 'w1',
+        toolName: 'Write',
+        input: { file_path: '/ws/pending.ts', content: 'x' },
+        omitResult: true,
+      }),
+    ]
+
+    assert.deepStrictEqual(scanMessagesForTouchedFiles(messages, []), [])
+  })
+
+  it('collects NotebookEdit touches via notebook_path', () => {
+    const messages = [
+      makeTouchMessage({
+        timestamp: 10,
+        toolUseId: 'nb1',
+        toolName: 'NotebookEdit',
+        input: { notebook_path: '/ws/nb.ipynb', cell_id: 'c1', new_source: 'print(1)' },
+      }),
+    ]
+
+    const entries = scanMessagesForTouchedFiles(messages, [])
+
+    assert.deepStrictEqual(entries, [
+      { path: '/ws/nb.ipynb', status: 'modified', lastTouchedAt: 10 },
+    ])
+  })
+
+  it('collects MultiEdit touches via file_path', () => {
+    const messages = [
+      makeTouchMessage({
+        timestamp: 10,
+        toolUseId: 'me1',
+        toolName: 'MultiEdit',
+        input: { file_path: '/ws/multi.ts', edits: [{ old_string: 'a', new_string: 'b' }] },
+      }),
+    ]
+
+    const entries = scanMessagesForTouchedFiles(messages, [])
+
+    assert.deepStrictEqual(entries, [
+      { path: '/ws/multi.ts', status: 'modified', lastTouchedAt: 10 },
+    ])
+  })
+
+  it('returns an empty list for messages containing only Bash tool uses (AE3)', () => {
+    const messages = [
+      makeTouchMessage({
+        timestamp: 10,
+        toolUseId: 'b1',
+        toolName: 'Bash',
+        input: { command: 'echo hi > /ws/sneaky.ts' },
+      }),
+      makeTouchMessage({
+        timestamp: 20,
+        toolUseId: 'b2',
+        toolName: 'Bash',
+        input: { command: 'rm /ws/gone.ts' },
+      }),
+    ]
+
+    assert.deepStrictEqual(scanMessagesForTouchedFiles(messages, []), [])
+  })
+
+  it('collects subagent touches the same as main-channel parts', () => {
+    const subagents = [
+      makeSubagentWithTouch({
+        parentToolUseId: 'sa-1',
+        startTime: 50,
+        endTime: 200,
+        toolUseId: 'sa-1-e1',
+        toolName: 'Edit',
+        input: { file_path: '/ws/agent.ts', old_string: 'a', new_string: 'b' },
+      }),
+    ]
+
+    const entries = scanMessagesForTouchedFiles([], subagents)
+
+    assert.deepStrictEqual(entries, [
+      { path: '/ws/agent.ts', status: 'modified', lastTouchedAt: 200 },
+    ])
+  })
+
+  it('orders a history-rebuilt subagent touch by the parent end-or-start time rather than sinking to the bottom', () => {
+    const messages = [
+      makeTouchMessage({
+        timestamp: 150,
+        toolUseId: 'm1',
+        toolName: 'Edit',
+        input: { file_path: '/ws/main.ts', old_string: 'a', new_string: 'b' },
+      }),
+    ]
+    const subagents = [
+      makeSubagentWithTouch({
+        parentToolUseId: 'sa-1',
+        startTime: 50,
+        endTime: 200,
+        toolUseId: 'sa-1-e1',
+        toolName: 'Edit',
+        input: { file_path: '/ws/agent.ts', old_string: 'a', new_string: 'b' },
+      }),
+      makeSubagentWithTouch({
+        parentToolUseId: 'sa-2',
+        startTime: 120,
+        toolUseId: 'sa-2-e1',
+        toolName: 'Edit',
+        input: { file_path: '/ws/running-agent.ts', old_string: 'a', new_string: 'b' },
+      }),
+    ]
+
+    const entries = scanMessagesForTouchedFiles(messages, subagents)
+
+    assert.deepStrictEqual(entries, [
+      { path: '/ws/agent.ts', status: 'modified', lastTouchedAt: 200 },
+      { path: '/ws/main.ts', status: 'modified', lastTouchedAt: 150 },
+      { path: '/ws/running-agent.ts', status: 'modified', lastTouchedAt: 120 },
+    ])
+  })
+
+  it('falls back to the created heuristic for a subagent Write without structured metadata', () => {
+    const subagents = [
+      makeSubagentWithTouch({
+        parentToolUseId: 'sa-1',
+        startTime: 50,
+        endTime: 200,
+        toolUseId: 'sa-1-w1',
+        toolName: 'Write',
+        input: { file_path: '/ws/agent-fresh.ts', content: 'x' },
+      }),
+    ]
+
+    const entries = scanMessagesForTouchedFiles([], subagents)
+
+    assert.deepStrictEqual(entries, [
+      { path: '/ws/agent-fresh.ts', status: 'created', lastTouchedAt: 200 },
+    ])
+  })
+
+  it('applies the same result gate to subagent touches', () => {
+    const subagents = [
+      makeSubagentWithTouch({
+        parentToolUseId: 'sa-1',
+        startTime: 50,
+        endTime: 200,
+        toolUseId: 'sa-1-e1',
+        toolName: 'Edit',
+        input: { file_path: '/ws/agent-error.ts', old_string: 'a', new_string: 'b' },
+        isError: true,
+      }),
+      makeSubagentWithTouch({
+        parentToolUseId: 'sa-2',
+        startTime: 60,
+        endTime: 210,
+        toolUseId: 'sa-2-w1',
+        toolName: 'Write',
+        input: { file_path: '/ws/agent-pending.ts', content: 'x' },
+        omitResult: true,
+      }),
+    ]
+
+    assert.deepStrictEqual(scanMessagesForTouchedFiles([], subagents), [])
+  })
+
+  it('keeps entries for absolute paths outside any workspace (membership is the panel layer’s job)', () => {
+    const messages = [
+      makeTouchMessage({
+        timestamp: 10,
+        toolUseId: 'e1',
+        toolName: 'Edit',
+        input: { file_path: '/etc/outside.conf', old_string: 'a', new_string: 'b' },
+      }),
+    ]
+
+    const entries = scanMessagesForTouchedFiles(messages, [])
+
+    assert.deepStrictEqual(entries, [
+      { path: '/etc/outside.conf', status: 'modified', lastTouchedAt: 10 },
+    ])
+  })
+
+  it('keeps one entry for two touches of one path and orders by the later touch', () => {
+    const messages = [
+      makeTouchMessage({
+        timestamp: 10,
+        toolUseId: 'w1',
+        toolName: 'Write',
+        input: { file_path: '/ws/x.ts', content: 'a' },
+      }),
+      makeTouchMessage({
+        timestamp: 30,
+        toolUseId: 'e2',
+        toolName: 'Edit',
+        input: { file_path: '/ws/y.ts', old_string: 'a', new_string: 'b' },
+      }),
+      makeTouchMessage({
+        timestamp: 50,
+        toolUseId: 'e1',
+        toolName: 'Edit',
+        input: { file_path: '/ws/x.ts', old_string: 'a', new_string: 'b' },
+      }),
+    ]
+
+    const entries = scanMessagesForTouchedFiles(messages, [])
+
+    assert.deepStrictEqual(entries, [
+      { path: '/ws/x.ts', status: 'created', lastTouchedAt: 50 },
+      { path: '/ws/y.ts', status: 'modified', lastTouchedAt: 30 },
+    ])
+  })
+
+  it('normalizes equivalent spellings of one path into a single entry', () => {
+    const messages = [
+      makeTouchMessage({
+        timestamp: 10,
+        toolUseId: 'w1',
+        toolName: 'Write',
+        input: { file_path: '/ws/src/./b.ts', content: 'a' },
+      }),
+      makeTouchMessage({
+        timestamp: 20,
+        toolUseId: 'e1',
+        toolName: 'Edit',
+        input: { file_path: '/ws/src//b.ts', old_string: 'a', new_string: 'b' },
+      }),
+    ]
+
+    const entries = scanMessagesForTouchedFiles(messages, [])
+
+    assert.deepStrictEqual(entries, [
+      { path: '/ws/src/b.ts', status: 'created', lastTouchedAt: 20 },
+    ])
+  })
+})
+
+describe('touched-files store wiring', () => {
+  beforeEach(() => {
+    useChatStore.setState({
+      sessions: {},
+      messages: {},
+      subagents: {},
+      tasks: {},
+      pendingTaskCreates: {},
+      touchedFiles: {},
+      totalMessageCount: {},
+      historyLoadState: {},
+      isLoadingMessages: {},
+      activeSessionIds: {},
+      pendingTurns: {},
+      pendingSend: {},
+      draftQueue: {},
+      imageDrafts: {},
+    })
+  })
+
+  function dispatchFileToolSequence(
+    set: SseSetter,
+    opts: {
+      messageId: string
+      toolUseId: string
+      toolName: string
+      input: unknown
+      isError?: boolean
+      toolUseResult?: unknown
+    },
+  ): void {
+    handleSseEvent(set, 'ws-1', 's1', 'assistant_start', { messageId: opts.messageId })
+    handleSseEvent(set, 'ws-1', 's1', 'tool_use_start', {
+      messageId: opts.messageId,
+      partIndex: 0,
+      toolUseId: opts.toolUseId,
+      toolName: opts.toolName,
+    })
+    handleSseEvent(set, 'ws-1', 's1', 'tool_use_done', {
+      toolUseId: opts.toolUseId,
+      input: opts.input,
+    })
+    handleSseEvent(set, 'ws-1', 's1', 'tool_result', {
+      toolUseId: opts.toolUseId,
+      output: opts.isError ? 'tool failed' : 'ok',
+      isError: opts.isError === true,
+      ...(opts.toolUseResult !== undefined && { toolUseResult: opts.toolUseResult }),
+    })
+  }
+
+  it('adds one entry for a live tool_use_done then successful tool_result sequence', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(5000)
+    const set = useChatStore.setState as unknown as SseSetter
+
+    dispatchFileToolSequence(set, {
+      messageId: 'm1',
+      toolUseId: 'tu-1',
+      toolName: 'Edit',
+      input: { file_path: '/ws/src/a.ts', old_string: 'a', new_string: 'b' },
+    })
+
+    assert.deepStrictEqual(useChatStore.getState().touchedFiles['s1'], [
+      { path: '/ws/src/a.ts', status: 'modified', lastTouchedAt: 5000 },
+    ])
+  })
+
+  it('adds no entry when the live tool_result carries an error', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+
+    dispatchFileToolSequence(set, {
+      messageId: 'm1',
+      toolUseId: 'tu-1',
+      toolName: 'Edit',
+      input: { file_path: '/ws/src/a.ts', old_string: 'missing', new_string: 'b' },
+      isError: true,
+    })
+
+    assert.strictEqual(useChatStore.getState().touchedFiles['s1'], undefined)
+  })
+
+  it('keeps a single entry for repeated touches of one path and refreshes its timestamp', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(5000)
+    const set = useChatStore.setState as unknown as SseSetter
+
+    dispatchFileToolSequence(set, {
+      messageId: 'm1',
+      toolUseId: 'tu-w1',
+      toolName: 'Write',
+      input: { file_path: '/ws/x.ts', content: 'a' },
+    })
+
+    vi.setSystemTime(7000)
+    dispatchFileToolSequence(set, {
+      messageId: 'm2',
+      toolUseId: 'tu-e1',
+      toolName: 'Edit',
+      input: { file_path: '/ws/x.ts', old_string: 'a', new_string: 'b' },
+    })
+
+    assert.deepStrictEqual(useChatStore.getState().touchedFiles['s1'], [
+      { path: '/ws/x.ts', status: 'created', lastTouchedAt: 7000 },
+    ])
+  })
+
+  it('adds an entry for a subagent tool_use delta followed by a successful tool_result delta', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(9000)
+    const set = useChatStore.setState as unknown as SseSetter
+
+    handleSseEvent(set, 'ws-1', 's1', 'subagent_start', {
+      parentToolUseId: 'task-1',
+      description: 'agent',
+    })
+    handleSseEvent(set, 'ws-1', 's1', 'subagent_delta', {
+      parentToolUseId: 'task-1',
+      delta: {
+        kind: 'tool_use',
+        toolUseId: 'stu-1',
+        toolName: 'Write',
+        input: { file_path: '/ws/agent-new.ts', content: 'x' },
+      },
+    })
+    handleSseEvent(set, 'ws-1', 's1', 'subagent_delta', {
+      parentToolUseId: 'task-1',
+      delta: { kind: 'tool_result', toolUseId: 'stu-1', output: 'ok', isError: false },
+    })
+
+    assert.deepStrictEqual(useChatStore.getState().touchedFiles['s1'], [
+      { path: '/ws/agent-new.ts', status: 'created', lastTouchedAt: 9000 },
+    ])
+  })
+
+  it('adds no entry when the subagent tool_result delta carries an error', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+
+    handleSseEvent(set, 'ws-1', 's1', 'subagent_start', {
+      parentToolUseId: 'task-1',
+      description: 'agent',
+    })
+    handleSseEvent(set, 'ws-1', 's1', 'subagent_delta', {
+      parentToolUseId: 'task-1',
+      delta: {
+        kind: 'tool_use',
+        toolUseId: 'stu-1',
+        toolName: 'Edit',
+        input: { file_path: '/ws/agent.ts', old_string: 'a', new_string: 'b' },
+      },
+    })
+    handleSseEvent(set, 'ws-1', 's1', 'subagent_delta', {
+      parentToolUseId: 'task-1',
+      delta: { kind: 'tool_result', toolUseId: 'stu-1', output: 'tool failed', isError: true },
+    })
+
+    assert.strictEqual(useChatStore.getState().touchedFiles['s1'], undefined)
+  })
+
+  it('rebuilds the full touched list from persisted file-tool activity on load (AE5)', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({
+      messages: [
+        {
+          id: 'h1',
+          role: 'assistant',
+          timestamp: 10,
+          parts: [
+            { type: 'tool_use', toolUseId: 'hw1', toolName: 'Write', input: { file_path: '/ws/fresh.ts', content: 'x' } },
+          ],
+        },
+        {
+          id: 'h2',
+          role: 'user',
+          timestamp: 11,
+          parts: [
+            {
+              type: 'tool_result',
+              toolUseId: 'hw1',
+              output: 'ok',
+              isError: false,
+              toolUseResult: { type: 'create', filePath: '/ws/fresh.ts', content: 'x' },
+            },
+          ],
+        },
+        {
+          id: 'h3',
+          role: 'assistant',
+          timestamp: 20,
+          parts: [
+            { type: 'tool_use', toolUseId: 'he1', toolName: 'Edit', input: { file_path: '/ws/existing.ts', old_string: 'a', new_string: 'b' } },
+          ],
+        },
+        {
+          id: 'h4',
+          role: 'user',
+          timestamp: 21,
+          parts: [
+            { type: 'tool_result', toolUseId: 'he1', output: 'ok', isError: false },
+          ],
+        },
+        {
+          id: 'h5',
+          role: 'assistant',
+          timestamp: 30,
+          parts: [
+            { type: 'tool_use', toolUseId: 'he2', toolName: 'Edit', input: { file_path: '/ws/failed.ts', old_string: 'a', new_string: 'b' } },
+          ],
+        },
+        {
+          id: 'h6',
+          role: 'user',
+          timestamp: 31,
+          parts: [
+            { type: 'tool_result', toolUseId: 'he2', output: 'tool failed', isError: true },
+          ],
+        },
+      ],
+      tasks: [],
+      subagents: [
+        {
+          parentToolUseId: 'sa-1',
+          description: 'agent',
+          state: 'completed',
+          startTime: 40,
+          endTime: 50,
+          toolCount: 1,
+          progressHint: '',
+          messages: [
+            {
+              id: 'sm1',
+              role: 'assistant',
+              parts: [
+                { type: 'tool_use', toolUseId: 'se1', toolName: 'Edit', input: { file_path: '/ws/agent.ts', old_string: 'a', new_string: 'b' } },
+              ],
+            },
+            {
+              id: 'sm2',
+              role: 'user',
+              parts: [
+                { type: 'tool_result', toolUseId: 'se1', output: 'ok', isError: false },
+              ],
+            },
+          ],
+        },
+      ],
+      workflows: [],
+    } as never)
+
+    try {
+      await useChatStore.getState().loadMessages('ws-1', 's1')
+
+      assert.deepStrictEqual(useChatStore.getState().touchedFiles['s1'], [
+        { path: '/ws/agent.ts', status: 'modified', lastTouchedAt: 50 },
+        { path: '/ws/existing.ts', status: 'modified', lastTouchedAt: 21 },
+        { path: '/ws/fresh.ts', status: 'created', lastTouchedAt: 11 },
+      ])
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('keeps live touches that accumulated while history was loading (merged-state rescan)', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(5000)
+    let resolveRequest: ((value: unknown) => void) | undefined
+    const response = new Promise((resolve) => {
+      resolveRequest = resolve
+    })
+    const requestSpy = vi.spyOn(wsClient, 'request').mockReturnValue(response as never)
+
+    try {
+      const loading = useChatStore.getState().loadMessages('ws-1', 's1')
+
+      // A live turn streams in while the history request is in flight.
+      const set = useChatStore.setState as unknown as SseSetter
+      dispatchFileToolSequence(set, {
+        messageId: 'live-m1',
+        toolUseId: 'live-tu',
+        toolName: 'Edit',
+        input: { file_path: '/ws/live.ts', old_string: 'a', new_string: 'b' },
+      })
+      assert.deepStrictEqual(useChatStore.getState().touchedFiles['s1'], [
+        { path: '/ws/live.ts', status: 'modified', lastTouchedAt: 5000 },
+      ])
+
+      resolveRequest?.({
+        messages: [
+          {
+            id: 'h1',
+            role: 'assistant',
+            timestamp: 10,
+            parts: [
+              { type: 'tool_use', toolUseId: 'hw1', toolName: 'Write', input: { file_path: '/ws/history.ts', content: 'x' } },
+            ],
+          },
+          {
+            id: 'h2',
+            role: 'user',
+            timestamp: 11,
+            parts: [
+              { type: 'tool_result', toolUseId: 'hw1', output: 'ok', isError: false },
+            ],
+          },
+        ],
+        tasks: [],
+        subagents: [],
+        workflows: [],
+      })
+      await loading
+
+      assert.deepStrictEqual(useChatStore.getState().touchedFiles['s1'], [
+        { path: '/ws/live.ts', status: 'modified', lastTouchedAt: 5000 },
+        { path: '/ws/history.ts', status: 'created', lastTouchedAt: 11 },
+      ])
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('drops the touched-files record when the session is deleted', async () => {
+    const fetchFn = vi.fn(() => Promise.resolve({ ok: true })) as unknown as Mock & typeof fetch
+    vi.stubGlobal('fetch', fetchFn)
+    useChatStore.setState({
+      sessions: {
+        'ws-1': [
+          {
+            id: 's1',
+            workspaceId: 'ws-1',
+            name: 'Session',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      },
+      messages: {
+        s1: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }], timestamp: 1 }],
+      },
+      touchedFiles: {
+        s1: [{ path: '/ws/a.ts', status: 'modified', lastTouchedAt: 1 }],
+      },
+    })
+
+    try {
+      const result = await useChatStore.getState().deleteSession('ws-1', 's1')
+      assert.strictEqual(result.ok, true)
+      assert.strictEqual(useChatStore.getState().touchedFiles['s1'], undefined)
+    } finally {
+      fetchFn.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('drops the touched-files record when messages are cleared (cache eviction path)', () => {
+    useChatStore.setState({
+      messages: {
+        s1: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }], timestamp: 1 }],
+      },
+      touchedFiles: {
+        s1: [{ path: '/ws/a.ts', status: 'modified', lastTouchedAt: 1 }],
+      },
+    })
+
+    useChatStore.getState().clearMessages('s1')
+
+    assert.strictEqual(useChatStore.getState().touchedFiles['s1'], undefined)
   })
 })
 

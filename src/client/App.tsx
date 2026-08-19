@@ -10,6 +10,7 @@ import ChatPanel from './components/ChatPanel'
 import ManagementWorkspace, { type ManagementDestination } from './components/ManagementWorkspace'
 import { initNotificationClickHandler } from './lib/notifications'
 import { openSessionDirect } from './lib/session-jump'
+import { openFileWithNotice } from './lib/open-file-with-notice'
 import ContextWorkspace from './components/ContextWorkspace'
 import UsageLoginModal from './components/UsageLoginModal'
 import CustomTitlebar from './components/CustomTitlebar'
@@ -299,13 +300,7 @@ function App() {
 
   const handleFileClick = useCallback(async (path: string, name: string) => {
     if (!activeWorkspaceId) return
-
-    try {
-      await useContextTabStore.getState().openFile(activeWorkspaceId, path, name)
-      ensureRightExpanded()
-    } catch (err) {
-      console.error('Failed to open file:', err)
-    }
+    await openFileWithNotice(activeWorkspaceId, path, name, { onOpened: ensureRightExpanded })
   }, [activeWorkspaceId, ensureRightExpanded])
 
   useEffect(() => {
