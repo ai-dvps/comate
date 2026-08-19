@@ -1,7 +1,7 @@
 import type { ChatSession } from '../stores/chat-store'
 import { getSessionActivityTimestamp } from './session-sort'
 
-type WorkspaceWithId = { id: string }
+type WorkspaceSortable = { id: string; createdAt?: string }
 
 export function getWorkspaceActivityTimestamp(
   sessions: readonly ChatSession[] | undefined,
@@ -15,15 +15,43 @@ export function getWorkspaceActivityTimestamp(
   )
 }
 
-export function sortWorkspacesByActivity<T extends WorkspaceWithId>(
+/**
+ * Workspace ordering key (activity sort position stability, KTD2): the
+ * server-carried turn-start key is the primary source. When it is absent
+ * (e.g. a downgraded server), fall back to the newest session activity, then
+ * to the workspace's own createdAt so a brand-new empty workspace still lands
+ * on top (R6).
+ */
+export function getWorkspaceSortTimestamp(
+  workspace: WorkspaceSortable,
+  sessions: readonly ChatSession[] | undefined,
+  workspaceLastTurnStartedAt: Record<string, number>,
+  lastActivityAt: Record<string, number>,
+): number {
+  const serverKey = workspaceLastTurnStartedAt[workspace.id]
+  if (serverKey !== undefined) return serverKey
+
+  const sessionDerived = getWorkspaceActivityTimestamp(sessions, lastActivityAt)
+  if (sessionDerived !== Number.NEGATIVE_INFINITY) return sessionDerived
+
+  return Date.parse(workspace.createdAt ?? '') || 0
+}
+
+export function sortWorkspacesByActivity<T extends WorkspaceSortable>(
   workspaces: readonly T[],
   sessionsByWorkspace: Readonly<Record<string, readonly ChatSession[]>>,
+  workspaceLastTurnStartedAt: Record<string, number>,
   lastActivityAt: Record<string, number>,
 ): T[] {
   const timestamps = new Map(
     workspaces.map((workspace) => [
       workspace.id,
-      getWorkspaceActivityTimestamp(sessionsByWorkspace[workspace.id], lastActivityAt),
+      getWorkspaceSortTimestamp(
+        workspace,
+        sessionsByWorkspace[workspace.id],
+        workspaceLastTurnStartedAt,
+        lastActivityAt,
+      ),
     ]),
   )
 

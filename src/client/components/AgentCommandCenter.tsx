@@ -142,6 +142,7 @@ export default function AgentCommandCenter({
   const isStreaming = useChatStore((state) => state.isStreaming)
   const unreadCompletions = useChatStore((state) => state.unreadCompletions)
   const lastActivityAt = useChatStore((state) => state.lastActivityAt)
+  const workspaceLastTurnStartedAt = useChatStore((state) => state.workspaceLastTurnStartedAt)
   const setActiveSession = useChatStore((state) => state.setActiveSession)
   const createSession = useChatStore((state) => state.createSession)
   const renameSession = useChatStore((state) => state.renameSession)
@@ -155,8 +156,8 @@ export default function AgentCommandCenter({
     [workspaces],
   )
   const sortedWorkspaces = useMemo(
-    () => sortWorkspacesByActivity(workspaces, sessions, lastActivityAt),
-    [lastActivityAt, sessions, workspaces],
+    () => sortWorkspacesByActivity(workspaces, sessions, workspaceLastTurnStartedAt, lastActivityAt),
+    [workspaceLastTurnStartedAt, lastActivityAt, sessions, workspaces],
   )
   const wecomStatuses = useChannelStatuses(workspaceIds, '/bot/status')
   const feishuStatuses = useChannelStatuses(workspaceIds, '/feishu/status')

@@ -17,7 +17,10 @@ import {
   mergeSessionStatusEntry,
   newChatDraftSessionId,
   promptImageDraftKey,
+  type ChatSession,
 } from './chat-store'
+import { compareSessionActivity } from '../lib/session-sort'
+import { sortWorkspacesByActivity } from '../lib/workspace-sort'
 import {
   DEFAULT_TIMEOUT,
   WebSocketRequestTimeoutError,
@@ -3909,5 +3912,530 @@ describe('workspace cleanup pending turns', () => {
       revokeSpy.mockRestore()
       requestSpy.mockRestore()
     }
+  })
+})
+
+describe('activity ordering writers (turn-start keyed; KTD2/KTD3/KTD5)', () => {
+  function orderingSession(
+    id: string,
+    workspaceId: string,
+    overrides: Partial<ChatSession> = {},
+  ): ChatSession {
+    return {
+      id,
+      workspaceId,
+      name: id,
+      source: 'gui',
+      createdAt: new Date(500).toISOString(),
+      updatedAt: new Date(1000).toISOString(),
+      ...overrides,
+    }
+  }
+
+  function stubSessionListFetch(rowsByWorkspace: Record<string, ChatSession[]>) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'PUT') return { ok: true, json: async () => ({}) }
+      const url = String(input)
+      if (url.includes('/prompt-history')) return { ok: true, json: async () => ({ prompts: [] }) }
+      const match = /\/api\/workspaces\/([^/]+)\/sessions/.exec(url)
+      const rows = match ? (rowsByWorkspace[match[1]] ?? []) : []
+      return { ok: true, json: async () => ({ sessions: rows }) }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  function putCalls(fetchMock: ReturnType<typeof stubSessionListFetch>) {
+    return fetchMock.mock.calls.filter(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'PUT',
+    )
+  }
+
+  function sortedSessionIds(workspaceId: string): string[] {
+    const state = useChatStore.getState()
+    return [...(state.sessions[workspaceId] ?? [])]
+      .sort((a, b) => compareSessionActivity(a, b, state.lastActivityAt))
+      .map((session) => session.id)
+  }
+
+  const idlePollStatus = (lastTurnStartedAt: number) => ({
+    pendingCount: 0,
+    isProcessing: false,
+    activity: { phase: 'background' as const, active: false, backgroundTasks: [] },
+    lastTurnStartedAt,
+  })
+
+  beforeEach(() => {
+    useChatStore.setState({
+      sessions: {},
+      messages: {},
+      activeSessionIds: {},
+      sessionStatus: {},
+      sessionActivity: {},
+      isStreaming: {},
+      unreadCompletions: {},
+      lastActivityAt: {},
+      workspaceLastTurnStartedAt: {},
+      approvalQueue: {},
+      serverNonce: {},
+      pendingSend: {},
+      pendingTurns: {},
+      draftQueue: {},
+      drafts: {},
+      lastCompletion: {},
+      totalMessageCount: {},
+      streamStartedAt: {},
+      backgroundSessions: {},
+    })
+  })
+
+  afterEach(() => {
+    clearAllSessionSubscriptions(useChatStore.setState as unknown as SseSetter)
+  })
+
+  it('AE1: streaming, completion, pending interactions, and key-stable poll ticks never move items', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] })
+    stubSessionListFetch({
+      'ws-ord': [
+        orderingSession('ord-s1', 'ws-ord', { lastTurnStartedAt: 1000 }),
+        orderingSession('ord-s2', 'ws-ord', { lastTurnStartedAt: 2000 }),
+      ],
+    })
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({
+      statuses: {
+        'ord-s1': {
+          pendingCount: 1,
+          pendingKind: 'approval',
+          isProcessing: true,
+          activity: { phase: 'background', active: true, backgroundTasks: [] },
+          lastTurnStartedAt: 1000,
+        },
+        'ord-s2': {
+          pendingCount: 0,
+          isProcessing: true,
+          activity: { phase: 'background', active: true, backgroundTasks: [] },
+          lastTurnStartedAt: 2000,
+        },
+      },
+      workspaceLastTurnStartedAt: 2000,
+    })
+
+    try {
+      await useChatStore.getState().fetchSessions('ws-ord')
+      assert.deepStrictEqual(useChatStore.getState().lastActivityAt, {
+        'ord-s1': 1000,
+        'ord-s2': 2000,
+      })
+      assert.deepStrictEqual(sortedSessionIds('ws-ord'), ['ord-s2', 'ord-s1'])
+
+      const set = useChatStore.setState as unknown as SseSetter
+      handleSseEvent(set, 'ws-ord', 'ord-s1', 'assistant_start', { messageId: 'm1' })
+      handleSseEvent(set, 'ws-ord', 'ord-s1', 'pending_approval', {
+        requestId: 'r1',
+        toolName: 'Bash',
+        toolUseId: 't1',
+        input: {},
+      })
+      handleSseEvent(set, 'ws-ord', 'ord-s2', 'result', { isError: false })
+
+      await vi.advanceTimersByTimeAsync(5000)
+
+      const state = useChatStore.getState()
+      // R4: the events still surface through badges and status fields.
+      assert.ok((state.sessionStatus['ord-s1']?.pendingCount ?? 0) > 0)
+      assert.strictEqual(state.approvalQueue['ord-s1']?.length, 1)
+      assert.ok(state.lastCompletion['ord-s2'])
+      // R1: but neither positions nor the ordering keys moved.
+      assert.deepStrictEqual(state.lastActivityAt, { 'ord-s1': 1000, 'ord-s2': 2000 })
+      assert.strictEqual(state.workspaceLastTurnStartedAt['ws-ord'], 2000)
+      assert.deepStrictEqual(sortedSessionIds('ws-ord'), ['ord-s2', 'ord-s1'])
+    } finally {
+      useChatStore.getState().cleanupWorkspace('ws-ord')
+      requestSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('AE2: a user send moves the session and its workspace to the top, preserving other positions', async () => {
+    stubSessionListFetch({
+      'ws-mv': [
+        orderingSession('mv-s1', 'ws-mv', { lastTurnStartedAt: 1000 }),
+        orderingSession('mv-s2', 'ws-mv', { lastTurnStartedAt: 3000 }),
+        orderingSession('mv-s3', 'ws-mv', { lastTurnStartedAt: 2000 }),
+      ],
+    })
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
+
+    try {
+      await useChatStore.getState().fetchSessions('ws-mv')
+      useChatStore.getState().seedWorkspaceActivityKeys([
+        { id: 'ws-mv', lastTurnStartedAt: 500 },
+        { id: 'ws-mv-other', lastTurnStartedAt: 4000 },
+      ])
+      assert.deepStrictEqual(sortedSessionIds('ws-mv'), ['mv-s2', 'mv-s3', 'mv-s1'])
+
+      useChatStore.getState().sendMessage('ws-mv', 'mv-s1', 'hello')
+
+      const state = useChatStore.getState()
+      const bump = state.lastActivityAt['mv-s1']
+      assert.ok(bump > 3000, 'send optimistically advances the session key')
+      assert.deepStrictEqual(sortedSessionIds('ws-mv'), ['mv-s1', 'mv-s2', 'mv-s3'])
+      assert.strictEqual(state.workspaceLastTurnStartedAt['ws-mv'], bump)
+      assert.strictEqual(state.workspaceLastTurnStartedAt['ws-mv-other'], 4000)
+      const sortedWorkspaces = sortWorkspacesByActivity(
+        [{ id: 'ws-mv-other' }, { id: 'ws-mv' }],
+        { 'ws-mv': state.sessions['ws-mv'], 'ws-mv-other': [] },
+        state.workspaceLastTurnStartedAt,
+        state.lastActivityAt,
+      )
+      assert.deepStrictEqual(
+        sortedWorkspaces.map((workspace) => workspace.id),
+        ['ws-mv', 'ws-mv-other'],
+      )
+    } finally {
+      useChatStore.getState().cleanupWorkspace('ws-mv')
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('AE4: selecting a session never changes ordering', async () => {
+    stubSessionListFetch({
+      'ws-sel': [
+        orderingSession('sel-s1', 'ws-sel', { lastTurnStartedAt: 1000 }),
+        orderingSession('sel-s2', 'ws-sel', { lastTurnStartedAt: 2000 }),
+      ],
+    })
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
+
+    try {
+      await useChatStore.getState().fetchSessions('ws-sel')
+      const keysBefore = { ...useChatStore.getState().lastActivityAt }
+
+      useChatStore.getState().setActiveSession('ws-sel', 'sel-s1')
+
+      assert.strictEqual(useChatStore.getState().activeSessionIds['ws-sel'], 'sel-s1')
+      assert.deepStrictEqual(useChatStore.getState().lastActivityAt, keysBefore)
+      assert.deepStrictEqual(sortedSessionIds('ws-sel'), ['sel-s2', 'sel-s1'])
+    } finally {
+      useChatStore.getState().cleanupWorkspace('ws-sel')
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('AE5: a restart re-seeds the same order from server-carried keys', async () => {
+    stubSessionListFetch({
+      'ws-re': [
+        orderingSession('re-s1', 'ws-re', { lastTurnStartedAt: 1000 }),
+        orderingSession('re-s2', 'ws-re', { lastTurnStartedAt: 3000 }),
+        orderingSession('re-s3', 'ws-re', { lastTurnStartedAt: 2000 }),
+      ],
+    })
+
+    try {
+      await useChatStore.getState().fetchSessions('ws-re')
+      const beforeRestart = sortedSessionIds('ws-re')
+      assert.deepStrictEqual(beforeRestart, ['re-s2', 're-s3', 're-s1'])
+
+      // Simulated restart: in-memory maps vanish; the next boot re-seeds from
+      // the keys carried by the server rows.
+      useChatStore.setState({
+        sessions: {},
+        lastActivityAt: {},
+        workspaceLastTurnStartedAt: {},
+      })
+      await useChatStore.getState().fetchSessions('ws-re')
+
+      assert.deepStrictEqual(sortedSessionIds('ws-re'), beforeRestart)
+    } finally {
+      useChatStore.getState().cleanupWorkspace('ws-re')
+    }
+  })
+
+  it('AE6: a fetched previously unseen session with a creation-initialized key lands on top', async () => {
+    stubSessionListFetch({
+      'ws-new': [
+        orderingSession('ex-s1', 'ws-new', { lastTurnStartedAt: 1000 }),
+        orderingSession('ex-s2', 'ws-new', { lastTurnStartedAt: 2000 }),
+      ],
+    })
+
+    try {
+      await useChatStore.getState().fetchSessions('ws-new')
+      assert.deepStrictEqual(sortedSessionIds('ws-new'), ['ex-s2', 'ex-s1'])
+
+      stubSessionListFetch({
+        'ws-new': [
+          orderingSession('ex-s1', 'ws-new', { lastTurnStartedAt: 1000 }),
+          orderingSession('ex-s2', 'ws-new', { lastTurnStartedAt: 2000 }),
+          orderingSession('ex-s3', 'ws-new', { lastTurnStartedAt: 3000 }),
+        ],
+      })
+      await useChatStore.getState().fetchSessions('ws-new')
+
+      assert.deepStrictEqual(sortedSessionIds('ws-new'), ['ex-s3', 'ex-s2', 'ex-s1'])
+    } finally {
+      useChatStore.getState().cleanupWorkspace('ws-new')
+    }
+  })
+
+  it('scopes fetch pruning to the fetched workspace, keeping other workspaces’ keys', async () => {
+    stubSessionListFetch({
+      'ws-prune-a': [orderingSession('pa-s1', 'ws-prune-a', { lastTurnStartedAt: 1000 })],
+      'ws-prune-b': [orderingSession('pb-s1', 'ws-prune-b', { lastTurnStartedAt: 500 })],
+    })
+
+    try {
+      await useChatStore.getState().fetchSessions('ws-prune-a')
+      await useChatStore.getState().fetchSessions('ws-prune-b')
+      let keys = useChatStore.getState().lastActivityAt
+      assert.strictEqual(keys['pa-s1'], 1000)
+      assert.strictEqual(keys['pb-s1'], 500)
+
+      // pb-s1 vanished server-side: only its key is pruned; ws-prune-a is untouched.
+      stubSessionListFetch({
+        'ws-prune-a': [orderingSession('pa-s1', 'ws-prune-a', { lastTurnStartedAt: 1000 })],
+        'ws-prune-b': [],
+      })
+      await useChatStore.getState().fetchSessions('ws-prune-b')
+      keys = useChatStore.getState().lastActivityAt
+      assert.strictEqual(keys['pa-s1'], 1000)
+      assert.strictEqual(keys['pb-s1'], undefined)
+    } finally {
+      useChatStore.getState().cleanupWorkspace('ws-prune-a')
+      useChatStore.getState().cleanupWorkspace('ws-prune-b')
+    }
+  })
+
+  it('lets server-carried poll values overwrite an optimistic send bump and converge within a tick', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] })
+    stubSessionListFetch({
+      'ws-conv': [
+        orderingSession('cv-s1', 'ws-conv', { lastTurnStartedAt: 1000 }),
+        orderingSession('cv-s2', 'ws-conv', { lastTurnStartedAt: 2000 }),
+      ],
+    })
+    let pollPayload: unknown = {
+      statuses: { 'cv-s1': idlePollStatus(1000), 'cv-s2': idlePollStatus(2000) },
+      workspaceLastTurnStartedAt: 2000,
+    }
+    const requestSpy = vi.spyOn(wsClient, 'request').mockImplementation((type) =>
+      Promise.resolve(type === 'status' ? pollPayload : {}),
+    )
+
+    try {
+      await useChatStore.getState().fetchSessions('ws-conv')
+      useChatStore.getState().seedWorkspaceActivityKeys([{ id: 'ws-conv', lastTurnStartedAt: 2000 }])
+
+      useChatStore.getState().sendMessage('ws-conv', 'cv-s1', 'hi')
+      const optimistic = useChatStore.getState().lastActivityAt['cv-s1']
+      assert.ok(optimistic > 2000)
+      assert.strictEqual(useChatStore.getState().workspaceLastTurnStartedAt['ws-conv'], optimistic)
+
+      // An in-flight poll response carrying pre-send keys lands first: server
+      // values are authoritative (KTD3) and overwrite the provisional bump.
+      await vi.advanceTimersByTimeAsync(5000)
+      assert.strictEqual(useChatStore.getState().lastActivityAt['cv-s1'], 1000)
+      assert.strictEqual(useChatStore.getState().workspaceLastTurnStartedAt['ws-conv'], 2000)
+
+      // The following tick carries the stamped turn start and the session
+      // reclaims the top (convergence).
+      pollPayload = {
+        statuses: { 'cv-s1': idlePollStatus(optimistic + 1), 'cv-s2': idlePollStatus(2000) },
+        workspaceLastTurnStartedAt: optimistic + 1,
+      }
+      await vi.advanceTimersByTimeAsync(5000)
+      assert.strictEqual(useChatStore.getState().lastActivityAt['cv-s1'], optimistic + 1)
+      assert.strictEqual(useChatStore.getState().workspaceLastTurnStartedAt['ws-conv'], optimistic + 1)
+      assert.deepStrictEqual(sortedSessionIds('ws-conv'), ['cv-s1', 'cv-s2'])
+    } finally {
+      useChatStore.getState().cleanupWorkspace('ws-conv')
+      requestSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('corrects a failed send’s optimistic bumps downward from the next server-carried values', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] })
+    stubSessionListFetch({
+      'ws-fail': [
+        orderingSession('fl-s1', 'ws-fail', { lastTurnStartedAt: 1000 }),
+        orderingSession('fl-s2', 'ws-fail', { lastTurnStartedAt: 2000 }),
+      ],
+    })
+    const requestSpy = vi.spyOn(wsClient, 'request').mockImplementation((type) =>
+      Promise.resolve(
+        type === 'status'
+          ? {
+              statuses: { 'fl-s1': idlePollStatus(1000), 'fl-s2': idlePollStatus(2000) },
+              workspaceLastTurnStartedAt: 2000,
+            }
+          : {},
+      ),
+    )
+
+    try {
+      await useChatStore.getState().fetchSessions('ws-fail')
+      useChatStore.getState().seedWorkspaceActivityKeys([{ id: 'ws-fail', lastTurnStartedAt: 2000 }])
+
+      // The admission failed server-side, so no stamp ever lands; the
+      // optimistic bump stays until the next server-carried value corrects it.
+      useChatStore.getState().sendMessage('ws-fail', 'fl-s1', 'hi')
+      assert.ok(useChatStore.getState().lastActivityAt['fl-s1'] > 2000)
+
+      await vi.advanceTimersByTimeAsync(5000)
+      assert.strictEqual(useChatStore.getState().lastActivityAt['fl-s1'], 1000)
+      assert.strictEqual(useChatStore.getState().workspaceLastTurnStartedAt['ws-fail'], 2000)
+      assert.deepStrictEqual(sortedSessionIds('ws-fail'), ['fl-s2', 'fl-s1'])
+    } finally {
+      useChatStore.getState().cleanupWorkspace('ws-fail')
+      requestSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not unarchive an archived session on the first-boot seed or a refetch without advance', async () => {
+    const archived = orderingSession('ar-s1', 'ws-arch', {
+      isArchived: true,
+      lastTurnStartedAt: 1000,
+    })
+    const fetchMock = stubSessionListFetch({ 'ws-arch': [archived] })
+
+    try {
+      // First-boot seed: no stored key to compare against — exempt (KTD5).
+      await useChatStore.getState().fetchSessions('ws-arch')
+      assert.strictEqual(useChatStore.getState().sessions['ws-arch'][0].isArchived, true)
+      assert.strictEqual(useChatStore.getState().lastActivityAt['ar-s1'], 1000)
+
+      // Refetch with the same key: no genuine advance — still archived.
+      await useChatStore.getState().fetchSessions('ws-arch')
+      assert.strictEqual(useChatStore.getState().sessions['ws-arch'][0].isArchived, true)
+      assert.strictEqual(putCalls(fetchMock).length, 0)
+    } finally {
+      useChatStore.getState().cleanupWorkspace('ws-arch')
+    }
+  })
+
+  it('unarchives an archived session when a refetch observes a genuine key advance (KTD5)', async () => {
+    stubSessionListFetch({
+      'ws-arch2': [orderingSession('ar2-s1', 'ws-arch2', { isArchived: true, lastTurnStartedAt: 1000 })],
+    })
+
+    try {
+      await useChatStore.getState().fetchSessions('ws-arch2')
+      assert.strictEqual(useChatStore.getState().sessions['ws-arch2'][0].isArchived, true)
+
+      const fetchMock = stubSessionListFetch({
+        'ws-arch2': [orderingSession('ar2-s1', 'ws-arch2', { isArchived: true, lastTurnStartedAt: 5000 })],
+      })
+      await useChatStore.getState().fetchSessions('ws-arch2')
+
+      assert.strictEqual(useChatStore.getState().sessions['ws-arch2'][0].isArchived, false)
+      assert.strictEqual(useChatStore.getState().lastActivityAt['ar2-s1'], 5000)
+      const puts = putCalls(fetchMock)
+      assert.strictEqual(puts.length, 1)
+      assert.strictEqual(String(puts[0][0]), '/api/workspaces/ws-arch2/sessions/ar2-s1')
+      assert.deepStrictEqual(JSON.parse((puts[0][1] as RequestInit).body as string), {
+        isArchived: false,
+      })
+    } finally {
+      useChatStore.getState().cleanupWorkspace('ws-arch2')
+    }
+  })
+
+  it('unarchives an archived session when a poll tick observes a genuine key advance (KTD5)', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] })
+    const fetchMock = stubSessionListFetch({
+      'ws-arch3': [orderingSession('ar3-s1', 'ws-arch3', { isArchived: true, lastTurnStartedAt: 1000 })],
+    })
+    const requestSpy = vi.spyOn(wsClient, 'request').mockImplementation((type) =>
+      Promise.resolve(
+        type === 'status'
+          ? { statuses: { 'ar3-s1': idlePollStatus(5000) }, workspaceLastTurnStartedAt: 5000 }
+          : {},
+      ),
+    )
+
+    try {
+      await useChatStore.getState().fetchSessions('ws-arch3')
+      assert.strictEqual(useChatStore.getState().sessions['ws-arch3'][0].isArchived, true)
+
+      await vi.advanceTimersByTimeAsync(5000)
+
+      assert.strictEqual(useChatStore.getState().sessions['ws-arch3'][0].isArchived, false)
+      assert.strictEqual(useChatStore.getState().lastActivityAt['ar3-s1'], 5000)
+      assert.strictEqual(putCalls(fetchMock).length, 1)
+    } finally {
+      useChatStore.getState().cleanupWorkspace('ws-arch3')
+      requestSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not double-fire the unarchive when the refetch lands before the poll', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] })
+    stubSessionListFetch({
+      'ws-arch4': [orderingSession('ar4-s1', 'ws-arch4', { isArchived: true, lastTurnStartedAt: 1000 })],
+    })
+    const requestSpy = vi.spyOn(wsClient, 'request').mockImplementation((type) =>
+      Promise.resolve(
+        type === 'status'
+          ? { statuses: { 'ar4-s1': idlePollStatus(5000) }, workspaceLastTurnStartedAt: 5000 }
+          : {},
+      ),
+    )
+
+    try {
+      await useChatStore.getState().fetchSessions('ws-arch4')
+
+      // The focus refetch lands between the server stamp and the next poll:
+      // it observes the advance and unarchives.
+      const fetchMock = stubSessionListFetch({
+        'ws-arch4': [orderingSession('ar4-s1', 'ws-arch4', { isArchived: true, lastTurnStartedAt: 5000 })],
+      })
+      await useChatStore.getState().fetchSessions('ws-arch4')
+      assert.strictEqual(useChatStore.getState().sessions['ws-arch4'][0].isArchived, false)
+
+      // The poll tick then carries the same key: no advance, no second PUT.
+      await vi.advanceTimersByTimeAsync(5000)
+      assert.strictEqual(putCalls(fetchMock).length, 1)
+      assert.strictEqual(useChatStore.getState().lastActivityAt['ar4-s1'], 5000)
+    } finally {
+      useChatStore.getState().cleanupWorkspace('ws-arch4')
+      requestSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('unarchives an archived session on a user send (send writer observes the advance)', async () => {
+    const fetchMock = stubSessionListFetch({
+      'ws-arch5': [orderingSession('ar5-s1', 'ws-arch5', { isArchived: true, lastTurnStartedAt: 1000 })],
+    })
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
+
+    try {
+      await useChatStore.getState().fetchSessions('ws-arch5')
+      assert.strictEqual(useChatStore.getState().sessions['ws-arch5'][0].isArchived, true)
+
+      useChatStore.getState().sendMessage('ws-arch5', 'ar5-s1', 'wake')
+
+      assert.strictEqual(useChatStore.getState().sessions['ws-arch5'][0].isArchived, false)
+      assert.ok(useChatStore.getState().lastActivityAt['ar5-s1'] > 1000)
+      assert.strictEqual(putCalls(fetchMock).length, 1)
+    } finally {
+      useChatStore.getState().cleanupWorkspace('ws-arch5')
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('seeds and authoritatively overwrites workspace keys from server rows', () => {
+    useChatStore.getState().seedWorkspaceActivityKeys([
+      { id: 'wk-1', lastTurnStartedAt: 100 },
+      { id: 'wk-2' },
+    ])
+    assert.deepStrictEqual(useChatStore.getState().workspaceLastTurnStartedAt, { 'wk-1': 100 })
+
+    // KTD3: a later server-carried value overwrites, even downward.
+    useChatStore.getState().seedWorkspaceActivityKeys([{ id: 'wk-1', lastTurnStartedAt: 50 }])
+    assert.strictEqual(useChatStore.getState().workspaceLastTurnStartedAt['wk-1'], 50)
   })
 })

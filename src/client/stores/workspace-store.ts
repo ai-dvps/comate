@@ -74,7 +74,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const res = await fetch(`${API_BASE}/workspaces`);
       if (!res.ok) throw new Error(i18next.t('common:failedToFetchWorkspaces', 'Failed to fetch workspaces'));
       const data = await res.json();
-      set({ workspaces: data.workspaces || [], isLoading: false });
+      const workspaces = (data.workspaces || []) as Workspace[];
+      // Seed the workspace ordering map from server-carried keys (KTD1/KTD3).
+      useChatStore.getState().seedWorkspaceActivityKeys(workspaces);
+      set({ workspaces, isLoading: false });
     } catch (err) {
       set({ error: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'), isLoading: false });
     }
@@ -94,6 +97,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }
       const data = await res.json();
       const workspace = data.workspace as Workspace;
+      // The creation-initialized key places the new workspace at the top (R6).
+      useChatStore.getState().seedWorkspaceActivityKeys([workspace]);
       set({ workspaces: [...get().workspaces, workspace], isLoading: false });
       return workspace;
     } catch (err) {
