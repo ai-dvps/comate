@@ -115,7 +115,7 @@ describe('ChangedFilesPanel', () => {
     expect(within(rows[1]).getByText('lib/deep/')).toHaveClass('text-text-tertiary')
   })
 
-  it('keeps the basename visible and shows the full relative path on hover', () => {
+  it('prioritizes the basename, truncates bounded, and shows the full relative path on hover', () => {
     mockChatStore.touchedFiles.s1 = [
       entry('/ws/src/client/components/tool-renderers/FilePath.tsx', 'modified', 100),
     ]
@@ -127,7 +127,8 @@ describe('ChangedFilesPanel', () => {
       'src/client/components/tool-renderers/FilePath.tsx',
     )
     const fileNameEl = screen.getByText('FilePath.tsx')
-    expect(fileNameEl).toHaveClass('shrink-0')
+    expect(fileNameEl.className).toContain('truncate')
+    expect(fileNameEl.className).not.toContain('shrink-0')
     const dirEl = screen.getByText('src/client/components/tool-renderers/')
     expect(dirEl.className).toContain('[direction:rtl]')
   })

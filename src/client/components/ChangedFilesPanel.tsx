@@ -70,7 +70,15 @@ function ChangedFileRow({ row, effectiveStatus, onOpen }: ChangedFileRowProps) {
         )}
         title={row.relativePath}
       >
-        <span className={cn('shrink-0', deleted && 'line-through')}>
+        <span
+          className={cn(
+            // Basename gets priority but must still shrink and truncate —
+            // shrink-0 here overflowed the row on long names and produced a
+            // horizontal scrollbar. RTL truncation keeps the extension visible.
+            'min-w-0 truncate [direction:rtl] [text-align:left]',
+            deleted && 'line-through',
+          )}
+        >
           {row.fileName}
         </span>
         {row.directory && (
