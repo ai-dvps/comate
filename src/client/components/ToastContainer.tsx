@@ -52,8 +52,10 @@ function ToastCard({ toast }: { toast: Toast }) {
 export default function ToastContainer() {
   const toasts = useToastStore((s) => s.toasts)
 
-  if (toasts.length === 0) return null
-
+  // The polite live region stays mounted even when empty: a region inserted
+  // together with its first message is not reliably announced by screen
+  // readers, so the container must predate any toast. It is pointer-events
+  // none and collapses to zero size when there is nothing to show.
   return (
     <div
       className="fixed top-2 right-2 z-50 flex flex-col-reverse gap-2 pointer-events-none"

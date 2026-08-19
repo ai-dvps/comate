@@ -20,6 +20,7 @@ const mockChatStore = {
   domCache: {},
   workflows: {} as Record<string, unknown[]>,
   tasks: {} as Record<string, unknown[]>,
+  touchedFiles: {} as Record<string, unknown[]>,
   fetchSessions: vi.fn(),
   sendMessage: vi.fn(),
   loadMessages: vi.fn(),
@@ -78,6 +79,13 @@ vi.mock('./TaskPanel', () => ({
     ) : null,
 }))
 
+vi.mock('./ChangedFilesPanel', () => ({
+  default: ({ sessionId }: { sessionId: string }) =>
+    mockChatStore.touchedFiles[sessionId]?.length ? (
+      <div data-testid="changed-files-panel">Changed files</div>
+    ) : null,
+}))
+
 vi.mock('./StatusBar', () => ({
   default: () => null,
 }))
@@ -106,6 +114,7 @@ describe('ChatPanel', () => {
     mockChatStore.domCache = {}
     mockChatStore.workflows = {}
     mockChatStore.tasks = {}
+    mockChatStore.touchedFiles = {}
   })
 
   it('hides the prompt input when no session is active', () => {
@@ -260,6 +269,7 @@ describe('ChatPanel', () => {
 
     expect(screen.queryByTestId('workflow-floating-panel')).not.toBeInTheDocument()
     expect(screen.queryByTestId('task-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('changed-files-panel')).not.toBeInTheDocument()
   })
 
   it('does not render a redundant message header above the conversation', () => {
