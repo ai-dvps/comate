@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Closing the embedded browser now also closes its right-side tab** — A server-side browser close (the agent's close tool, the state bar's close button, or idle reclaim) now retires the session's Browser context tab and clears its persisted pane-open flag, instead of leaving an orphaned tab showing the empty state; a later browser birth re-opens the panel as before.
 - **Embedded browser panel now auto-opens when Claude starts a web task** — The first `comate-browser` MCP tool call in the active chat expands the right-side browser panel (and a crash rebuild re-opens it), matching the empty-state promise that a browser opens automatically; switching into a chat whose browser is already running keeps the panel's saved per-session open state, and takeover/handback cycles never re-open a panel the user closed.
 - **Browser panel open state no longer clobbers itself across windows** — Persisting the panel's per-session open flags now merges into the latest stored map, so a detached browser window can no longer overwrite open/close choices the main window made after it launched (and vice versa).
 - **Scheduled-task creation validates before writing** — The scheduled-task MCP tool now checks the schedule before persisting, so an invalid cron returns an error without leaving an orphaned Todo row, and the server test suite covers the unified Todo-backed tool surface again.

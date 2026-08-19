@@ -1,6 +1,41 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { WsEventMessage } from '@server/websocket/types'
 import { useContextTabStore } from './context-tab-store'
 import { useBrowserPaneStore } from './browser-pane-store'
+
+const wsClientMock = vi.hoisted(() => {
+  type Listener = (msg: WsEventMessage) => void
+  const listeners = new Set<Listener>()
+  return {
+    request: vi.fn(() => Promise.resolve({})),
+    onEvent: vi.fn((cb: Listener) => {
+      listeners.add(cb)
+      return () => {
+        listeners.delete(cb)
+      }
+    }),
+    onReconnect: vi.fn(() => () => {}),
+    onDisconnect: vi.fn(() => () => {}),
+    emitEvent: (msg: WsEventMessage) => {
+      for (const listener of [...listeners]) listener(msg)
+    },
+  }
+})
+
+vi.mock('../lib/websocket-client.js', () => ({
+  wsClient: wsClientMock,
+  DEFAULT_TIMEOUT: 30000,
+}))
+
+function browserClosedEvent(sessionId: string): WsEventMessage {
+  return {
+    type: 'event',
+    eventType: 'browser_closed',
+    sessionId,
+    workspaceId: 'ws-1',
+    data: { type: 'browser_closed', sessionId, workspaceId: 'ws-1' },
+  }
+}
 
 function resetStore() {
   useContextTabStore.getState().reset()
@@ -195,6 +230,58 @@ describe('context-tab-store', () => {
 
     expect(close).toHaveBeenCalledWith('session-a')
     expect(useContextTabStore.getState().openTabs).toEqual([])
+  })
+
+  // -- browser_closed event: the tab retires with the browser -----------------
+
+  it('removes the Browser tab and clears the pane open flag when the browser closes', async () => {
+    const store = useContextTabStore.getState()
+    store.setContext('ws-1', 'session-a')
+    await store.openFile('ws-1', 'a.ts', 'a.ts')
+    store.openBrowser('session-a', 'ws-1')
+    useBrowserPaneStore.getState().setPaneOpen('session-a', true)
+    expect(useContextTabStore.getState().activeTabId).toBe('browser:session-a')
+
+    wsClientMock.emitEvent(browserClosedEvent('session-a'))
+
+    // The tab is gone and the selection falls back to the remaining tab.
+    expect(useContextTabStore.getState().openTabs.map((tab) => tab.id)).toEqual(['file:a.ts'])
+    expect(useContextTabStore.getState().activeTabId).toBe('file:a.ts')
+    expect(useBrowserPaneStore.getState().openBySession['session-a']).toBe(false)
+  })
+
+  it('does not ask the server to close again when the event drives the removal', () => {
+    const store = useContextTabStore.getState()
+    store.setContext('ws-1', 'session-a')
+    store.openBrowser('session-a', 'ws-1')
+    wsClientMock.request.mockClear()
+
+    wsClientMock.emitEvent(browserClosedEvent('session-a'))
+
+    // The event IS the close — re-sending browserClose would be a loop.
+    expect(wsClientMock.request).not.toHaveBeenCalledWith('browserClose', expect.anything())
+    expect(useContextTabStore.getState().openTabs).toEqual([])
+  })
+
+  it('is a no-op for a session without a Browser tab', () => {
+    const before = useContextTabStore.getState().openTabs
+    wsClientMock.emitEvent(browserClosedEvent('session-unknown'))
+    expect(useContextTabStore.getState().openTabs).toBe(before)
+  })
+
+  it('keeps the current selection when a background session browser closes', async () => {
+    const store = useContextTabStore.getState()
+    store.setContext('ws-1', 'session-a')
+    await store.openFile('ws-1', 'a.ts', 'a.ts')
+    // A background session's tab is not projected while session-a is active.
+    store.openBrowser('session-b', 'ws-1')
+    expect(useContextTabStore.getState().activeTabId).toBe('file:a.ts')
+
+    wsClientMock.emitEvent(browserClosedEvent('session-b'))
+
+    expect(useContextTabStore.getState().openTabs.map((tab) => tab.id)).toEqual(['file:a.ts'])
+    expect(useContextTabStore.getState().activeTabId).toBe('file:a.ts')
+    expect(useContextTabStore.getState().sessionTabs['session-b']?.tabs ?? []).toEqual([])
   })
 
   it('creates one empty File or Changes workspace tab from the add menu', () => {
