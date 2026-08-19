@@ -5,6 +5,8 @@ import { isUntrackedFile } from '../lib/git-status-helpers'
 import type { GitStatusItem } from './git-changes-store'
 import { useBrowserPaneStore } from './browser-pane-store'
 import { getApiBase } from '../lib/desktop-api'
+import { wsClient } from '../lib/websocket-client.js'
+import type { WsEventMessage } from '@server/websocket/types'
 
 export interface FileContextTab {
   type: 'file'
@@ -107,6 +109,11 @@ export interface ContextTabState extends ContextTabData {
   openFileWorkspace: (workspaceId: string) => void
   openChangesWorkspace: (workspaceId: string) => void
   closeTab: (id: string) => void
+  /**
+   * Event-driven removal of a session's Browser tab (browser_closed) — unlike
+   * closeTab it never asks the server to close; the event IS the close.
+   */
+  removeBrowserTab: (sessionId: string) => void
   selectTab: (id: string) => void
   clearWorkspace: (workspaceId: string) => void
   reset: () => void
@@ -501,6 +508,27 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
     })
   },
 
+  removeBrowserTab: (sessionId) => {
+    set((state) => {
+      const id = `browser:${sessionId}`
+      const collection = state.sessionTabs[sessionId]
+      if (!collection || !collection.tabs.some((tab) => tab.id === id)) return state
+      // synchronize re-projects openTabs and resolves the selection: a removed
+      // active tab falls back to the last projected tab, an untouched
+      // selection survives a background session's removal.
+      return synchronize({
+        ...state,
+        sessionTabs: {
+          ...state.sessionTabs,
+          [sessionId]: {
+            workspaceId: collection.workspaceId,
+            tabs: collection.tabs.filter((tab) => tab.id !== id),
+          },
+        },
+      })
+    })
+  },
+
   selectTab: (id) => {
     set((state) => {
       if (!state.openTabs.some((tab) => tab.id === id) || state.activeTabId === id) return state
@@ -535,3 +563,24 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
     set(EMPTY_DATA)
   },
 }))
+
+// ---------------------------------------------------------------------------
+// Module-level WS wiring (browser-pane-store pattern)
+// ---------------------------------------------------------------------------
+
+// browser_closed → retire the session's Browser tab together with the browser.
+// The server-side close (agent close tool, state-bar close, idle reclaim,
+// session teardown) is the source of truth — the event already IS the close,
+// so removeBrowserTab never re-sends browserClose. The pane open flag is
+// cleared too, so the persisted map does not remember an open pane for a
+// closed browser (a later browser birth re-opens it via the pane store's
+// auto-open gates). The listener lives in this module because
+// context-tab-store already depends on browser-pane-store — the reverse
+// import would be circular.
+wsClient.onEvent((msg: WsEventMessage) => {
+  if (msg.type !== 'event' || msg.eventType !== 'browser_closed') return
+  const sessionId = msg.sessionId
+  if (!sessionId) return
+  useContextTabStore.getState().removeBrowserTab(sessionId)
+  useBrowserPaneStore.getState().setPaneOpen(sessionId, false)
+})
