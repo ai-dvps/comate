@@ -17,6 +17,7 @@ import type {
   UserTurnContent,
 } from '../types/message.js';
 import { normalizeSessionMessage, scanSdkMessagesForTasks } from './message-normalizer.js';
+import type { StatusResult } from '../websocket/types.js';
 import { SdkClient } from './sdk-client.js';
 import {
   getBackendAvailability,
@@ -2093,33 +2094,16 @@ export class ChatService {
    * key — letting the client overwrite both ordering maps authoritatively
    * within one poll tick.
    */
-  async getSessionsStatus(workspaceId: string): Promise<{
-    statuses: Record<
-      string,
-      {
-        pendingCount: number;
-        pendingKind?: 'approval' | 'question';
-        isProcessing: boolean;
-        activity: SessionActivitySnapshot;
-        lastTurnStartedAt?: number;
-      }
-    >;
-    workspaceLastTurnStartedAt?: number;
-  }> {
-    const statuses: Record<
-      string,
-      {
-        pendingCount: number;
-        pendingKind?: 'approval' | 'question';
-        isProcessing: boolean;
-        activity: SessionActivitySnapshot;
-        lastTurnStartedAt?: number;
-      }
-    > = {};
+  async getSessionsStatus(workspaceId: string): Promise<StatusResult> {
+    const statuses: StatusResult['statuses'] = {};
+    // Key-only readers: this poll runs every few seconds per workspace, so it
+    // must not pay full-row parses (or the legacy site-auth migration sweep
+    // inside `workspaceStore.get`) to read one column.
+    const turnKeys = workspaceStore.getSessionTurnStartedKeys(workspaceId);
     for (const [sessionId, runtime] of this.runtimes) {
       const status = runtime.getStatus();
       if (status.workspaceId === workspaceId) {
-        const lastTurnStartedAt = workspaceStore.getLocalSession(sessionId)?.lastTurnStartedAt;
+        const lastTurnStartedAt = turnKeys[sessionId];
         statuses[sessionId] = {
           pendingCount: status.pendingCount,
           ...(status.pendingKind !== undefined && { pendingKind: status.pendingKind }),
@@ -2129,11 +2113,11 @@ export class ChatService {
         };
       }
     }
-    const workspace = await workspaceStore.get(workspaceId);
+    const workspaceLastTurnStartedAt = workspaceStore.getWorkspaceTurnStartedKey(workspaceId);
     return {
       statuses,
-      ...(workspace?.lastTurnStartedAt !== undefined && {
-        workspaceLastTurnStartedAt: workspace.lastTurnStartedAt,
+      ...(workspaceLastTurnStartedAt !== undefined && {
+        workspaceLastTurnStartedAt,
       }),
     };
   }

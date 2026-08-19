@@ -22,7 +22,7 @@ export function getWorkspaceActivityTimestamp(
  * to the workspace's own createdAt so a brand-new empty workspace still lands
  * on top (R6).
  */
-export function getWorkspaceSortTimestamp(
+function getWorkspaceSortTimestamp(
   workspace: WorkspaceSortable,
   sessions: readonly ChatSession[] | undefined,
   workspaceLastTurnStartedAt: Record<string, number>,

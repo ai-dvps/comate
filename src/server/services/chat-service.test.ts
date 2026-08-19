@@ -1,4 +1,5 @@
 import '../test-utils/test-env.js';
+import { PAST_TURN_KEY, resetTurnKeysToPast } from '../test-utils/test-store.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import {
@@ -987,10 +988,6 @@ describe('chat-service pushMessage turn-start stamping (U2, KTD1/R2)', { concurr
   const originalGetDefaultProvider = workspaceStore.getDefaultProvider.bind(workspaceStore);
   const originalStampTurnStarted = workspaceStore.stampTurnStarted.bind(workspaceStore);
 
-  // Fixed past sentinel: a real stamp is distinguishable from the creation
-  // initializer without depending on wall-clock granularity.
-  const PAST_KEY = 1_700_000_000_000;
-
   const createdSessionIds: string[] = [];
   const createdWorkspaceIds: string[] = [];
 
@@ -1061,11 +1058,7 @@ describe('chat-service pushMessage turn-start stamping (U2, KTD1/R2)', { concurr
     const session = workspaceStore.createLocalSession(ws.id, 'Stamp Session');
     createdWorkspaceIds.push(ws.id);
     createdSessionIds.push(session.id);
-    const raw = workspaceStore as unknown as {
-      db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } };
-    };
-    raw.db.prepare('UPDATE sessions SET last_turn_started_at = ? WHERE id = ?').run(PAST_KEY, session.id);
-    raw.db.prepare('UPDATE workspaces SET last_turn_started_at = ? WHERE id = ?').run(PAST_KEY, ws.id);
+    resetTurnKeysToPast(workspaceStore, session.id, ws.id);
     return { ws, session };
   }
 
@@ -1100,8 +1093,8 @@ describe('chat-service pushMessage turn-start stamping (U2, KTD1/R2)', { concurr
 
     const sKey = sessionKey(session.id);
     const wKey = await workspaceKey(ws.id);
-    assert.ok(sKey !== undefined && sKey > PAST_KEY && sKey >= before && sKey <= after, `session key ${sKey} stamped within [${before}, ${after}]`);
-    assert.ok(wKey !== undefined && wKey > PAST_KEY && wKey >= before && wKey <= after, `workspace key ${wKey} stamped within [${before}, ${after}]`);
+    assert.ok(sKey !== undefined && sKey > PAST_TURN_KEY && sKey >= before && sKey <= after, `session key ${sKey} stamped within [${before}, ${after}]`);
+    assert.ok(wKey !== undefined && wKey > PAST_TURN_KEY && wKey >= before && wKey <= after, `workspace key ${wKey} stamped within [${before}, ${after}]`);
   });
 
   it('stamps on an admitted bot-session turn (WeCom / Feishu / scheduler entry path)', async () => {
@@ -1111,8 +1104,8 @@ describe('chat-service pushMessage turn-start stamping (U2, KTD1/R2)', { concurr
 
     await service.pushMessage(session.id, ws.id, 'bot turn', true, handler);
 
-    assert.ok(sessionKey(session.id)! > PAST_KEY, 'bot turn stamps the session key');
-    assert.ok((await workspaceKey(ws.id))! > PAST_KEY, 'bot turn stamps the workspace key');
+    assert.ok(sessionKey(session.id)! > PAST_TURN_KEY, 'bot turn stamps the session key');
+    assert.ok((await workspaceKey(ws.id))! > PAST_TURN_KEY, 'bot turn stamps the workspace key');
   });
 
   it('leaves both keys unchanged when admission rejects', async () => {
@@ -1127,8 +1120,8 @@ describe('chat-service pushMessage turn-start stamping (U2, KTD1/R2)', { concurr
     await assert.rejects(() => service.pushMessage(session.id, ws.id, 'hello'), /busy/);
 
     assert.strictEqual(stampCalled, false, 'a failed admission must not stamp');
-    assert.strictEqual(sessionKey(session.id), PAST_KEY);
-    assert.strictEqual(await workspaceKey(ws.id), PAST_KEY);
+    assert.strictEqual(sessionKey(session.id), PAST_TURN_KEY);
+    assert.strictEqual(await workspaceKey(ws.id), PAST_TURN_KEY);
   });
 
   it('a stamp write failure after admission neither fails the send nor moves the keys', async () => {
@@ -1147,8 +1140,8 @@ describe('chat-service pushMessage turn-start stamping (U2, KTD1/R2)', { concurr
     }
 
     assert.deepStrictEqual(runtime.pushMessageCalls, ['hello'], 'the turn was admitted');
-    assert.strictEqual(sessionKey(session.id), PAST_KEY);
-    assert.strictEqual(await workspaceKey(ws.id), PAST_KEY);
+    assert.strictEqual(sessionKey(session.id), PAST_TURN_KEY);
+    assert.strictEqual(await workspaceKey(ws.id), PAST_TURN_KEY);
     assert.ok(
       logs.some((line) => line.includes('turn-start stamp failed') && line.includes('disk I/O error')),
       'the stamp failure is logged via diagLog',
@@ -1169,7 +1162,7 @@ describe('chat-service pushMessage turn-start stamping (U2, KTD1/R2)', { concurr
 
     assert.ok(s2 >= s1, `session key ${s2} >= ${s1}`);
     assert.ok(w2 >= w1, `workspace key ${w2} >= ${w1}`);
-    assert.ok(s1 > PAST_KEY && w1 > PAST_KEY, 'both turns stamped');
+    assert.ok(s1 > PAST_TURN_KEY && w1 > PAST_TURN_KEY, 'both turns stamped');
   });
 });
 

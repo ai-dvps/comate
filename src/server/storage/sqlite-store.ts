@@ -2384,6 +2384,32 @@ export class SqliteStore {
     return atMs;
   }
 
+  /**
+   * Key-only readers for the status-poll hot path (U3): `getSessionsStatus`
+   * runs every few seconds per polled workspace, so it reads the ordering
+   * column directly rather than paying full-row parses per session. NULL keys
+   * are omitted; a missing workspace row yields `undefined`.
+   */
+  getSessionTurnStartedKeys(workspaceId: string): Record<string, number> {
+    const rows = this.db.prepare(`
+      SELECT id, last_turn_started_at FROM sessions WHERE workspace_id = ?
+    `).all(workspaceId) as Array<{ id: string; last_turn_started_at: number | null }>;
+    const keys: Record<string, number> = {};
+    for (const row of rows) {
+      if (row.last_turn_started_at !== null) {
+        keys[row.id] = row.last_turn_started_at;
+      }
+    }
+    return keys;
+  }
+
+  getWorkspaceTurnStartedKey(workspaceId: string): number | undefined {
+    const row = this.db.prepare(`
+      SELECT last_turn_started_at FROM workspaces WHERE id = ?
+    `).get(workspaceId) as { last_turn_started_at: number | null } | undefined;
+    return row?.last_turn_started_at ?? undefined;
+  }
+
   syncSdkSession(session: ChatSession): void {
     // KTD4: transcript discovery initializes the ordering key from the
     // pre-upgrade client comparator expression (lastModified ?? Date.parse(createdAt)),

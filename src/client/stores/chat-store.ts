@@ -26,7 +26,7 @@ import {
   WebSocketRequestTimeoutError,
   wsClient,
 } from '../lib/websocket-client.js'
-import type { WsEventMessage } from '@server/websocket/types'
+import type { StatusResult, WsEventMessage } from '@server/websocket/types'
 import { BROWSER_TOOL_PREFIX } from '@server/services/browser-tool-names'
 import {
   releasePromptImage,
@@ -269,18 +269,7 @@ function startBackgroundPolling(
     wsClient
       .request('status', { workspaceId }, 5000)
       .then((data) => {
-        const result = data as {
-          statuses?: Record<string, {
-            pendingCount: number
-            pendingKind?: PendingInteractionKind
-            isProcessing?: boolean
-            activity: SessionActivitySnapshot
-            // U3 (KTD1/KTD3): server-persisted turn-start ordering keys on the
-            // poll payload; the poll writer applies them authoritatively (U4).
-            lastTurnStartedAt?: number
-          }>
-          workspaceLastTurnStartedAt?: number
-        }
+        const result = data as StatusResult
         const statuses = result.statuses ?? {}
         const unarchiveSessionIds: string[] = []
         set((state) => {
@@ -290,7 +279,8 @@ function startBackgroundPolling(
           const nextWorkspaceKeys = { ...state.workspaceLastTurnStartedAt }
           const nextActivity = { ...state.sessionActivity }
           const nextUnread = { ...state.unreadCompletions }
-          for (const session of state.sessions[workspaceId] ?? []) {
+          const workspaceSessions = state.sessions[workspaceId] ?? []
+          for (const session of workspaceSessions) {
             if (
               !sessionSubscriptions.has(session.id) &&
               !Object.prototype.hasOwnProperty.call(statuses, session.id)
@@ -330,7 +320,7 @@ function startBackgroundPolling(
               if (
                 stored !== undefined &&
                 st.lastTurnStartedAt > stored &&
-                (state.sessions[workspaceId] ?? []).some(
+                workspaceSessions.some(
                   (session) => session.id === sid && session.isArchived,
                 )
               ) {
@@ -354,7 +344,7 @@ function startBackgroundPolling(
               ? {
                   sessions: {
                     ...state.sessions,
-                    [workspaceId]: (state.sessions[workspaceId] ?? []).map((session) =>
+                    [workspaceId]: workspaceSessions.map((session) =>
                       unarchiveSet.has(session.id) ? { ...session, isArchived: false } : session,
                     ),
                   },
@@ -3917,13 +3907,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   seedWorkspaceActivityKeys: (workspaces) => {
     set((state) => {
+      let changed = false
       const next = { ...state.workspaceLastTurnStartedAt }
       for (const workspace of workspaces) {
-        if (workspace.lastTurnStartedAt !== undefined) {
+        if (
+          workspace.lastTurnStartedAt !== undefined &&
+          next[workspace.id] !== workspace.lastTurnStartedAt
+        ) {
           next[workspace.id] = workspace.lastTurnStartedAt
+          changed = true
         }
       }
-      return { workspaceLastTurnStartedAt: next }
+      // Keep the map reference on no-change so store subscribers skip the update.
+      return changed ? { workspaceLastTurnStartedAt: next } : {}
     })
   },
 
