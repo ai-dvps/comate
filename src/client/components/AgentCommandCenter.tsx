@@ -746,13 +746,14 @@ export default function AgentCommandCenter({
                               value={isCreatingSession ? newSessionName : ''}
                               onChange={(event) => setNewSessionName(event.target.value)}
                               onKeyDown={(event) => {
-                                if (event.key === 'Enter') {
+                                if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
                                   event.preventDefault()
                                   void createWorkspaceSession(workspace.id, workspaceSessions.length + 1)
                                 } else if (event.key === 'Escape') {
                                   closeNewSessionForm(workspace.id)
                                 }
                               }}
+                              aria-keyshortcuts="Meta+Enter Control+Enter"
                               aria-label={tc('sessionNamePlaceholder')}
                               placeholder={tc('sessionNamePlaceholder')}
                               className="h-7 w-full rounded border border-border bg-surface px-2 text-[11px] text-text-primary outline-none placeholder:text-text-tertiary focus:border-accent"
