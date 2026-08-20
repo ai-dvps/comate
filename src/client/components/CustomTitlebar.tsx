@@ -193,6 +193,7 @@ export default function CustomTitlebar({
             >
               {tabs.map((tab) => {
                 const active = tab.id === activeTabId
+                const isPreview = tab.type !== 'browser' && tab.preview
                 return (
                   <div
                     key={tab.id}
@@ -202,6 +203,7 @@ export default function CustomTitlebar({
                     data-testid="titlebar-interactive"
                     style={interactiveStyle}
                     onClick={() => onSelectTab(tab.id)}
+                    title={isPreview ? t('shell.previewTabHint') : undefined}
                     className={cn(
                       'group flex h-7 min-w-0 max-w-44 flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 text-[11px]',
                       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
@@ -211,7 +213,7 @@ export default function CustomTitlebar({
                     )}
                   >
                     <TabIcon tab={tab} />
-                    <span className="truncate">{tab.name}</span>
+                    <span className={cn('truncate', isPreview && 'italic')}>{tab.name}</span>
                     <button
                       type="button"
                       onClick={(event) => {

@@ -41,6 +41,7 @@
     "contextTabs": "Context tabs",
     "addContextTab": "Add context tab",
     "closeTab": "Close {{name}}",
+    "previewTabHint": "Preview tab — double-click a file in the tree to keep it open",
     "emptyContext": "Use + in the titlebar to open a File, Browser, or Changes tab.",
     "selectFile": "Select a file from the tree",
     "selectChange": "Select a changed file to review",

@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Workspace groups now expand and collapse from the whole header** — Clicking a workspace name toggles its session list with a smooth transition instead of selecting the workspace and opening an empty “Start a conversation” view.
 - **Prompt input no longer shows Skills and Files toolbar buttons** — Skills and files are still inserted with `/` and `@` triggers; the dedicated toolbar buttons are removed to reduce clutter.
 - **The file-tree toggle now lives in the viewer header and animates** — With a file or diff open, the internal file tree's collapse/expand button moves into the viewer header beside Copy content instead of floating over the top-right corner (the floating button remains only for empty states), and the tree column now slides smoothly open and closed instead of snapping.
+- **Preview tabs are now visually distinct** — Tabs opened by single-clicking a file (preview) show their name in italic with a hover hint explaining that double-clicking keeps the file open, matching the durable/preview distinction users expect from modern editors.
 
 ### Fixed
 

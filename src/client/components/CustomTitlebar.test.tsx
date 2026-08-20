@@ -61,6 +61,57 @@ describe('CustomTitlebar', () => {
     expect(onToggleRight).toHaveBeenCalledOnce()
   })
 
+  it('distinguishes preview tabs with italic names and a pin hint', () => {
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={288}
+        rightWidth={520}
+        leftCollapsed={false}
+        rightCollapsed={false}
+        contextAvailable
+        tabs={[
+          {
+            type: 'file',
+            id: 'file:preview',
+            workspaceId: 'ws-1',
+            path: 'Preview.tsx',
+            name: 'Preview.tsx',
+            content: '',
+            isBinary: false,
+            preview: true,
+          },
+          {
+            type: 'file',
+            id: 'file:App.tsx',
+            workspaceId: 'ws-1',
+            path: 'App.tsx',
+            name: 'App.tsx',
+            content: '',
+            isBinary: false,
+            preview: false,
+          },
+        ]}
+        activeTabId="file:preview"
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onToggleLeft={vi.fn()}
+        onToggleRight={vi.fn()}
+      />,
+    )
+
+    const previewTab = screen.getByRole('tab', { name: /Preview\.tsx/ })
+    expect(previewTab.querySelector('span')).toHaveClass('italic')
+    expect(previewTab).toHaveAttribute(
+      'title',
+      'Preview tab — double-click a file in the tree to keep it open',
+    )
+
+    const durableTab = screen.getByRole('tab', { name: /App\.tsx/ })
+    expect(durableTab.querySelector('span')).not.toHaveClass('italic')
+    expect(durableTab).not.toHaveAttribute('title')
+  })
+
   it('shows management identity and hides typed tabs', () => {
     renderTitlebar(
       <CustomTitlebar
