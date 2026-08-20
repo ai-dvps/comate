@@ -21,6 +21,7 @@ interface NewChatPageProps {
       backend?: BackendId
       providerId?: string
       fastMode: boolean
+      outputStyle: string | null
       approvalMode: ApprovalMode
     },
   ) => Promise<void>
@@ -32,6 +33,7 @@ interface NewChatComposerOptions {
   backendId: BackendId | null
   providerId: string | null
   fastMode: boolean
+  outputStyle: string | null
   approvalMode: ApprovalMode
 }
 
@@ -39,6 +41,7 @@ const DEFAULT_COMPOSER_OPTIONS: NewChatComposerOptions = {
   backendId: null,
   providerId: null,
   fastMode: false,
+  outputStyle: null,
   approvalMode: 'manual',
 }
 
@@ -141,6 +144,8 @@ export default function NewChatPage({
               onProviderChange={(providerId) => updateComposerOptions({ providerId })}
               fastMode={composerOptions.fastMode}
               onFastModeChange={(fastMode) => updateComposerOptions({ fastMode })}
+              outputStyle={composerOptions.outputStyle}
+              onOutputStyleChange={(outputStyle) => updateComposerOptions({ outputStyle })}
               approvalMode={composerOptions.approvalMode}
               onApprovalModeChange={(approvalMode) => updateComposerOptions({ approvalMode })}
               onSend={(turn) => {
@@ -149,6 +154,7 @@ export default function NewChatPage({
                   backend: composerOptions.backendId ?? undefined,
                   providerId: composerOptions.providerId ?? undefined,
                   fastMode: composerOptions.fastMode,
+                  outputStyle: composerOptions.outputStyle,
                   approvalMode: composerOptions.approvalMode,
                 })
               }}

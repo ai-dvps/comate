@@ -748,3 +748,126 @@ describe('result error visibility (silent-error fix)', () => {
     assert.equal(events.filter((e) => e.type === 'error_note').length, 0);
   });
 });
+
+describe('SseEmitter system_init enrichment (CLI 2.1.237)', { concurrency: false }, () => {
+  it('forwards effort, outputStyle, and capabilities on system_init', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+
+    emitter.handle({
+      type: 'system',
+      subtype: 'init',
+      model: 'claude-opus-4-8',
+      tools: ['Bash'],
+      session_id: 's1',
+      mcp_servers: [{ name: 'linear', status: 'connected' }],
+      effort: 'high',
+      output_style: 'concise',
+      capabilities: ['interrupt_receipt_v1'],
+    } as unknown as SDKMessage);
+
+    const init = events.find((e) => e.type === 'system_init');
+    assert.ok(init && init.type === 'system_init');
+    assert.strictEqual(init.effort, 'high');
+    assert.strictEqual(init.outputStyle, 'concise');
+    assert.deepStrictEqual(init.capabilities, ['interrupt_receipt_v1']);
+  });
+
+  it('omits absent enrichment fields for older CLIs', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+
+    emitter.handle({
+      type: 'system',
+      subtype: 'init',
+      model: 'claude-sonnet-5',
+      tools: [],
+      session_id: 's2',
+    } as unknown as SDKMessage);
+
+    const init = events.find((e) => e.type === 'system_init');
+    assert.ok(init && init.type === 'system_init');
+    assert.strictEqual(init.effort, undefined);
+    assert.strictEqual(init.outputStyle, undefined);
+    assert.strictEqual(init.capabilities, undefined);
+  });
+});
+
+describe('SseEmitter context_usage twin (CLI 2.1.237)', { concurrency: false }, () => {
+  it('emits an enriched context_usage event from the assistant message twin', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+
+    emitter.handle({
+      type: 'assistant',
+      message: {
+        id: 'msg-1',
+        content: [{ type: 'text', text: 'context table markdown' }],
+      },
+      parent_tool_use_id: null,
+      context_usage: {
+        model: 'claude-opus-4-8',
+        total_tokens: 120000,
+        raw_max_tokens: 200000,
+        percentage: 60,
+        over_limit: { tokens_over: 5000, kind: 'compaction_window' },
+        categories: [
+          { name: 'Messages', tokens: 80000, kind: 'used' },
+          { name: 'MCP tools (deferred)', tokens: 4000, kind: 'deferred' },
+          { name: 'Free space', tokens: 80000, kind: 'free' },
+        ],
+        mcp_tools: [{ name: 'mcp__linear__create_issue', server_name: 'linear', tokens: 3000 }],
+        memory_files: [{ path: '/repo/CLAUDE.md', type: 'Project', tokens: 2000 }],
+        agents: [{ agent_type: 'code-reviewer', source: 'projectSettings', tokens: 1500 }],
+        skills: [{ name: 'wecom', source: 'plugin', tokens: 900 }],
+      },
+    } as unknown as SDKMessage);
+
+    const usage = events.find((e) => e.type === 'context_usage');
+    assert.ok(usage && usage.type === 'context_usage');
+    assert.strictEqual(usage.totalTokens, 120000);
+    assert.strictEqual(usage.maxTokens, 200000);
+    assert.strictEqual(usage.model, 'claude-opus-4-8');
+    assert.deepStrictEqual(usage.overLimit, { tokensOver: 5000, kind: 'compaction_window' });
+    const deferred = usage.categories.find((c) => c.name === 'MCP tools (deferred)');
+    assert.ok(deferred);
+    assert.strictEqual(deferred.isDeferred, true);
+    const used = usage.categories.find((c) => c.name === 'Messages');
+    assert.ok(used);
+    assert.strictEqual(used.isDeferred, undefined);
+    assert.strictEqual(usage.mcpTools?.[0].serverName, 'linear');
+    assert.strictEqual(usage.memoryFiles?.[0].path, '/repo/CLAUDE.md');
+    assert.strictEqual(usage.agents?.[0].agentType, 'code-reviewer');
+    assert.strictEqual(usage.skills?.[0].source, 'plugin');
+  });
+
+  it('ignores assistant messages without a context_usage twin', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+
+    emitter.handle({
+      type: 'assistant',
+      message: {
+        id: 'msg-2',
+        content: [{ type: 'text', text: 'plain reply' }],
+      },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage);
+
+    assert.equal(events.filter((e) => e.type === 'context_usage').length, 0);
+  });
+
+  it('drops a malformed twin instead of emitting partial data', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+
+    emitter.handle({
+      type: 'assistant',
+      message: { id: 'msg-3', content: [] },
+      parent_tool_use_id: null,
+      context_usage: { model: 'claude-opus-4-8' },
+    } as unknown as SDKMessage);
+
+    assert.equal(events.filter((e) => e.type === 'context_usage').length, 0);
+  });
+});

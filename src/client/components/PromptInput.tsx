@@ -20,6 +20,7 @@ import { usePromptReferenceValidation } from '../hooks/usePromptReferenceValidat
 import { shouldSubmitOnEnter } from '../lib/keyboard'
 import ApprovalModeToggle from './ApprovalModeToggle'
 import FastModeToggle from './FastModeToggle'
+import OutputStyleSelect from './OutputStyleSelect'
 import ProviderSelector from './ProviderSelector'
 import BackendSelector from './BackendSelector'
 import { useBackendStore, backendAvailability, backendCapability, type BackendId } from '../stores/backend-store'
@@ -102,9 +103,9 @@ const TOOLBAR_BREAKPOINTS = [
   { width: 680, hidden: [] as string[] },
   { width: 440, hidden: ['history'] },
   { width: 380, hidden: ['history', 'provider'] },
-  { width: 330, hidden: ['history', 'provider', 'fast'] },
-  { width: 280, hidden: ['history', 'provider', 'fast', 'approval'] },
-  { width: 220, hidden: ['history', 'provider', 'fast', 'approval', 'clear'] },
+  { width: 330, hidden: ['history', 'provider', 'fast', 'style'] },
+  { width: 280, hidden: ['history', 'provider', 'fast', 'style', 'approval'] },
+  { width: 220, hidden: ['history', 'provider', 'fast', 'style', 'approval', 'clear'] },
 ]
 
 function getToolbarVisibility(width: number | undefined) {
@@ -118,6 +119,7 @@ function getToolbarVisibility(width: number | undefined) {
     showHistory: !hidden.has('history'),
     showProvider: !hidden.has('provider'),
     showFast: !hidden.has('fast'),
+    showStyle: !hidden.has('style'),
     showApproval: !hidden.has('approval'),
     showClear: !hidden.has('clear'),
   }
@@ -156,6 +158,8 @@ interface NewChatPromptInputProps extends PromptInputCommonProps {
   onProviderChange: (providerId: string | null) => void
   fastMode: boolean
   onFastModeChange: (fastMode: boolean) => void
+  outputStyle: string | null
+  onOutputStyleChange: (outputStyle: string | null) => void
   approvalMode: ApprovalMode
   onApprovalModeChange: (approvalMode: ApprovalMode) => void
 }
@@ -1424,6 +1428,7 @@ export default function PromptInput(props: PromptInputProps) {
     showHistory,
     showProvider,
     showFast,
+    showStyle,
     showApproval,
     showClear,
   } = toolbarVisibility
@@ -1831,6 +1836,16 @@ export default function PromptInput(props: PromptInputProps) {
                         disabled={disabled}
                       />
                     )}
+                    {showStyle && (
+                      <OutputStyleSelect
+                        mode="new-chat"
+                        workspaceId={workspaceId}
+                        outputStyle={props.outputStyle}
+                        onOutputStyleChange={props.onOutputStyleChange}
+                        disabled={disabled}
+                        hideNameBelowSm
+                      />
+                    )}
                     {showApproval && (
                       <ApprovalModeToggle
                         mode="new-chat"
@@ -1846,6 +1861,7 @@ export default function PromptInput(props: PromptInputProps) {
                     <BackendSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} hideNameBelowSm />
                     {showProvider && <ProviderSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} hideNameBelowSm />}
                     {showFast && <FastModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} />}
+                    {showStyle && <OutputStyleSelect workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} hideNameBelowSm />}
                     {showApproval && <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} />}
                   </>
                 ) : null}

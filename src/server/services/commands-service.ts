@@ -31,6 +31,7 @@ interface WorkspaceCommandsState {
   fsCommandsByPath: Map<string, FsCommandEntry>;
   partial: boolean;
   partialReason?: string;
+  outputStyles?: string[];
 }
 
 const SOURCE_PRIORITY: Record<CommandSource, number> = {
@@ -89,9 +90,11 @@ export class CommandsService {
 
     let sdkCommands: SlashCommandDto[] = [];
     let partialReason: string | undefined;
+    let outputStyles: string[] | undefined;
     try {
       const init = await this.sdkClient.fetchInitialization(options);
       sdkCommands = init.commands;
+      outputStyles = init.availableOutputStyles;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(
@@ -121,6 +124,7 @@ export class CommandsService {
       fsCommandsByPath,
       partial: partialReason !== undefined,
       partialReason,
+      outputStyles,
     };
 
     const pluginDirs = pluginEntries.map((e) => path.dirname(e.filePath));
@@ -152,6 +156,7 @@ export class CommandsService {
       commands: merged,
       partial: state.partial,
       partialReason: state.partialReason,
+      ...(state.outputStyles !== undefined && { outputStyles: state.outputStyles }),
     };
   }
 

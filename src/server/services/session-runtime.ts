@@ -964,7 +964,41 @@ export class SessionRuntime {
           categories: usage.categories.map((category) => ({
             name: category.name,
             tokens: category.tokens,
+            ...(category.isDeferred && { isDeferred: true }),
           })),
+          ...(usage.model !== undefined && { model: usage.model }),
+          ...(usage.rawMaxTokens !== undefined && { rawMaxTokens: usage.rawMaxTokens }),
+          ...(usage.autoCompactThreshold !== undefined && {
+            autoCompactThreshold: usage.autoCompactThreshold,
+          }),
+          ...(usage.mcpTools && {
+            mcpTools: usage.mcpTools.map((tool) => ({
+              name: tool.name,
+              serverName: tool.serverName,
+              tokens: tool.tokens,
+            })),
+          }),
+          ...(usage.memoryFiles && {
+            memoryFiles: usage.memoryFiles.map((file) => ({
+              path: file.path,
+              type: file.type,
+              tokens: file.tokens,
+            })),
+          }),
+          ...(usage.agents && {
+            agents: usage.agents.map((agent) => ({
+              agentType: agent.agentType,
+              source: agent.source,
+              tokens: agent.tokens,
+            })),
+          }),
+          ...(usage.skills?.skillFrontmatter && {
+            skills: usage.skills.skillFrontmatter.map((skill) => ({
+              name: skill.name,
+              source: skill.source,
+              tokens: skill.tokens,
+            })),
+          }),
         });
       })
       .catch((err) => {
