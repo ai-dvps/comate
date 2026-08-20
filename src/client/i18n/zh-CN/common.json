@@ -41,6 +41,7 @@
     "contextTabs": "上下文标签页",
     "addContextTab": "添加上下文标签页",
     "closeTab": "关闭 {{name}}",
+    "previewTabHint": "预览标签页 — 在文件树中双击文件即可固定打开",
     "emptyContext": "使用标题栏中的 + 打开文件、浏览器或变更标签页。",
     "selectFile": "从文件树中选择文件",
     "selectChange": "选择要审查的变更文件",
