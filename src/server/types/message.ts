@@ -283,7 +283,19 @@ export type SessionActivitySnapshot = {
 }
 
 export type SseEvent =
-  | { type: 'system_init'; model: string; tools: string[]; sessionId: string; mcpServers?: { name: string; status: string }[] }
+  | {
+      type: 'system_init'
+      model: string
+      tools: string[]
+      sessionId: string
+      mcpServers?: { name: string; status: string }[]
+      /** SDK 2.1.237+ (CLI system/init): effort the session sends on its next request; null when none is sent. */
+      effort?: string | null
+      /** SDK 2.1.237+ (CLI system/init): active output style (e.g. 'default', 'concise'). */
+      outputStyle?: string
+      /** SDK 2.1.237+ (CLI system/init): protocol capabilities for feature detection. */
+      capabilities?: string[]
+    }
   | { type: 'session_title'; title: string }
   | { type: 'assistant_start'; messageId: string }
   | { type: 'text_delta'; messageId: string; partIndex: number; text: string }
@@ -337,7 +349,19 @@ export type SseEvent =
       totalTokens: number
       maxTokens: number
       percentage: number
-      categories: { name: string; tokens: number }[]
+      categories: { name: string; tokens: number; isDeferred?: boolean }[]
+      /** SDK getContextUsage / context_usage twin: model the usage was computed for. */
+      model?: string
+      /** Raw model/context window before autocompact policy narrowing. */
+      rawMaxTokens?: number
+      /** Present when totalTokens exceeds the measured window. */
+      overLimit?: { tokensOver: number; kind: 'hard_limit' | 'compaction_window' }
+      /** Token threshold autocompact triggers at, when reported. */
+      autoCompactThreshold?: number
+      mcpTools?: { name: string; serverName: string; tokens: number }[]
+      memoryFiles?: { path: string; type: string; tokens: number }[]
+      agents?: { agentType: string; source: string; tokens: number }[]
+      skills?: { name: string; source: string; tokens: number }[]
     }
   | { type: 'error'; message: string }
   | {
