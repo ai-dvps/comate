@@ -255,8 +255,13 @@ export class BrowserNetworkCaptureManager {
     context.offClose = this.transport.onClose(() => this.abortContext(context, 'connection_closed'));
     try {
       await this.transport.start();
+      // These timers deliberately stay ref'd: callers await stop() with the
+      // timers as the only pending handles, and unref'd timers would let the
+      // event loop drain first, stranding the await (node:test cancels such
+      // tests on Node 22). Both classes using this run inside the sidecar,
+      // whose HTTP server refs the loop anyway. All timers are bounded
+      // (≤ recordingDeadlineMs/hardDeadlineMs) and cleared on settle.
       context.recordingTimer = setTimeout(() => this.beginDraining(context, true), this.recordingDeadlineMs);
-      context.recordingTimer.unref?.();
     } catch (error) {
       context.offEvent();
       context.offClose();
@@ -515,7 +520,6 @@ export class BrowserNetworkCaptureManager {
     context.recordingTimer = undefined;
     if (limitReached) context.incompleteReasons.add('capture_limit_exceeded');
     context.deadlineTimer = setTimeout(() => this.finishAtDeadline(context), this.hardDeadlineMs);
-    context.deadlineTimer.unref?.();
     this.maybeScheduleCompletion(context);
   }
 
@@ -524,7 +528,6 @@ export class BrowserNetworkCaptureManager {
     const active = context.chainOrder.some((chain) => !currentHop(chain).terminal);
     if (active || context.pendingBodies.size > 0 || context.quietTimer) return;
     context.quietTimer = setTimeout(() => this.settle(context, 'complete'), this.quietMs);
-    context.quietTimer.unref?.();
   }
 
   private finishAtDeadline(context: CaptureContext): void {
