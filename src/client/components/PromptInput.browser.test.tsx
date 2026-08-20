@@ -197,6 +197,17 @@ vi.mock('../stores/commands-store', () => ({
     })),
     }
   },
+  // OutputStyleSelect reads available styles from the raw store hook; the
+  // empty map keeps it on the built-in style list in these tests.
+  useCommandsStore: (selector: (state: unknown) => unknown) =>
+    selector({
+      commandsByWorkspace: {},
+      loadingByWorkspace: {},
+      errorByWorkspace: {},
+      fetchCommands: vi.fn(async () => {}),
+      refreshCommands: vi.fn(async () => {}),
+      clearCommandsForWorkspace: vi.fn(),
+    }),
 }))
 
 const filesMock = vi.hoisted(() => ({
@@ -460,6 +471,8 @@ describe('PromptInput browser', () => {
         providerId={null}
         onProviderChange={vi.fn()}
         fastMode={false}
+        outputStyle={null}
+        onOutputStyleChange={vi.fn()}
         onFastModeChange={vi.fn()}
         approvalMode="manual"
         onApprovalModeChange={vi.fn()}
@@ -492,6 +505,8 @@ describe('PromptInput browser', () => {
         providerId={null}
         onProviderChange={vi.fn()}
         fastMode={false}
+        outputStyle={null}
+        onOutputStyleChange={vi.fn()}
         onFastModeChange={vi.fn()}
         approvalMode="manual"
         onApprovalModeChange={vi.fn()}
@@ -525,6 +540,8 @@ describe('PromptInput browser', () => {
             providerId={null}
             onProviderChange={vi.fn()}
             fastMode={false}
+            outputStyle={null}
+            onOutputStyleChange={vi.fn()}
             onFastModeChange={vi.fn()}
             approvalMode="manual"
             onApprovalModeChange={vi.fn()}
@@ -562,6 +579,8 @@ describe('PromptInput browser', () => {
           providerId={null}
           onProviderChange={vi.fn()}
           fastMode={false}
+          outputStyle={null}
+          onOutputStyleChange={vi.fn()}
           onFastModeChange={vi.fn()}
           approvalMode="manual"
           onApprovalModeChange={vi.fn()}
@@ -595,6 +614,8 @@ describe('PromptInput browser', () => {
           providerId={null}
           onProviderChange={vi.fn()}
           fastMode={false}
+          outputStyle={null}
+          onOutputStyleChange={vi.fn()}
           onFastModeChange={vi.fn()}
           approvalMode="manual"
           onApprovalModeChange={vi.fn()}
@@ -951,6 +972,8 @@ describe('PromptInput browser', () => {
         providerId={null}
         onProviderChange={vi.fn()}
         fastMode={false}
+        outputStyle={null}
+        onOutputStyleChange={vi.fn()}
         onFastModeChange={vi.fn()}
         approvalMode="manual"
         onApprovalModeChange={vi.fn()}

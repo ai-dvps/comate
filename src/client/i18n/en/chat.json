@@ -264,7 +264,23 @@
   "tokenUsage": {
     "turn": "Turn",
     "session": "Session",
-    "context": "Context"
+    "context": "Context",
+    "contextCardTitle": "Context usage",
+    "overLimit": "Over the context window by {{tokens}} tokens",
+    "autoCompactThreshold": "Auto-compact threshold",
+    "mcpTools": "MCP tools",
+    "memoryFiles": "Memory files",
+    "agents": "Agents",
+    "skills": "Skills",
+    "effort": "Effort",
+    "effortTitle": "Reasoning effort the session uses for its next request"
+  },
+  "outputStyle": {
+    "selectorTitle": "Output style",
+    "default": "Default",
+    "explanatory": "Explanatory",
+    "learning": "Learning",
+    "concise": "Concise"
   },
   "tokens": "tokens",
   "searchSessions": "Search sessions...",

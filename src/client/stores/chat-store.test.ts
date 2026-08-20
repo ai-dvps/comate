@@ -1042,6 +1042,99 @@ describe('handleSseEvent context_usage', () => {
     assert.strictEqual(state.contextUsage['s1'].percentage, 5)
     assert.strictEqual(state.contextUsage['s1'].totalTokens, 10)
   })
+
+  it('maps enriched CLI 2.1.237 context_usage fields', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'context_usage', {
+      totalTokens: 120000,
+      maxTokens: 200000,
+      percentage: 60,
+      categories: [
+        { name: 'Messages', tokens: 80000 },
+        { name: 'MCP tools (deferred)', tokens: 5000, isDeferred: true },
+      ],
+      model: 'claude-opus-4-8',
+      rawMaxTokens: 200000,
+      autoCompactThreshold: 156000,
+      overLimit: { tokensOver: 12000, kind: 'compaction_window' },
+      mcpTools: [{ name: 'mcp__linear__create_issue', serverName: 'linear', tokens: 3000 }],
+      memoryFiles: [{ path: '/repo/CLAUDE.md', type: 'Project', tokens: 2000 }],
+      agents: [{ agentType: 'code-reviewer', source: 'projectSettings', tokens: 1500 }],
+      skills: [{ name: 'wecom', source: 'plugin', tokens: 900 }],
+    })
+    const usage = useChatStore.getState().contextUsage['s1']
+    assert.ok(usage)
+    assert.strictEqual(usage.model, 'claude-opus-4-8')
+    assert.strictEqual(usage.autoCompactThreshold, 156000)
+    assert.deepStrictEqual(usage.overLimit, { tokensOver: 12000, kind: 'compaction_window' })
+    assert.strictEqual(usage.categories[1].isDeferred, true)
+    assert.strictEqual(usage.mcpTools?.[0].serverName, 'linear')
+    assert.strictEqual(usage.memoryFiles?.[0].type, 'Project')
+    assert.strictEqual(usage.agents?.[0].agentType, 'code-reviewer')
+    assert.strictEqual(usage.skills?.[0].name, 'wecom')
+  })
+
+  it('keeps enrichment fields absent when an older CLI sends the base payload', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'context_usage', {
+      totalTokens: 100,
+      maxTokens: 200000,
+      percentage: 5,
+      categories: [],
+    })
+    const usage = useChatStore.getState().contextUsage['s1']
+    assert.ok(usage)
+    assert.strictEqual(usage.model, undefined)
+    assert.strictEqual(usage.overLimit, undefined)
+    assert.strictEqual(usage.mcpTools, undefined)
+    assert.strictEqual(usage.skills, undefined)
+  })
+})
+
+describe('handleSseEvent system_init', () => {
+  beforeEach(() => {
+    useChatStore.setState({
+      sessions: {},
+      messages: {},
+      subagents: {},
+      workflows: {},
+      tasks: {},
+      contextUsage: {},
+      sessionRuntimeInfo: {},
+    })
+  })
+
+  it('stores effort, outputStyle, and capabilities from the init frame', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'system_init', {
+      model: 'claude-opus-4-8',
+      tools: ['Bash'],
+      sessionId: 's1',
+      effort: 'high',
+      outputStyle: 'concise',
+      capabilities: ['interrupt_receipt_v1', 'interrupt_cancel_queued_v1'],
+    })
+    const info = useChatStore.getState().sessionRuntimeInfo['s1']
+    assert.ok(info)
+    assert.strictEqual(info.effort, 'high')
+    assert.strictEqual(info.outputStyle, 'concise')
+    assert.deepStrictEqual(info.capabilities, ['interrupt_receipt_v1', 'interrupt_cancel_queued_v1'])
+  })
+
+  it('stores null effort and omits absent optional fields', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    handleSseEvent(set, 'ws-1', 's1', 'system_init', {
+      model: 'claude-sonnet-5',
+      tools: [],
+      sessionId: 's1',
+      effort: null,
+    })
+    const info = useChatStore.getState().sessionRuntimeInfo['s1']
+    assert.ok(info)
+    assert.strictEqual(info.effort, null)
+    assert.strictEqual(info.outputStyle, undefined)
+    assert.strictEqual(info.capabilities, undefined)
+  })
 })
 
 describe('handleSseEvent approval_timeout', () => {

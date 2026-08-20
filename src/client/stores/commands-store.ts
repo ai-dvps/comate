@@ -13,6 +13,8 @@ export interface CachedCommandList {
   commands: SlashCommandDto[];
   partial: boolean;
   partialReason?: string;
+  /** Output styles the CLI reports for this workspace (CLI 2.1.237+). */
+  outputStyles?: string[];
 }
 
 interface CommandsState {
@@ -59,6 +61,9 @@ async function doFetch(
           commands: Array.isArray(data.commands) ? data.commands : [],
           partial: Boolean(data.partial),
           partialReason: data.partialReason,
+          outputStyles: Array.isArray(data.outputStyles)
+            ? data.outputStyles.filter((name): name is string => typeof name === 'string')
+            : undefined,
         },
       },
       loadingByWorkspace: { ...state.loadingByWorkspace, [workspaceId]: false },

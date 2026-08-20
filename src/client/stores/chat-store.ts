@@ -372,6 +372,7 @@ export interface CreateSessionOptions {
   providerId?: string
   backend?: string
   fastMode?: boolean
+  outputStyle?: string
   initialPrompt?: string
   signal?: AbortSignal
 }
@@ -393,6 +394,8 @@ export interface ChatSession {
   /** Agent backend the session is locked to; unset on drafts (pre-selectable). */
   backend?: string
   fastMode?: boolean
+  /** Claude Code output style (CLI 2.1.237+); null = CLI default. */
+  outputStyle?: string | null
   createdAt: string
   updatedAt: string
   summary?: string
@@ -435,6 +438,8 @@ export interface TurnUsage {
   outputTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number
+  /** CLI 2.1.237+: reasoning tokens inside output_tokens_details. */
+  thinkingTokens?: number
 }
 
 export interface SessionUsage {
@@ -442,12 +447,13 @@ export interface SessionUsage {
   cumulativeOutput: number
   cumulativeCacheRead: number
   cumulativeCacheWrite: number
+  cumulativeThinkingTokens?: number
 }
 
 export interface ContextUsageCategory {
   name: string
   tokens: number
-  color?: string
+  isDeferred?: boolean
 }
 
 export interface ContextUsage {
@@ -455,6 +461,26 @@ export interface ContextUsage {
   maxTokens: number
   percentage: number
   categories: ContextUsageCategory[]
+  /** CLI 2.1.237+ enrichments; all optional and defensively populated. */
+  model?: string
+  rawMaxTokens?: number
+  overLimit?: { tokensOver: number; kind: 'hard_limit' | 'compaction_window' }
+  autoCompactThreshold?: number
+  mcpTools?: { name: string; serverName: string; tokens: number }[]
+  memoryFiles?: { path: string; type: string; tokens: number }[]
+  agents?: { agentType: string; source: string; tokens: number }[]
+  skills?: { name: string; source: string; tokens: number }[]
+}
+
+/**
+ * Session facts from the CLI system/init frame (CLI 2.1.237+): effort level,
+ * active output style, and protocol capabilities for feature detection.
+ */
+export interface SessionRuntimeInfo {
+  model?: string
+  effort?: string | null
+  outputStyle?: string
+  capabilities?: string[]
 }
 
 export interface ResultMeta {
@@ -525,6 +551,7 @@ export interface ChatState {
   lastTurnUsage: Record<string, TurnUsage>
   sessionUsage: Record<string, SessionUsage>
   contextUsage: Record<string, ContextUsage>
+  sessionRuntimeInfo: Record<string, SessionRuntimeInfo>
   resultMeta: Record<string, ResultMeta>
   lastCompletion: Record<string, TurnCompletion>
   domCache: Record<string, string[]>
@@ -584,6 +611,7 @@ export interface ChatState {
   refreshBotMessages: (workspaceId: string, sessionId: string) => Promise<void>
   setSessionApprovalMode: (workspaceId: string, sessionId: string, mode: ApprovalMode) => Promise<void>
   setSessionFastMode: (workspaceId: string, sessionId: string, fastMode: boolean) => Promise<void>
+  setSessionOutputStyle: (workspaceId: string, sessionId: string, outputStyle: string | null) => Promise<void>
   setSessionProvider: (workspaceId: string, sessionId: string, providerId: string | null) => Promise<void>
   setSessionBackend: (workspaceId: string, sessionId: string, backend: string) => Promise<void>
   deleteSession: (workspaceId: string, sessionId: string) => Promise<{ ok: boolean; error?: string }>
@@ -1877,6 +1905,21 @@ export function clearLastEventId(sessionId?: string): void {
   }
 }
 
+/**
+ * Maps an optional token-breakdown list from a context_usage SSE event.
+ * Returns undefined when the field is absent (pre-2.1.237 CLI) so the card can
+ * omit the section entirely.
+ */
+function mapTokenList<T>(
+  raw: unknown,
+  mapItem: (item: Record<string, unknown>) => T,
+): T[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  return raw
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .map(mapItem)
+}
+
 export function handleSseEvent(
   set: SseSetter,
   workspaceId: string,
@@ -2358,12 +2401,62 @@ export function handleSseEvent(
               return {
                 name: typeof cx.name === 'string' ? cx.name : '',
                 tokens: typeof cx.tokens === 'number' ? cx.tokens : 0,
+                ...(cx.isDeferred === true && { isDeferred: true }),
               }
             })
           : [],
       }
+      if (typeof data.model === 'string') usage.model = data.model
+      if (typeof data.rawMaxTokens === 'number') usage.rawMaxTokens = data.rawMaxTokens
+      if (typeof data.autoCompactThreshold === 'number') {
+        usage.autoCompactThreshold = data.autoCompactThreshold
+      }
+      const over = data.overLimit as Record<string, unknown> | undefined
+      if (
+        over &&
+        typeof over === 'object' &&
+        typeof over.tokensOver === 'number' &&
+        (over.kind === 'hard_limit' || over.kind === 'compaction_window')
+      ) {
+        usage.overLimit = { tokensOver: over.tokensOver, kind: over.kind }
+      }
+      usage.mcpTools = mapTokenList(data.mcpTools, (t) => ({
+        name: typeof t.name === 'string' ? t.name : '',
+        serverName: typeof t.serverName === 'string' ? t.serverName : '',
+        tokens: typeof t.tokens === 'number' ? t.tokens : 0,
+      }))
+      usage.memoryFiles = mapTokenList(data.memoryFiles, (f) => ({
+        path: typeof f.path === 'string' ? f.path : '',
+        type: typeof f.type === 'string' ? f.type : '',
+        tokens: typeof f.tokens === 'number' ? f.tokens : 0,
+      }))
+      usage.agents = mapTokenList(data.agents, (a) => ({
+        agentType: typeof a.agentType === 'string' ? a.agentType : '',
+        source: typeof a.source === 'string' ? a.source : '',
+        tokens: typeof a.tokens === 'number' ? a.tokens : 0,
+      }))
+      usage.skills = mapTokenList(data.skills, (s) => ({
+        name: typeof s.name === 'string' ? s.name : '',
+        source: typeof s.source === 'string' ? s.source : '',
+        tokens: typeof s.tokens === 'number' ? s.tokens : 0,
+      }))
       set((state) => ({
         contextUsage: { ...state.contextUsage, [sessionId]: usage },
+      }))
+      return
+    }
+    case 'system_init': {
+      const info: SessionRuntimeInfo = {}
+      if (typeof data.model === 'string') info.model = data.model
+      if (data.effort === null || typeof data.effort === 'string') info.effort = data.effort
+      if (typeof data.outputStyle === 'string') info.outputStyle = data.outputStyle
+      if (Array.isArray(data.capabilities)) {
+        info.capabilities = data.capabilities.filter(
+          (c): c is string => typeof c === 'string',
+        )
+      }
+      set((state) => ({
+        sessionRuntimeInfo: { ...state.sessionRuntimeInfo, [sessionId]: info },
       }))
       return
     }
@@ -2701,12 +2794,21 @@ export function handleSseEvent(
             typeof usage.cache_creation_input_tokens === 'number'
               ? usage.cache_creation_input_tokens
               : 0
+          // CLI 2.1.237+ reports reasoning tokens in output_tokens_details.
+          const outputDetails = usage.output_tokens_details as
+            | { thinking_tokens?: unknown }
+            | undefined
+          const thinkingTokens =
+            typeof outputDetails?.thinking_tokens === 'number'
+              ? outputDetails.thinking_tokens
+              : undefined
 
           const turnUsage: TurnUsage = {
             inputTokens,
             outputTokens,
             cacheReadTokens,
             cacheWriteTokens,
+            ...(thinkingTokens !== undefined && { thinkingTokens }),
           }
 
           const prevSession = state.sessionUsage[sessionId]
@@ -2719,6 +2821,10 @@ export function handleSseEvent(
               (prevSession?.cumulativeCacheRead || 0) + cacheReadTokens,
             cumulativeCacheWrite:
               (prevSession?.cumulativeCacheWrite || 0) + cacheWriteTokens,
+            ...(thinkingTokens !== undefined && {
+              cumulativeThinkingTokens:
+                (prevSession?.cumulativeThinkingTokens || 0) + thinkingTokens,
+            }),
           }
 
           next.lastTurnUsage = {
@@ -3074,7 +3180,6 @@ export function handleSseEvent(
     }
     case 'heartbeat':
       return
-    case 'system_init':
     case 'done':
     default:
       return
@@ -3271,6 +3376,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   lastTurnUsage: {},
   sessionUsage: {},
   contextUsage: {},
+  sessionRuntimeInfo: {},
   resultMeta: {},
   lastCompletion: {},
   domCache: {},
@@ -3395,6 +3501,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (options.providerId) body.providerId = options.providerId
       if (options.backend) body.backend = options.backend
       if (options.fastMode !== undefined) body.fastMode = options.fastMode
+      if (options.outputStyle !== undefined) body.outputStyle = options.outputStyle
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3698,6 +3805,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           lastTurnUsage: withoutSession(state.lastTurnUsage),
           sessionUsage: withoutSession(state.sessionUsage),
           contextUsage: withoutSession(state.contextUsage),
+          sessionRuntimeInfo: withoutSession(state.sessionRuntimeInfo),
           resultMeta: withoutSession(state.resultMeta),
           lastCompletion: withoutSession(state.lastCompletion),
           workflows: withoutSession(state.workflows),
@@ -4440,6 +4548,47 @@ export const useChatStore = create<ChatState>((set, get) => ({
           : session?.approvalMode
         const nextSessions = workspaceSessions.map((s) =>
           s.id === sessionId ? { ...s, approvalMode: prevMode } : s,
+        )
+        return {
+          sessions: { ...state.sessions, [workspaceId]: nextSessions },
+        }
+      })
+    }
+  },
+
+  setSessionOutputStyle: async (workspaceId: string, sessionId: string, outputStyle: string | null) => {
+    // Snapshot the previous value before the optimistic update so the revert
+    // restores the exact prior state instead of the newly-set value.
+    let previousOutputStyle: string | null | undefined = null
+    set((state) => {
+      const workspaceSessions = state.sessions[workspaceId] || []
+      const session = workspaceSessions.find((s) => s.id === sessionId)
+      previousOutputStyle = session?.outputStyle ?? null
+      const nextSessions = workspaceSessions.map((s) =>
+        s.id === sessionId ? { ...s, outputStyle } : s,
+      )
+      return {
+        sessions: { ...state.sessions, [workspaceId]: nextSessions },
+      }
+    })
+
+    try {
+      const res = await fetch(
+        `/api/workspaces/${workspaceId}/sessions/${sessionId}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ outputStyle }),
+        },
+      )
+      if (!res.ok) throw new Error(i18next.t('common:failedToUpdateSession', 'Failed to update session'))
+    } catch (err) {
+      console.error('Failed to set session output style:', err)
+      // Revert optimistic update on error
+      set((state) => {
+        const workspaceSessions = state.sessions[workspaceId] || []
+        const nextSessions = workspaceSessions.map((s) =>
+          s.id === sessionId ? { ...s, outputStyle: previousOutputStyle } : s,
         )
         return {
           sessions: { ...state.sessions, [workspaceId]: nextSessions },
