@@ -1,11 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fdir } from 'fdir';
-
-const require = createRequire(import.meta.url);
 
 export function discoverServerTests(rootDirectory: string): string[] {
   return new fdir()
@@ -57,13 +54,26 @@ function runServerTests(): void {
     console.log(`  ${path.relative(process.cwd(), filePath)}`);
   }
 
+  // The stable `--test-isolation` flag only exists on Node 23+; Node 22 (the
+  // repo-pinned toolchain, see .nvmrc/engines) carries the same feature behind
+  // `--experimental-test-isolation`. tsx is loaded via `--import` rather than
+  // as the entry script: under process isolation Node re-execs one child per
+  // test file, and only `--import`-registered loaders propagate into those
+  // children (the tsx/cli entry wrapper does not, failing with
+  // ERR_METHOD_NOT_IMPLEMENTED resolveSync on Node 22).
+  const isolationFlag =
+    Number(process.versions.node.split('.')[0]) >= 23
+      ? '--test-isolation=process'
+      : '--experimental-test-isolation=process';
+
   const result = spawnSync(
     process.execPath,
     [
-      require.resolve('tsx/cli'),
-      '--test-isolation=process',
+      '--import',
+      'tsx',
+      isolationFlag,
       '--test-concurrency=1',
-      '-r',
+      '--import',
       './src/server/test-utils/test-env.ts',
       '--test',
       '--test-force-exit',

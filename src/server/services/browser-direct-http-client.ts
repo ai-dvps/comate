@@ -170,7 +170,6 @@ export class NodeDirectHttpsTransport implements DirectHttpTransport {
         connectTimer = setTimeout(() => {
           req.destroy(new BrowserDirectHttpError('request_timeout', 'TLS connect timeout'));
         }, input.connectTimeoutMs);
-        connectTimer.unref?.();
         socket.once('secureConnect', () => {
           if (connectTimer) clearTimeout(connectTimer);
         });
@@ -178,7 +177,6 @@ export class NodeDirectHttpsTransport implements DirectHttpTransport {
       const headerTimer = setTimeout(() => {
         req.destroy(new BrowserDirectHttpError('request_timeout', 'Response header timeout'));
       }, input.headerTimeoutMs);
-      headerTimer.unref?.();
       req.once('error', (error) => {
         if (headerTimer) clearTimeout(headerTimer);
         if (connectTimer) clearTimeout(connectTimer);
@@ -320,11 +318,14 @@ export class BrowserDirectHttpClient {
     const onExternalAbort = () => controller.abort();
     input.signal?.addEventListener('abort', onExternalAbort, { once: true });
     if (input.signal?.aborted) controller.abort();
+    // Watchdog timers stay ref'd: a caller awaiting the request may hold no
+    // other loop handle (fake transports in tests, one-shot scripts), and an
+    // unref'd watchdog would let the loop drain and strand the await. Bounded
+    // by totalTimeoutMs and always cleared in finally.
     const timer = setTimeout(() => {
       timedOut = true;
       controller.abort();
     }, this.limits.totalTimeoutMs);
-    timer.unref?.();
     try {
       return await this.perform(input, controller.signal, () => timedOut);
     } catch (error) {
