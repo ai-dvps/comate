@@ -43,6 +43,40 @@ function wrapQuery(q: Query): AsyncGenerator<SDKMessage> {
   })();
 }
 
+/** Upper bound for waiting on the system/init frame during command discovery. */
+const INIT_FRAME_DRAIN_TIMEOUT_MS = 3_000;
+
+interface InitFrameInfo {
+  terminalSlashCommands?: string[];
+}
+
+/**
+ * Drains the query's message stream up to the system/init frame to capture
+ * fields only that frame carries (CLI 2.1.237+: terminal_slash_commands).
+ * Never throws — on stream error the caller degrades to no filtering.
+ */
+async function drainInitFrame(q: Query): Promise<InitFrameInfo | undefined> {
+  try {
+    for await (const msg of q) {
+      if (msg.type === 'system' && (msg as { subtype?: string }).subtype === 'init') {
+        const frame = msg as unknown as Record<string, unknown>;
+        const terminal = frame.terminal_slash_commands;
+        if (Array.isArray(terminal)) {
+          return {
+            terminalSlashCommands: terminal.filter(
+              (name): name is string => typeof name === 'string',
+            ),
+          };
+        }
+        return {};
+      }
+    }
+  } catch {
+    // Non-fatal: terminal filtering degrades to absent.
+  }
+  return undefined;
+}
+
 export class SdkClient {
   createQuery(prompt: string, options: Options): QueryResult {
     const q = query({ prompt, options });
@@ -126,14 +160,41 @@ export class SdkClient {
 
     const q = query({ prompt: empty, options });
     try {
-      const init = await q.initializationResult();
-      const commands: SlashCommandDto[] = (init.commands ?? []).map((c) => ({
-        name: c.name,
-        description: c.description,
-        argumentHint: c.argumentHint || undefined,
-        aliases: c.aliases,
-      }));
-      return { commands };
+      // CLI 2.1.237+ announces terminal-only slash commands on the system/init
+      // frame (the initialize control response does not carry them), so drain
+      // the message stream alongside the control request. Bounded by a race:
+      // a CLI that never emits the frame (or buffers it past iteration start)
+      // must not hang command discovery.
+      const initFrame = drainInitFrame(q);
+      const frameTimer = new Promise<undefined>((resolve) => {
+        setTimeout(resolve, INIT_FRAME_DRAIN_TIMEOUT_MS, undefined);
+      });
+      const [init, frame] = await Promise.all([
+        q.initializationResult(),
+        Promise.race([initFrame, frameTimer]),
+      ]);
+
+      const terminalSlashCommands = frame?.terminalSlashCommands;
+      const terminal = new Set(terminalSlashCommands ?? []);
+      const commands: SlashCommandDto[] = (init.commands ?? [])
+        .filter((c) => !terminal.has(c.name))
+        .map((c) => ({
+          name: c.name,
+          description: c.description,
+          argumentHint: c.argumentHint || undefined,
+          aliases: c.aliases,
+        }));
+      return {
+        commands,
+        ...(terminalSlashCommands !== undefined && { terminalSlashCommands }),
+        ...(typeof init.output_style === 'string' && init.output_style
+          ? { outputStyle: init.output_style }
+          : {}),
+        ...(Array.isArray(init.available_output_styles) &&
+        init.available_output_styles.length > 0
+          ? { availableOutputStyles: init.available_output_styles }
+          : {}),
+      };
     } finally {
       try {
         q.close();

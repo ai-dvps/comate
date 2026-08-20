@@ -121,12 +121,26 @@ export class SseEmitter {
                 })
                 .filter((s) => s.name)
             : undefined;
+          // CLI 2.1.237+ init frame carries the session's effort level (null
+          // when none is sent), active output style, and protocol
+          // capabilities for feature detection — forward what is present.
+          const effortRaw = initMsg.effort;
+          const outputStyle =
+            typeof initMsg.output_style === 'string' ? initMsg.output_style : undefined;
+          const capabilities = Array.isArray(initMsg.capabilities)
+            ? initMsg.capabilities.filter((c): c is string => typeof c === 'string')
+            : undefined;
           this.send({
             type: 'system_init',
             model: msg.model,
             tools: msg.tools,
             sessionId: msg.session_id,
             ...(mcpServers && { mcpServers }),
+            ...(effortRaw === null || typeof effortRaw === 'string'
+              ? { effort: effortRaw }
+              : {}),
+            ...(outputStyle !== undefined && { outputStyle }),
+            ...(capabilities !== undefined && { capabilities }),
           });
           this.sessionId = msg.session_id;
           return;
@@ -690,6 +704,15 @@ export class SseEmitter {
       (msg.message as { id?: string }).id ?? '';
     const content = (msg.message as { content?: unknown }).content;
 
+    // CLI 2.1.237+ attaches a structured twin of the /context report to the
+    // synthetic assistant message that delivers the markdown table. Forward
+    // it as a context_usage event so the client can render the structured
+    // card without parsing markdown.
+    const contextUsageTwin = (msg as Record<string, unknown>).context_usage;
+    if (contextUsageTwin && typeof contextUsageTwin === 'object') {
+      this.emitContextUsageTwin(contextUsageTwin as Record<string, unknown>);
+    }
+
     if (messageId && messageId !== this.currentMessageId) {
       this.currentMessageId = messageId;
       this.assistantStartEmitted = false;
@@ -869,6 +892,74 @@ export class SseEmitter {
         }
       }
     }
+  }
+
+  /**
+   * Maps the SDKContextUsage twin (snake_case, on the /context assistant
+   * message) into the enriched context_usage SSE event. Defensive on every
+   * field: absent/partial data degrades to the base total/max/percentage.
+   */
+  private emitContextUsageTwin(twin: Record<string, unknown>): void {
+    const totalTokens =
+      typeof twin.total_tokens === 'number' ? twin.total_tokens : undefined;
+    const rawMaxTokens =
+      typeof twin.raw_max_tokens === 'number' ? twin.raw_max_tokens : undefined;
+    const percentage =
+      typeof twin.percentage === 'number' ? twin.percentage : undefined;
+    if (totalTokens === undefined || rawMaxTokens === undefined || percentage === undefined) {
+      return;
+    }
+
+    const overLimitRaw = twin.over_limit as Record<string, unknown> | undefined;
+    let overLimit:
+      | { tokensOver: number; kind: 'hard_limit' | 'compaction_window' }
+      | undefined;
+    if (
+      overLimitRaw &&
+      typeof overLimitRaw === 'object' &&
+      (overLimitRaw.kind === 'hard_limit' || overLimitRaw.kind === 'compaction_window') &&
+      typeof overLimitRaw.tokens_over === 'number'
+    ) {
+      overLimit = {
+        tokensOver: overLimitRaw.tokens_over,
+        kind: overLimitRaw.kind,
+      };
+    }
+
+    this.send({
+      type: 'context_usage',
+      totalTokens,
+      maxTokens: rawMaxTokens,
+      percentage,
+      categories: mapArrayField(twin.categories, (c) => ({
+        name: typeof c.name === 'string' ? c.name : '',
+        tokens: typeof c.tokens === 'number' ? c.tokens : 0,
+        ...(c.kind === 'deferred' && { isDeferred: true }),
+      })).filter((c: { name: string }) => c.name !== ''),
+      ...(typeof twin.model === 'string' && { model: twin.model }),
+      rawMaxTokens,
+      ...(overLimit !== undefined && { overLimit }),
+      mcpTools: mapArrayField(twin.mcp_tools, (t) => ({
+        name: typeof t.name === 'string' ? t.name : '',
+        serverName: typeof t.server_name === 'string' ? t.server_name : '',
+        tokens: typeof t.tokens === 'number' ? t.tokens : 0,
+      })).filter((t: { name: string }) => t.name !== ''),
+      memoryFiles: mapArrayField(twin.memory_files, (f) => ({
+        path: typeof f.path === 'string' ? f.path : '',
+        type: typeof f.type === 'string' ? f.type : '',
+        tokens: typeof f.tokens === 'number' ? f.tokens : 0,
+      })).filter((f: { path: string }) => f.path !== ''),
+      agents: mapArrayField(twin.agents, (a) => ({
+        agentType: typeof a.agent_type === 'string' ? a.agent_type : '',
+        source: typeof a.source === 'string' ? a.source : '',
+        tokens: typeof a.tokens === 'number' ? a.tokens : 0,
+      })).filter((a: { agentType: string }) => a.agentType !== ''),
+      skills: mapArrayField(twin.skills, (s) => ({
+        name: typeof s.name === 'string' ? s.name : '',
+        source: typeof s.source === 'string' ? s.source : '',
+        tokens: typeof s.tokens === 'number' ? s.tokens : 0,
+      })).filter((s: { name: string }) => s.name !== ''),
+    });
   }
 
   private ensureAssistantStart(): void {
@@ -1121,6 +1212,16 @@ class SubagentEmitter {
       return { _raw: buffer };
     }
   }
+}
+
+function mapArrayField<T>(
+  raw: unknown,
+  map: (item: Record<string, unknown>) => T,
+): T[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .map(map);
 }
 
 function stringifyToolResult(content: unknown): string {

@@ -263,7 +263,23 @@
   "tokenUsage": {
     "turn": "本轮",
     "session": "累计",
-    "context": "上下文"
+    "context": "上下文",
+    "contextCardTitle": "上下文用量",
+    "overLimit": "已超出上下文窗口 {{tokens}} tokens",
+    "autoCompactThreshold": "自动压缩阈值",
+    "mcpTools": "MCP 工具",
+    "memoryFiles": "记忆文件",
+    "agents": "子代理",
+    "skills": "技能",
+    "effort": "思考强度",
+    "effortTitle": "会话下一次请求所用的推理强度"
+  },
+  "outputStyle": {
+    "selectorTitle": "输出风格",
+    "default": "默认",
+    "explanatory": "讲解型",
+    "learning": "学习型",
+    "concise": "简洁"
   },
   "tokens": "token",
   "searchSessions": "搜索会话...",

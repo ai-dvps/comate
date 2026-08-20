@@ -665,6 +665,7 @@ export class ChatService {
       input.botId,
       input.backend,
       input.fastMode,
+      input.outputStyle,
     );
   }
 
@@ -691,6 +692,7 @@ export class ChatService {
           session.isArchived = localSession?.isArchived;
           session.approvalMode = localSession?.approvalMode;
           session.fastMode = localSession?.fastMode;
+          session.outputStyle = localSession?.outputStyle;
           session.botId = localSession?.botId;
           session.source = localSession?.source;
           workspaceStore.syncSdkSession(session);
@@ -719,6 +721,17 @@ export class ChatService {
     // Check local DB for current provider before update
     const localSession = workspaceStore.getLocalSession(id);
     const previousProviderId = localSession?.providerId;
+    // Output style is applied at runtime creation (inline settings), so a
+    // change must rebuild a live runtime for the new style to take effect on
+    // the next turn.
+    const previousOutputStyle = localSession?.outputStyle;
+    const outputStyleChanged =
+      input.outputStyle !== undefined && input.outputStyle !== previousOutputStyle;
+    if (input.outputStyle !== undefined) {
+      workspaceStore.updateLocalSession(id, {
+        outputStyle: input.outputStyle === null ? null : input.outputStyle,
+      });
+    }
 
     // Backend changes are free while the session is a draft (R4: the lock
     // lands at the first message). Once the conversation has started, a
@@ -761,6 +774,18 @@ export class ChatService {
         const runtime = this.getRuntimeIfExists(id);
         if (runtime) {
           sidecarLog(`[ChatService] scheduling rebuild for runtime ${id} due to provider change`);
+          this.scheduleRuntimeRebuild(id, this.runtimeContexts.get(id));
+        }
+      }
+
+      // Output style is baked into the runtime options, so a live runtime must
+      // rebuild for the change to apply on the next turn.
+      if (outputStyleChanged) {
+        const runtime = this.getRuntimeIfExists(id);
+        if (runtime) {
+          sidecarLog(
+            `[ChatService] scheduling rebuild for runtime ${id} due to output style change`,
+          );
           this.scheduleRuntimeRebuild(id, this.runtimeContexts.get(id));
         }
       }
@@ -815,6 +840,20 @@ export class ChatService {
       }
     }
 
+    // Output style change on a live (non-draft) session: rebuild the runtime
+    // so the next turn runs with the new style.
+    if (outputStyleChanged) {
+      const runtime = this.getRuntimeIfExists(id);
+      if (runtime) {
+        sidecarLog(
+          `[ChatService] closing runtime ${id} due to output style change`,
+        );
+        this.closeRuntime(id).catch((err) => {
+          console.error(`Failed to close runtime ${id} during output style change:`, err);
+        });
+      }
+    }
+
     // opencode sessions have no claude .jsonl transcript, so getSessionInfo
     // (which scans project dirs for {id}.jsonl) would throw — return the
     // locally-mirrored session instead.
@@ -833,6 +872,7 @@ export class ChatService {
       session.isArchived = localSession?.isArchived;
       session.approvalMode = localSession?.approvalMode;
       session.fastMode = localSession?.fastMode;
+      session.outputStyle = localSession?.outputStyle;
       session.providerId = localSession?.providerId;
       return session;
     }
@@ -2300,6 +2340,13 @@ export class ChatService {
     // https://code.claude.com/docs/en/scheduled-tasks#disable-scheduled-tasks
     env.CLAUDE_CODE_DISABLE_CRON = '1';
 
+    // CLI 2.1.233 stopped offering the task-tracking tools (TaskCreate/Get/
+    // Update/List, TodoWrite) on newer models (Opus 4.8, Sonnet 5, …). The
+    // Comate task list UI and message normalization are driven by the
+    // task_started/task_updated system messages those tools emit, so keep
+    // them available. Official switch: Claude Code changelog 2.1.233.
+    env.CLAUDE_CODE_ENABLE_TODO_TOOLS = '1';
+
     // Keep the browser MCP bearer out of the agent subprocess environment.
     // Shell commands receive only the API-broker audience, so they cannot
     // bypass the SDK permission gate by POSTing browser tools directly.
@@ -2480,10 +2527,24 @@ export class ChatService {
     const fastMode = session.fastMode === true && providerSupportsFastMode;
     sidecarLog(`[ChatService.buildSdkOptions] fastMode=${fastMode}`);
 
+    // CLI 2.1.237 output style ('default' | 'explanatory' | 'learning' |
+    // 'concise' | custom). Unset lets the CLI decide.
+    const outputStyle =
+      typeof session.outputStyle === 'string' && session.outputStyle.trim() !== ''
+        ? session.outputStyle
+        : undefined;
+    if (outputStyle) {
+      sidecarLog(`[ChatService.buildSdkOptions] outputStyle=${outputStyle}`);
+    }
+
     const options: import('@anthropic-ai/claude-agent-sdk').Options = {
       cwd: normalizedCwd,
       env,
-      settings: { env: settingsEnv, fastMode },
+      settings: {
+        env: settingsEnv,
+        fastMode,
+        ...(outputStyle !== undefined && { outputStyle }),
+      },
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
       model: resolvedProvider.model || (isBotSession ? BOT_SESSION_PINNED_MODEL : undefined),
       includePartialMessages: false,
