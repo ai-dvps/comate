@@ -20,8 +20,11 @@ const baseStyles = {
   '&.cm-focused .cm-selectionBackground': {
     backgroundColor: 'hsl(var(--color-accent) / 0.3)',
   },
+  // Opaque gutter background: the gutter is sticky over the scrollable content,
+  // so a transparent background lets code show through behind the line numbers
+  // when the file is scrolled horizontally.
   '.cm-gutters': {
-    backgroundColor: 'transparent',
+    backgroundColor: 'hsl(var(--color-bg))',
     color: 'hsl(var(--color-text-tertiary))',
     borderRight: '1px solid hsl(var(--color-border))',
   },

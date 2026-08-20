@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Code viewer line numbers no longer show scrolling text behind them** — The line-number gutter in the file viewer (and other read-only code views) now has a solid background matching the panel, so horizontally scrolled code no longer bleeds through behind the line numbers.
 - **Sidebar workspace and session lists no longer reshuffle while sessions work** — Streaming output, turn completion, pending approvals or questions, background poll ticks, and simply opening a session no longer move items in the Agent Command Center; those states still surface through the existing status icons and badges. Items rise only when a new turn actually starts — sending a message or a bot/scheduled run beginning — and the learned order now persists across app restarts, with newly created workspaces and sessions appearing at the top once.
 
 ## [0.2.0] - 2026-08-16
