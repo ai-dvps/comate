@@ -55,6 +55,7 @@
     "changes": "Changes"
   },
   "header": {
+    "usage": "Usage",
     "analytics": "Analytics",
     "createWorkspace": "Create workspace",
     "todos": "Todos",

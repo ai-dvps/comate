@@ -55,6 +55,7 @@
     "changes": "变更"
   },
   "header": {
+    "usage": "用量",
     "analytics": "分析",
     "createWorkspace": "创建工作区",
     "todos": "待办",
