@@ -23,6 +23,7 @@ import { createServer as createNetServer } from 'node:net';
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { MISSING_UPDATE_FEED_ERROR } from '../src/shared/updater-contract';
 import { APP_ID, resolveLegacyDataDir } from './paths';
 import { createNoopShellLogger, createShellLogger, type ShellLogger } from './logger';
 import { createApiInfoLatch } from './api-info';
@@ -64,7 +65,7 @@ import {
   type UpdaterAdapter,
   type UpdaterController,
 } from './updater';
-import { resolvePackagedRuntime, shouldEnableUpdater } from './runtime-mode';
+import { resolvePackagedRuntime, resolveUpdaterRuntimeConfig } from './runtime-mode';
 import { isTrustedUiUrl as matchesTrustedUiUrl } from './trusted-ui-url';
 import { addSidecarAuthorization } from './api-request-auth';
 
@@ -251,14 +252,22 @@ function createElectronUpdaterAdapter(): UpdaterAdapter {
   // downloaded update installs it — performShutdown arms the update grace.
   // Dev feed: only when the developer dropped a dev-app-update.yml into the
   // app root (gitignored) — otherwise check stays a quiet "no update".
-  const hasDevUpdateConfig =
-    !isPackagedRuntime && existsSync(join(app.getAppPath(), 'dev-app-update.yml'));
-  autoUpdater.forceDevUpdateConfig = hasDevUpdateConfig;
-  const updaterEnabled = shouldEnableUpdater(isPackagedRuntime, hasDevUpdateConfig);
+  const updaterRuntime = resolveUpdaterRuntimeConfig(
+    isPackagedRuntime,
+    process.resourcesPath,
+    app.getAppPath(),
+    existsSync,
+  );
+  autoUpdater.forceDevUpdateConfig = updaterRuntime.forceDevUpdateConfig;
   autoUpdater.logger = logger;
   return {
     async checkForUpdates() {
-      if (!updaterEnabled) return null;
+      if (!updaterRuntime.enabled) {
+        if (isPackagedRuntime) {
+          throw new Error(MISSING_UPDATE_FEED_ERROR);
+        }
+        return null;
+      }
       const result = await autoUpdater.checkForUpdates();
       // electron-updater resolves a non-null { isUpdateAvailable: false,
       // updateInfo } when already up-to-date — map that to null, otherwise

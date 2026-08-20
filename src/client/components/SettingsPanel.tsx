@@ -18,6 +18,7 @@ import { useTheme } from '../hooks/use-theme'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { useUpdaterStore } from '../stores/updater-store'
 import { checkForUpdates, getAppVersion, downloadAndInstallUpdate, restartToUpdate, dismissUpdate } from '../lib/updater-api'
+import { MISSING_UPDATE_FEED_ERROR } from '../../shared/updater-contract'
 import i18n from '../i18n'
 import { clampFontSize, MAX_FONT_SIZE, MIN_FONT_SIZE } from '../lib/font-size'
 import type { Workspace } from '../stores/workspace-store'
@@ -829,15 +830,20 @@ export function GeneralTab({
     if (checkingNow || updateStatus === 'downloading' || updateStatus === 'ready' || updateStatus === 'restarting') return
     setCheckingNow(true)
     try {
-      await checkForUpdates()
-      onRecordUpdateCheck()
+      const checked = await checkForUpdates()
+      if (checked) onRecordUpdateCheck()
     } finally {
       setCheckingNow(false)
     }
   }
 
   const statusText = useMemo(() => {
-    if (updateError) return t('general.updateStatusError', { error: updateError })
+    if (updateError) {
+      const error = updateError === MISSING_UPDATE_FEED_ERROR
+        ? t('general.updateFeedMissing')
+        : updateError
+      return t('general.updateStatusError', { error })
+    }
     switch (updateStatus) {
       case 'checking':
         return t('general.updateStatusChecking')

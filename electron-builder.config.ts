@@ -31,12 +31,12 @@
  *    the cross-arch app (staged by build-sidecar.ts step 11)
  *  - build/icon.png → <resourcesPath>/icon.png (window/tray icon, electron/main.ts)
  *
- * The updater endpoint (provider github / owner ai-dvps / repo comate) is
- * asserted by src/client/lib/updater-config.test.ts as source text — keep the
- * literal block below intact.
+ * The updater endpoint is shared with the packaged-feed release guard through
+ * src/shared/updater-contract.ts, so build output and CI validate one contract.
  */
 import type { Configuration } from 'electron-builder';
 import { parseBundleBackends } from './scripts/lib/host-config.js';
+import { UPDATE_FEED } from './src/shared/updater-contract.js';
 
 // ---------------------------------------------------------------------------
 // Enterprise variant gate (shared with scripts/build-sidecar.ts)
@@ -97,9 +97,7 @@ const releaseReady =
 
 const githubPublish: Configuration['publish'] = [
   {
-    provider: 'github',
-    owner: 'ai-dvps',
-    repo: 'comate',
+    ...UPDATE_FEED,
     channel: updateChannel,
   },
 ];

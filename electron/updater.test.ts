@@ -106,12 +106,11 @@ describe('check', () => {
     assert.strictEqual(controller.getState().status, 'idle');
   });
 
-  it('enters a retryable error state on manifest 404 and recovers on the next check', async () => {
+  it('rejects with a manifest error, keeps a retryable error state, and recovers on the next check', async () => {
     const { adapter, controller, logLines } = createHarness();
     adapter.checkError = new Error('Cannot find latest.yml in the release assets (404)');
 
-    const first = await controller.check();
-    assert.strictEqual(first, null);
+    await assert.rejects(controller.check(), /404/);
     assert.strictEqual(controller.getState().status, 'error');
     assert.match(controller.getState().error ?? '', /404/);
     // Never silent: the failure hits the shell log.

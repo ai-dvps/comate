@@ -91,7 +91,7 @@ export interface UpdaterControllerDeps {
 }
 
 export interface UpdaterController {
-  /** Discover an update; resolves null when none / on error (state records it). */
+  /** Discover an update; resolves null when none and rejects on check errors. */
   check(): Promise<UpdaterUpdateInfo | null>;
   /** Manually download the discovered update; resumable across failures. */
   download(): Promise<void>;
@@ -142,7 +142,7 @@ export function createUpdaterController(deps: UpdaterControllerDeps): UpdaterCon
       const message = errorMessage(err);
       logger.error(`Update check failed: ${message}`);
       setState({ status: 'error', update: null, error: message });
-      return null;
+      throw err;
     }
     if (!checkInfo) {
       setState({ status: 'idle', update: null, error: null });
