@@ -151,6 +151,7 @@ export default function CodeMirrorFileViewer({
             readOnly={true}
             className="h-full"
             fontSize={fontSize}
+            fillHeight
           />
         )}
       </div>

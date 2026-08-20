@@ -121,6 +121,7 @@ export default function CodeMirrorDiffViewer({
         readOnly={true}
         className="h-full"
         fontSize={fontSize}
+        fillHeight
       />
     )
   }, [tab.modified, tab.name, language, fontSize])
@@ -222,8 +223,8 @@ export default function CodeMirrorDiffViewer({
             <p className="text-sm">{t('gitChanges.binaryPlaceholder')}</p>
           </div>
         ) : tab.isDeleted ? (
-          <div className="h-full space-y-2">
-            <div className="flex items-center gap-2 px-4 py-2 text-xs text-destructive">
+          <div className="flex h-full flex-col gap-2">
+            <div className="flex flex-shrink-0 items-center gap-2 px-4 py-2 text-xs text-destructive">
               <FileX className="w-3.5 h-3.5" />
               <span>{t('gitChanges.deletedFileHeader')}</span>
             </div>
@@ -231,9 +232,10 @@ export default function CodeMirrorDiffViewer({
               value={tab.modified}
               language={language}
               readOnly={true}
-              className="h-full"
+              className="min-h-0 flex-1"
               fontSize={fontSize}
               extensions={unifiedExtensions}
+              fillHeight
             />
           </div>
         ) : tab.isUntracked ? (
@@ -245,6 +247,7 @@ export default function CodeMirrorDiffViewer({
             readOnly={true}
             className="h-full"
             extensions={unifiedExtensions}
+            fillHeight
           />
         ) : (
           <div ref={mergeRef} className="h-full cm-mergeView" />
