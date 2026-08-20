@@ -41,6 +41,7 @@ const chatState = {
   isStreaming: { 'session-a': true },
   unreadCompletions: {},
   lastActivityAt: {} as Record<string, number>,
+  workspaceLastTurnStartedAt: {} as Record<string, number>,
   setActiveSession: vi.fn(),
   createSession: vi.fn(() => Promise.resolve()),
   renameSession: vi.fn(() => Promise.resolve()),
@@ -112,6 +113,7 @@ describe('AgentCommandCenter', () => {
     }]
     chatState.sessions['ws-2'] = []
     chatState.lastActivityAt = {}
+    chatState.workspaceLastTurnStartedAt = {}
   })
 
   it('shows Workspace groups, Session supervision state, and footer controls', () => {
@@ -201,7 +203,7 @@ describe('AgentCommandCenter', () => {
     expect(workspaceState.openWorkspace).not.toHaveBeenCalled()
   })
 
-  it('reorders a collapsed Workspace after Session activity without changing its UI state', () => {
+  it('reorders a collapsed Workspace after a turn start without changing its UI state', () => {
     chatState.sessions['ws-2'] = [{
       id: 'session-hidden',
       workspaceId: 'ws-2',
@@ -223,7 +225,9 @@ describe('AgentCommandCenter', () => {
     const view = renderCommandCenter(center())
 
     fireEvent.click(screen.getByRole('button', { name: 'Collapse Hidden tools' }))
-    chatState.lastActivityAt = { 'session-hidden': Date.parse('2026-08-15T00:00:00.000Z') }
+    // Turn-start keys are the only ordering signal (activity sort position
+    // stability): the workspace rises when its server-carried key advances.
+    chatState.workspaceLastTurnStartedAt = { 'ws-2': Date.parse('2026-08-15T00:00:00.000Z') }
     view.rerender(<I18nextProvider i18n={i18n}>{center()}</I18nextProvider>)
 
     const hiddenWorkspace = screen.getByRole('region', { name: 'Hidden tools' })

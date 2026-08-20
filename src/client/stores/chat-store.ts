@@ -26,7 +26,7 @@ import {
   WebSocketRequestTimeoutError,
   wsClient,
 } from '../lib/websocket-client.js'
-import type { WsEventMessage } from '@server/websocket/types'
+import type { StatusResult, WsEventMessage } from '@server/websocket/types'
 import { BROWSER_TOOL_PREFIX } from '@server/services/browser-tool-names'
 import {
   releasePromptImage,
@@ -269,22 +269,18 @@ function startBackgroundPolling(
     wsClient
       .request('status', { workspaceId }, 5000)
       .then((data) => {
-        const result = data as {
-          statuses?: Record<string, {
-            pendingCount: number
-            pendingKind?: PendingInteractionKind
-            isProcessing?: boolean
-            activity: SessionActivitySnapshot
-          }>
-        }
+        const result = data as StatusResult
         const statuses = result.statuses ?? {}
+        const unarchiveSessionIds: string[] = []
         set((state) => {
           const next = { ...state.sessionStatus }
           const nextStreaming = { ...state.isStreaming }
           const nextLastActivityAt = { ...state.lastActivityAt }
+          const nextWorkspaceKeys = { ...state.workspaceLastTurnStartedAt }
           const nextActivity = { ...state.sessionActivity }
           const nextUnread = { ...state.unreadCompletions }
-          for (const session of state.sessions[workspaceId] ?? []) {
+          const workspaceSessions = state.sessions[workspaceId] ?? []
+          for (const session of workspaceSessions) {
             if (
               !sessionSubscriptions.has(session.id) &&
               !Object.prototype.hasOwnProperty.call(statuses, session.id)
@@ -297,14 +293,10 @@ function startBackgroundPolling(
             }
           }
           for (const [sid, st] of Object.entries(statuses)) {
-            const prevPending = state.sessionStatus[sid]?.pendingCount ?? 0
             if (st.pendingCount === 0 && !st.isProcessing) {
               delete next[sid]
             } else {
               next[sid] = mergeSessionStatusEntry(next[sid], st)!
-            }
-            if (st.pendingCount > 0 && prevPending === 0) {
-              nextLastActivityAt[sid] = Date.now()
             }
             if (!sessionSubscriptions.has(sid)) {
               const previous = state.sessionActivity[sid]
@@ -319,15 +311,49 @@ function startBackgroundPolling(
                 nextUnread[sid] = true
               }
             }
+            // Ordering keys are server-carried only (KTD2) and always
+            // overwrite the stored value (KTD3) — pending-count transitions no
+            // longer bump. KTD5: compare before the overwrite and unarchive an
+            // archived session only on a genuine advance.
+            if (st.lastTurnStartedAt !== undefined) {
+              const stored = state.lastActivityAt[sid]
+              if (
+                isGenuineTurnKeyAdvance(stored, st.lastTurnStartedAt) &&
+                workspaceSessions.some(
+                  (session) => session.id === sid && session.isArchived,
+                )
+              ) {
+                unarchiveSessionIds.push(sid)
+              }
+              nextLastActivityAt[sid] = st.lastTurnStartedAt
+            }
           }
+          if (result.workspaceLastTurnStartedAt !== undefined) {
+            nextWorkspaceKeys[workspaceId] = result.workspaceLastTurnStartedAt
+          }
+          const unarchiveSet = new Set(unarchiveSessionIds)
           return {
             sessionStatus: next,
             sessionActivity: nextActivity,
             isStreaming: nextStreaming,
             lastActivityAt: nextLastActivityAt,
+            workspaceLastTurnStartedAt: nextWorkspaceKeys,
             unreadCompletions: nextUnread,
+            ...(unarchiveSet.size > 0
+              ? {
+                  sessions: {
+                    ...state.sessions,
+                    [workspaceId]: workspaceSessions.map((session) =>
+                      unarchiveSet.has(session.id) ? { ...session, isArchived: false } : session,
+                    ),
+                  },
+                }
+              : {}),
           }
         })
+        for (const sessionId of unarchiveSessionIds) {
+          persistSessionUnarchive(workspaceId, sessionId)
+        }
       })
       .catch((err) => {
         console.error('Background poll error:', err)
@@ -371,6 +397,13 @@ export interface ChatSession {
   updatedAt: string
   summary?: string
   lastModified?: number
+  /**
+   * Server-persisted MRU ordering key (epoch ms of the last turn start,
+   * activity sort position stability KTD1). Carried by list/create payloads
+   * and the status poll; server-carried values are authoritative (KTD3).
+   * Ordering writers are rewired to it in U4.
+   */
+  lastTurnStartedAt?: number
   firstPrompt?: string
   gitBranch?: string
   customTitle?: string
@@ -475,6 +508,15 @@ export interface ChatState {
   sessionActivity: Record<string, SessionActivitySnapshot>
   unreadCompletions: Record<string, boolean>
   lastActivityAt: Record<string, number>
+  /**
+   * Workspace-level MRU ordering keys (epoch ms of the workspace's last turn
+   * start), mirroring the server-persisted column (activity sort position
+   * stability, KTD1/KTD2). Server-carried values from workspace fetches and
+   * the status poll always overwrite; the optimistic send bump is provisional
+   * (KTD3). The Workspace list sorts by this map, falling back to
+   * session-derived activity then createdAt (R6).
+   */
+  workspaceLastTurnStartedAt: Record<string, number>
   tasks: Record<string, TaskItem[]>
   pendingTaskCreates: Record<string, Record<string, PendingTaskCreate>>
   touchedFiles: Record<string, TouchedFileEntry[]>
@@ -530,6 +572,15 @@ export interface ChatState {
   interruptSession: (workspaceId: string, sessionId: string) => Promise<void>
   stopBackgroundTask: (workspaceId: string, sessionId: string, taskId: string) => Promise<void>
   cleanupWorkspace: (workspaceId: string) => void
+  /**
+   * Seed the workspace ordering map from server-carried workspace rows
+   * (fetchWorkspaces / createWorkspace in workspace-store). Present keys
+   * overwrite authoritatively (KTD3); rows without a key leave existing
+   * entries untouched.
+   */
+  seedWorkspaceActivityKeys: (
+    workspaces: ReadonlyArray<{ id: string; lastTurnStartedAt?: number }>,
+  ) => void
   refreshBotMessages: (workspaceId: string, sessionId: string) => Promise<void>
   setSessionApprovalMode: (workspaceId: string, sessionId: string, mode: ApprovalMode) => Promise<void>
   setSessionFastMode: (workspaceId: string, sessionId: string, fastMode: boolean) => Promise<void>
@@ -1881,7 +1932,7 @@ export function handleSseEvent(
             ...state.totalMessageCount,
             [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
           },
-          ...applyActivityUpdate(state, workspaceId, sessionId),
+          // Streaming never moves sidebar ordering (R1) — no activity-key write.
         }
         // Preserve an earlier prompt-send timestamp when present; otherwise
         // capture the turn start here.
@@ -2407,12 +2458,12 @@ export function handleSseEvent(
           },
         ]
         diagLog(`[Client] approvalQueue updated for ${sessionId}: length=${queue.length}`)
+        // Pending approvals surface through badges (R4), never position changes.
         return {
           approvalQueue: {
             ...state.approvalQueue,
             [sessionId]: queue,
           },
-          ...applyActivityUpdate(state, workspaceId, sessionId),
         }
       })
       return
@@ -2433,12 +2484,12 @@ export function handleSseEvent(
           { requestId, questions, expiresAt },
         ]
         diagLog(`[Client] approvalQueue updated for ${sessionId}: length=${queue.length}`)
+        // Pending questions surface through badges (R4), never position changes.
         return {
           approvalQueue: {
             ...state.approvalQueue,
             [sessionId]: queue,
           },
-          ...applyActivityUpdate(state, workspaceId, sessionId),
         }
       })
       return
@@ -2632,9 +2683,9 @@ export function handleSseEvent(
     }
     case 'result': {
       set((state) => {
-        const next: Partial<ChatState> = {
-          ...applyActivityUpdate(state, workspaceId, sessionId),
-        }
+        // Turn completion never moves sidebar ordering (R1/R4) — the
+        // completion shows through the unread badge instead.
+        const next: Partial<ChatState> = {}
 
         const usage = data.usage as Record<string, unknown> | undefined
         if (usage && typeof usage === 'object') {
@@ -3121,32 +3172,69 @@ function subscribeToSession(
   void doSubscribe()
 }
 
-function applyActivityUpdate(
-  state: ChatState,
-  workspaceId: string,
-  sessionId: string,
-): Partial<ChatState> {
-  const workspaceSessions = state.sessions[workspaceId] || []
-  const session = workspaceSessions.find((s) => s.id === sessionId)
-  const updates: Partial<ChatState> = {
-    lastActivityAt: { ...state.lastActivityAt, [sessionId]: Date.now() },
-  }
-  if (session?.isArchived) {
-    updates.sessions = {
-      ...state.sessions,
-      [workspaceId]: workspaceSessions.map((s) =>
-        s.id === sessionId ? { ...s, isArchived: false } : s,
-      ),
+/**
+ * Session ids whose unarchive PUT (KTD5) has fired but not yet settled. While
+ * an id is pending, a sessions refetch must not re-archive the local row from
+ * a server value that has not caught up yet.
+ */
+const pendingUnarchiveSessionIds = new Set<string>()
+
+/**
+ * Restore the local archived flag after a failed unarchive persist, in
+ * whichever workspace array currently holds the session.
+ */
+function restoreSessionArchivedFlag(sessionId: string): void {
+  useChatStore.setState((state) => {
+    for (const [workspaceId, sessions] of Object.entries(state.sessions)) {
+      if (!sessions.some((session) => session.id === sessionId)) continue
+      return {
+        sessions: {
+          ...state.sessions,
+          [workspaceId]: sessions.map((session) =>
+            session.id === sessionId ? { ...session, isArchived: true } : session,
+          ),
+        },
+      }
     }
-    fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isArchived: false }),
-    }).catch((err) => {
-      console.warn('Failed to clear archived state on activity:', err)
+    return {}
+  })
+}
+
+/**
+ * KTD5 advance gate: a genuine turn-key advance is an incoming key strictly
+ * greater than the stored key, with a stored key present — the first-boot
+ * seed (no stored key) never qualifies. Each writer pairs this with its own
+ * archived-flag source.
+ */
+function isGenuineTurnKeyAdvance(stored: number | undefined, incoming: number): boolean {
+  return stored !== undefined && incoming > stored
+}
+
+/**
+ * Persist the unarchive side effect of an observed turn-start advance (KTD5).
+ * Callers flip the local sessions list and decide when the gate holds (a
+ * genuine server-carried key advance over the stored value; the first-boot
+ * seed never qualifies); this only fires the best-effort server write. The id
+ * stays in pendingUnarchiveSessionIds until the write settles; on failure the
+ * local row is re-archived so the session does not sit unarchived until the
+ * next turn.
+ */
+function persistSessionUnarchive(workspaceId: string, sessionId: string): void {
+  pendingUnarchiveSessionIds.add(sessionId)
+  fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ isArchived: false }),
+  })
+    .then((res) => {
+      if (!res.ok) throw new Error(`request failed with status ${res.status}`)
+      pendingUnarchiveSessionIds.delete(sessionId)
     })
-  }
-  return updates
+    .catch((err) => {
+      console.warn('Failed to clear archived state on activity:', err)
+      restoreSessionArchivedFlag(sessionId)
+      pendingUnarchiveSessionIds.delete(sessionId)
+    })
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -3174,6 +3262,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sessionActivity: {},
   unreadCompletions: {},
   lastActivityAt: {},
+  workspaceLastTurnStartedAt: {},
   tasks: {},
   pendingTaskCreates: {},
   touchedFiles: {},
@@ -3218,22 +3307,54 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       const data = await res.json()
       const fetchedSessions: ChatSession[] = data.sessions || []
+      const unarchiveSessionIds: string[] = []
       set((state) => {
         const nextLastActivityAt = { ...state.lastActivityAt }
         for (const session of fetchedSessions) {
-          nextLastActivityAt[session.id] =
-            session.lastModified ?? (Date.parse(session.updatedAt) || Date.now())
-        }
-        for (const id of Object.keys(nextLastActivityAt)) {
-          if (!fetchedSessions.some((s) => s.id === id)) {
-            delete nextLastActivityAt[id]
+          const serverKey = session.lastTurnStartedAt
+          if (serverKey !== undefined) {
+            // KTD3: server-carried ordering keys always overwrite. KTD5:
+            // compare before the overwrite — only a genuine advance unarchives
+            // an archived session; the first-boot seed (no stored key) never
+            // does.
+            const stored = state.lastActivityAt[session.id]
+            if (isGenuineTurnKeyAdvance(stored, serverKey) && session.isArchived) {
+              unarchiveSessionIds.push(session.id)
+            }
+            nextLastActivityAt[session.id] = serverKey
+          } else {
+            nextLastActivityAt[session.id] =
+              session.lastModified ?? (Date.parse(session.updatedAt) || Date.now())
           }
         }
+        // Prune only sessions that vanished from THIS workspace; keys for other
+        // workspaces belong to their own fetches.
+        const fetchedIds = new Set(fetchedSessions.map((s) => s.id))
+        for (const previous of state.sessions[workspaceId] ?? []) {
+          if (!fetchedIds.has(previous.id)) {
+            delete nextLastActivityAt[previous.id]
+          }
+        }
+        const unarchiveSet = new Set(unarchiveSessionIds)
+        // While an unarchive PUT is still in flight the server row is stale;
+        // hold the local unarchived state for those sessions instead of
+        // re-archiving them from this refetch.
+        const holdUnarchived = (session: ChatSession): boolean =>
+          unarchiveSet.has(session.id) ||
+          (session.isArchived === true && pendingUnarchiveSessionIds.has(session.id))
         return {
-          sessions: { ...state.sessions, [workspaceId]: fetchedSessions },
+          sessions: {
+            ...state.sessions,
+            [workspaceId]: fetchedSessions.map((session) =>
+              holdUnarchived(session) ? { ...session, isArchived: false } : session,
+            ),
+          },
           lastActivityAt: nextLastActivityAt,
         }
       })
+      for (const sessionId of unarchiveSessionIds) {
+        persistSessionUnarchive(workspaceId, sessionId)
+      }
       startBackgroundPolling(set, workspaceId)
       // Load workspace-scoped prompt history in parallel with session setup.
       // Errors are logged but do not fail the overall session fetch.
@@ -3310,7 +3431,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
           activeSessionIds: { ...state.activeSessionIds, [workspaceId]: session.id },
           unreadCompletions: nextUnread,
           domCache: { ...state.domCache, [workspaceId]: nextCache },
-          ...applyActivityUpdate(state, workspaceId, session.id),
+          // Seed the ordering key from the server response (creation-initialized,
+          // R6); a brand-new session has no stored key, so there is nothing to
+          // compare against (KTD5 first-seed exemption).
+          lastActivityAt: {
+            ...state.lastActivityAt,
+            [session.id]: session.lastTurnStartedAt ?? Date.now(),
+          },
         }
       })
       if (evicted) {
@@ -3354,9 +3481,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       const fetchResult = await get().fetchSessions(workspaceId)
       if (fetchResult.ok) {
+        // The refetch above seeded the fork's ordering key from its server row.
         set((state) => ({
           activeSessionIds: { ...state.activeSessionIds, [workspaceId]: forkedSessionId },
-          ...applyActivityUpdate(state, workspaceId, forkedSessionId),
         }))
       }
       return { ok: true }
@@ -3382,7 +3509,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeSessionIds: { ...state.activeSessionIds, [workspaceId]: session.id },
         unreadCompletions: nextUnread,
         domCache: { ...state.domCache, [workspaceId]: nextCache },
-        ...applyActivityUpdate(state, workspaceId, session.id),
+        // Seed the ordering key from the server-carried row (R6), never a
+        // client-side bump.
+        lastActivityAt: {
+          ...state.lastActivityAt,
+          [session.id]: session.lastTurnStartedAt ?? Date.now(),
+        },
       }
     })
     if (evicted) {
@@ -3612,11 +3744,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => {
       const nextUnread = { ...state.unreadCompletions }
       if (sessionId) delete nextUnread[sessionId]
+      // Selection never changes ordering (R3) — no activity-key write here.
       return {
         activeSessionIds: { ...state.activeSessionIds, [workspaceId]: sessionId },
         unreadCompletions: nextUnread,
         domCache: { ...state.domCache, [workspaceId]: nextCache },
-        ...(sessionId ? applyActivityUpdate(state, workspaceId, sessionId) : {}),
       }
     })
 
@@ -3788,6 +3920,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete nextPromptHistory[workspaceId]
       const nextBackgroundSessions = { ...state.backgroundSessions }
       delete nextBackgroundSessions[workspaceId]
+      // workspaceLastTurnStartedAt is deliberately kept: the map is bounded by
+      // workspace count, authoritatively re-seeded by fetchWorkspaces/poll,
+      // and a lingering entry for a deleted workspace is never read.
       const keyPrefix = `${JSON.stringify(workspaceId)}:`
       const nextImageDrafts = { ...state.imageDrafts }
       const releasedPreviewUrls = new Set<string>()
@@ -3819,6 +3954,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
         pendingSend: withoutWorkspaceTurns(state.pendingSend),
         draftQueue: withoutWorkspaceTurns(state.draftQueue),
       }
+    })
+  },
+
+  seedWorkspaceActivityKeys: (workspaces) => {
+    set((state) => {
+      let changed = false
+      const next = { ...state.workspaceLastTurnStartedAt }
+      for (const workspace of workspaces) {
+        if (
+          workspace.lastTurnStartedAt !== undefined &&
+          next[workspace.id] !== workspace.lastTurnStartedAt
+        ) {
+          next[workspace.id] = workspace.lastTurnStartedAt
+          changed = true
+        }
+      }
+      // Keep the map reference on no-change so store subscribers skip the update.
+      return changed ? { workspaceLastTurnStartedAt: next } : {}
     })
   },
 
@@ -3858,6 +4011,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Optimistically add the immutable user turn and transfer matching draft
     // ownership into pending state. The visible composer can immediately hold
     // a newer draft, but cannot submit it until this admission settles.
+    //
+    // This is also the only client-initiated ordering write (KTD2): the
+    // provisional turn-start bump advances both ordering maps until the next
+    // server-carried value overwrites them (KTD3).
+    const optimisticTurnStartedAt = Date.now()
+    let unarchiveOnSend = false
     set((state) => {
       const nextDrafts = { ...state.drafts }
       if (nextDrafts[sessionId] === snapshot.text) delete nextDrafts[sessionId]
@@ -3889,8 +4048,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       ]
       const workspaceSessions = state.sessions[workspaceId] || []
+      // KTD5: the send writer unarchives an archived session only on a genuine
+      // advance over the stored key; a missing stored key (first-seed case)
+      // never unarchives.
+      const storedActivityKey = state.lastActivityAt[sessionId]
+      unarchiveOnSend =
+        session?.isArchived === true &&
+        isGenuineTurnKeyAdvance(storedActivityKey, optimisticTurnStartedAt)
       const nextSessions = workspaceSessions.map((s) =>
-        s.id === sessionId ? { ...s, isDraft: false } : s,
+        s.id === sessionId
+          ? { ...s, isDraft: false, ...(unarchiveOnSend ? { isArchived: false } : {}) }
+          : s,
       )
       const historyLoadState = session?.isDraft
         ? { ...state.historyLoadState, [sessionId]: 'loaded' as const }
@@ -3918,9 +4086,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...state.totalMessageCount,
           [sessionId]: (state.totalMessageCount[sessionId] || 0) + 1,
         },
-        ...applyActivityUpdate(state, workspaceId, sessionId),
+        lastActivityAt: { ...state.lastActivityAt, [sessionId]: optimisticTurnStartedAt },
+        workspaceLastTurnStartedAt: {
+          ...state.workspaceLastTurnStartedAt,
+          [workspaceId]: optimisticTurnStartedAt,
+        },
       }
     })
+    if (unarchiveOnSend) {
+      persistSessionUnarchive(workspaceId, sessionId)
+    }
 
     // If approval is pending, queue the message
     const queue = get().approvalQueue[sessionId] || []

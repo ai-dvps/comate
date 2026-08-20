@@ -4,6 +4,7 @@ import assert from 'node:assert';
 import { existsSync, mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import type { ChatSession } from '../models/session.js';
 import { SqliteStore } from './sqlite-store.js';
 
 const testDbDir = mkdtempSync(join(tmpdir(), 'sqlite-store-test-'));
@@ -1325,5 +1326,177 @@ describe('SqliteStore session backend column (KTD-9)', { concurrency: false }, (
     const session = store.createLocalSession(ws.id, 'S');
     const reloaded = store.getLocalSession(session.id);
     assert.strictEqual(reloaded?.backend, undefined);
+  });
+});
+
+describe('SqliteStore last_turn_started_at ordering key (U1, KTD1/KTD4)', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(':memory:');
+    store.resetData();
+  });
+
+  it('createLocalSession initializes the key to now and the row parsers carry it', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/turn-key' });
+    const before = Date.now();
+    const session = store.createLocalSession(ws.id, 'S');
+    const after = Date.now();
+
+    assert.ok(session.lastTurnStartedAt !== undefined, 'creation returns the key');
+    assert.ok(
+      session.lastTurnStartedAt >= before && session.lastTurnStartedAt <= after,
+      `key ${session.lastTurnStartedAt} within [${before}, ${after}]`,
+    );
+    assert.strictEqual(store.getLocalSession(session.id)?.lastTurnStartedAt, session.lastTurnStartedAt);
+    assert.strictEqual(store.listLocalSessions(ws.id)[0]?.lastTurnStartedAt, session.lastTurnStartedAt);
+    assert.strictEqual(store.listLocalSessions()[0]?.lastTurnStartedAt, session.lastTurnStartedAt);
+  });
+
+  it('workspace create initializes the key to now and list/get carry it', async () => {
+    const before = Date.now();
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/turn-key-ws' });
+    const after = Date.now();
+
+    assert.ok(ws.lastTurnStartedAt !== undefined, 'creation returns the key');
+    assert.ok(
+      ws.lastTurnStartedAt >= before && ws.lastTurnStartedAt <= after,
+      `key ${ws.lastTurnStartedAt} within [${before}, ${after}]`,
+    );
+    assert.strictEqual((await store.get(ws.id))?.lastTurnStartedAt, ws.lastTurnStartedAt);
+    assert.strictEqual((await store.list()).find((w) => w.id === ws.id)?.lastTurnStartedAt, ws.lastTurnStartedAt);
+  });
+
+  it('syncSdkSession discovery initializes from lastModified; a repeat sync leaves the key untouched', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/turn-key-sync' });
+    const discovered: ChatSession = {
+      id: 'sdk-1',
+      workspaceId: ws.id,
+      name: 'Discovered',
+      isDraft: false,
+      createdAt: '2025-08-10T10:00:00.000Z',
+      updatedAt: '2025-08-12T12:30:45.678Z',
+      lastModified: 1_755_500_000_123,
+    };
+    store.syncSdkSession(discovered);
+    assert.strictEqual(store.getLocalSession('sdk-1')?.lastTurnStartedAt, 1_755_500_000_123);
+
+    // The conflict-upsert branch must not move the key (KTD4).
+    store.syncSdkSession({ ...discovered, lastModified: 1_799_999_999_999, summary: 'newer scan' });
+    const afterResync = store.getLocalSession('sdk-1');
+    assert.strictEqual(afterResync?.lastTurnStartedAt, 1_755_500_000_123);
+    assert.strictEqual(afterResync?.summary, 'newer scan', 'the rest of the upsert still applies');
+  });
+
+  it('syncSdkSession discovery without lastModified falls back to Date.parse(createdAt)', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/turn-key-sync2' });
+    store.syncSdkSession({
+      id: 'sdk-2',
+      workspaceId: ws.id,
+      name: 'No lastModified',
+      isDraft: false,
+      createdAt: '2025-08-14T09:15:30.000Z',
+      updatedAt: '2025-08-16T18:45:30.000Z',
+    });
+    assert.strictEqual(
+      store.getLocalSession('sdk-2')?.lastTurnStartedAt,
+      Date.parse('2025-08-14T09:15:30.000Z'),
+    );
+  });
+
+  it('a NULL key (row inserted by a downgraded binary) parses as undefined', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/turn-key-null' });
+    const session = store.createLocalSession(ws.id, 'S');
+    const raw = store as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } };
+    raw.db.prepare('UPDATE sessions SET last_turn_started_at = NULL WHERE id = ?').run(session.id);
+
+    assert.strictEqual(store.getLocalSession(session.id)?.lastTurnStartedAt, undefined);
+    raw.db.prepare('UPDATE workspaces SET last_turn_started_at = NULL WHERE id = ?').run(ws.id);
+    assert.strictEqual((await store.get(ws.id))?.lastTurnStartedAt, undefined);
+  });
+});
+
+describe('SqliteStore stampTurnStarted (U2, KTD1/R2)', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(':memory:');
+    store.resetData();
+  });
+
+  const rawDb = (s: SqliteStore) =>
+    s as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } };
+
+  it('advances both the session and the workspace key to the turn-start timestamp', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/stamp-both' });
+    const session = store.createLocalSession(ws.id, 'S');
+    const other = store.createLocalSession(ws.id, 'Other');
+
+    const t = Date.now() + 60_000;
+    const applied = store.stampTurnStarted(session.id, ws.id, t);
+
+    assert.strictEqual(applied, t);
+    assert.strictEqual(store.getLocalSession(session.id)?.lastTurnStartedAt, t);
+    assert.strictEqual((await store.get(ws.id))?.lastTurnStartedAt, t);
+    assert.notStrictEqual(
+      store.getLocalSession(other.id)?.lastTurnStartedAt,
+      t,
+      'a sibling session that did not start a turn keeps its own key',
+    );
+  });
+
+  it('defaults to Date.now() when no timestamp is given', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/stamp-now' });
+    const session = store.createLocalSession(ws.id, 'S');
+
+    const before = Date.now();
+    store.stampTurnStarted(session.id, ws.id);
+    const after = Date.now();
+
+    const sessionKey = store.getLocalSession(session.id)?.lastTurnStartedAt;
+    const workspaceKey = (await store.get(ws.id))?.lastTurnStartedAt;
+    assert.ok(sessionKey !== undefined && sessionKey >= before && sessionKey <= after, `session key ${sessionKey} within [${before}, ${after}]`);
+    assert.ok(workspaceKey !== undefined && workspaceKey >= before && workspaceKey <= after, `workspace key ${workspaceKey} within [${before}, ${after}]`);
+  });
+
+  it('keeps keys monotonically non-decreasing: an older stamp never moves a key backwards', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/stamp-mono' });
+    const session = store.createLocalSession(ws.id, 'S');
+
+    const t1 = 1_800_000_000_000;
+    store.stampTurnStarted(session.id, ws.id, t1);
+    store.stampTurnStarted(session.id, ws.id, t1 - 5_000);
+    assert.strictEqual(store.getLocalSession(session.id)?.lastTurnStartedAt, t1);
+    assert.strictEqual((await store.get(ws.id))?.lastTurnStartedAt, t1);
+
+    store.stampTurnStarted(session.id, ws.id, t1);
+    store.stampTurnStarted(session.id, ws.id, t1 + 5_000);
+    assert.strictEqual(store.getLocalSession(session.id)?.lastTurnStartedAt, t1 + 5_000);
+    assert.strictEqual((await store.get(ws.id))?.lastTurnStartedAt, t1 + 5_000);
+  });
+
+  it('heals NULL keys left by a downgraded binary', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/stamp-heal' });
+    const session = store.createLocalSession(ws.id, 'S');
+    rawDb(store).db.prepare('UPDATE sessions SET last_turn_started_at = NULL WHERE id = ?').run(session.id);
+    rawDb(store).db.prepare('UPDATE workspaces SET last_turn_started_at = NULL WHERE id = ?').run(ws.id);
+
+    const t = 1_800_000_000_000;
+    store.stampTurnStarted(session.id, ws.id, t);
+
+    assert.strictEqual(store.getLocalSession(session.id)?.lastTurnStartedAt, t);
+    assert.strictEqual((await store.get(ws.id))?.lastTurnStartedAt, t);
+  });
+
+  it('leaves missing rows untouched and does not throw', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/stamp-missing' });
+    const session = store.createLocalSession(ws.id, 'S');
+    const keyBefore = store.getLocalSession(session.id)?.lastTurnStartedAt;
+
+    const t = 1_800_000_000_000;
+    assert.doesNotThrow(() => store.stampTurnStarted('no-such-session', 'no-such-workspace', t));
+
+    assert.strictEqual(store.getLocalSession(session.id)?.lastTurnStartedAt, keyBefore);
+    assert.strictEqual((await store.get(ws.id))?.lastTurnStartedAt, ws.lastTurnStartedAt);
   });
 });

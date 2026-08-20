@@ -782,3 +782,55 @@ describe('chat route background task stop', { concurrency: false }, () => {
     }
   });
 });
+
+describe('chat route ordering-key payloads (U3)', { concurrency: false }, () => {
+  beforeEach(() => {
+    workspaceStore.resetData();
+  });
+
+  async function importSessionsHandler(method: 'get' | 'post') {
+    const mod = await import('./chat.js');
+    const router = mod.default;
+    const layers = (router as unknown as { stack: Array<{ route?: { methods: Record<string, boolean>; path: string; stack: Array<{ handle: (req: unknown, res: unknown) => Promise<void> }> } }> }).stack;
+    for (const layer of layers) {
+      if (layer.route?.path === '/sessions' && layer.route.methods[method]) {
+        return layer.route.stack[layer.route.stack.length - 1].handle;
+      }
+    }
+    throw new Error(`${method.toUpperCase()} /sessions handler not found`);
+  }
+
+  it('GET /sessions carries the persisted lastTurnStartedAt ordering key', async () => {
+    const handler = await importSessionsHandler('get');
+    const workspace = await workspaceStore.create({ name: 'WS', folderPath: '/tmp/u3-chat-route-list' });
+    const session = workspaceStore.createLocalSession(workspace.id, 'S1');
+    const stampMs = 1_800_000_000_000;
+    workspaceStore.stampTurnStarted(session.id, workspace.id, stampMs);
+
+    const res = createMockRes();
+    await handler({ params: { id: workspace.id }, query: {} }, res);
+
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { sessions: Array<{ id: string; lastTurnStartedAt?: number }> };
+    const listed = body.sessions.find((s) => s.id === session.id);
+    assert.strictEqual(listed?.lastTurnStartedAt, stampMs);
+  });
+
+  it('POST /sessions returns the initialized ordering key', async () => {
+    const handler = await importSessionsHandler('post');
+    const workspace = await workspaceStore.create({ name: 'WS', folderPath: '/tmp/u3-chat-route-create' });
+
+    const before = Date.now();
+    const res = createMockRes();
+    await handler({ params: { id: workspace.id }, body: { name: 'New session' } }, res);
+
+    assert.strictEqual(res.statusCode, 201);
+    const session = res.jsonBody as { id: string; lastTurnStartedAt?: number };
+    assert.strictEqual(typeof session.lastTurnStartedAt, 'number');
+    assert.ok(
+      session.lastTurnStartedAt! >= before && session.lastTurnStartedAt! <= Date.now(),
+      'creation initializes the ordering key to ~now (KTD4/R6)',
+    );
+    assert.strictEqual(workspaceStore.getLocalSession(session.id)?.lastTurnStartedAt, session.lastTurnStartedAt);
+  });
+});

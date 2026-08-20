@@ -1,4 +1,5 @@
 import '../test-utils/test-env.js';
+import { PAST_TURN_KEY, resetTurnKeysToPast } from '../test-utils/test-store.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { WeComQueueWorker, formatProactiveDirective } from './wecom-queue-worker.js';
@@ -279,5 +280,49 @@ describe('WeComQueueWorker', { concurrency: false }, () => {
     const directive = formatProactiveDirective(msg);
     assert.ok(directive.includes('Send a WeCom message to user-b: please upload the file'));
     assert.ok(!directive.includes('[Proactive Send]'));
+  });
+
+  describe('turn-start stamping (U2, KTD1/R2)', { concurrency: false }, () => {
+    it('stamps the session and workspace ordering keys after a successful dispatch', async () => {
+      const ws = await workspaceStore.create({ name: 'WS', folderPath: '/tmp/stamp-dispatch' });
+      const bot = createWecomBot(ws.id);
+      const user = addWecomUser(bot.id, 'enc-b', 'plain-b');
+      const session = await createWecomSession(ws.id, user.id);
+      resetTurnKeysToPast(workspaceStore, session.id, ws.id);
+
+      setupHappyPathMocks(ws.id);
+      mockMessages.push(createMockMessage({ workspaceId: ws.id }));
+
+      await (worker as unknown as { poll(): Promise<void> }).poll();
+
+      assert.strictEqual(mockMessages[0].status, 'delivering', 'dispatch was admitted');
+      const sessionKey = workspaceStore.getLocalSession(session.id)?.lastTurnStartedAt;
+      const workspaceKey = (await workspaceStore.get(ws.id))?.lastTurnStartedAt;
+      assert.ok(sessionKey !== undefined && sessionKey > PAST_TURN_KEY, `session key ${sessionKey} stamped past ${PAST_TURN_KEY}`);
+      assert.ok(workspaceKey !== undefined && workspaceKey > PAST_TURN_KEY, `workspace key ${workspaceKey} stamped past ${PAST_TURN_KEY}`);
+    });
+
+    it('does not stamp when dispatch admission rejects', async () => {
+      const ws = await workspaceStore.create({ name: 'WS', folderPath: '/tmp/stamp-reject' });
+      const bot = createWecomBot(ws.id);
+      const user = addWecomUser(bot.id, 'enc-b', 'plain-b');
+      const session = await createWecomSession(ws.id, user.id);
+      resetTurnKeysToPast(workspaceStore, session.id, ws.id);
+
+      setupHappyPathMocks(ws.id);
+      const rejectingRuntime = {
+        isProcessingTurn: () => false,
+        cancelIdleClose: () => {},
+        pushMessage: () => Promise.reject(new Error('busy: a turn is already running')),
+      } as unknown as SessionRuntime;
+      chatService.getOrCreateRuntime = async () => rejectingRuntime;
+      mockMessages.push(createMockMessage({ workspaceId: ws.id }));
+
+      await (worker as unknown as { poll(): Promise<void> }).poll();
+
+      assert.strictEqual(mockMessages[0].status, 'failed', 'rejected admission marks the message failed');
+      assert.strictEqual(workspaceStore.getLocalSession(session.id)?.lastTurnStartedAt, PAST_TURN_KEY, 'session key untouched');
+      assert.strictEqual((await workspaceStore.get(ws.id))?.lastTurnStartedAt, PAST_TURN_KEY, 'workspace key untouched');
+    });
   });
 });

@@ -123,6 +123,9 @@ SkillHub 中以企业为发现入口的标准 Skill 目录。用户先浏览企�
 ### Agent Command Center
 桌面端常驻左侧的后台工作监督与导航区域。它按 Workspace 组织 Session，承载搜索、状态筛选、Bot 连接状态和需要用户参与的提示；用户在中间区域一次只处理一个激活 Session。
 
+### 事件驱动 MRU 排序 (event-driven MRU ordering)
+Agent Command Center 侧栏 Workspace 与 Session 列表的排序契约：列表顺序只在「回合开始」（用户发送消息，或 bot/定时任务开始一轮执行）时把对应 Session 及其 Workspace 移到顶部；流式增量、状态轮询、回合完成、待处理交互、点击打开都不再改变位置，仅用状态图标/徽标表达。顺序跨重启持久化，新建项一次性插入列表顶部。由 `docs/plans/2026-08-19-001-fix-activity-sort-position-stability-plan.md` 定义，取代此前按活跃时间戳实时重排的契约。
+
 ### Typed context tab
 桌面端右侧工作区中带有内容类型和归属范围的标签页。Browser tab 归属于 Session，File 与 Changes tab 归属于 Workspace；File 和 Changes 各自在内容右侧携带可收起的导航列表。
 

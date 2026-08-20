@@ -18,6 +18,13 @@ export interface Workspace {
   createdAt: string;
   updatedAt: string;
   lastOpenedAt?: string;
+  /**
+   * Server-persisted MRU ordering key (epoch ms of the last turn start in any
+   * session of this workspace, activity sort position stability KTD1).
+   * Server-carried values are authoritative (KTD3); ordering writers are
+   * rewired to it in U4.
+   */
+  lastTurnStartedAt?: number;
 }
 
 interface WorkspaceState {
@@ -67,7 +74,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const res = await fetch(`${API_BASE}/workspaces`);
       if (!res.ok) throw new Error(i18next.t('common:failedToFetchWorkspaces', 'Failed to fetch workspaces'));
       const data = await res.json();
-      set({ workspaces: data.workspaces || [], isLoading: false });
+      const workspaces = (data.workspaces || []) as Workspace[];
+      // Seed the workspace ordering map from server-carried keys (KTD1/KTD3).
+      useChatStore.getState().seedWorkspaceActivityKeys(workspaces);
+      set({ workspaces, isLoading: false });
     } catch (err) {
       set({ error: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'), isLoading: false });
     }
@@ -87,6 +97,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }
       const data = await res.json();
       const workspace = data.workspace as Workspace;
+      // The creation-initialized key places the new workspace at the top (R6).
+      useChatStore.getState().seedWorkspaceActivityKeys([workspace]);
       set({ workspaces: [...get().workspaces, workspace], isLoading: false });
       return workspace;
     } catch (err) {

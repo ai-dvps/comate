@@ -17,6 +17,7 @@ import type {
   UserTurnContent,
 } from '../types/message.js';
 import { normalizeSessionMessage, scanSdkMessagesForTasks } from './message-normalizer.js';
+import type { StatusResult } from '../websocket/types.js';
 import { SdkClient } from './sdk-client.js';
 import {
   getBackendAvailability,
@@ -2000,6 +2001,23 @@ export class ChatService {
     );
   }
 
+  /**
+   * U2 (KTD1/R2): stamp the turn-start ordering keys of a session and its
+   * workspace. This is post-admission housekeeping: a stamp failure must never
+   * fail an admitted turn (a rejecting promise would let a client retry
+   * re-admit the same message), so errors are logged and swallowed — a missed
+   * stamp only leaves the key one turn stale until the next turn start.
+   */
+  stampTurnStarted(sessionId: string, workspaceId: string): void {
+    try {
+      workspaceStore.stampTurnStarted(sessionId, workspaceId);
+    } catch (error) {
+      diagLog(
+        `[ChatService] admitted turn ${sessionId} but turn-start stamp failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   async pushMessage(
     sessionId: string,
     workspaceId: string,
@@ -2038,6 +2056,11 @@ export class ChatService {
 
     await runtime.pushMessage(runtimeContent, clientTurnId);
 
+    // U2 (KTD1/R2): an admitted turn is the only event that advances the
+    // ordering keys. Stamp exactly once, right after admission succeeds — a
+    // rejected admission (e.g. busy error) must not stamp.
+    this.stampTurnStarted(sessionId, workspaceId);
+
     // U11 (KTD-19): only an admitted new turn resets the per-turn
     // override-deny cap.
     this.sessionOverrideDenies.delete(sessionId);
@@ -2064,36 +2087,39 @@ export class ChatService {
     }
   }
 
-  getSessionsStatus(workspaceId: string): Record<
-    string,
-    {
-      pendingCount: number;
-      pendingKind?: 'approval' | 'question';
-      isProcessing: boolean;
-      activity: SessionActivitySnapshot;
-    }
-  > {
-    const statuses: Record<
-      string,
-      {
-        pendingCount: number;
-        pendingKind?: 'approval' | 'question';
-        isProcessing: boolean;
-        activity: SessionActivitySnapshot;
-      }
-    > = {};
+  /**
+   * U3 (KTD1/KTD3): the status poll is the propagation path for background
+   * turn starts, so the payload carries the server-persisted ordering keys —
+   * per-session `lastTurnStartedAt` for live runtimes plus the workspace-level
+   * key — letting the client overwrite both ordering maps authoritatively
+   * within one poll tick.
+   */
+  async getSessionsStatus(workspaceId: string): Promise<StatusResult> {
+    const statuses: StatusResult['statuses'] = {};
+    // Key-only readers: this poll runs every few seconds per workspace, so it
+    // must not pay full-row parses (or the legacy site-auth migration sweep
+    // inside `workspaceStore.get`) to read one column.
+    const turnKeys = workspaceStore.getSessionTurnStartedKeys(workspaceId);
     for (const [sessionId, runtime] of this.runtimes) {
       const status = runtime.getStatus();
       if (status.workspaceId === workspaceId) {
+        const lastTurnStartedAt = turnKeys[sessionId];
         statuses[sessionId] = {
           pendingCount: status.pendingCount,
           ...(status.pendingKind !== undefined && { pendingKind: status.pendingKind }),
           isProcessing: status.isProcessing,
           activity: status.activity ?? this.runtimeActivity(runtime),
+          ...(lastTurnStartedAt !== undefined && { lastTurnStartedAt }),
         };
       }
     }
-    return statuses;
+    const workspaceLastTurnStartedAt = workspaceStore.getWorkspaceTurnStartedKey(workspaceId);
+    return {
+      statuses,
+      ...(workspaceLastTurnStartedAt !== undefined && {
+        workspaceLastTurnStartedAt,
+      }),
+    };
   }
 
   // Legacy message streaming (preserved during migration; removed after U5)

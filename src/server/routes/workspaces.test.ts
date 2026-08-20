@@ -81,6 +81,25 @@ describe('workspaces routes', { concurrency: false }, () => {
     return handlers;
   }
 
+  it('GET / carries the persisted lastTurnStartedAt ordering key (U3)', async () => {
+    const handlers = await importRouteHandlers();
+    const workspace = await workspaceStore.create({ name: 'WS', folderPath: '/tmp/u3-ws-route-list' });
+    // KTD4/R6: true creation initializes the key to ~now.
+    assert.strictEqual(typeof workspace.lastTurnStartedAt, 'number');
+
+    const session = workspaceStore.createLocalSession(workspace.id, 'S1');
+    const stampMs = 1_900_000_000_000;
+    workspaceStore.stampTurnStarted(session.id, workspace.id, stampMs);
+
+    const res = createMockRes();
+    await handlers['/'].get({}, res);
+
+    assert.strictEqual(res.statusCode, 200);
+    const body = res.jsonBody as { workspaces: Array<{ id: string; lastTurnStartedAt?: number }> };
+    const listed = body.workspaces.find((w) => w.id === workspace.id);
+    assert.strictEqual(listed?.lastTurnStartedAt, stampMs);
+  });
+
   it('DELETE returns 204 and evicts runtimes when workspace exists', async () => {
     const handlers = await importRouteHandlers();
 

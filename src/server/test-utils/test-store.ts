@@ -31,3 +31,23 @@ export async function withIsolatedStore<T>(
     store.resetData();
   }
 }
+
+/**
+ * Fixed past sentinel for turn-start ordering keys: a real stamp is
+ * distinguishable from the creation initializer without depending on
+ * wall-clock granularity.
+ */
+export const PAST_TURN_KEY = 1_700_000_000_000;
+
+/**
+ * Reset a session's and its workspace's turn-start ordering keys to
+ * {@link PAST_TURN_KEY}. Uses the raw database because the public
+ * `stampTurnStarted` MAX guard deliberately cannot move keys backward.
+ */
+export function resetTurnKeysToPast(store: SqliteStore, sessionId: string, workspaceId: string): void {
+  const raw = store as unknown as {
+    db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } };
+  };
+  raw.db.prepare('UPDATE sessions SET last_turn_started_at = ? WHERE id = ?').run(PAST_TURN_KEY, sessionId);
+  raw.db.prepare('UPDATE workspaces SET last_turn_started_at = ? WHERE id = ?').run(PAST_TURN_KEY, workspaceId);
+}

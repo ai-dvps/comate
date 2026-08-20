@@ -7,7 +7,7 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from '../services/chat-service.js';
 import { browserStateChannel } from './browser-state-channel.js';
 import { ComateWebSocketServer } from './server.js';
-import type { WsResponse, WsErrorResponse, WsEventMessage } from './types.js';
+import type { WsResponse, WsErrorResponse, WsEventMessage, StatusResult } from './types.js';
 
 describe('ComateWebSocketServer', { concurrency: false }, () => {
   let server: http.Server;
@@ -74,13 +74,17 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
 
   it('handles status requests over the same connection', async () => {
     const original = chatService.getSessionsStatus.bind(chatService);
-    chatService.getSessionsStatus = () => ({
-      'session-a': {
-        pendingCount: 1,
-        pendingKind: 'approval',
-        isProcessing: true,
-        activity: { phase: 'background', active: true, backgroundTasks: [] },
+    chatService.getSessionsStatus = async () => ({
+      statuses: {
+        'session-a': {
+          pendingCount: 1,
+          pendingKind: 'approval',
+          isProcessing: true,
+          activity: { phase: 'background', active: true, backgroundTasks: [] },
+          lastTurnStartedAt: 1_800_000_000_000,
+        },
       },
+      workspaceLastTurnStartedAt: 1_800_000_000_000,
     });
 
     try {
@@ -91,15 +95,18 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
         'id' in msg && (msg as WsResponse).id === 'req-1',
       );
       assert.strictEqual(response.ok, true);
-      const payload = response.payload as { statuses: ReturnType<typeof chatService.getSessionsStatus> };
+      const payload = response.payload as StatusResult;
       assert.deepStrictEqual(payload.statuses, {
         'session-a': {
           pendingCount: 1,
           pendingKind: 'approval',
           isProcessing: true,
           activity: { phase: 'background', active: true, backgroundTasks: [] },
+          lastTurnStartedAt: 1_800_000_000_000,
         },
       });
+      // U3 (KTD3): the workspace-level ordering key rides the same poll payload.
+      assert.strictEqual(payload.workspaceLastTurnStartedAt, 1_800_000_000_000);
     } finally {
       chatService.getSessionsStatus = original;
     }
@@ -369,11 +376,13 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
 
   it('multiplexes multiple concurrent requests', async () => {
     const originalStatus = chatService.getSessionsStatus.bind(chatService);
-    chatService.getSessionsStatus = () => ({
-      'session-a': {
-        pendingCount: 2,
-        isProcessing: true,
-        activity: { phase: 'foreground', active: true, backgroundTasks: [] },
+    chatService.getSessionsStatus = async () => ({
+      statuses: {
+        'session-a': {
+          pendingCount: 2,
+          isProcessing: true,
+          activity: { phase: 'foreground', active: true, backgroundTasks: [] },
+        },
       },
     });
 
