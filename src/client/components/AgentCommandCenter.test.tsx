@@ -585,6 +585,80 @@ describe('AgentCommandCenter', () => {
     await waitFor(() => expect(newSessionButton).toHaveFocus())
   })
 
+  it('submits the new session form with Meta+Enter', async () => {
+    renderCommandCenter(
+      <AgentCommandCenter
+        width={288}
+        onWidthChange={vi.fn()}
+        onCreateWorkspace={vi.fn()}
+        onOpenTodos={vi.fn()}
+        onOpenAnalytics={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onOpenCapabilities={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'New session in Comate' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Session name' }), {
+      target: { value: 'Cmd-enter session' },
+    })
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Session name' }), {
+      key: 'Enter',
+      metaKey: true,
+    })
+
+    expect(chatState.createSession).toHaveBeenCalledWith('ws-1', { name: 'Cmd-enter session' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'New session in Comate' })).toHaveFocus())
+  })
+
+  it('submits the new session form with Control+Enter', async () => {
+    renderCommandCenter(
+      <AgentCommandCenter
+        width={288}
+        onWidthChange={vi.fn()}
+        onCreateWorkspace={vi.fn()}
+        onOpenTodos={vi.fn()}
+        onOpenAnalytics={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onOpenCapabilities={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'New session in Comate' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Session name' }), {
+      target: { value: 'Ctrl-enter session' },
+    })
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Session name' }), {
+      key: 'Enter',
+      ctrlKey: true,
+    })
+
+    expect(chatState.createSession).toHaveBeenCalledWith('ws-1', { name: 'Ctrl-enter session' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'New session in Comate' })).toHaveFocus())
+  })
+
+  it('does not submit the new session form on plain Enter', () => {
+    renderCommandCenter(
+      <AgentCommandCenter
+        width={288}
+        onWidthChange={vi.fn()}
+        onCreateWorkspace={vi.fn()}
+        onOpenTodos={vi.fn()}
+        onOpenAnalytics={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onOpenCapabilities={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'New session in Comate' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Session name' }), {
+      target: { value: 'Plain enter session' },
+    })
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Session name' }), { key: 'Enter' })
+
+    expect(chatState.createSession).not.toHaveBeenCalled()
+  })
+
   it('animates the new Session form when opening and cancelling it', () => {
     renderCommandCenter(
       <AgentCommandCenter
