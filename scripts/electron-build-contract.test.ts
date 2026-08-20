@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
+import { verifyPackagedUpdaterFeeds } from './verify-packaged-updater-feed';
 
 interface PackageJson {
   engines?: Record<string, string>;
@@ -40,6 +43,46 @@ test('the Electron distribution build produces both renderer and shell bundles',
     /(?:^|&&)\s*(?:npm run build:electron:shell|electron-vite build)\s*(?:&&|$)/,
     'build:electron must build the Electron main and preload bundles',
   );
+});
+
+test('signed release packages must contain the updater feed configuration', () => {
+  const workflow = readFileSync('.github/workflows/build.yml', 'utf8');
+
+  assert.match(
+    workflow,
+    /name: Guard packaged updater feed[\s\S]*?if: steps\.signing\.outputs\.ready == 'true'[\s\S]*?verify-packaged-updater-feed\.ts release "\$\{\{ runner\.os \}\}"/,
+    'signed release jobs must fail when electron-builder omits app-update.yml',
+  );
+});
+
+test('packaged updater feed guard validates every macOS architecture and exact feed values', () => {
+  const releaseDir = mkdtempSync(join(tmpdir(), 'comate-updater-feed-'));
+  const feed = 'provider: github\nowner: ai-dvps\nrepo: comate\n';
+  const x64Resources = join(releaseDir, 'mac', 'Comate.app', 'Contents', 'Resources');
+  const arm64Resources = join(releaseDir, 'mac-arm64', 'Comate.app', 'Contents', 'Resources');
+
+  try {
+    mkdirSync(x64Resources, { recursive: true });
+    mkdirSync(arm64Resources, { recursive: true });
+    writeFileSync(join(x64Resources, 'app-update.yml'), feed);
+    writeFileSync(join(arm64Resources, 'app-update.yml'), feed);
+
+    assert.equal(verifyPackagedUpdaterFeeds(releaseDir, 'macOS').length, 2);
+
+    rmSync(join(arm64Resources, 'app-update.yml'));
+    assert.throws(
+      () => verifyPackagedUpdaterFeeds(releaseDir, 'macOS'),
+      /signed package missing .*mac-arm64.*app-update\.yml/,
+    );
+
+    writeFileSync(join(arm64Resources, 'app-update.yml'), 'provider: github\nowner: ai-dvps-fork\nrepo: comate\n');
+    assert.throws(
+      () => verifyPackagedUpdaterFeeds(releaseDir, 'macOS'),
+      /owner=ai-dvps-fork; expected ai-dvps/,
+    );
+  } finally {
+    rmSync(releaseDir, { recursive: true, force: true });
+  }
 });
 
 test('the Electron shell builds a dedicated least-privilege detached-browser preload', () => {

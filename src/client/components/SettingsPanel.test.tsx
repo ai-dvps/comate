@@ -4,6 +4,7 @@ import { I18nextProvider } from 'react-i18next';
 import { GeneralTab } from './SettingsPanel';
 import i18n from '../i18n';
 import * as updaterApi from '../lib/updater-api';
+import { MISSING_UPDATE_FEED_ERROR } from '../../shared/updater-contract';
 
 vi.mock('../lib/updater-api', async () => {
   const actual = await vi.importActual<typeof import('../lib/updater-api')>('../lib/updater-api');
@@ -70,6 +71,33 @@ describe('GeneralTab updater flow', () => {
     );
 
     expect(screen.getByRole('button', { name: /Check for Updates/i })).toBeInTheDocument();
+  });
+
+  it('records the check time only when the update check succeeds', async () => {
+    const onRecordUpdateCheck = vi.fn();
+    vi.mocked(updaterApi.checkForUpdates).mockResolvedValueOnce(false);
+    await renderWithAct(
+      <GeneralTab {...defaultProps} onRecordUpdateCheck={onRecordUpdateCheck} />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Check for Updates/i }));
+    });
+    expect(onRecordUpdateCheck).not.toHaveBeenCalled();
+
+    vi.mocked(updaterApi.checkForUpdates).mockResolvedValueOnce(true);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Check for Updates/i }));
+    });
+    expect(onRecordUpdateCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it('localizes the packaged missing-feed error', async () => {
+    await renderWithAct(
+      <GeneralTab {...defaultProps} updateError={MISSING_UPDATE_FEED_ERROR} />,
+    );
+
+    expect(screen.getByText(/This build has no automatic update feed/)).toBeInTheDocument();
   });
 
   it('renders Download button and version info when an update is available', async () => {

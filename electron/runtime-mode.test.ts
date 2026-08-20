@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { resolvePackagedRuntime, shouldEnableUpdater } from './runtime-mode';
+import { resolvePackagedRuntime, resolveUpdaterRuntimeConfig } from './runtime-mode';
 
 describe('resolvePackagedRuntime', () => {
   it('keeps an Electron Vite development launch in dev mode after the executable is rebranded', () => {
@@ -14,10 +14,41 @@ describe('resolvePackagedRuntime', () => {
   });
 });
 
-describe('shouldEnableUpdater', () => {
-  it('keeps updater checks quiet in dev unless a dev feed is configured', () => {
-    assert.equal(shouldEnableUpdater(false, false), false);
-    assert.equal(shouldEnableUpdater(false, true), true);
-    assert.equal(shouldEnableUpdater(true, false), true);
+describe('resolveUpdaterRuntimeConfig', () => {
+  it('requires app-update.yml from packaged resources', () => {
+    let checkedPath = '';
+    const config = resolveUpdaterRuntimeConfig(true, '/resources', '/app', (path) => {
+      checkedPath = path;
+      return false;
+    });
+
+    assert.deepEqual(config, {
+      enabled: false,
+      forceDevUpdateConfig: false,
+    });
+    assert.equal(checkedPath, '/resources/app-update.yml');
+  });
+
+  it('keeps development quiet without dev-app-update.yml', () => {
+    let checkedPath = '';
+    const config = resolveUpdaterRuntimeConfig(false, '/resources', '/app', (path) => {
+      checkedPath = path;
+      return false;
+    });
+
+    assert.deepEqual(config, {
+      enabled: false,
+      forceDevUpdateConfig: false,
+    });
+    assert.equal(checkedPath, '/app/dev-app-update.yml');
+  });
+
+  it('enables electron-updater development config when the file exists', () => {
+    const config = resolveUpdaterRuntimeConfig(false, '/resources', '/app', () => true);
+
+    assert.deepEqual(config, {
+      enabled: true,
+      forceDevUpdateConfig: true,
+    });
   });
 });

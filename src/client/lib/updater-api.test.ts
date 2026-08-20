@@ -1,7 +1,31 @@
-import { describe, it, beforeEach } from 'node:test'
+import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert'
 import { useUpdaterStore } from '../stores/updater-store'
-import { canStartDownload, canRestart, handleDownloadEvent } from './updater-api'
+import {
+  canStartDownload,
+  canRestart,
+  checkForUpdates,
+  handleDownloadEvent,
+  startPeriodicUpdateChecks,
+  stopPeriodicUpdateChecks,
+} from './updater-api'
+import { MISSING_UPDATE_FEED_ERROR } from '../../shared/updater-contract'
+
+type TestWindow = {
+  comate?: {
+    updater?: {
+      check?: () => Promise<null>
+    }
+  }
+}
+
+function installUpdaterCheck(check: () => Promise<null>): void {
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    writable: true,
+    value: { comate: { updater: { check } } } satisfies TestWindow,
+  })
+}
 
 describe('canStartDownload', () => {
   it('returns false when already downloading, ready, or restarting', () => {
@@ -68,5 +92,60 @@ describe('handleDownloadEvent', () => {
     handleDownloadEvent({ event: 'Started', data: { contentLength: 200 } })
     handleDownloadEvent({ event: 'Progress', data: { chunkLength: 50 } })
     assert.strictEqual(useUpdaterStore.getState().downloadProgress, 25)
+  })
+})
+
+describe('checkForUpdates', () => {
+  beforeEach(() => {
+    useUpdaterStore.setState({
+      status: 'idle',
+      update: null,
+      downloadProgress: 0,
+      error: null,
+    })
+  })
+
+  afterEach(() => {
+    stopPeriodicUpdateChecks()
+    Reflect.deleteProperty(globalThis, 'window')
+  })
+
+  it('returns false and preserves the updater error for the UI', async () => {
+    installUpdaterCheck(() => Promise.reject(new Error('app-update.yml is missing')))
+
+    assert.strictEqual(await checkForUpdates(), false)
+    assert.strictEqual(useUpdaterStore.getState().status, 'idle')
+    assert.match(useUpdaterStore.getState().error ?? '', /app-update\.yml is missing/)
+  })
+
+  it('normalizes a packaged missing-feed IPC error for localization', async () => {
+    installUpdaterCheck(() => Promise.reject(new Error(`Error invoking updater: ${MISSING_UPDATE_FEED_ERROR}`)))
+
+    assert.strictEqual(await checkForUpdates(), false)
+    assert.strictEqual(useUpdaterStore.getState().error, MISSING_UPDATE_FEED_ERROR)
+  })
+
+  it('returns true after a successful no-update check', async () => {
+    installUpdaterCheck(() => Promise.resolve(null))
+
+    assert.strictEqual(await checkForUpdates(), true)
+    assert.strictEqual(useUpdaterStore.getState().status, 'idle')
+    assert.strictEqual(useUpdaterStore.getState().error, null)
+  })
+
+  it('does not record a failed automatic check as successful', async () => {
+    installUpdaterCheck(() => Promise.reject(new Error('update feed unavailable')))
+    let successfulChecks = 0
+
+    startPeriodicUpdateChecks(
+      () => ({ autoCheckUpdates: true }),
+      () => {
+        successfulChecks += 1
+      },
+    )
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    assert.strictEqual(successfulChecks, 0)
+    assert.match(useUpdaterStore.getState().error ?? '', /update feed unavailable/)
   })
 })
