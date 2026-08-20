@@ -57,6 +57,31 @@ const openFolderMock = vi.fn((path: string): Promise<void> => {
   return Promise.resolve()
 })
 
+const providerState = {
+  providers: [] as Array<{ id: string; name: string; baseUrl: string; isDefault: boolean }>,
+  fetchProviders: vi.fn(() => Promise.resolve()),
+}
+
+const fetchUsage = vi.fn().mockResolvedValue(undefined)
+const usageState = {
+  usageByProvider: {} as Record<
+    string,
+    {
+      status: string
+      summary: {
+        used: number | null
+        total: number | null
+        remaining: number | null
+        resetDate: string | null
+        rolling: { remaining: number | null; resetDate: string | null } | null
+        lastUpdated: string
+      } | null
+      lastUpdated: number | null
+    }
+  >,
+  fetchUsage,
+}
+
 vi.mock('../lib/desktop-api', () => ({
   openFolder: (path: string) => openFolderMock(path),
 }))
@@ -68,6 +93,18 @@ vi.mock('../stores/workspace-store', () => ({
 vi.mock('../stores/chat-store', () => ({
   useChatStore: (selector: (state: typeof chatState) => unknown) => selector(chatState),
 }))
+
+vi.mock('../stores/provider-store', () => ({
+  useProviderStore: (selector: (state: typeof providerState) => unknown) => selector(providerState),
+}))
+
+vi.mock('../stores/provider-usage-store', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../stores/provider-usage-store')>()
+  return {
+    ...actual,
+    useProviderUsageStore: (selector: (state: typeof usageState) => unknown) => selector(usageState),
+  }
+})
 
 vi.mock('../hooks/use-channel-statuses', () => ({
   CHANNEL_STATUS_CLASS: {
@@ -114,6 +151,8 @@ describe('AgentCommandCenter', () => {
     chatState.sessions['ws-2'] = []
     chatState.lastActivityAt = {}
     chatState.workspaceLastTurnStartedAt = {}
+    providerState.providers = []
+    usageState.usageByProvider = {}
   })
 
   it('shows Workspace groups, Session supervision state, and footer controls', () => {
@@ -279,6 +318,87 @@ describe('AgentCommandCenter', () => {
     fireEvent.click(accountButton)
     fireEvent.click(screen.getByRole('menuitem', { name: 'Settings' }))
     expect(onOpenSettings).toHaveBeenCalledOnce()
+  })
+
+  it('shows read-only provider usage above Analytics in the user account menu', async () => {
+    providerState.providers = [
+      { id: 'p1', name: 'Default', baseUrl: 'https://api.example.com', isDefault: true },
+      { id: 'p2', name: 'Kimi', baseUrl: 'https://www.kimi.com', isDefault: false },
+    ]
+    usageState.usageByProvider = {
+      p2: {
+        status: 'ready',
+        summary: {
+          used: 20,
+          total: 100,
+          remaining: 80,
+          resetDate: '2026-08-21T16:00:00.000Z',
+          rolling: null,
+          lastUpdated: '2026-08-20T00:00:00.000Z',
+        },
+        lastUpdated: Date.now(),
+      },
+    }
+    renderCommandCenter(
+      <AgentCommandCenter
+        width={288}
+        onWidthChange={vi.fn()}
+        onCreateWorkspace={vi.fn()}
+        onOpenTodos={vi.fn()}
+        onOpenAnalytics={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onOpenCapabilities={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'User account' }))
+
+    // Only providers with usage support get a row; the row is pure display.
+    const kimiRow = screen.getByTestId('menu-usage-row-p2')
+    expect(kimiRow).toHaveTextContent('Kimi')
+    expect(kimiRow).toHaveTextContent('80% left')
+    const expectedReset = new Date('2026-08-21T16:00:00.000Z').toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+    expect(kimiRow).toHaveTextContent(`resets ${expectedReset}`)
+    expect(screen.queryByTestId('menu-usage-row-p1')).not.toBeInTheDocument()
+    expect(kimiRow.querySelector('button')).toBeNull()
+
+    // Usage data is fetched live for supported providers only.
+    await waitFor(() => expect(fetchUsage).toHaveBeenCalledWith('p2'))
+    expect(fetchUsage).not.toHaveBeenCalledWith('p1')
+
+    // The usage section sits above the Analytics menu item.
+    const usageHeader = screen.getByText('Usage')
+    const analyticsItem = screen.getByRole('menuitem', { name: 'Analytics' })
+    expect(
+      usageHeader.compareDocumentPosition(analyticsItem) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
+  it('hides the usage section when no provider supports usage', () => {
+    providerState.providers = [
+      { id: 'p1', name: 'Default', baseUrl: 'https://api.example.com', isDefault: true },
+    ]
+    renderCommandCenter(
+      <AgentCommandCenter
+        width={288}
+        onWidthChange={vi.fn()}
+        onCreateWorkspace={vi.fn()}
+        onOpenTodos={vi.fn()}
+        onOpenAnalytics={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onOpenCapabilities={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'User account' }))
+
+    expect(screen.queryByText('Usage')).not.toBeInTheDocument()
+    expect(fetchUsage).not.toHaveBeenCalled()
   })
 
   it('removes the outer divider when the command center is collapsed', () => {

@@ -70,6 +70,16 @@ export function formatRemaining(remaining: number | null | undefined): string {
   return `${remaining} left`
 }
 
+/** Format remaining quota as a percentage of the plan ("80% left") for compact
+ * displays; empty string when not computable. */
+export function formatRemainingPercent(summary: UsageSummary | null): string {
+  if (!summary || summary.total === null || summary.total === 0) return ''
+  const remaining = summary.remaining ?? (summary.used !== null ? summary.total - summary.used : null)
+  if (remaining === null) return ''
+  const pct = Math.min(100, Math.max(0, (remaining / summary.total) * 100))
+  return `${Math.round(pct)}% left`
+}
+
 interface ProviderUsageState {
   usageByProvider: Record<string, UsageState>
   login: UsageLoginState | null

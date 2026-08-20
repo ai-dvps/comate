@@ -11,6 +11,7 @@ import {
   Folder,
   FolderOpen,
   FlaskConical,
+  Gauge,
   GitBranch,
   Moon,
   MessageSquarePlus,
@@ -26,6 +27,14 @@ import {
   X,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../stores/workspace-store'
+import { useProviderStore } from '../stores/provider-store'
+import {
+  useProviderUsageStore,
+  hasUsageSupport,
+  usagePercentage,
+  usageBarColor,
+  formatRemainingPercent,
+} from '../stores/provider-usage-store'
 import { getSessionDisplayName } from '../lib/session-filter'
 import { compareSessionActivity } from '../lib/session-sort'
 import { sortWorkspacesByActivity } from '../lib/workspace-sort'
@@ -66,6 +75,20 @@ function relativeTime(session: ChatSession): string {
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return `${hours}h`
   return `${Math.floor(hours / 24)}d`
+}
+
+/** Compact reset date for the menu usage rows: "Aug 21, 4:00 PM" — month/day
+ * and time suffice for a quick glance (the Settings panel keeps the full date). */
+function formatResetDate(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 function startSessionNameScroll(row: HTMLElement) {
@@ -112,6 +135,90 @@ function BotConnectionStatus({
         aria-hidden="true"
       />
     </span>
+  )
+}
+
+/** Quick read-only usage display for the user account menu: one row per
+ * provider whose coding-plan usage we support (Kimi / BigModel), refreshed
+ * live whenever the menu opens. Purely informational — no actions here;
+ * connecting an account stays in Settings or the provider selector. */
+function UserMenuUsageSection({ active }: { active: boolean }) {
+  const { t } = useTranslation('common')
+  const { t: tc } = useTranslation('chat')
+  const { t: ts } = useTranslation('settings')
+  const providers = useProviderStore((s) => s.providers)
+  const fetchProviders = useProviderStore((s) => s.fetchProviders)
+  const usageByProvider = useProviderUsageStore((s) => s.usageByProvider)
+  const fetchUsage = useProviderUsageStore((s) => s.fetchUsage)
+
+  const supported = providers.filter((provider) => hasUsageSupport(provider.baseUrl))
+
+  // Lazily load the provider list and refresh usage for each supported
+  // provider whenever the menu opens (on-demand; the client throttle prevents
+  // over-fetching, and the server always fetches live).
+  useEffect(() => {
+    if (!active) return
+    if (providers.length === 0) fetchProviders()
+    for (const provider of providers) {
+      if (hasUsageSupport(provider.baseUrl)) fetchUsage(provider.id)
+    }
+  }, [active, providers, fetchProviders, fetchUsage])
+
+  if (supported.length === 0) return null
+
+  return (
+    <>
+      <div className="flex items-center gap-1.5 px-3 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-wider text-text-tertiary">
+        <Gauge className="h-3 w-3" aria-hidden="true" />
+        {t('header.usage', 'Usage')}
+      </div>
+      {supported.map((provider) => {
+        const entry = usageByProvider[provider.id]
+        const status = entry?.status ?? 'idle'
+        const summary = entry?.summary ?? null
+        const pct = usagePercentage(summary)
+        return (
+          <div
+            key={provider.id}
+            data-testid={`menu-usage-row-${provider.id}`}
+            className="flex w-full items-center gap-2 px-3 py-1 text-xs"
+          >
+            <span className="min-w-0 flex-shrink truncate text-text-secondary">{provider.name}</span>
+            <span className="ml-auto flex min-w-0 flex-shrink-0 flex-col items-end gap-0.5">
+              <span className="flex items-center gap-1.5">
+                {status === 'ready' && summary ? (
+                  <>
+                    <span className="h-1 w-12 overflow-hidden rounded-full bg-border" aria-hidden="true">
+                      <span
+                        className={cn('block h-full rounded-full transition-all duration-300', usageBarColor(pct))}
+                        style={{ width: `${pct ?? 0}%` }}
+                      />
+                    </span>
+                    <span className="whitespace-nowrap text-[10px] text-text-tertiary">
+                      {formatRemainingPercent(summary)}
+                    </span>
+                  </>
+                ) : status === 'no-plan' ? (
+                  <span className="truncate text-[10px] text-text-tertiary">
+                    {tc('provider.usage.noPlan', 'No coding plan')}
+                  </span>
+                ) : status === 'fetching' || status === 'idle' ? (
+                  <span className="text-[10px] text-text-tertiary" aria-hidden="true">…</span>
+                ) : (
+                  <span className="text-[10px] text-text-tertiary" aria-hidden="true">—</span>
+                )}
+              </span>
+              {status === 'ready' && summary?.resetDate && formatResetDate(summary.resetDate) && (
+                <span className="whitespace-nowrap text-[10px] text-text-tertiary">
+                  {ts('providers.usage.resets', 'resets')} {formatResetDate(summary.resetDate)}
+                </span>
+              )}
+            </span>
+          </div>
+        )
+      })}
+      <div className="my-1 border-t border-border" aria-hidden="true" />
+    </>
   )
 }
 
@@ -843,6 +950,7 @@ export default function AgentCommandCenter({
           aria-label={t('shell.userAccount')}
           className="absolute bottom-12 left-2 right-2 z-30 overflow-hidden rounded-md border border-border bg-surface py-1 shadow-xl"
         >
+          <UserMenuUsageSection active={userMenuOpen} />
           <button
             type="button"
             role="menuitem"

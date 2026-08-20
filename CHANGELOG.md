@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The Developer menu now shows provider usage at a glance** — Opening the user account menu lists every Kimi and BigModel coding-plan provider under a read-only Usage section (above Analytics) with a quota progress bar, remaining percentage, and compact quota reset time, refreshed live each time the menu opens; providers without usage support are omitted.
 - **Prompt messages now accept screenshots and images** — Paste, drop, or choose ordered PNG, JPEG, WebP, and GIF images alongside text (or send images alone) to supported Claude Code and OpenCode models. Static images are proportionally normalized to the active model limits, failed admission restores the complete draft, and accepted images are rendered later from the backend-owned transcript rather than a separate Comate archive.
 - **File Explorer now plays workspace video files** — Opening a supported video displays native playback controls with streamed seeking instead of the generic binary-file placeholder.
 - **File Explorer now plays workspace audio files** — Opening a supported audio file (WAV, MP3, M4A, AAC, FLAC, Ogg Audio, Opus, WebM audio) displays an audio card with native playback controls and streamed seeking instead of the generic binary-file placeholder; audio files also get a dedicated icon in the file tree.
