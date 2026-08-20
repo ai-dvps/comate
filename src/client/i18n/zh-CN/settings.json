@@ -53,6 +53,7 @@
     "updateStatusDownloading": "正在下载更新...",
     "updateStatusReady": "更新已准备好安装",
     "updateStatusError": "更新错误：{{error}}",
+    "updateFeedMissing": "此版本没有自动更新源。请从 github.com/ai-dvps/comate/releases/latest 下载已签名版本。",
     "updaterDownload": "下载",
     "updaterDownloadingProgress": "{{progress}}%",
     "updaterInstallNow": "安装并重启",

@@ -8,6 +8,7 @@ import {
   type DownloadEvent,
 } from './desktop-api'
 import { useUpdaterStore, type UpdaterStatus } from '../stores/updater-store'
+import { MISSING_UPDATE_FEED_ERROR } from '../../shared/updater-contract'
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000 // 4 hours
 const JITTER_MAX_MS = 5 * 60 * 1000 // 5 minutes
@@ -61,12 +62,12 @@ export function handleDownloadEvent(event: DownloadEvent): void {
   }
 }
 
-export async function checkForUpdates(): Promise<void> {
-  if (!isDesktop()) return
+export async function checkForUpdates(): Promise<boolean> {
+  if (!isDesktop()) return false
 
   const store = useUpdaterStore.getState()
   if (store.status === 'downloading' || store.status === 'ready' || store.status === 'restarting') {
-    return
+    return false
   }
 
   store.setChecking()
@@ -80,9 +81,12 @@ export async function checkForUpdates(): Promise<void> {
       currentUpdate = null
       store.setIdle()
     }
-  } catch {
+    return true
+  } catch (err) {
     currentUpdate = null
-    store.setIdle()
+    const message = err instanceof Error ? err.message : 'Update check failed'
+    store.setError(message.includes(MISSING_UPDATE_FEED_ERROR) ? MISSING_UPDATE_FEED_ERROR : message)
+    return false
   }
 }
 
@@ -130,12 +134,16 @@ export function startPeriodicUpdateChecks(
   if (!isDesktop()) return
   if (checkIntervalId) return
 
-  void checkForUpdates().then(() => onCheck?.())
+  const runCheck = async () => {
+    if (await checkForUpdates()) onCheck?.()
+  }
+
+  void runCheck()
 
   const scheduleNext = () => {
     checkIntervalId = setInterval(() => {
       if (!getPreferences().autoCheckUpdates) return
-      void checkForUpdates().then(() => onCheck?.())
+      void runCheck()
     }, getIntervalWithJitter())
   }
 

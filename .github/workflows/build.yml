@@ -216,6 +216,13 @@ jobs:
           # with the same TS loader the repo uses everywhere (tsx is a devDep).
           npx tsx -e "void (async () => { const {default: c} = await import('./electron-builder.config.ts'); if (c?.appId !== 'com.comate.app') { console.error('appId mismatch:', c?.appId); process.exit(1); } console.log('electron-builder config OK: appId', c.appId); })()"
 
+      - name: Guard packaged updater feed
+        if: steps.signing.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx tsx scripts/verify-packaged-updater-feed.ts release "${{ runner.os }}"
+
       - name: Unsigned smoke build notice
         if: steps.signing.outputs.ready != 'true'
         shell: bash

@@ -53,6 +53,7 @@
     "updateStatusDownloading": "Downloading update...",
     "updateStatusReady": "Update ready to install",
     "updateStatusError": "Update error: {{error}}",
+    "updateFeedMissing": "This build has no automatic update feed. Download a signed release from github.com/ai-dvps/comate/releases/latest.",
     "updaterDownload": "Download",
     "updaterDownloadingProgress": "{{progress}}%",
     "updaterInstallNow": "Install & Restart",
