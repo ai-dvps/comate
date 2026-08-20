@@ -112,4 +112,35 @@ describe('CodeMirrorFileViewer', () => {
       screen.getByText('Unable to play this audio. The file may be corrupt or use an unsupported codec.'),
     ).toBeInTheDocument()
   })
+
+  it('renders header actions next to the copy button', () => {
+    const tab: FileContextTab = {
+      type: 'file',
+      id: 'file:app.ts',
+      workspaceId: 'ws-1',
+      path: 'src/app.ts',
+      name: 'app.ts',
+      content: 'export {}',
+      isBinary: false,
+      preview: false,
+    }
+
+    render(
+      <I18nextProvider i18n={i18n}>
+        <CodeMirrorFileViewer
+          tab={tab}
+          workspacePath="/project"
+          headerActions={<button type="button">navigator-toggle</button>}
+        />
+      </I18nextProvider>,
+    )
+
+    const copyButton = screen.getByRole('button', { name: 'Copy content' })
+    const actionButton = screen.getByRole('button', { name: 'navigator-toggle' })
+    const header = screen.getByTestId('file-viewer-header')
+    expect(header).toContainElement(copyButton)
+    expect(header).toContainElement(actionButton)
+    // The header action sits to the right of the copy button.
+    expect(copyButton.compareDocumentPosition(actionButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
 })

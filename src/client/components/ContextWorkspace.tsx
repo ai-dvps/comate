@@ -4,6 +4,7 @@ import { File, GitCompare, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { useContextTabStore } from '../stores/context-tab-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { cn } from './ui/utils'
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import FileExplorer from './FileExplorer'
 import GitChangesPanel from './GitChangesPanel'
 import CodeMirrorFileViewer from './CodeMirrorFileViewer'
@@ -100,6 +101,32 @@ export default function ContextWorkspace({
     }))
   }
 
+  // The viewer header only exists when a concrete file/diff is open; without it
+  // the toggle falls back to the tree header (expanded) or a floating button (collapsed).
+  const viewerHasHeader = hasNavigator && Boolean(activeTab?.path)
+  const navigatorToggle = hasNavigator ? (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={toggleNavigator}
+          data-testid="navigator-toggle"
+          className="flex h-7 w-7 items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          aria-label={navigatorCollapsed ? t('shell.expandNavigator') : t('shell.collapseNavigator')}
+        >
+          {navigatorCollapsed ? (
+            <PanelRightOpen className="h-4 w-4" aria-hidden="true" />
+          ) : (
+            <PanelRightClose className="h-4 w-4" aria-hidden="true" />
+          )}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        {navigatorCollapsed ? t('shell.expandNavigator') : t('shell.collapseNavigator')}
+      </TooltipContent>
+    </Tooltip>
+  ) : undefined
+
   const previewFile = (path: string, name: string) => {
     void useContextTabStore.getState().openFile(workspaceId, path, name, { preview: true })
   }
@@ -117,7 +144,11 @@ export default function ContextWorkspace({
     }
     if (activeTab.type === 'file') {
       return activeTab.path ? (
-        <CodeMirrorFileViewer tab={activeTab} workspacePath={workspacePath} />
+        <CodeMirrorFileViewer
+          tab={activeTab}
+          workspacePath={workspacePath}
+          headerActions={navigatorToggle}
+        />
       ) : (
         <div className="flex h-full flex-col items-center justify-center gap-2 text-text-tertiary">
           <File className="h-7 w-7" aria-hidden="true" />
@@ -140,6 +171,7 @@ export default function ContextWorkspace({
           tab={diffTab}
           workspacePath={workspacePath}
           width={primaryWidth}
+          headerActions={navigatorToggle}
         />
       )
     }
@@ -181,38 +213,27 @@ export default function ContextWorkspace({
             </div>
           ))}
 
-          {hasNavigator && navigatorCollapsed ? (
-            <button
-              type="button"
-              onClick={toggleNavigator}
-              className="absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-md border border-border bg-surface text-text-tertiary shadow-sm hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              aria-label={t('shell.expandNavigator')}
-            >
-              <PanelRightOpen className="h-4 w-4" aria-hidden="true" />
-            </button>
+          {hasNavigator && navigatorCollapsed && !viewerHasHeader ? (
+            <div className="absolute right-2 top-2 z-10">{navigatorToggle}</div>
           ) : null}
         </div>
 
         <div
           data-testid={showNavigator ? 'context-navigator' : undefined}
+          aria-hidden={!showNavigator}
           className={cn(
             'relative flex h-full flex-shrink-0 flex-col overflow-hidden border-l border-border/70 bg-chrome',
-            !showNavigator && 'w-0 border-l-0 invisible pointer-events-none',
+            'transition-[width,border-width,visibility] duration-200 ease-out motion-reduce:transition-none',
+            isDragging && 'transition-none',
+            !showNavigator && 'invisible pointer-events-none border-l-0',
           )}
-          style={showNavigator ? { width: navigatorWidth } : undefined}
+          style={{ width: showNavigator ? navigatorWidth : 0 }}
         >
           <div className="flex h-9 flex-shrink-0 items-center border-b border-border/70 px-2">
             <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-text-secondary">
               {activeTab?.type === 'changes' ? t('shell.changedFiles') : t('shell.files')}
             </span>
-            <button
-              type="button"
-              onClick={toggleNavigator}
-              className="flex h-7 w-7 items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              aria-label={t('shell.collapseNavigator')}
-            >
-              <PanelRightClose className="h-4 w-4" aria-hidden="true" />
-            </button>
+            {viewerHasHeader ? null : navigatorToggle}
           </div>
           <div className="min-h-0 flex-1 overflow-hidden">
             <div className={cn('h-full', activeTab?.type !== 'file' && 'hidden')}>

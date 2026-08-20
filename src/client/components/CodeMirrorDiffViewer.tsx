@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, Columns2, AlignLeft, FileWarning, FileX } from 'lucide-react'
 import { unifiedMergeView, MergeView } from '@codemirror/merge'
@@ -25,12 +26,15 @@ interface CodeMirrorDiffViewerProps {
   tab: DiffViewerTab
   workspacePath?: string
   width?: number
+  /** Extra actions rendered at the header's top-right (e.g. the navigator toggle). */
+  headerActions?: ReactNode
 }
 
 export default function CodeMirrorDiffViewer({
   tab,
   workspacePath,
   width = 0,
+  headerActions,
 }: CodeMirrorDiffViewerProps) {
   const { t } = useTranslation('common')
   const { theme } = useTheme()
@@ -123,7 +127,10 @@ export default function CodeMirrorDiffViewer({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-4 py-1.5 border-b border-border/50 flex-shrink-0">
+      <div
+        data-testid="diff-viewer-header"
+        className="flex items-center justify-between px-4 py-1.5 border-b border-border/50 flex-shrink-0"
+      >
         <div className="flex items-center gap-2 min-w-0">
           <svg
             className="w-4 h-4 text-text-tertiary flex-shrink-0"
@@ -155,39 +162,42 @@ export default function CodeMirrorDiffViewer({
           </span>
         </div>
 
-        {!tab.isUntracked && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                data-testid="diff-mode-toggle"
-                onClick={handleToggleDiffMode}
-                disabled={width < MIN_SIDE_BY_SIDE_WIDTH}
-                className={cn(
-                  'p-1.5 rounded-md transition-colors',
-                  width < MIN_SIDE_BY_SIDE_WIDTH
-                    ? 'text-text-tertiary cursor-not-allowed'
-                    : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
-                )}
-                aria-label={
-                  diffMode === 'unified'
-                    ? t('rightPanel.diffModeSideBySide')
-                    : t('rightPanel.diffModeUnified')
-                }
-              >
-                {diffMode === 'unified' ? (
-                  <Columns2 className="w-3.5 h-3.5" />
-                ) : (
-                  <AlignLeft className="w-3.5 h-3.5" />
-                )}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">
-              {diffMode === 'unified'
-                ? t('rightPanel.diffModeSideBySide')
-                : t('rightPanel.diffModeUnified')}
-            </TooltipContent>
-          </Tooltip>
-        )}
+        <div className="flex flex-shrink-0 items-center gap-0.5">
+          {!tab.isUntracked && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  data-testid="diff-mode-toggle"
+                  onClick={handleToggleDiffMode}
+                  disabled={width < MIN_SIDE_BY_SIDE_WIDTH}
+                  className={cn(
+                    'p-1.5 rounded-md transition-colors',
+                    width < MIN_SIDE_BY_SIDE_WIDTH
+                      ? 'text-text-tertiary cursor-not-allowed'
+                      : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
+                  )}
+                  aria-label={
+                    diffMode === 'unified'
+                      ? t('rightPanel.diffModeSideBySide')
+                      : t('rightPanel.diffModeUnified')
+                  }
+                >
+                  {diffMode === 'unified' ? (
+                    <Columns2 className="w-3.5 h-3.5" />
+                  ) : (
+                    <AlignLeft className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {diffMode === 'unified'
+                  ? t('rightPanel.diffModeSideBySide')
+                  : t('rightPanel.diffModeUnified')}
+              </TooltipContent>
+            </Tooltip>
+          )}
+          {headerActions}
+        </div>
       </div>
 
       {tab.error && (
