@@ -34,8 +34,39 @@ describe('workspace activity sorting', () => {
 
     assert.strictEqual(getWorkspaceActivityTimestamp(sessions['workspace-1'], {}), 2000)
     assert.deepStrictEqual(
-      sortWorkspacesByActivity(workspaces, sessions, { latest: 3000 }).map(({ id }) => id),
+      sortWorkspacesByActivity(workspaces, sessions, {}, { latest: 3000 }).map(({ id }) => id),
       ['workspace-2', 'workspace-1', 'workspace-3'],
+    )
+  })
+
+  it('prefers the server-carried workspace key over session-derived activity', () => {
+    const sessions = {
+      'workspace-1': [
+        makeSession({ id: 'hot', workspaceId: 'workspace-1', updatedAt: new Date(9000).toISOString() }),
+      ],
+      'workspace-2': [
+        makeSession({ id: 'warm', workspaceId: 'workspace-2', updatedAt: new Date(500).toISOString() }),
+      ],
+    }
+
+    // workspace-1's own sessions are newer, but its server key is older, and
+    // the server key is the primary source for that workspace (KTD2/KTD3).
+    assert.deepStrictEqual(
+      sortWorkspacesByActivity(workspaces, sessions, { 'workspace-1': 100 }, {}).map(({ id }) => id),
+      ['workspace-2', 'workspace-1', 'workspace-3'],
+    )
+  })
+
+  it('places a zero-session Workspace with a seeded key on top (new workspace, R6)', () => {
+    const sessions = {
+      'workspace-1': [
+        makeSession({ id: 's', workspaceId: 'workspace-1', updatedAt: new Date(1000).toISOString() }),
+      ],
+    }
+
+    assert.deepStrictEqual(
+      sortWorkspacesByActivity(workspaces, sessions, { 'workspace-3': 5000 }, {}).map(({ id }) => id),
+      ['workspace-3', 'workspace-1', 'workspace-2'],
     )
   })
 
@@ -46,8 +77,21 @@ describe('workspace activity sorting', () => {
     }
 
     assert.deepStrictEqual(
-      sortWorkspacesByActivity(workspaces, sessions, {}).map(({ id }) => id),
+      sortWorkspacesByActivity(workspaces, sessions, {}, {}).map(({ id }) => id),
       ['workspace-1', 'workspace-2', 'workspace-3'],
+    )
+  })
+
+  it('falls back to createdAt for Workspaces with no key and no sessions', () => {
+    const dated = [
+      { id: 'a', createdAt: new Date(1000).toISOString() },
+      { id: 'b', createdAt: new Date(3000).toISOString() },
+      { id: 'c', createdAt: new Date(2000).toISOString() },
+    ]
+
+    assert.deepStrictEqual(
+      sortWorkspacesByActivity(dated, {}, {}, {}).map(({ id }) => id),
+      ['b', 'c', 'a'],
     )
   })
 
@@ -60,7 +104,7 @@ describe('workspace activity sorting', () => {
     const original = [...workspaces]
 
     assert.deepStrictEqual(
-      sortWorkspacesByActivity(workspaces, sessions, {}).map(({ id }) => id),
+      sortWorkspacesByActivity(workspaces, sessions, {}, {}).map(({ id }) => id),
       ['workspace-1', 'workspace-2', 'workspace-3'],
     )
     assert.deepStrictEqual(workspaces, original)
@@ -68,7 +112,7 @@ describe('workspace activity sorting', () => {
 
   it('preserves source order when every Workspace is empty', () => {
     assert.deepStrictEqual(
-      sortWorkspacesByActivity(workspaces, {}, {}).map(({ id }) => id),
+      sortWorkspacesByActivity(workspaces, {}, {}, {}).map(({ id }) => id),
       ['workspace-1', 'workspace-2', 'workspace-3'],
     )
   })

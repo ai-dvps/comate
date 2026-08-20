@@ -1,7 +1,7 @@
 import '../test-utils/test-env.js';
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
-import { mkdtempSync } from 'fs';
+import { mkdtempSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import Database from 'better-sqlite3';
@@ -841,5 +841,450 @@ describe('todos content column migration (additive ADD COLUMN)', { concurrency: 
     assert.ok(fetched);
     assert.strictEqual(fetched!.content, 'persisted body');
     openRawDb(second).close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// last_turn_started_at (activity sort position stability, U1 / KTD1 / KTD4):
+// an additive INTEGER epoch-ms ordering key on sessions and workspaces plus an
+// unconditional, NULL-guarded, transaction-wrapped backfill at the end of the
+// constructor migration chain, so every successful construction converges to
+// zero NULL keys.
+// ---------------------------------------------------------------------------
+
+const ACT_T1 = '2025-08-10T10:00:00.000Z';
+const ACT_T2 = '2025-08-12T12:30:45.678Z'; // carries milliseconds — unixepoch() floors them
+const ACT_T3 = '2025-08-14T09:15:30.000Z';
+const ACT_T4 = '2025-08-16T18:45:30.000Z';
+const ACT_LM_BIG = 1_755_500_000_123; // ~2025-08-18, exact-ms last_modified
+const ACT_LM_OLD = 1_754_900_000_000; // ~2025-08-11
+
+const ACT_WS1 = 'ws-act-1';
+const ACT_WS2 = 'ws-act-2'; // deliberately zero sessions
+
+/** unixepoch() floors to whole seconds — the expected value for text-derived keys. */
+function floorToSecondMs(iso: string): number {
+  return Math.floor(Date.parse(iso) / 1000) * 1000;
+}
+
+interface ActivitySessionSeed {
+  id: string;
+  workspaceId: string;
+  lastModified?: number | null;
+  updatedAt: string;
+  createdAt: string;
+}
+
+interface ActivityFixtureSpec {
+  workspaces: Array<{ id: string; createdAt: string; updatedAt: string }>;
+  sessions: ActivitySessionSeed[];
+}
+
+/**
+ * Build a pre-upgrade database on disk: the current sessions/workspaces shape
+ * WITHOUT last_turn_started_at, version already at 11 so every version-gated
+ * migration short-circuits and only the additive column guards and the
+ * backfill run when SqliteStore opens it.
+ */
+function seedPreUpgradeActivityDb(dbPath: string, spec: ActivityFixtureSpec): void {
+  const db = new Database(dbPath);
+  db.exec(`
+    CREATE TABLE bot_migration_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      version INTEGER NOT NULL,
+      run_at TEXT NOT NULL,
+      snapshot_json TEXT NOT NULL DEFAULT '{}'
+    )
+  `);
+  db.prepare("INSERT INTO bot_migration_state (id, version, run_at, snapshot_json) VALUES (1, 11, ?, '{}')").run(now());
+  db.exec(`
+    CREATE TABLE workspaces (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      folderPath TEXT NOT NULL,
+      settings TEXT NOT NULL DEFAULT '{}',
+      skills TEXT NOT NULL DEFAULT '[]',
+      mcpServers TEXT NOT NULL DEFAULT '[]',
+      hooks TEXT NOT NULL DEFAULT '[]',
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL,
+      lastOpenedAt TEXT
+    )
+  `);
+  db.exec(`
+    CREATE TABLE sessions (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      is_draft INTEGER NOT NULL DEFAULT 1,
+      is_wip INTEGER NOT NULL DEFAULT 0,
+      is_archived INTEGER NOT NULL DEFAULT 0,
+      source TEXT,
+      approval_mode TEXT,
+      fast_mode INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      summary TEXT,
+      last_modified INTEGER,
+      first_prompt TEXT,
+      git_branch TEXT,
+      custom_title TEXT,
+      bot_id TEXT,
+      provider_id TEXT,
+      backend TEXT,
+      backend_session_id TEXT
+    )
+  `);
+  const insertWorkspace = db.prepare(
+    `INSERT INTO workspaces (id, name, description, folderPath, settings, skills, mcpServers, hooks, createdAt, updatedAt, lastOpenedAt)
+     VALUES (?, ?, '', ?, '{}', '[]', '[]', '[]', ?, ?, NULL)`,
+  );
+  for (const ws of spec.workspaces) {
+    insertWorkspace.run(ws.id, `WS ${ws.id}`, `/tmp/${ws.id}`, ws.createdAt, ws.updatedAt);
+  }
+  const insertSession = db.prepare(
+    `INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, fast_mode, created_at, updated_at, summary, last_modified, first_prompt, git_branch, custom_title, bot_id, provider_id, backend, backend_session_id)
+     VALUES (?, ?, ?, 0, 0, 0, NULL, 'manual', 0, ?, ?, NULL, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`,
+  );
+  for (const s of spec.sessions) {
+    insertSession.run(s.id, s.workspaceId, `Session ${s.id}`, s.createdAt, s.updatedAt, s.lastModified ?? null);
+  }
+  db.close();
+}
+
+function hasTurnKeyColumn(db: Database.Database, table: 'sessions' | 'workspaces'): boolean {
+  return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).some(
+    (col) => col.name === 'last_turn_started_at',
+  );
+}
+
+function nullKeyCount(db: Database.Database, table: 'sessions' | 'workspaces'): number {
+  return (
+    db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE last_turn_started_at IS NULL`).get() as { c: number }
+  ).c;
+}
+
+function turnKeyOf(db: Database.Database, table: 'sessions' | 'workspaces', id: string): number | null {
+  const row = db.prepare(`SELECT last_turn_started_at AS k FROM ${table} WHERE id = ?`).get(id) as
+    | { k: number | null }
+    | undefined;
+  return row ? row.k : null;
+}
+
+function allTurnKeys(db: Database.Database, table: 'sessions' | 'workspaces'): Record<string, number | null> {
+  const rows = db.prepare(`SELECT id, last_turn_started_at AS k FROM ${table} ORDER BY id`).all() as Array<{
+    id: string;
+    k: number | null;
+  }>;
+  const out: Record<string, number | null> = {};
+  for (const row of rows) out[row.id] = row.k;
+  return out;
+}
+
+/** The populated pre-upgrade fixture shared by the acceptance tests below. */
+function seedActivityFixture(dbPath: string): void {
+  seedPreUpgradeActivityDb(dbPath, {
+    workspaces: [
+      { id: ACT_WS1, createdAt: ACT_T1, updatedAt: ACT_T1 },
+      { id: ACT_WS2, createdAt: ACT_T4, updatedAt: ACT_T4 },
+    ],
+    sessions: [
+      // last_modified present: the key must be exactly that value.
+      { id: 's-exact', workspaceId: ACT_WS1, lastModified: ACT_LM_BIG, updatedAt: ACT_T4, createdAt: ACT_T1 },
+      // No last_modified: the key derives from updated_at (floored to seconds).
+      { id: 's-updated', workspaceId: ACT_WS1, lastModified: null, updatedAt: ACT_T2, createdAt: ACT_T1 },
+      // Malformed updated_at: falls through to created_at.
+      { id: 's-created', workspaceId: ACT_WS1, lastModified: null, updatedAt: 'not-a-date', createdAt: ACT_T3 },
+      // Everything malformed: the terminal 0 fallback, never NULL.
+      { id: 's-fallback', workspaceId: ACT_WS1, lastModified: null, updatedAt: '', createdAt: 'garbage' },
+      // last_modified older than its own updated_at: last_modified wins (mirrors the old comparator).
+      { id: 's-lm-old', workspaceId: ACT_WS1, lastModified: ACT_LM_OLD, updatedAt: ACT_T4, createdAt: ACT_T1 },
+    ],
+  });
+}
+
+describe('last_turn_started_at schema and backfill (U1)', { concurrency: false }, () => {
+  let dbDir: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    dbDir = mkdtempSync(join(tmpdir(), 'turn-key-migration-'));
+    dbPath = join(dbDir, 'data.db');
+  });
+
+  it('adds the column to a populated pre-upgrade database and backfills every row in epoch-ms scale', () => {
+    seedActivityFixture(dbPath);
+    const before = new Database(dbPath, { readonly: true });
+    assert.strictEqual(hasTurnKeyColumn(before, 'sessions'), false, 'fixture starts without the sessions column');
+    assert.strictEqual(hasTurnKeyColumn(before, 'workspaces'), false, 'fixture starts without the workspaces column');
+    before.close();
+
+    const store = new SqliteStore(dbPath);
+    const db = openRawDb(store);
+    assert.strictEqual(hasTurnKeyColumn(db, 'sessions'), true);
+    assert.strictEqual(hasTurnKeyColumn(db, 'workspaces'), true);
+    assert.strictEqual(nullKeyCount(db, 'sessions'), 0, 'every session has a key after construction');
+    assert.strictEqual(nullKeyCount(db, 'workspaces'), 0, 'every workspace has a key after construction');
+
+    // Magnitude check: 2025 epoch-ms keys are ~1.75e12; a seconds/milliseconds
+    // mix-up would land near 1.75e9. Only the terminal fallback may be 0.
+    const keys = allTurnKeys(db, 'sessions');
+    for (const [id, key] of Object.entries(keys)) {
+      if (id === 's-fallback') {
+        assert.strictEqual(key, 0, 'malformed row lands on the terminal fallback');
+      } else {
+        assert.ok(key !== null && key >= 1e12, `${id} key ${key} is epoch-ms scale`);
+      }
+    }
+    for (const [id, key] of Object.entries(allTurnKeys(db, 'workspaces'))) {
+      assert.ok(key !== null && key >= 1e12, `${id} key ${key} is epoch-ms scale`);
+    }
+    db.close();
+  });
+
+  it('reproduces the pre-upgrade comparator order (lastModified ?? Date.parse(updatedAt))', () => {
+    seedActivityFixture(dbPath);
+    const store = new SqliteStore(dbPath);
+    const db = openRawDb(store);
+
+    // Only rows whose comparator key is defined participate; malformed rows are
+    // covered by the fallback test, and sub-second ties are the accepted
+    // flooring divergence (excluded here — fixture values are distinct).
+    const comparable = ['s-exact', 's-updated', 's-lm-old'];
+    const seeds: Record<string, { lastModified: number | null; updatedAt: string; createdAt: string }> = {
+      's-exact': { lastModified: ACT_LM_BIG, updatedAt: ACT_T4, createdAt: ACT_T1 },
+      's-updated': { lastModified: null, updatedAt: ACT_T2, createdAt: ACT_T1 },
+      's-lm-old': { lastModified: ACT_LM_OLD, updatedAt: ACT_T4, createdAt: ACT_T1 },
+    };
+    const comparatorKey = (id: string) => seeds[id].lastModified ?? (Date.parse(seeds[id].updatedAt) || 0);
+    const expectedOrder = [...comparable].sort((a, b) => {
+      const ka = comparatorKey(a);
+      const kb = comparatorKey(b);
+      if (ka !== kb) return kb - ka;
+      const ca = Date.parse(seeds[a].createdAt) || 0;
+      const cb = Date.parse(seeds[b].createdAt) || 0;
+      if (ca !== cb) return cb - ca;
+      return a.localeCompare(b);
+    });
+
+    const actualOrder = [...comparable].sort((a, b) => turnKeyOf(db, 'sessions', b)! - turnKeyOf(db, 'sessions', a)!);
+    assert.deepStrictEqual(actualOrder, expectedOrder);
+    // Sanity: the fixture actually exercises both comparator branches.
+    assert.ok(seeds['s-updated'].lastModified === null);
+    assert.ok(comparatorKey('s-lm-old') < comparatorKey('s-updated'), 'last_modified beats a newer updated_at');
+    db.close();
+  });
+
+  it('backfills each workspace from the max of its sessions keys and zero-session workspaces from createdAt', () => {
+    seedActivityFixture(dbPath);
+    const store = new SqliteStore(dbPath);
+    const db = openRawDb(store);
+
+    assert.strictEqual(turnKeyOf(db, 'workspaces', ACT_WS1), ACT_LM_BIG, 'workspace takes the max session key');
+    assert.strictEqual(
+      turnKeyOf(db, 'workspaces', ACT_WS2),
+      floorToSecondMs(ACT_T4),
+      'zero-session workspace falls back to its own createdAt',
+    );
+    db.close();
+  });
+
+  it('gives exact last_modified, falls back through updated_at and created_at, never leaves NULL', () => {
+    seedActivityFixture(dbPath);
+    const store = new SqliteStore(dbPath);
+    const db = openRawDb(store);
+
+    assert.strictEqual(turnKeyOf(db, 'sessions', 's-exact'), ACT_LM_BIG, 'last_modified is used verbatim');
+    assert.strictEqual(turnKeyOf(db, 'sessions', 's-updated'), floorToSecondMs(ACT_T2), 'updated_at fallback');
+    assert.strictEqual(turnKeyOf(db, 'sessions', 's-created'), floorToSecondMs(ACT_T3), 'created_at fallback');
+    assert.strictEqual(turnKeyOf(db, 'sessions', 's-fallback'), 0, 'terminal fallback for malformed rows');
+    db.close();
+  });
+
+  it('heals an all-NULL database on reopen and stays stable across a third construction', async () => {
+    const first = new SqliteStore(dbPath);
+    const ws = await first.create({ name: 'W', folderPath: '/tmp/turn-key-heal' });
+    const s1 = first.createLocalSession(ws.id, 'one');
+    const s2 = first.createLocalSession(ws.id, 'two');
+    first.close();
+
+    // Simulate the interrupted first run: the column exists but every key is NULL.
+    const raw = new Database(dbPath);
+    raw.prepare('UPDATE sessions SET last_turn_started_at = NULL').run();
+    raw.prepare('UPDATE workspaces SET last_turn_started_at = NULL').run();
+    raw.close();
+
+    const second = new SqliteStore(dbPath);
+    const db2 = openRawDb(second);
+    assert.strictEqual(nullKeyCount(db2, 'sessions'), 0, 'reopen heals session keys');
+    assert.strictEqual(nullKeyCount(db2, 'workspaces'), 0, 'reopen heals workspace keys');
+
+    // Local sessions carry no last_modified, so healing derives from updated_at.
+    const s1Key = turnKeyOf(db2, 'sessions', s1.id);
+    const s2Key = turnKeyOf(db2, 'sessions', s2.id);
+    assert.strictEqual(s1Key, floorToSecondMs(s1.updatedAt));
+    assert.strictEqual(s2Key, floorToSecondMs(s2.updatedAt));
+    assert.strictEqual(turnKeyOf(db2, 'workspaces', ws.id), Math.max(s1Key!, s2Key!));
+
+    const healed = { sessions: allTurnKeys(db2, 'sessions'), workspaces: allTurnKeys(db2, 'workspaces') };
+    second.close();
+
+    const third = new SqliteStore(dbPath);
+    const db3 = openRawDb(third);
+    assert.deepStrictEqual(
+      { sessions: allTurnKeys(db3, 'sessions'), workspaces: allTurnKeys(db3, 'workspaces') },
+      healed,
+      'double construction changes no keys',
+    );
+    third.close();
+  });
+
+  it('computes workspace maxima from raw session columns even when some sessions are already backfilled', async () => {
+    const first = new SqliteStore(dbPath);
+    const ws = await first.create({ name: 'W', folderPath: '/tmp/turn-key-partial' });
+    const s1 = first.createLocalSession(ws.id, 'one');
+    const s2 = first.createLocalSession(ws.id, 'two');
+    first.close();
+
+    // Partial state: one session already keyed (to a sentinel far above any
+    // derivable value), the rest NULL, and the workspace key NULL.
+    const SENTINEL = 9_999_999_999_999;
+    const raw = new Database(dbPath);
+    raw.prepare('UPDATE sessions SET last_turn_started_at = ? WHERE id = ?').run(SENTINEL, s1.id);
+    raw.prepare('UPDATE sessions SET last_turn_started_at = NULL WHERE id = ?').run(s2.id);
+    raw.prepare('UPDATE workspaces SET last_turn_started_at = NULL').run();
+    raw.close();
+
+    const second = new SqliteStore(dbPath);
+    const db2 = openRawDb(second);
+    assert.strictEqual(turnKeyOf(db2, 'sessions', s1.id), SENTINEL, 'NULL-guard keeps existing keys untouched');
+    assert.strictEqual(turnKeyOf(db2, 'sessions', s2.id), floorToSecondMs(s2.updatedAt), 'NULL session healed');
+    // The workspace max is computed from the raw session columns — the sentinel
+    // stored in s1.last_turn_started_at must NOT leak into it.
+    const expectedWsKey = Math.max(floorToSecondMs(s1.updatedAt), floorToSecondMs(s2.updatedAt));
+    assert.strictEqual(turnKeyOf(db2, 'workspaces', ws.id), expectedWsKey);
+    second.close();
+  });
+
+  it('heals rows inserted by the legacy JSON migrations (workspaces.json + draft-sessions.json)', () => {
+    const dataDir = process.env.COMATE_DATA_DIR!;
+    const wsId = 'ws-legacy-json';
+    writeFileSync(
+      join(dataDir, 'workspaces.json'),
+      JSON.stringify({
+        workspaces: [
+          {
+            id: wsId,
+            name: 'Legacy JSON Workspace',
+            description: '',
+            folderPath: '/tmp/legacy-json-ws',
+            settings: {},
+            skills: [],
+            mcpServers: [],
+            hooks: [],
+            createdAt: ACT_T1,
+            updatedAt: ACT_T1,
+            lastOpenedAt: null,
+          },
+        ],
+        sessions: [],
+      }),
+    );
+    writeFileSync(
+      join(dataDir, 'draft-sessions.json'),
+      JSON.stringify({
+        sessions: [
+          {
+            id: 'draft-with-lm',
+            workspaceId: wsId,
+            name: 'Draft with lastModified',
+            isDraft: true,
+            createdAt: ACT_T1,
+            updatedAt: ACT_T2,
+            lastModified: ACT_LM_BIG,
+          },
+          {
+            id: 'draft-no-lm',
+            workspaceId: wsId,
+            name: 'Draft without lastModified',
+            isDraft: true,
+            createdAt: ACT_T1,
+            updatedAt: ACT_T2,
+          },
+        ],
+      }),
+    );
+
+    const store = new SqliteStore(dbPath);
+    const db = openRawDb(store);
+    assert.strictEqual(nullKeyCount(db, 'workspaces'), 0, 'legacy-migrated workspace healed');
+    assert.strictEqual(nullKeyCount(db, 'sessions'), 0, 'legacy-migrated draft sessions healed');
+    assert.strictEqual(turnKeyOf(db, 'sessions', 'draft-with-lm'), ACT_LM_BIG);
+    assert.strictEqual(turnKeyOf(db, 'sessions', 'draft-no-lm'), floorToSecondMs(ACT_T2));
+    assert.strictEqual(
+      turnKeyOf(db, 'workspaces', wsId),
+      ACT_LM_BIG,
+      'workspace key is the max over its sessions raw columns',
+    );
+    db.close();
+  });
+
+  it('downgrade round-trip: old-shape parsers and writers neither error nor lose data', () => {
+    seedActivityFixture(dbPath);
+    const store = new SqliteStore(dbPath);
+    const db = openRawDb(store);
+
+    // A downgraded binary reads SELECT * rows with a parser that does not know
+    // the new column; the extra value is simply ignored.
+    interface LegacySessionRow {
+      id: string;
+      workspace_id: string;
+      name: string;
+      created_at: string;
+      updated_at: string;
+      last_modified: number | null;
+    }
+    const legacyParse = (row: LegacySessionRow) => ({
+      id: row.id,
+      workspaceId: row.workspace_id,
+      name: row.name,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      lastModified: row.last_modified ?? undefined,
+    });
+    const rows = db.prepare('SELECT * FROM sessions ORDER BY id').all() as LegacySessionRow[];
+    assert.strictEqual(rows.length, 5);
+    const parsed = rows.map(legacyParse);
+    const parsedExact = parsed.find((p) => p.id === 's-exact')!;
+    assert.strictEqual(parsedExact.lastModified, ACT_LM_BIG);
+    assert.strictEqual(parsedExact.name, 'Session s-exact');
+
+    // ...and rewrites a row with an explicit column list, which must not touch
+    // the key or lose any field.
+    const keyBefore = turnKeyOf(db, 'sessions', 's-exact');
+    db.prepare('UPDATE sessions SET name = ?, updated_at = ? WHERE id = ?').run('Renamed by old binary', ACT_T3, 's-exact');
+    const rewritten = db.prepare('SELECT * FROM sessions WHERE id = ?').get('s-exact') as LegacySessionRow & {
+      last_turn_started_at: number | null;
+    };
+    assert.strictEqual(rewritten.name, 'Renamed by old binary');
+    assert.strictEqual(rewritten.last_modified, ACT_LM_BIG, 'unrelated columns survive the rewrite');
+    assert.strictEqual(rewritten.last_turn_started_at, keyBefore, 'the key survives a downgraded rewrite');
+
+    // Rows inserted by a downgraded binary carry a NULL key until the next
+    // launch heals them.
+    db.prepare(
+      `INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, fast_mode, created_at, updated_at, summary, last_modified, first_prompt, git_branch, custom_title, bot_id, provider_id, backend, backend_session_id)
+       VALUES ('s-downgrade-insert', ?, 'Old binary insert', 1, 0, 0, NULL, 'manual', 0, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`,
+    ).run(ACT_WS1, ACT_T1, ACT_T2);
+    assert.strictEqual(turnKeyOf(db, 'sessions', 's-downgrade-insert'), null, 'downgrade insert leaves a NULL key');
+    db.close();
+
+    const reopened = new SqliteStore(dbPath);
+    const db2 = openRawDb(reopened);
+    assert.strictEqual(turnKeyOf(db2, 'sessions', 's-downgrade-insert'), floorToSecondMs(ACT_T2), 'healed on reopen');
+    assert.strictEqual(nullKeyCount(db2, 'sessions'), 0);
+    assert.strictEqual(turnKeyOf(db2, 'sessions', 's-exact'), keyBefore, 'existing keys unchanged by the healing pass');
+    db2.close();
   });
 });

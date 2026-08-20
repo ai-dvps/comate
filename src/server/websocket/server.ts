@@ -366,8 +366,7 @@ export class ComateWebSocketServer {
 
   private async handleStatus(ctx: ClientContext, req: WsRequest): Promise<void> {
     const { workspaceId } = req.payload as unknown as StatusPayload;
-    const statuses = chatService.getSessionsStatus(workspaceId);
-    const result: StatusResult = { statuses };
+    const result: StatusResult = await chatService.getSessionsStatus(workspaceId);
     this.sendOk(ctx.socket, req.id, result);
   }
 

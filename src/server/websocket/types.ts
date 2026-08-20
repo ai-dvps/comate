@@ -88,7 +88,16 @@ export interface StatusResult {
     pendingKind?: 'approval' | 'question'
     isProcessing?: boolean
     activity: SessionActivitySnapshot
+    /**
+     * Server-persisted MRU ordering key (epoch ms of the last turn start,
+     * activity sort position stability KTD1). Carried on the poll so
+     * background turn starts propagate to the client's ordering maps within
+     * one tick; server-carried values are authoritative (KTD3).
+     */
+    lastTurnStartedAt?: number
   }>
+  /** Workspace-level ordering key (epoch ms) for the polled workspace (KTD1/KTD3). */
+  workspaceLastTurnStartedAt?: number
 }
 
 export interface SendMessagePayload {

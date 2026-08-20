@@ -1,4 +1,5 @@
 import '../test-utils/test-env.js';
+import { PAST_TURN_KEY, resetTurnKeysToPast } from '../test-utils/test-store.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import {
@@ -507,19 +508,48 @@ describe('chat-service idle-close', { concurrency: false }, () => {
 
     await service.getOrCreateRuntime('s1', 'ws-1');
 
-    assert.deepStrictEqual(service.getSessionsStatus('ws-1'), {
-      s1: {
-        pendingCount: 2,
-        pendingKind: 'question',
-        isProcessing: true,
-        activity: {
-          phase: 'background',
-          active: true,
-          backgroundTasks: [{ id: 'bg-1', type: 'agent', description: 'Research' }],
+    assert.deepStrictEqual(await service.getSessionsStatus('ws-1'), {
+      statuses: {
+        s1: {
+          pendingCount: 2,
+          pendingKind: 'question',
+          isProcessing: true,
+          activity: {
+            phase: 'background',
+            active: true,
+            backgroundTasks: [{ id: 'bg-1', type: 'agent', description: 'Research' }],
+          },
         },
       },
     });
-    assert.deepStrictEqual(service.getSessionsStatus('other-ws'), {});
+    assert.deepStrictEqual(await service.getSessionsStatus('other-ws'), { statuses: {} });
+  });
+
+  it('U3: status payload carries the stamped session and workspace ordering keys', async () => {
+    // Real store rows (isolated test DB) — the poll payload must surface the
+    // persisted turn-start keys stamped by U2's helper.
+    workspaceStore.resetData();
+    const workspace = await workspaceStore.create({ name: 'WS', folderPath: '/tmp/u3-poll-payload' });
+    const session = workspaceStore.createLocalSession(workspace.id, 'S1');
+    assert.strictEqual(typeof session.lastTurnStartedAt, 'number');
+
+    const runtime = {
+      ...createMockRuntime(),
+      getStatus: () => ({
+        pendingCount: 0,
+        isProcessing: false,
+        workspaceId: workspace.id,
+        activity: { phase: 'idle' as const, active: false, backgroundTasks: [] },
+      }),
+    } as unknown as SessionRuntime;
+    (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.set(session.id, runtime);
+
+    const stampMs = 1_800_000_000_000;
+    workspaceStore.stampTurnStarted(session.id, workspace.id, stampMs);
+
+    const result = await service.getSessionsStatus(workspace.id);
+    assert.strictEqual(result.statuses[session.id]?.lastTurnStartedAt, stampMs);
+    assert.strictEqual(result.workspaceLastTurnStartedAt, stampMs);
   });
 
   it('onSubscribed cancels idle timer', async () => {
@@ -949,6 +979,190 @@ describe('chat-service pushMessage', { concurrency: false }, () => {
     const handlers = (runtime as unknown as { botHandlers: Array<(id: number, event: SseEvent) => void> }).botHandlers;
     assert.strictEqual(handlers.length, 1);
     assert.strictEqual(handlers[0], handler);
+  });
+});
+
+describe('chat-service pushMessage turn-start stamping (U2, KTD1/R2)', { concurrency: false }, () => {
+  let service: ChatService;
+  const originalOpen = SessionRuntime.open;
+  const originalGetDefaultProvider = workspaceStore.getDefaultProvider.bind(workspaceStore);
+  const originalStampTurnStarted = workspaceStore.stampTurnStarted.bind(workspaceStore);
+
+  const createdSessionIds: string[] = [];
+  const createdWorkspaceIds: string[] = [];
+
+  class StampMockSdkClient extends SdkClient {
+    override async getSessionInfo(): Promise<SDKSessionInfo | undefined> {
+      // No SDK session: getSession falls back to the local row, so no
+      // syncSdkSession upsert fires and the stored key is only moved by the stamp.
+      return undefined;
+    }
+    override async listSessions(): Promise<SDKSessionInfo[]> {
+      return [];
+    }
+    override async listSubagents(): Promise<string[]> {
+      return [];
+    }
+    override async getSessionMessages(): Promise<SessionMessage[]> {
+      return [];
+    }
+    override async getSubagentMessages(): Promise<SessionMessage[]> {
+      return [];
+    }
+    override async renameSession(): Promise<void> {}
+    override async forkSession(): Promise<{ sessionId: string }> {
+      return { sessionId: 'fork-s1' };
+    }
+  }
+
+  class StampTestChatService extends ChatService {
+    constructor() {
+      super(new StampMockSdkClient());
+    }
+    protected override async testClaudeBinary(): Promise<void> {
+      // no-op to avoid spawning the real Claude binary in tests
+    }
+  }
+
+  function createStampMockRuntime(rejectAdmission?: Error): SessionRuntime & { pushMessageCalls: unknown[] } {
+    const pushMessageCalls: unknown[] = [];
+    const mock = {
+      isClosed: () => false,
+      getStatus: () => ({ pendingCount: 0, isProcessing: false, workspaceId: 'ws-1' }),
+      close: () => Promise.resolve(),
+      subscribe: () => {},
+      unsubscribe: () => {},
+      pushMessage: (message: unknown) => {
+        if (rejectAdmission) {
+          return Promise.reject(rejectAdmission);
+        }
+        pushMessageCalls.push(message);
+        return Promise.resolve();
+      },
+      resolveApproval: () => {},
+      interrupt: () => Promise.resolve(),
+      addBotEventHandler: () => {},
+      clearBotEventHandlers: () => {},
+      removeBotEventHandler: () => {},
+      setApprovalMode: () => {},
+      getApprovalMode: () => 'manual' as const,
+      getBackendId: () => 'claude' as const,
+      getModelId: () => 'claude-sonnet-4-6',
+      pushMessageCalls,
+    };
+    return mock as unknown as SessionRuntime & { pushMessageCalls: unknown[] };
+  }
+
+  async function setupRealRows(): Promise<{ ws: Workspace; session: ChatSession }> {
+    const ws = await workspaceStore.create({ name: 'Stamp WS', folderPath: '/tmp/stamp-ws' });
+    const session = workspaceStore.createLocalSession(ws.id, 'Stamp Session');
+    createdWorkspaceIds.push(ws.id);
+    createdSessionIds.push(session.id);
+    resetTurnKeysToPast(workspaceStore, session.id, ws.id);
+    return { ws, session };
+  }
+
+  const sessionKey = (id: string) => workspaceStore.getLocalSession(id)?.lastTurnStartedAt;
+  const workspaceKey = async (id: string) => (await workspaceStore.get(id))?.lastTurnStartedAt;
+
+  beforeEach(() => {
+    service = new StampTestChatService();
+    workspaceStore.getDefaultProvider = () => createMockProvider();
+  });
+
+  afterEach(async () => {
+    await service.closeAllRuntimes();
+    SessionRuntime.open = originalOpen;
+    workspaceStore.getDefaultProvider = originalGetDefaultProvider;
+    workspaceStore.stampTurnStarted = originalStampTurnStarted;
+    for (const id of createdSessionIds.splice(0)) {
+      workspaceStore.deleteLocalSession(id);
+    }
+    for (const id of createdWorkspaceIds.splice(0)) {
+      await workspaceStore.delete(id);
+    }
+  });
+
+  it('stamps the session row and its workspace row on an admitted GUI send', async () => {
+    const { ws, session } = await setupRealRows();
+    SessionRuntime.open = () => createStampMockRuntime();
+
+    const before = Date.now();
+    await service.pushMessage(session.id, ws.id, 'hello');
+    const after = Date.now();
+
+    const sKey = sessionKey(session.id);
+    const wKey = await workspaceKey(ws.id);
+    assert.ok(sKey !== undefined && sKey > PAST_TURN_KEY && sKey >= before && sKey <= after, `session key ${sKey} stamped within [${before}, ${after}]`);
+    assert.ok(wKey !== undefined && wKey > PAST_TURN_KEY && wKey >= before && wKey <= after, `workspace key ${wKey} stamped within [${before}, ${after}]`);
+  });
+
+  it('stamps on an admitted bot-session turn (WeCom / Feishu / scheduler entry path)', async () => {
+    const { ws, session } = await setupRealRows();
+    SessionRuntime.open = () => createStampMockRuntime();
+    const handler = (() => {}) as (id: number, event: SseEvent) => void;
+
+    await service.pushMessage(session.id, ws.id, 'bot turn', true, handler);
+
+    assert.ok(sessionKey(session.id)! > PAST_TURN_KEY, 'bot turn stamps the session key');
+    assert.ok((await workspaceKey(ws.id))! > PAST_TURN_KEY, 'bot turn stamps the workspace key');
+  });
+
+  it('leaves both keys unchanged when admission rejects', async () => {
+    const { ws, session } = await setupRealRows();
+    let stampCalled = false;
+    workspaceStore.stampTurnStarted = (...args: Parameters<typeof workspaceStore.stampTurnStarted>) => {
+      stampCalled = true;
+      return originalStampTurnStarted(...args);
+    };
+    SessionRuntime.open = () => createStampMockRuntime(new Error('busy: a turn is already running'));
+
+    await assert.rejects(() => service.pushMessage(session.id, ws.id, 'hello'), /busy/);
+
+    assert.strictEqual(stampCalled, false, 'a failed admission must not stamp');
+    assert.strictEqual(sessionKey(session.id), PAST_TURN_KEY);
+    assert.strictEqual(await workspaceKey(ws.id), PAST_TURN_KEY);
+  });
+
+  it('a stamp write failure after admission neither fails the send nor moves the keys', async () => {
+    const { ws, session } = await setupRealRows();
+    const { logs, restore } = collectDiagLogs();
+    workspaceStore.stampTurnStarted = () => {
+      throw new Error('disk I/O error');
+    };
+    const runtime = createStampMockRuntime();
+    SessionRuntime.open = () => runtime;
+
+    try {
+      await service.pushMessage(session.id, ws.id, 'hello');
+    } finally {
+      restore();
+    }
+
+    assert.deepStrictEqual(runtime.pushMessageCalls, ['hello'], 'the turn was admitted');
+    assert.strictEqual(sessionKey(session.id), PAST_TURN_KEY);
+    assert.strictEqual(await workspaceKey(ws.id), PAST_TURN_KEY);
+    assert.ok(
+      logs.some((line) => line.includes('turn-start stamp failed') && line.includes('disk I/O error')),
+      'the stamp failure is logged via diagLog',
+    );
+  });
+
+  it('two turns in sequence produce monotonically non-decreasing keys', async () => {
+    const { ws, session } = await setupRealRows();
+    SessionRuntime.open = () => createStampMockRuntime();
+
+    await service.pushMessage(session.id, ws.id, 'first');
+    const s1 = sessionKey(session.id)!;
+    const w1 = (await workspaceKey(ws.id))!;
+
+    await service.pushMessage(session.id, ws.id, 'second');
+    const s2 = sessionKey(session.id)!;
+    const w2 = (await workspaceKey(ws.id))!;
+
+    assert.ok(s2 >= s1, `session key ${s2} >= ${s1}`);
+    assert.ok(w2 >= w1, `workspace key ${w2} >= ${w1}`);
+    assert.ok(s1 > PAST_TURN_KEY && w1 > PAST_TURN_KEY, 'both turns stamped');
   });
 });
 
@@ -2935,9 +3149,9 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     };
   }
 
-  async function waitForCondition(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
+  async function waitForCondition(predicate: () => boolean | Promise<boolean>, timeoutMs = 5000): Promise<void> {
     const start = Date.now();
-    while (!predicate()) {
+    while (!(await predicate())) {
       if (Date.now() - start > timeoutMs) {
         throw new Error('timed out waiting for condition');
       }
@@ -3294,22 +3508,22 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     });
     botService.addMember(botId, { channelKey: 'wecom', channelUserId: 'owner-1', roleKey: 'owner' });
     const sdkOptions = { toolUseID: 'toolu_u8_badge', signal: new AbortController().signal };
-    const pendingCountFor = (n: number): boolean =>
-      service.getSessionsStatus(workspaceId)[sessionId]?.pendingCount === n;
+    const pendingCountFor = async (n: number): Promise<boolean> =>
+      (await service.getSessionsStatus(workspaceId)).statuses[sessionId]?.pendingCount === n;
     const pending = canUseTool('Bash', { command: 'curl https://example.com/x', dangerouslyDisableSandbox: true }, sdkOptions);
     await waitForCondition(() => pendingCountFor(1));
 
     // The desktop session-list pending indicator reads exactly this surface:
     // the bot session shows a pending approval (needs-me badge).
-    const status = service.getSessionsStatus(workspaceId);
-    assert.strictEqual(status[sessionId]?.pendingCount, 1, 'pending approval is visible for the bot session');
+    const status = await service.getSessionsStatus(workspaceId);
+    assert.strictEqual(status.statuses[sessionId]?.pendingCount, 1, 'pending approval is visible for the bot session');
 
     settleApproval({ behavior: 'allow' });
     const result = await pending;
     assert.strictEqual(result.behavior, 'allow');
     await waitForCondition(() => pendingCountFor(0));
     assert.strictEqual(
-      service.getSessionsStatus(workspaceId)[sessionId]?.pendingCount ?? 0,
+      (await service.getSessionsStatus(workspaceId)).statuses[sessionId]?.pendingCount ?? 0,
       0,
       'indicator clears once the approval is handled',
     );

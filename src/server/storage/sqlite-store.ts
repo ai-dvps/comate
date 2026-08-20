@@ -102,6 +102,10 @@ export class SqliteStore {
     if (!workspaceColumns.some(col => col.name === 'lastOpenedAt')) {
       this.db.exec('ALTER TABLE workspaces ADD COLUMN lastOpenedAt TEXT');
     }
+    if (!workspaceColumns.some(col => col.name === 'last_turn_started_at')) {
+      // Activity sort stability (KTD1): per-item MRU ordering key, epoch ms.
+      this.db.exec('ALTER TABLE workspaces ADD COLUMN last_turn_started_at INTEGER');
+    }
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS bot_migration_state (
@@ -416,6 +420,10 @@ export class SqliteStore {
     if (!sessionColumns.some(col => col.name === 'fast_mode')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN fast_mode INTEGER NOT NULL DEFAULT 0');
     }
+    if (!sessionColumns.some(col => col.name === 'last_turn_started_at')) {
+      // Activity sort stability (KTD1): per-item MRU ordering key, epoch ms.
+      this.db.exec('ALTER TABLE sessions ADD COLUMN last_turn_started_at INTEGER');
+    }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS workspace_prompt_history (
         id TEXT PRIMARY KEY,
@@ -652,6 +660,7 @@ export class SqliteStore {
     this.migrateTodoExecutionSchema();
     this.migrateBotEscalationLedgerSchema();
     this.migrateBrowserOperationLedgerSchema();
+    this.backfillLastTurnStartedAt();
   }
 
   private migrateTodoExecutionSchema(): void {
@@ -1210,6 +1219,66 @@ export class SqliteStore {
       }
     } catch (err) {
       console.error('[SqliteStore] Failed to backfill WeCom session source:', err);
+    }
+  }
+
+  /**
+   * Activity sort stability (U1, KTD1): every successful construction must
+   * converge to zero NULL ordering keys, so this pass is unconditional and
+   * NULL-guarded — it heals pre-upgrade rows, interrupted first runs, rows
+   * written by a downgraded binary, and any insert path that forgets the
+   * column (including the legacy-JSON migrations, which deliberately stay
+   * key-less and are covered by this pass's placement at the end of the
+   * constructor chain). Both UPDATEs run in one transaction.
+   *
+   * Expressions are epoch ms, matching the last_modified scale: unixepoch()
+   * returns seconds, so the `* 1000` is load-bearing, and the terminal 0
+   * guarantees convergence on NULL, empty, or malformed legacy timestamps.
+   * The sessions COALESCE priority mirrors the pre-upgrade client comparator
+   * (lastModified ?? Date.parse(updatedAt)). Workspaces compute from the RAW
+   * session columns (never the sessions' backfilled output), so each pass is
+   * independently correct and re-runnable in any order.
+   */
+  private backfillLastTurnStartedAt(): void {
+    try {
+      const backfill = this.db.transaction(() => {
+        const sessionsResult = this.db.prepare(`
+          UPDATE sessions
+          SET last_turn_started_at = COALESCE(
+            last_modified,
+            unixepoch(updated_at) * 1000,
+            unixepoch(created_at) * 1000,
+            0
+          )
+          WHERE last_turn_started_at IS NULL
+        `).run();
+        const workspacesResult = this.db.prepare(`
+          UPDATE workspaces
+          SET last_turn_started_at = COALESCE(
+            (
+              SELECT MAX(COALESCE(
+                s.last_modified,
+                unixepoch(s.updated_at) * 1000,
+                unixepoch(s.created_at) * 1000,
+                0
+              ))
+              FROM sessions s
+              WHERE s.workspace_id = workspaces.id
+            ),
+            unixepoch(workspaces.createdAt) * 1000,
+            0
+          )
+          WHERE last_turn_started_at IS NULL
+        `).run();
+        if (sessionsResult.changes > 0 || workspacesResult.changes > 0) {
+          console.log(
+            `[SqliteStore] Backfilled last_turn_started_at for ${sessionsResult.changes} sessions and ${workspacesResult.changes} workspaces`,
+          );
+        }
+      });
+      backfill();
+    } catch (err) {
+      console.error('[SqliteStore] Failed to backfill last_turn_started_at:', err);
     }
   }
 
@@ -1895,6 +1964,9 @@ export class SqliteStore {
 
   async create(input: CreateWorkspaceInput): Promise<Workspace> {
     const now = new Date().toISOString();
+    // KTD4/R6: true creation initializes the ordering key to now so the new
+    // workspace inserts at the top of the list once.
+    const nowMs = Date.now();
     const workspace: Workspace = {
       id: uuidv4(),
       name: input.name,
@@ -1907,10 +1979,11 @@ export class SqliteStore {
       createdAt: now,
       updatedAt: now,
       lastOpenedAt: null,
+      lastTurnStartedAt: nowMs,
     };
     this.db.prepare(`
-      INSERT INTO workspaces (id, name, description, folderPath, settings, skills, mcpServers, hooks, createdAt, updatedAt, lastOpenedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO workspaces (id, name, description, folderPath, settings, skills, mcpServers, hooks, createdAt, updatedAt, lastOpenedAt, last_turn_started_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       workspace.id,
       workspace.name,
@@ -1922,7 +1995,8 @@ export class SqliteStore {
       JSON.stringify(workspace.hooks),
       workspace.createdAt,
       workspace.updatedAt,
-      workspace.lastOpenedAt
+      workspace.lastOpenedAt,
+      nowMs
     );
     return workspace;
   }
@@ -2195,6 +2269,9 @@ export class SqliteStore {
     fastMode = false,
   ): ChatSession {
     const now = new Date().toISOString();
+    // KTD4/R6: true creation initializes the ordering key to now so the new
+    // session inserts at the top of its workspace's list once.
+    const nowMs = Date.now();
     const mode = approvalMode ?? 'manual';
     const session: ChatSession = {
       id: uuidv4(),
@@ -2210,11 +2287,12 @@ export class SqliteStore {
       createdAt: now,
       updatedAt: now,
       customTitle,
+      lastTurnStartedAt: nowMs,
     };
     this.db.prepare(`
-      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, fast_mode, provider_id, bot_id, created_at, updated_at, custom_title, backend)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(session.id, session.workspaceId, session.name, 1, 0, 0, source ?? null, mode, fastMode ? 1 : 0, providerId ?? null, botId ?? null, session.createdAt, session.updatedAt, customTitle ?? null, backend ?? null);
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, fast_mode, provider_id, bot_id, created_at, updated_at, custom_title, backend, last_turn_started_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(session.id, session.workspaceId, session.name, 1, 0, 0, source ?? null, mode, fastMode ? 1 : 0, providerId ?? null, botId ?? null, session.createdAt, session.updatedAt, customTitle ?? null, backend ?? null, nowMs);
     return session;
   }
 
@@ -2284,10 +2362,67 @@ export class SqliteStore {
     return result.changes > 0;
   }
 
+  /**
+   * U2 (KTD1/R2): advance the turn-start ordering keys of a session and its
+   * workspace to `atMs` (defaults to now). One UPDATE per table inside a single
+   * transaction; `updated_at` is deliberately untouched so the stamp only moves
+   * the ordering key. The MAX guard keeps each key monotonically non-decreasing
+   * even under wall-clock regression, so a late writer can never move an item
+   * backwards; COALESCE heals NULL keys left by a downgraded binary. Missing
+   * rows are no-ops. Returns the timestamp that was applied.
+   */
+  stampTurnStarted(sessionId: string, workspaceId: string, atMs: number = Date.now()): number {
+    const stamp = this.db.transaction(() => {
+      this.db.prepare(`
+        UPDATE sessions SET last_turn_started_at = MAX(COALESCE(last_turn_started_at, 0), ?) WHERE id = ?
+      `).run(atMs, sessionId);
+      this.db.prepare(`
+        UPDATE workspaces SET last_turn_started_at = MAX(COALESCE(last_turn_started_at, 0), ?) WHERE id = ?
+      `).run(atMs, workspaceId);
+    });
+    stamp();
+    return atMs;
+  }
+
+  /**
+   * Key-only readers for the status-poll hot path (U3): `getSessionsStatus`
+   * runs every few seconds per polled workspace, so it reads the ordering
+   * column directly rather than paying full-row parses per session. NULL keys
+   * are omitted; a missing workspace row yields `undefined`.
+   */
+  getSessionTurnStartedKeys(workspaceId: string): Record<string, number> {
+    const rows = this.db.prepare(`
+      SELECT id, last_turn_started_at FROM sessions WHERE workspace_id = ?
+    `).all(workspaceId) as Array<{ id: string; last_turn_started_at: number | null }>;
+    const keys: Record<string, number> = {};
+    for (const row of rows) {
+      if (row.last_turn_started_at !== null) {
+        keys[row.id] = row.last_turn_started_at;
+      }
+    }
+    return keys;
+  }
+
+  getWorkspaceTurnStartedKey(workspaceId: string): number | undefined {
+    const row = this.db.prepare(`
+      SELECT last_turn_started_at FROM workspaces WHERE id = ?
+    `).get(workspaceId) as { last_turn_started_at: number | null } | undefined;
+    return row?.last_turn_started_at ?? undefined;
+  }
+
   syncSdkSession(session: ChatSession): void {
+    // KTD4: transcript discovery initializes the ordering key from the
+    // pre-upgrade client comparator expression (lastModified ?? Date.parse(createdAt)),
+    // computed TS-side — created_at is ISO TEXT, so a raw SQL COALESCE would mix
+    // TEXT into the INTEGER-affinity key and corrupt ordering. The
+    // conflict-upsert branch deliberately leaves the key untouched. A non-finite
+    // result (malformed createdAt) binds NULL and heals at the next launch's
+    // backfill.
+    const discoveredKey = session.lastModified ?? Date.parse(session.createdAt);
+    const initialKey = Number.isFinite(discoveredKey) ? discoveredKey : null;
     this.db.prepare(`
-      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, provider_id, bot_id, created_at, updated_at, summary, last_modified, first_prompt, git_branch, custom_title, fast_mode)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, provider_id, bot_id, created_at, updated_at, summary, last_modified, first_prompt, git_branch, custom_title, fast_mode, last_turn_started_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         is_draft = excluded.is_draft,
@@ -2318,7 +2453,8 @@ export class SqliteStore {
       session.firstPrompt ?? null,
       session.gitBranch ?? null,
       session.customTitle ?? null,
-      session.fastMode ? 1 : 0
+      session.fastMode ? 1 : 0,
+      initialKey
     );
   }
 
@@ -4514,6 +4650,7 @@ interface RawWorkspaceRow {
   createdAt: string;
   updatedAt: string;
   lastOpenedAt: string | null;
+  last_turn_started_at: number | null;
 }
 
 function parseRow(row: RawWorkspaceRow): Workspace {
@@ -4529,6 +4666,7 @@ function parseRow(row: RawWorkspaceRow): Workspace {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     lastOpenedAt: row.lastOpenedAt ?? null,
+    lastTurnStartedAt: row.last_turn_started_at ?? undefined,
   };
 }
 
@@ -4553,6 +4691,7 @@ interface RawSessionRow {
   first_prompt: string | null;
   git_branch: string | null;
   custom_title: string | null;
+  last_turn_started_at: number | null;
 }
 
 function parseSessionRow(row: RawSessionRow): ChatSession {
@@ -4574,6 +4713,7 @@ function parseSessionRow(row: RawSessionRow): ChatSession {
     updatedAt: row.updated_at,
     summary: row.summary ?? undefined,
     lastModified: row.last_modified ?? undefined,
+    lastTurnStartedAt: row.last_turn_started_at ?? undefined,
     firstPrompt: row.first_prompt ?? undefined,
     gitBranch: row.git_branch ?? undefined,
     customTitle: row.custom_title ?? undefined,

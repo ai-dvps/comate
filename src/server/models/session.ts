@@ -26,6 +26,14 @@ export interface ChatSession {
   // SDK-derived fields (populated when discovered via listSessions)
   summary?: string;
   lastModified?: number;
+  /**
+   * Server-persisted MRU ordering key (activity sort position stability, KTD1):
+   * epoch ms of the last turn start. Initialized at creation/discovery (KTD4),
+   * stamped once per admitted turn; the client treats server-carried values as
+   * authoritative. May be absent on rows inserted by a downgraded binary until
+   * the next launch's backfill heals them.
+   */
+  lastTurnStartedAt?: number;
   firstPrompt?: string;
   gitBranch?: string;
   customTitle?: string;
