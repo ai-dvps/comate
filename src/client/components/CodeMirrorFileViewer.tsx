@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { Copy, FileAudio, FileWarning } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import { cn } from './ui/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import MarkdownPreview from './MarkdownPreview'
@@ -15,11 +16,14 @@ import type { FileContextTab } from '../stores/context-tab-store'
 interface CodeMirrorFileViewerProps {
   tab: FileContextTab
   workspacePath?: string
+  /** Extra actions rendered at the header's top-right (e.g. the navigator toggle). */
+  headerActions?: ReactNode
 }
 
 export default function CodeMirrorFileViewer({
   tab,
   workspacePath,
+  headerActions,
 }: CodeMirrorFileViewerProps) {
   const { t } = useTranslation('common')
   const { chatFontSize } = useAppSettings()
@@ -40,7 +44,10 @@ export default function CodeMirrorFileViewer({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-4 py-1.5 border-b border-border/50 flex-shrink-0">
+      <div
+        data-testid="file-viewer-header"
+        className="flex items-center justify-between px-4 py-1.5 border-b border-border/50 flex-shrink-0"
+      >
         <div className="flex items-center gap-2 min-w-0">
           <svg
             className="w-4 h-4 text-text-tertiary flex-shrink-0"
@@ -63,20 +70,23 @@ export default function CodeMirrorFileViewer({
           </span>
         </div>
 
-        {!tab.isBinary && !tab.imageDataUrl && !tab.videoUrl && !tab.audioUrl && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={handleCopy}
-                className="px-2 py-1.5 rounded-md text-xs text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
-                aria-label={t('copyContent')}
-              >
-                <Copy className="w-3.5 h-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">{t('copyContent')}</TooltipContent>
-          </Tooltip>
-        )}
+        <div className="flex flex-shrink-0 items-center gap-0.5">
+          {!tab.isBinary && !tab.imageDataUrl && !tab.videoUrl && !tab.audioUrl && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={handleCopy}
+                  className="px-2 py-1.5 rounded-md text-xs text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+                  aria-label={t('copyContent')}
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{t('copyContent')}</TooltipContent>
+            </Tooltip>
+          )}
+          {headerActions}
+        </div>
       </div>
 
       <div className={cn('flex-1 overflow-auto', isMarkdown(tab.name) && 'p-0')} data-testid="file-viewer-content">
