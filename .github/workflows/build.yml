@@ -503,7 +503,7 @@ jobs:
           const escapeRegExp = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const managed = new RegExp(`\\n?${escapeRegExp(start)}[\\s\\S]*?${escapeRegExp(end)}\\n?`, 'g');
           const preserved = existing.replace(managed, '').trimEnd();
-          fs.writeFileSync(outputPath, `${preserved}${preserved ? '\\n\\n' : ''}${status}\\n`);
+          fs.writeFileSync(outputPath, `${preserved}${preserved ? '\n\n' : ''}${status}\n`);
           NODE
           gh release edit "$GITHUB_REF_NAME" --notes-file "$updated_body"
 
