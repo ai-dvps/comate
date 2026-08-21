@@ -22,9 +22,8 @@
 ;   HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{ProductCode}
 ; with DisplayName "Comate" and WindowsInstaller = 1 (per-machine MSI).
 ;
-; NOTE: cannot be exercised locally (no Windows/makensis on dev machines) —
-; the two-OS rehearsal (docs/runbooks/bridge-rollback.md) is the gate for
-; real behavior, including the UAC-refusal branch.
+; NOTE: cannot be exercised locally without Windows/makensis. Validate the
+; legacy-MSI and UAC-refusal paths on Windows when changing this include.
 
 !ifndef COMATE_LEGACY_CLEANUP_NSH
 !define COMATE_LEGACY_CLEANUP_NSH
@@ -134,8 +133,7 @@ FunctionEnd
     ${Else}
       ; 1602 = user cancelled (incl. UAC refusal); anything else = failure.
       ; Tolerate the residue (KTD-8) and neutralize old entry points so the
-      ; old binary stops being launched (it would otherwise keep polling
-      ; latest.json and re-run the bridge update).
+      ; old binary stops being launched and presenting a second Comate entry.
       DetailPrint "Legacy uninstall declined/failed (msiexec exit $0) — neutralizing old entry points"
       Call NeutralizeLegacyEntryPoints
       MessageBox MB_ICONINFORMATION|MB_OK \

@@ -19,7 +19,6 @@ interface WorkflowStep {
 interface BuildWorkflow {
   jobs?: {
     build?: { steps?: WorkflowStep[] };
-    'bridge-manifest'?: { steps?: WorkflowStep[] };
     'release-signing-status'?: { env?: Record<string, string>; steps?: WorkflowStep[] };
   };
 }
@@ -66,9 +65,21 @@ test('the Electron distribution build produces both renderer and shell bundles',
 });
 
 test('every release package must contain updater metadata even when signing is unavailable', () => {
+  const packageJson = JSON.parse(readFileSync('package.json', 'utf8')) as PackageJson;
   const workflow = readFileSync('.github/workflows/build.yml', 'utf8');
   const parsedWorkflow = parse(workflow) as BuildWorkflow;
   const builderConfig = readFileSync('electron-builder.config.ts', 'utf8');
+
+  assert.doesNotMatch(
+    workflow,
+    /tauri|bridge-manifest/i,
+    'the Electron release workflow must not retain the retired Tauri updater bridge',
+  );
+  assert.doesNotMatch(
+    Object.values(packageJson.scripts ?? {}).join('\n'),
+    /build-bridge-manifest|test:bridge/,
+    'package scripts must not retain the retired updater bridge toolchain',
+  );
 
   assert.match(
     workflow,
@@ -130,12 +141,6 @@ test('every release package must contain updater metadata even when signing is u
     /elif \[ "\$\{\{ runner\.os \}\}" = 'Linux' \]; then[\s\S]*?ready=true/,
   )?.[0];
   assert.ok(linuxReadiness, 'Linux signing readiness must always mark Linux builds ready');
-  assert.doesNotMatch(
-    linuxReadiness,
-    /TAURI_SIGNING_PRIVATE_KEY/,
-    'Linux packaging readiness must be independent of the Tauri bridge key',
-  );
-
   const signingStatus = requiredWorkflowStep(
     parsedWorkflow.jobs?.['release-signing-status']?.steps,
     'Preserve notes and record signing status',
