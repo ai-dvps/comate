@@ -161,6 +161,11 @@ test('every release package must contain updater metadata even when signing is u
     /gh release edit "\$GITHUB_REF_NAME" --notes-file "\$updated_body"/,
     'the managed signing status must be persisted to the draft release body',
   );
+  assert.equal(
+    signingStatus.includes(String.raw`preserved ? '\n\n'`),
+    true,
+    'the release body update must write real newlines between preserved notes and signing status',
+  );
 });
 
 test('packaged updater feed guard validates every macOS architecture and exact feed values', () => {
