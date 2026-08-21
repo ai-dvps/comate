@@ -20,7 +20,7 @@ interface BuildWorkflow {
   jobs?: {
     build?: { steps?: WorkflowStep[] };
     'bridge-manifest'?: { steps?: WorkflowStep[] };
-    'release-signing-status'?: { steps?: WorkflowStep[] };
+    'release-signing-status'?: { env?: Record<string, string>; steps?: WorkflowStep[] };
   };
 }
 
@@ -140,6 +140,11 @@ test('every release package must contain updater metadata even when signing is u
     parsedWorkflow.jobs?.['release-signing-status']?.steps,
     'Preserve notes and record signing status',
   ).run;
+  assert.equal(
+    parsedWorkflow.jobs?.['release-signing-status']?.env?.GH_REPO,
+    '${{ github.repository }}',
+    'the no-checkout release status job must tell gh which repository owns the release',
+  );
   assert.ok(signingStatus, 'release signing-status step must define its release-body update');
   assert.match(
     signingStatus,
