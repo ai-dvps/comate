@@ -6,10 +6,9 @@
  *    exactly like scripts/build-sidecar.ts: the artifact name carries a
  *    variant suffix and the publish channel differs, so update manifests of
  *    the two flavors can never cross-wire (KTD-13);
- *  - signing is conditional on CI-injected credentials: with credentials the
- *    build signs/notarizes; without them it skips signing AND emits no
- *    electron-updater manifests (latest*.yml) — never a half-signed release
- *    (U3 error scenario);
+ *  - signing is conditional on CI-injected credentials, while updater feed
+ *    metadata is always generated. This lets release automation publish
+ *    latest*.yml and blockmaps for explicitly unsigned builds too;
  *  - `npmRebuild: false` pins the better-sqlite3 ABI guard (KTD-1): the shell
  *    has zero native modules, and an Electron-ABI rebuild of better-sqlite3
  *    would corrupt the system-Node sidecar resource. Nothing is rebuilt.
@@ -51,11 +50,17 @@ const variantSuffix = isEnterpriseVariant ? '-enterprise' : '';
 const updateChannel = isEnterpriseVariant ? 'latest-enterprise' : 'latest';
 
 // ---------------------------------------------------------------------------
-// Conditional signing (KTD-9). Credentials are env-injected by CI (U4);
-// absent locally. Unsigned builds must NOT emit update manifests.
+// Conditional signing (KTD-9). Credentials are env-injected by CI (U4) and
+// are normally absent locally. Signing does not gate updater metadata.
 // ---------------------------------------------------------------------------
 
 const platform = process.platform;
+// Must exactly match the Azure Trusted Signing certificate subject. Keep this
+// non-secret value in app-update.yml even for unsigned Windows packages so
+// NsisUpdater retains its signature-verification contract.
+const defaultWindowsPublisherName = 'ai-dvps';
+const windowsPublisherName =
+  process.env.AZURE_TRUSTED_SIGNING_PUBLISHER || defaultWindowsPublisherName;
 
 // macOS: CSC_LINK (base64 p12) or CSC_NAME (keychain identity), injected by CI.
 const macSigningEnabled = Boolean(process.env.CSC_LINK || process.env.CSC_NAME);
@@ -66,15 +71,28 @@ const macNotarizeEnabled = Boolean(
 
 // Windows: Azure Trusted Signing (KTD-9 "云签名"). Auth itself uses the
 // standard Microsoft Entra env vars (AZURE_TENANT_ID / AZURE_CLIENT_ID /
-// AZURE_CLIENT_SECRET); the four below describe the signing account/profile.
+// AZURE_CLIENT_SECRET); the four Trusted Signing vars below describe the
+// signing account/profile. The certificate subject is non-secret, but it is
+// required for signed builds so update verification matches the real cert.
 type AzureSignOptions = NonNullable<NonNullable<Configuration['win']>['azureSignOptions']>;
 
 function readWinAzureSignOptions(): AzureSignOptions | null {
   const publisherName = process.env.AZURE_TRUSTED_SIGNING_PUBLISHER;
+  const tenantId = process.env.AZURE_TENANT_ID;
+  const clientId = process.env.AZURE_CLIENT_ID;
+  const clientSecret = process.env.AZURE_CLIENT_SECRET;
   const endpoint = process.env.AZURE_TRUSTED_SIGNING_ENDPOINT;
   const certificateProfileName = process.env.AZURE_TRUSTED_SIGNING_CERT_PROFILE;
   const codeSigningAccountName = process.env.AZURE_TRUSTED_SIGNING_ACCOUNT;
-  if (!publisherName || !endpoint || !certificateProfileName || !codeSigningAccountName) {
+  if (
+    !publisherName ||
+    !tenantId ||
+    !clientId ||
+    !clientSecret ||
+    !endpoint ||
+    !certificateProfileName ||
+    !codeSigningAccountName
+  ) {
     return null;
   }
   return { publisherName, endpoint, certificateProfileName, codeSigningAccountName };
@@ -83,12 +101,7 @@ function readWinAzureSignOptions(): AzureSignOptions | null {
 const winAzureSignOptions = readWinAzureSignOptions();
 const winSigningEnabled = winAzureSignOptions !== null;
 
-// A platform release is "release-ready" only when the artifacts will be
-// usable by end users: macOS requires signature AND notarization (unsigned or
-// un-notarized apps cannot auto-update / are Gatekeeper-blocked), Windows
-// requires Authenticode. Linux (AppImage/deb) has no signing requirement
-// (KTD-9 covers mac + Windows only) and is always release-ready.
-const releaseReady =
+const signingReady =
   platform === 'darwin'
     ? macSigningEnabled && macNotarizeEnabled
     : platform === 'win32'
@@ -99,13 +112,14 @@ const githubPublish: Configuration['publish'] = [
   {
     ...UPDATE_FEED,
     channel: updateChannel,
+    publisherName: [windowsPublisherName],
   },
 ];
 
-if (!releaseReady) {
+if (!signingReady) {
   console.log(
     `[electron-builder.config] ${platform} signing credentials absent — ` +
-      'building UNSIGNED and suppressing update manifests (publish: null).',
+      'building UNSIGNED; updater manifests remain enabled.',
   );
 }
 
@@ -140,8 +154,9 @@ const config: Configuration = {
     onlyLoadAppFromAsar: true,
     enableEmbeddedAsarIntegrityValidation: true,
   },
-  // No manifests without a release-ready signing chain (no half-signed releases).
-  publish: releaseReady ? githubPublish : null,
+  // Keep the feed configured even with `--publish never`: electron-builder
+  // then generates app-update.yml, latest*.yml, and blockmaps locally.
+  publish: githubPublish,
 
   extraResources: [
     // Sidecar binary for the target arch, staged by scripts/build-sidecar.ts

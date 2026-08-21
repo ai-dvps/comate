@@ -3,11 +3,31 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { parse } from 'yaml';
 import { verifyPackagedUpdaterFeeds } from './verify-packaged-updater-feed';
 
 interface PackageJson {
   engines?: Record<string, string>;
   scripts?: Record<string, string>;
+}
+
+interface WorkflowStep {
+  name?: string;
+  run?: string;
+}
+
+interface BuildWorkflow {
+  jobs?: {
+    build?: { steps?: WorkflowStep[] };
+    'bridge-manifest'?: { steps?: WorkflowStep[] };
+    'release-signing-status'?: { steps?: WorkflowStep[] };
+  };
+}
+
+function requiredWorkflowStep(steps: WorkflowStep[] | undefined, name: string): WorkflowStep {
+  const step = steps?.find(candidate => candidate.name === name);
+  assert.ok(step, `workflow must contain the ${name} step`);
+  return step;
 }
 
 test('the repository and sidecar build share the Node 22 runtime contract', () => {
@@ -45,13 +65,96 @@ test('the Electron distribution build produces both renderer and shell bundles',
   );
 });
 
-test('signed release packages must contain the updater feed configuration', () => {
+test('every release package must contain updater metadata even when signing is unavailable', () => {
   const workflow = readFileSync('.github/workflows/build.yml', 'utf8');
+  const parsedWorkflow = parse(workflow) as BuildWorkflow;
+  const builderConfig = readFileSync('electron-builder.config.ts', 'utf8');
 
   assert.match(
     workflow,
-    /name: Guard packaged updater feed[\s\S]*?if: steps\.signing\.outputs\.ready == 'true'[\s\S]*?verify-packaged-updater-feed\.ts release "\$\{\{ runner\.os \}\}"/,
-    'signed release jobs must fail when electron-builder omits app-update.yml',
+    /name: Guard packaged updater feed\s+shell: bash[\s\S]*?verify-packaged-updater-feed\.ts release "\$\{\{ runner\.os \}\}"/,
+    'every release job must fail when electron-builder omits app-update.yml',
+  );
+  assert.match(
+    builderConfig,
+    /publish: githubPublish/,
+    'electron-builder must retain its publish configuration so --publish never still generates manifests',
+  );
+  assert.doesNotMatch(
+    builderConfig,
+    /publish: releaseReady \? githubPublish : null/,
+    'missing signing credentials must not suppress updater manifests',
+  );
+  assert.match(
+    workflow,
+    /assets=\(release\/\*\.dmg release\/\*\.zip release\/\*\.exe release\/latest\*\.yml release\/\*\.blockmap\)/,
+    'unsigned macOS and Windows release uploads must include updater manifests and blockmaps',
+  );
+  const signingReadiness = requiredWorkflowStep(
+    parsedWorkflow.jobs?.build?.steps,
+    'Determine signing readiness',
+  ).run;
+  assert.ok(signingReadiness, 'Determine signing readiness must define its shell condition');
+
+  const windowsReadiness = signingReadiness.match(
+    /elif \[ "\$\{\{ runner\.os \}\}" = 'Windows' \] \\\n([\s\S]*?); then/,
+  )?.[0];
+  assert.ok(windowsReadiness, 'Windows signing readiness must have a dedicated condition');
+  for (const credential of [
+    'AZURE_TENANT_ID',
+    'AZURE_CLIENT_ID',
+    'AZURE_CLIENT_SECRET',
+    'AZURE_TRUSTED_SIGNING_PUBLISHER',
+    'AZURE_TRUSTED_SIGNING_ENDPOINT',
+    'AZURE_TRUSTED_SIGNING_CERT_PROFILE',
+    'AZURE_TRUSTED_SIGNING_ACCOUNT',
+  ]) {
+    assert.match(
+      windowsReadiness,
+      new RegExp(`\\[ -n "\\$${credential}" \\]`),
+      `Windows release readiness must require ${credential}`,
+    );
+  }
+  assert.match(
+    builderConfig,
+    /const defaultWindowsPublisherName = 'ai-dvps'/,
+    'unsigned Windows packages must pin the expected future signing identity',
+  );
+  assert.match(
+    builderConfig,
+    /publisherName: \[windowsPublisherName\]/,
+    'the stable Windows publisher identity must be included in updater configuration',
+  );
+
+  const linuxReadiness = signingReadiness.match(
+    /elif \[ "\$\{\{ runner\.os \}\}" = 'Linux' \]; then[\s\S]*?ready=true/,
+  )?.[0];
+  assert.ok(linuxReadiness, 'Linux signing readiness must always mark Linux builds ready');
+  assert.doesNotMatch(
+    linuxReadiness,
+    /TAURI_SIGNING_PRIVATE_KEY/,
+    'Linux packaging readiness must be independent of the Tauri bridge key',
+  );
+
+  const signingStatus = requiredWorkflowStep(
+    parsedWorkflow.jobs?.['release-signing-status']?.steps,
+    'Preserve notes and record signing status',
+  ).run;
+  assert.ok(signingStatus, 'release signing-status step must define its release-body update');
+  assert.match(
+    signingStatus,
+    /windows_status='SIGNED with Azure Trusted Signing'/,
+    'release notes must identify signed Windows assets consistently',
+  );
+  assert.match(
+    signingStatus,
+    /windows_status='UNSIGNED — full Azure Trusted Signing credentials were unavailable'/,
+    'release notes must identify unsigned Windows assets consistently',
+  );
+  assert.match(
+    signingStatus,
+    /gh release edit "\$GITHUB_REF_NAME" --notes-file "\$updated_body"/,
+    'the managed signing status must be persisted to the draft release body',
   );
 });
 

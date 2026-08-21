@@ -16,16 +16,14 @@ name: Build
 # conditional signing config, draft-first-then-test-endpoints, and
 # missing-manifest = build failure.
 #
-# Signing readiness contract (mirrors electron-builder.config.ts):
-#  - Credentials present → signed/notarized build, update manifests
-#    (latest.yml / latest-mac.yml / latest-linux.yml + blockmaps) emitted,
-#    draft release published.
-#  - Credentials absent → UNSIGNED build with electron-builder publish: null
-#    and no update manifests. macOS/Windows installers are uploaded explicitly
-#    as individual release assets (and clearly identified as unsigned in the
-#    release notes); signature/manifest guards still skip in lockstep. Linux
-#    has no signing credentials of its own (KTD-9) — its readiness keys off the
-#    tauri bridge key as the release-run sentinel.
+# Signing and updater-metadata contract:
+#  - Update manifests (latest.yml / latest-mac.yml / latest-linux.yml) and
+#    blockmaps are generated and guarded on every build.
+#  - Credentials present → signed/notarized build published by electron-builder.
+#  - Credentials absent → UNSIGNED macOS/Windows build; installers, manifests,
+#    and blockmaps are uploaded explicitly and must be labeled unsigned in the
+#    release notes. Linux has no platform signing requirement and is always
+#    published.
 #
 # FOOTGUN (KTD-1): electron-builder does NOT auto-discover
 # electron-builder.config.ts — the --config flag below is load-bearing. A bare
@@ -64,8 +62,7 @@ jobs:
     env:
       # Signing credentials injected from GitHub secrets (KTD-9). Absent
       # secrets evaluate to empty strings; electron-builder.config.ts then
-      # skips signing AND suppresses update manifests, and the guard steps
-      # below skip too.
+      # skips signing. Updater metadata is still generated and uploaded.
       # macOS: base64 .p12 (CSC_LINK; CSC_NAME keychain identity is the local
       # alternative, not used in CI) + App Store Connect API key for
       # notarization (APPLE_API_KEY holds the .p8 CONTENTS; a step below
@@ -178,29 +175,31 @@ jobs:
           set -euo pipefail
           # Must match the releaseReady logic in electron-builder.config.ts:
           # macOS requires signature AND notarization, Windows requires the
-          # Azure Trusted Signing profile. Linux has no signing credentials of
-          # its own (KTD-9) — the tauri bridge key doubles as the release-run
-          # sentinel (same gating the bridge-manifest job uses), so an
-          # unsigned smoke run stays publish-free on every leg in lockstep.
+          # Azure Trusted Signing profile. Linux has no platform signing
+          # requirement, so it is release-ready independently of the Tauri
+          # bridge key; bridge readiness remains separate below.
           ready=false
           if [ "${{ runner.os }}" = 'macOS' ] && [ -n "$CSC_LINK" ] \
              && [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_KEY_ID" ] && [ -n "$APPLE_API_ISSUER" ]; then
             ready=true
-          elif [ "${{ runner.os }}" = 'Windows' ] && [ -n "$AZURE_TRUSTED_SIGNING_ACCOUNT" ]; then
+          elif [ "${{ runner.os }}" = 'Windows' ] \
+             && [ -n "$AZURE_TENANT_ID" ] && [ -n "$AZURE_CLIENT_ID" ] && [ -n "$AZURE_CLIENT_SECRET" ] \
+             && [ -n "$AZURE_TRUSTED_SIGNING_PUBLISHER" ] && [ -n "$AZURE_TRUSTED_SIGNING_ENDPOINT" ] \
+             && [ -n "$AZURE_TRUSTED_SIGNING_CERT_PROFILE" ] && [ -n "$AZURE_TRUSTED_SIGNING_ACCOUNT" ]; then
             ready=true
-          elif [ "${{ runner.os }}" = 'Linux' ] && [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+          elif [ "${{ runner.os }}" = 'Linux' ]; then
             ready=true
           fi
           echo "ready=$ready" >> "$GITHUB_OUTPUT"
 
-      - name: Package (publish draft release when signed)
+      - name: Package (publish signed builds and Linux)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # Signed → --publish onTagOrDraft uploads artifacts + update manifests
-        # to the tag's DRAFT release. Unsigned → --publish never: a smoke
-        # build that cannot half-publish (config publish is already null).
+        # Signed and Linux builds publish through electron-builder. Unsigned
+        # macOS/Windows builds use --publish never so they can be uploaded by
+        # the explicit, provenance-preserving step below.
         # --config is load-bearing: see the FOOTGUN note at the top.
-        run: npx electron-builder --config electron-builder.config.ts ${{ matrix.builder-args }} ${{ steps.signing.outputs.ready == 'true' && '--publish onTagOrDraft' || '--publish never' }}
+        run: npx electron-builder --config electron-builder.config.ts ${{ matrix.builder-args }} ${{ (steps.signing.outputs.ready == 'true' || runner.os == 'Linux') && '--publish onTagOrDraft' || '--publish never' }}
 
       - name: Guard packaged renderer contents
         run: npm run verify:electron:package
@@ -217,22 +216,21 @@ jobs:
           npx tsx -e "void (async () => { const {default: c} = await import('./electron-builder.config.ts'); if (c?.appId !== 'com.comate.app') { console.error('appId mismatch:', c?.appId); process.exit(1); } console.log('electron-builder config OK: appId', c.appId); })()"
 
       - name: Guard packaged updater feed
-        if: steps.signing.outputs.ready == 'true'
         shell: bash
         run: |
           set -euo pipefail
           npx tsx scripts/verify-packaged-updater-feed.ts release "${{ runner.os }}"
 
       - name: Unsigned smoke build notice
-        if: steps.signing.outputs.ready != 'true'
+        if: runner.os != 'Linux' && steps.signing.outputs.ready != 'true'
         shell: bash
         run: |
-          echo "::warning::Signing credentials absent — artifacts are UNSIGNED and no update manifests are emitted. macOS/Windows installers will be uploaded as individual release assets."
+          echo "::warning::Signing credentials absent — artifacts are UNSIGNED. Installers and updater metadata will still be uploaded to the release."
 
       # actions/upload-artifact always wraps downloads in an outer ZIP. Upload
-      # unsigned desktop installers from the runner as well so the release
-      # exposes each DMG, macOS updater ZIP, and Windows EXE directly.
-      - name: Upload unsigned macOS/Windows installers to release
+      # unsigned desktop release assets from the runner so the release exposes
+      # each installer, updater manifest, and differential blockmap directly.
+      - name: Upload unsigned macOS/Windows release assets
         if: runner.os != 'Linux' && steps.signing.outputs.ready != 'true'
         shell: bash
         env:
@@ -240,8 +238,8 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          assets=(release/*.dmg release/*.zip release/*.exe)
-          [ "${#assets[@]}" -gt 0 ] || { echo "::error::no macOS/Windows installers found under release/"; exit 1; }
+          assets=(release/*.dmg release/*.zip release/*.exe release/latest*.yml release/*.blockmap)
+          [ "${#assets[@]}" -gt 0 ] || { echo "::error::no macOS/Windows release assets found under release/"; exit 1; }
 
           tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.sha')"
           [ "$tag_sha" = "$GITHUB_SHA" ] || {
@@ -373,15 +371,16 @@ jobs:
             release/*.exe
             release/*.AppImage
             release/*.deb
+            release/latest*.yml
+            release/*.blockmap
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Guard update manifests (signed builds)
-        if: steps.signing.outputs.ready == 'true'
+      - name: Guard update manifests
         shell: bash
         run: |
           set -euo pipefail
-          # Ported from the tauri-era structural guard: a signed build with no
+          # Ported from the tauri-era structural guard: any release build with no
           # update manifest is a broken release → CI red. Blockmaps are the
           # differential-download companions and must ship alongside — but on
           # Linux electron-builder embeds the AppImage blockmap INSIDE the
@@ -413,7 +412,6 @@ jobs:
       # via the API instead. The release is published manually after all
       # matrix legs are green.
       - name: Test draft release endpoints
-        if: steps.signing.outputs.ready == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -444,6 +442,82 @@ jobs:
       # so the "missing latest.json = build failure" guard lives there, not
       # in this per-platform endpoint test.
 
+  # This is deliberately post-matrix: individual matrix legs may create or
+  # upload to the same draft release, but only this job writes its body.
+  release-signing-status:
+    name: Record release signing status
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TRUSTED_SIGNING_PUBLISHER: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER }}
+      AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+      AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
+      AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Preserve notes and record signing status
+        shell: bash
+        run: |
+          set -euo pipefail
+          mac_status='SIGNED and notarized'
+          if [ -z "$CSC_LINK" ] || [ -z "$APPLE_API_KEY" ] || [ -z "$APPLE_API_KEY_ID" ] || [ -z "$APPLE_API_ISSUER" ]; then
+            mac_status='UNSIGNED — full code-signing and notarization credentials were unavailable'
+          fi
+          windows_status='SIGNED with Azure Trusted Signing'
+          if [ -z "$AZURE_TENANT_ID" ] || [ -z "$AZURE_CLIENT_ID" ] || [ -z "$AZURE_CLIENT_SECRET" ] \
+             || [ -z "$AZURE_TRUSTED_SIGNING_PUBLISHER" ] || [ -z "$AZURE_TRUSTED_SIGNING_ENDPOINT" ] \
+             || [ -z "$AZURE_TRUSTED_SIGNING_CERT_PROFILE" ] || [ -z "$AZURE_TRUSTED_SIGNING_ACCOUNT" ]; then
+            windows_status='UNSIGNED — full Azure Trusted Signing credentials were unavailable'
+          fi
+
+          status_file="$(mktemp)"
+          cat > "$status_file" <<EOF
+          <!-- comate-signing-status:start -->
+          ## Signing status
+
+          - macOS: **${mac_status}**
+          - Windows: **${windows_status}**
+          - Linux: No platform signing requirement; Linux release assets are published without a platform signature.
+
+          <!-- comate-signing-status:end -->
+          EOF
+
+          existing_body="$(mktemp)"
+          gh release view "$GITHUB_REF_NAME" --json body --jq '.body' > "$existing_body"
+          updated_body="$(mktemp)"
+          node - "$existing_body" "$status_file" "$updated_body" <<'NODE'
+          const fs = require('node:fs');
+          const [existingPath, statusPath, outputPath] = process.argv.slice(2);
+          const existing = fs.readFileSync(existingPath, 'utf8');
+          const status = fs.readFileSync(statusPath, 'utf8').trim();
+          const start = '<!-- comate-signing-status:start -->';
+          const end = '<!-- comate-signing-status:end -->';
+          const escapeRegExp = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const managed = new RegExp(`\\n?${escapeRegExp(start)}[\\s\\S]*?${escapeRegExp(end)}\\n?`, 'g');
+          const preserved = existing.replace(managed, '').trimEnd();
+          fs.writeFileSync(outputPath, `${preserved}${preserved ? '\\n\\n' : ''}${status}\\n`);
+          NODE
+          gh release edit "$GITHUB_REF_NAME" --notes-file "$updated_body"
+
+          verified_body="$(mktemp)"
+          gh release view "$GITHUB_REF_NAME" --json body --jq '.body' > "$verified_body"
+          node - "$verified_body" "$status_file" <<'NODE'
+          const fs = require('node:fs');
+          const [bodyPath, statusPath] = process.argv.slice(2);
+          const body = fs.readFileSync(bodyPath, 'utf8');
+          const status = fs.readFileSync(statusPath, 'utf8').trim();
+          if (!body.includes(status)) {
+            throw new Error('draft release body is missing the managed signing-status section');
+          }
+          NODE
+
   # ---------------------------------------------------------------------------
   # U6 bridge manifest (KTD-3 dual manifest families). Generates the
   # tauri-format latest.json — pointing at the Electron installers — uploads
@@ -460,6 +534,14 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       CSC_LINK: ${{ secrets.CSC_LINK }}
       APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TRUSTED_SIGNING_PUBLISHER: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER }}
+      AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+      AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
       AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -477,7 +559,10 @@ jobs:
           set -euo pipefail
           ready=false
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && [ -n "$CSC_LINK" ] \
-             && [ -n "$APPLE_API_KEY" ] && [ -n "$AZURE_TRUSTED_SIGNING_ACCOUNT" ]; then
+             && [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_KEY_ID" ] && [ -n "$APPLE_API_ISSUER" ] \
+             && [ -n "$AZURE_TENANT_ID" ] && [ -n "$AZURE_CLIENT_ID" ] && [ -n "$AZURE_CLIENT_SECRET" ] \
+             && [ -n "$AZURE_TRUSTED_SIGNING_PUBLISHER" ] && [ -n "$AZURE_TRUSTED_SIGNING_ENDPOINT" ] \
+             && [ -n "$AZURE_TRUSTED_SIGNING_CERT_PROFILE" ] && [ -n "$AZURE_TRUSTED_SIGNING_ACCOUNT" ]; then
             ready=true
           fi
           echo "ready=$ready" >> "$GITHUB_OUTPUT"
