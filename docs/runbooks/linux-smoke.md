@@ -3,9 +3,7 @@
 Audience: whoever validates a release candidate on Linux. Linux joined the
 release matrix in U10: **AppImage is the primary artifact** (electron-updater
 auto-update via `latest-linux.yml`), **deb is secondary** (updates need
-privileges — see §5). There is no Tauri Linux install base, so no bridge
-rehearsal exists here — this is a clean-install smoke gate (see
-`bridge-rollback.md` §1c).
+privileges — see §5). This is a clean-install smoke gate.
 
 **Hard gate: every item below must pass on a real Ubuntu VM before the first
 Electron release carrying Linux artifacts is published.** Code-level platform
