@@ -8,8 +8,15 @@ interface CodexAdapterDeps {
   directory: string;
   backendSessionId?: string;
   model?: string;
+  provider?: CodexProviderOverride;
   onBackendSessionId(id: string): void;
   manager?: CodexAppServerManager;
+}
+
+export interface CodexProviderOverride {
+  name: string;
+  baseUrl: string;
+  bearerToken: string;
 }
 
 class AsyncMessageQueue {
@@ -107,7 +114,10 @@ export class CodexBackendDriver implements BackendDriver {
         this.turnId = response.turn.id;
       }
     } catch (error) {
-      this.queue.push(resultMessage(this.threadId ?? '', error));
+      this.queue.push(resultMessage(
+        this.threadId ?? '',
+        redactCodexError(error, this.deps.provider?.bearerToken),
+      ));
     } finally {
       client.off('notification', notification);
       client.off('request', request);
@@ -234,14 +244,25 @@ export class CodexBackendDriver implements BackendDriver {
 
   private async ensureThread(options: Options): Promise<void> {
     if (this.threadId) {
-      await this.manager.request('thread/resume', { threadId: this.threadId });
+      await this.manager.request('thread/resume', {
+        threadId: this.threadId,
+        cwd: this.deps.directory,
+        approvalPolicy: 'on-request',
+        sandbox: 'workspace-write',
+        config: codexThreadConfig(options, this.deps.provider),
+        ...(this.deps.provider ? {
+          modelProvider: 'comate-enterprise',
+          ...(this.deps.model ? { model: this.deps.model } : {}),
+        } : {}),
+      });
       return;
     }
     const response = await this.manager.request<{ thread: { id: string } }>('thread/start', {
       cwd: this.deps.directory,
       approvalPolicy: 'on-request',
       sandbox: 'workspace-write',
-      config: codexThreadConfig(options),
+      config: codexThreadConfig(options, this.deps.provider),
+      ...(this.deps.provider ? { modelProvider: 'comate-enterprise' } : {}),
       ...(this.deps.model ? { model: this.deps.model } : {}),
     });
     this.threadId = response.thread.id;
@@ -260,11 +281,14 @@ export class CodexBackendDriver implements BackendDriver {
 }
 
 /**
- * Project stdio MCP servers are safe to pass as ephemeral thread overrides.
+ * Project stdio MCP commands/arguments can be passed as thread overrides.
  * Remote servers and stdio environment maps are deliberately excluded: both
- * can contain bearer/API credentials and Codex owns its persisted history.
+ * commonly contain bearer/API credentials and Codex owns its persisted history.
  */
-export function codexThreadConfig(options: Options): Record<string, unknown> {
+export function codexThreadConfig(
+  options: Options,
+  provider?: CodexProviderOverride,
+): Record<string, unknown> {
   const mcpServers: Record<string, Record<string, unknown>> = {};
   for (const [name, rawConfig] of Object.entries(options.mcpServers ?? {})) {
     const config = rawConfig as Record<string, unknown>;
@@ -277,7 +301,20 @@ export function codexThreadConfig(options: Options): Record<string, unknown> {
         : {}),
     };
   }
-  return Object.keys(mcpServers).length > 0 ? { mcp_servers: mcpServers } : {};
+  return {
+    ...(Object.keys(mcpServers).length > 0 ? { mcp_servers: mcpServers } : {}),
+    ...(provider ? {
+      model_providers: {
+        'comate-enterprise': {
+          name: provider.name,
+          base_url: provider.baseUrl,
+          wire_api: 'responses',
+          requires_openai_auth: false,
+          experimental_bearer_token: provider.bearerToken,
+        },
+      },
+    } : {}),
+  };
 }
 
 export function codexUserInput(content: unknown): Array<Record<string, unknown>> {
@@ -319,4 +356,10 @@ function resultMessage(sessionId: string, error?: unknown): SDKMessage {
     duration_ms: 0, duration_api_ms: 0, num_turns: 1, total_cost_usd: 0,
     session_id: sessionId, ...(message ? { errors: [`codex backend error: ${message}`] } : {}),
   } as unknown as SDKMessage;
+}
+
+function redactCodexError(error: unknown, secret?: string): unknown {
+  if (!(error instanceof Error) || !secret) return error;
+  const sanitized = error.message.split(secret).join('[REDACTED]');
+  return sanitized === error.message ? error : new Error(sanitized);
 }

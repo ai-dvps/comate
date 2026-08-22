@@ -1,8 +1,11 @@
+export type ProviderProtocol = 'anthropic' | 'openai-responses';
+
 export interface Provider {
   id: string;
   name: string;
   baseUrl: string;
   authToken: string;
+  protocol?: ProviderProtocol;
   model?: string;
   isDefault: boolean;
   defaultOpusModel?: string;
@@ -20,6 +23,7 @@ export interface CreateProviderInput {
   name: string;
   baseUrl: string;
   authToken: string;
+  protocol?: ProviderProtocol;
   model?: string;
   isDefault?: boolean;
   defaultOpusModel?: string;
@@ -35,6 +39,7 @@ export interface UpdateProviderInput {
   name?: string;
   baseUrl?: string;
   authToken?: string;
+  protocol?: ProviderProtocol;
   model?: string;
   isDefault?: boolean;
   defaultOpusModel?: string;

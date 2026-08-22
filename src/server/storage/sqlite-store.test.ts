@@ -1051,6 +1051,7 @@ describe('SqliteStore provider fast mode capability', { concurrency: false }, ()
       authToken: 'test',
     });
     assert.strictEqual(provider.supportsFastMode, true);
+    assert.strictEqual(store.getProvider(provider.id)?.protocol, 'anthropic');
   });
 
   it('updates capability when model changes', () => {
@@ -1063,6 +1064,20 @@ describe('SqliteStore provider fast mode capability', { concurrency: false }, ()
     assert.strictEqual(provider.supportsFastMode, true);
     const updated = store.updateProvider(provider.id, { model: 'claude-3-opus' });
     assert.strictEqual(updated?.supportsFastMode, false);
+  });
+
+  it('persists Responses protocol and preserves an omitted secret', () => {
+    const provider = store.createProvider({
+      name: 'Enterprise',
+      baseUrl: 'https://example.com/v1',
+      authToken: 'stored-secret',
+      protocol: 'openai-responses',
+      model: 'enterprise-model',
+    });
+    const updated = store.updateProvider(provider.id, { name: 'Renamed' });
+
+    assert.strictEqual(updated?.protocol, 'openai-responses');
+    assert.strictEqual(updated?.authToken, 'stored-secret');
   });
 });
 

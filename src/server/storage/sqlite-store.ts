@@ -2516,6 +2516,7 @@ export class SqliteStore {
       name: input.name.trim(),
       baseUrl: input.baseUrl.trim(),
       authToken: input.authToken,
+      protocol: input.protocol ?? 'anthropic',
       model: input.model,
       isDefault: input.isDefault ?? false,
       defaultOpusModel: input.defaultOpusModel,
@@ -2535,6 +2536,7 @@ export class SqliteStore {
       subagentModel: provider.subagentModel,
       effortLevel: provider.effortLevel,
       customEnvVars: provider.customEnvVars,
+      protocol: provider.protocol,
     });
     this.db.prepare(`
       INSERT INTO providers (id, name, base_url, auth_token, model, is_default, options_json, created_at, updated_at)
@@ -2564,6 +2566,7 @@ export class SqliteStore {
       ...(input.name !== undefined && { name: input.name.trim() }),
       ...(input.baseUrl !== undefined && { baseUrl: input.baseUrl.trim() }),
       ...(input.authToken !== undefined && { authToken: input.authToken }),
+      ...(input.protocol !== undefined && { protocol: input.protocol }),
       ...(input.model !== undefined && { model: input.model }),
       ...(input.isDefault !== undefined && { isDefault: input.isDefault }),
       ...(input.defaultOpusModel !== undefined && { defaultOpusModel: input.defaultOpusModel }),
@@ -2584,6 +2587,7 @@ export class SqliteStore {
       subagentModel: provider.subagentModel,
       effortLevel: provider.effortLevel,
       customEnvVars: provider.customEnvVars,
+      protocol: provider.protocol,
     });
     this.db.prepare(`
       UPDATE providers
@@ -5411,6 +5415,7 @@ function parseProviderRow(row: RawProviderRow): Provider {
     name: row.name,
     baseUrl: row.base_url,
     authToken: row.auth_token,
+    protocol: options.protocol === 'openai-responses' ? 'openai-responses' : 'anthropic',
     model: row.model ?? undefined,
     isDefault: row.is_default === 1,
     defaultOpusModel: typeof options.defaultOpusModel === 'string' ? options.defaultOpusModel : undefined,

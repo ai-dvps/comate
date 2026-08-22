@@ -5,7 +5,8 @@ export interface Provider {
   id: string
   name: string
   baseUrl: string
-  authToken: string
+  authTokenPresent: boolean
+  protocol: 'anthropic' | 'openai-responses'
   model?: string
   isDefault: boolean
   defaultOpusModel?: string
@@ -23,6 +24,7 @@ interface ProviderFormData {
   name: string
   baseUrl: string
   authToken: string
+  protocol: 'anthropic' | 'openai-responses'
   model: string
   defaultOpusModel: string
   defaultSonnetModel: string
@@ -55,8 +57,9 @@ function formToInput(data: ProviderFormData): Record<string, unknown> {
   const input: Record<string, unknown> = {
     name: data.name.trim(),
     baseUrl: data.baseUrl.trim(),
-    authToken: data.authToken,
+    protocol: data.protocol,
   }
+  if (data.authToken) input.authToken = data.authToken
   if (data.model) input.model = data.model.trim()
   if (data.defaultOpusModel) input.defaultOpusModel = data.defaultOpusModel.trim()
   if (data.defaultSonnetModel) input.defaultSonnetModel = data.defaultSonnetModel.trim()

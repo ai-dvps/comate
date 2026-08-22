@@ -5455,10 +5455,58 @@ describe('chat-service session backend resolution (KTD-5/KTD-9)', { concurrency:
       name: 'Codex native account',
       baseUrl: '',
       authToken: '',
+      protocol: 'openai-responses',
       isDefault: false,
       createdAt: (captured[9] as Provider).createdAt,
       updatedAt: (captured[9] as Provider).updatedAt,
     });
+    assert.strictEqual((captured[10] as { backendId?: string }).backendId, 'codex');
+  });
+
+  it('rejects an explicit Anthropic provider for a Codex session without native fallback', async () => {
+    registerBackendRuntime('codex', {
+      resolveBinaryPath: () => '/fake/codex',
+      healthCheck: async () => true,
+    });
+    const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'comate-codex-provider-'));
+    const workspace = await workspaceStore.create({ name: 'W', folderPath });
+    const provider = workspaceStore.createProvider({
+      name: 'Anthropic only',
+      baseUrl: 'https://api.example.com',
+      authToken: 'secret',
+      protocol: 'anthropic',
+      model: 'model-1',
+    });
+    const session = workspaceStore.createLocalSession(workspace.id, 'S', undefined, provider.id, 'gui');
+    workspaceStore.updateSessionBackend(session.id, 'codex');
+
+    await assert.rejects(
+      () => service.getOrCreateRuntime(session.id, workspace.id),
+      /not marked as OpenAI Responses compatible/,
+    );
+    assert.strictEqual(captured, undefined);
+  });
+
+  it('accepts an explicitly Responses-compatible provider for Codex', async () => {
+    registerBackendRuntime('codex', {
+      resolveBinaryPath: () => '/fake/codex',
+      healthCheck: async () => true,
+    });
+    const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'comate-codex-provider-'));
+    const workspace = await workspaceStore.create({ name: 'W', folderPath });
+    const provider = workspaceStore.createProvider({
+      name: 'Enterprise Responses',
+      baseUrl: 'https://api.example.com/v1',
+      authToken: 'secret',
+      protocol: 'openai-responses',
+      model: 'model-1',
+    });
+    const session = workspaceStore.createLocalSession(workspace.id, 'S', undefined, provider.id, 'gui');
+    workspaceStore.updateSessionBackend(session.id, 'codex');
+
+    await service.getOrCreateRuntime(session.id, workspace.id);
+
+    assert.ok(captured, 'runtime opened');
     assert.strictEqual((captured[10] as { backendId?: string }).backendId, 'codex');
   });
 

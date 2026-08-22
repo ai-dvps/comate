@@ -30,6 +30,7 @@ interface ProviderFormData {
   name: string
   baseUrl: string
   authToken: string
+  protocol: 'anthropic' | 'openai-responses'
   model: string
   defaultOpusModel: string
   defaultSonnetModel: string
@@ -44,6 +45,7 @@ function emptyForm(): ProviderFormData {
     name: '',
     baseUrl: 'https://api.anthropic.com',
     authToken: '',
+    protocol: 'anthropic',
     model: '',
     defaultOpusModel: '',
     defaultSonnetModel: '',
@@ -58,7 +60,8 @@ function providerToForm(provider: Provider): ProviderFormData {
   return {
     name: provider.name,
     baseUrl: provider.baseUrl,
-    authToken: provider.authToken,
+    authToken: '',
+    protocol: provider.protocol,
     model: provider.model || '',
     defaultOpusModel: provider.defaultOpusModel || '',
     defaultSonnetModel: provider.defaultSonnetModel || '',
@@ -82,6 +85,9 @@ export default function ProviderSection() {
   const [formError, setFormError] = useState<string | null>(null)
   const [showSaveAnywayConfirm, setShowSaveAnywayConfirm] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
+  const existingProvider = editingId && editingId !== 'new'
+    ? providers.find((provider) => provider.id === editingId)
+    : undefined
 
   useEffect(() => {
     if (providers.length === 0) {
@@ -124,7 +130,7 @@ export default function ProviderSection() {
       setFormError(t('providers.baseUrlRequired'))
       return
     }
-    if (!form.authToken.trim()) {
+    if (!form.authToken.trim() && !existingProvider?.authTokenPresent) {
       setFormError(t('providers.authTokenRequired'))
       return
     }
@@ -301,13 +307,26 @@ export default function ProviderSection() {
           </div>
 
           <div>
+            <label className="block text-[11px] font-medium text-text-tertiary mb-1">{t('providers.protocol')} *</label>
+            <select
+              value={form.protocol}
+              onChange={(event) => updateForm({ protocol: event.target.value as ProviderFormData['protocol'] })}
+              className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary"
+            >
+              <option value="anthropic">{t('providers.protocolAnthropic')}</option>
+              <option value="openai-responses">{t('providers.protocolOpenAiResponses')}</option>
+            </select>
+            <p className="mt-1 text-[11px] text-text-tertiary">{t('providers.protocolHint')}</p>
+          </div>
+
+          <div>
             <label className="block text-[11px] font-medium text-text-tertiary mb-1">{t('providers.authToken')} *</label>
             <div className="flex gap-2">
               <input
                 type={showToken ? 'text' : 'password'}
                 value={form.authToken}
                 onChange={(e) => updateForm({ authToken: e.target.value })}
-                placeholder="sk-ant-..."
+                placeholder={existingProvider?.authTokenPresent ? t('providers.authTokenKeepPlaceholder') : 'sk-...'}
                 className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
               />
               <button
@@ -670,6 +689,9 @@ function ProviderListItem({
           <div className="flex items-center gap-2 text-[11px] text-text-tertiary">
             <span className="truncate">{provider.baseUrl}</span>
             {provider.model && <span>· {provider.model}</span>}
+            {provider.protocol === 'openai-responses' && (
+              <span>· {t('providers.protocolResponsesBadge')}</span>
+            )}
           </div>
           {healthStatus && (
             <div className="flex items-center gap-1 mt-1">

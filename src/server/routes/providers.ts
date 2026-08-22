@@ -12,6 +12,17 @@ const router = Router();
 
 const HEALTH_CHECK_TIMEOUT_MS = 5000;
 
+type PublicProvider = Omit<Provider, 'authToken'> & { authTokenPresent: boolean };
+
+export function publicProvider(provider: Provider): PublicProvider {
+  const { authToken, ...safe } = provider;
+  return { ...safe, protocol: provider.protocol ?? 'anthropic', authTokenPresent: authToken.length > 0 };
+}
+
+function validProtocol(value: unknown): value is Provider['protocol'] {
+  return value === 'anthropic' || value === 'openai-responses';
+}
+
 async function runHealthCheck(baseUrl: string, authToken: string): Promise<{ ok: boolean; error?: string }> {
   const trimmedBase = baseUrl.replace(/\/$/, '');
   const urlsToTry = [`${trimmedBase}/v1/models`, trimmedBase];
@@ -53,6 +64,7 @@ function hasSnapshottedProviderChange(input: UpdateProviderInput, existing: Prov
   const fields: (keyof Provider & keyof UpdateProviderInput)[] = [
     'baseUrl',
     'authToken',
+    'protocol',
     'model',
     'defaultOpusModel',
     'defaultSonnetModel',
@@ -68,7 +80,7 @@ function hasSnapshottedProviderChange(input: UpdateProviderInput, existing: Prov
 router.get('/', (_req, res) => {
   try {
     const providers = store.listProviders();
-    res.json({ providers });
+    res.json({ providers: providers.map(publicProvider) });
   } catch (error) {
     console.error('Failed to list providers:', error);
     res.status(500).json({ error: 'Failed to list providers' });
@@ -92,7 +104,7 @@ router.post('/detect', (_req, res) => {
     }
 
     const provider = store.createProvider(detected);
-    res.status(201).json({ provider });
+    res.status(201).json({ provider: publicProvider(provider) });
   } catch (error) {
     console.error('Failed to detect provider:', error);
     res.status(500).json({ error: 'Failed to detect provider' });
@@ -116,6 +128,10 @@ router.post('/', async (req, res) => {
       res.status(400).json({ error: 'authToken is required' });
       return;
     }
+    if (input.protocol !== undefined && !validProtocol(input.protocol)) {
+      res.status(400).json({ error: "protocol must be 'anthropic' or 'openai-responses'" });
+      return;
+    }
 
     const nameExists = store.getProviderByName(input.name.trim());
     if (nameExists) {
@@ -132,7 +148,7 @@ router.post('/', async (req, res) => {
     }
 
     const provider = store.createProvider(input);
-    res.status(201).json({ provider });
+    res.status(201).json({ provider: publicProvider(provider) });
   } catch (error) {
     console.error('Failed to create provider:', error);
     if (error instanceof ChatError) {
@@ -166,6 +182,17 @@ router.put('/:id', async (req, res) => {
         return;
       }
     }
+    if (input.protocol !== undefined && !validProtocol(input.protocol)) {
+      res.status(400).json({ error: "protocol must be 'anthropic' or 'openai-responses'" });
+      return;
+    }
+    if (input.authToken !== undefined) {
+      if (typeof input.authToken !== 'string') {
+        res.status(400).json({ error: 'authToken must be a string when provided' });
+        return;
+      }
+      if (input.authToken.trim().length === 0) delete input.authToken;
+    }
 
     // Run health check if baseUrl or authToken changed
     const baseUrl = input.baseUrl ?? existing.baseUrl;
@@ -182,7 +209,7 @@ router.put('/:id', async (req, res) => {
     if (existing && hasSnapshottedProviderChange(input, existing)) {
       chatService.scheduleRebuildsForProvider(id);
     }
-    res.json({ provider });
+    res.json({ provider: provider ? publicProvider(provider) : null });
   } catch (error) {
     console.error('Failed to update provider:', error);
     if (error instanceof ChatError) {
