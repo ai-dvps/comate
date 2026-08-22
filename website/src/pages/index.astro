@@ -1,4 +1,8 @@
 ---
+import { getImage } from 'astro:assets';
+import appIcon from '../../../build/icon.png';
+
+const favicon = await getImage({ src: appIcon, width: 32, height: 32, format: 'png' });
 ---
 
 <!DOCTYPE html>
@@ -6,7 +10,7 @@
   <head>
     <meta charset="utf-8" />
     <meta http-equiv="refresh" content="0;url=./zh/" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href={favicon.src} />
     <title>Comate</title>
   </head>
   <body>
