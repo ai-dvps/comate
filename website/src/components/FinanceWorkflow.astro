@@ -5,25 +5,6 @@ import { financeScenarioStages } from '../lib/site-facts.js';
 interface Props { locale: Lang }
 const { locale } = Astro.props;
 
-const details = locale === 'zh'
-  ? [
-      '“汇总本月各区域收入与费用，分析偏差并发布财务简报。”',
-      'IM 立即返回：任务 FIN-042 已创建，可随时查看进度。',
-      '仅调用已批准的内部模型、财务数据 Skill 与目录权限。',
-      'Agent 在后台收集数据、核对口径、分析异常并生成报告草稿。',
-      '遇到受限数据时暂停，并在 IM 中请求审批或补充信息。',
-      '审批后将定稿发布到获批的内部报告目录。',
-      'IM 返回完成状态、摘要和内部报告链接。',
-    ]
-  : [
-      '“Consolidate monthly revenue and costs by region, analyze variance, and publish a finance brief.”',
-      'IM responds immediately: task FIN-042 is created and its progress is available.',
-      'Only approved internal models, finance-data Skills, and directory access are used.',
-      'The Agent collects data, reconciles definitions, analyzes anomalies, and drafts the report in the background.',
-      'If restricted data is needed, the task pauses and asks for approval or clarification in IM.',
-      'After approval, the final report is published to an approved internal destination.',
-      'IM returns the completion status, a concise summary, and the internal report link.',
-    ];
 ---
 
 <section class="border-y border-border bg-surface/60" aria-labelledby="finance-workflow-heading" data-finance-workflow>
@@ -51,10 +32,10 @@ const details = locale === 'zh'
             </span>
             <div>
               <h3 class="font-semibold text-text-primary">{stage.label[locale]}</h3>
-              <p class="mt-2 text-sm leading-6 text-text-secondary">{details[index]}</p>
-              {(index === 1 || index === 4 || index === 6) && (
+              <p class="mt-2 text-sm leading-6 text-text-secondary">{stage.detail[locale]}</p>
+              {'status' in stage && (
                 <p class="mt-3 inline-flex rounded-md bg-surface px-2.5 py-1 font-mono text-xs text-text-tertiary">
-                  {index === 1 ? (locale === 'zh' ? 'FIN-042 · 已接收' : 'FIN-042 · acknowledged') : index === 4 ? (locale === 'zh' ? '等待批准' : 'approval required') : (locale === 'zh' ? 'FIN-042 · 已完成' : 'FIN-042 · completed')}
+                  {stage.status[locale]}
                 </p>
               )}
             </div>

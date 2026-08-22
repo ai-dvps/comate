@@ -57,11 +57,11 @@ async function featureSources(locale: 'en' | 'zh-CN') {
 
 describe('product evidence asset contract', () => {
   it('keeps optimized WebP assets within the declared dimension and byte budgets', async () => {
-    for (const [name, width, height] of assetContract) {
+    await Promise.all(assetContract.map(async ([name, width, height]) => {
       const bytes = await readFile(path.join(productRoot, name));
       expect(bytes.byteLength, `${name} exceeds the 150 KB per-image budget`).toBeLessThanOrEqual(150 * 1024);
       expect(readWebpDimensions(bytes), name).toEqual({ width, height });
-    }
+    }));
 
     const committedImages = (await readdir(productRoot)).filter((name) => /\.(?:png|jpe?g|webp)$/i.test(name));
     expect(committedImages.sort()).toEqual(assetContract.map(([name]) => name).sort());

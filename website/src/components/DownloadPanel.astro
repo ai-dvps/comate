@@ -81,18 +81,18 @@ const providerSetupUrl = `${getRelativeLocaleUrl(locale, '/usage/')}#provider-se
 
   <script is:inline>
     (function () {
+      function detectPlatform(userAgent, uaDataPlatform) {
+        if (/android|iphone|ipad|ipod/.test(userAgent)) return null;
+        const signal = `${uaDataPlatform} ${userAgent}`;
+        if (/windows|win64|win32/.test(signal)) return 'windows';
+        if (/macintosh|mac os|macintel/.test(signal)) return 'macos';
+        if (/linux|x11|cros/.test(signal)) return 'linux';
+        return null;
+      }
+
       const uaDataPlatform = navigator.userAgentData?.platform?.toLowerCase?.() || '';
       const userAgent = navigator.userAgent.toLowerCase();
-      const signal = `${uaDataPlatform} ${userAgent}`;
-      const likelyPlatform = /android|iphone|ipad|ipod/.test(userAgent)
-        ? null
-        : /windows|win64|win32/.test(signal)
-          ? 'windows'
-          : /macintosh|mac os|macintel/.test(signal)
-            ? 'macos'
-            : /linux|x11|cros/.test(signal)
-              ? 'linux'
-              : null;
+      const likelyPlatform = detectPlatform(userAgent, uaDataPlatform);
       if (!likelyPlatform) return;
       const card = document.querySelector(`[data-platform-card="${likelyPlatform}"]`);
       if (!card) return;

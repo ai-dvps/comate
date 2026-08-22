@@ -49,10 +49,13 @@ test('consented release click emits one allowlisted event and navigates immediat
       return nativePush.apply(this, commands);
     };
     (window as typeof window & { dataLayer: unknown[][] }).dataLayer = layer;
-    new MutationObserver(() => {
+    const observer = new MutationObserver(() => {
       const consent = document.querySelector<HTMLElement>('#analytics-consent');
-      if (consent) consent.dataset.measurementId = 'G-TEST123';
-    }).observe(document, { childList: true, subtree: true });
+      if (!consent) return;
+      consent.dataset.measurementId = 'G-TEST123';
+      observer.disconnect();
+    });
+    observer.observe(document, { childList: true, subtree: true });
   }, { key: consentKey });
   await context.route('https://www.googletagmanager.com/**', (route) => route.fulfill({ body: '' }));
   await context.route(releaseUrl, (route) => route.fulfill({ contentType: 'text/html', body: '<title>Releases</title>' }));

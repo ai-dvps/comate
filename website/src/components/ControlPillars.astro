@@ -5,21 +5,6 @@ import { controlPillars } from '../lib/site-facts.js';
 interface Props { locale: Lang }
 const { locale } = Astro.props;
 
-const descriptions = locale === 'zh'
-  ? [
-      '工作区与本地上下文由你选择和维护。',
-      '按团队技术栈选择任务执行引擎与模型服务。',
-      '敏感操作在执行前清楚展示并等待授权。',
-      '通过受控的 Skills 与 MCP 连接专业工具。',
-      '接入企业内部模型、IM 与 Skill Market。',
-    ]
-  : [
-      'You choose and maintain the Workspace and its local context.',
-      'Select a task execution engine and model service for your stack.',
-      'Sensitive actions stay visible and wait for approval before execution.',
-      'Connect specialist tools through governed Skills and MCP.',
-      'Fit internal models, IM, and a Skill Market into existing boundaries.',
-    ];
 ---
 
 <section class="mx-auto max-w-6xl px-4 py-16 md:py-24" aria-labelledby="control-heading">
@@ -43,7 +28,7 @@ const descriptions = locale === 'zh'
         <li class:list={["bg-surface p-6", index === controlPillars.length - 1 && "sm:col-span-2"]} data-control-pillar={pillar.key}>
           <span class="font-mono text-xs text-text-tertiary">{String(index + 1).padStart(2, '0')}</span>
           <h3 class="mt-3 text-lg font-semibold text-text-primary">{pillar.label[locale]}</h3>
-          <p class="mt-2 text-sm leading-6 text-text-secondary">{descriptions[index]}</p>
+          <p class="mt-2 text-sm leading-6 text-text-secondary">{pillar.description[locale]}</p>
         </li>
       ))}
     </ol>

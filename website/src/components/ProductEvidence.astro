@@ -63,6 +63,16 @@ const evidence = [
 ] as const;
 
 const shown = variant === 'usage' ? evidence.slice(3) : evidence;
+const heading = {
+  home: {
+    zh: '一项日常工作，始终在同一个任务上下文里',
+    en: 'One everyday job, kept in one task context',
+  },
+  usage: {
+    zh: '完成任务后复核结果与去向',
+    en: 'Review the outcome and destination after completion',
+  },
+} as const;
 ---
 
 <section
@@ -78,13 +88,7 @@ const shown = variant === 'usage' ? evidence.slice(3) : evidence;
       {locale === 'zh' ? '当前产品实景' : 'Current product evidence'}
     </p>
     <h2 id={`product-evidence-${variant}`} class="mt-3 text-3xl font-bold tracking-tight text-text-primary md:text-4xl">
-      {variant === 'home'
-        ? locale === 'zh'
-          ? '一项日常工作，始终在同一个任务上下文里'
-          : 'One everyday job, kept in one task context'
-        : locale === 'zh'
-          ? '完成任务后复核结果与去向'
-          : 'Review the outcome and destination after completion'}
+      {heading[variant][locale]}
     </h2>
     <p class="mt-4 leading-7 text-text-secondary">
       {locale === 'zh'
@@ -101,7 +105,7 @@ const shown = variant === 'usage' ? evidence.slice(3) : evidence;
           alt={item.alt[locale]}
           width={variant === 'home' && index === 0 ? 1440 : 960}
           height={variant === 'home' && index === 0 ? 900 : 600}
-          loading={variant === 'home' && index === 0 ? 'eager' : 'lazy'}
+          loading="lazy"
           class="aspect-[16/10] w-full bg-white object-cover object-top"
         />
         <figcaption class="border-t border-border px-5 py-4 text-sm font-medium text-text-primary">

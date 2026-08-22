@@ -5,10 +5,13 @@ const releaseUrl = 'https://github.com/ai-dvps/comate/releases';
 
 async function forceMeasurementId(context: BrowserContext, value: string) {
   await context.addInitScript(({ measurementId }) => {
-    new MutationObserver(() => {
+    const observer = new MutationObserver(() => {
       const consent = document.querySelector<HTMLElement>('#analytics-consent');
-      if (consent) consent.dataset.measurementId = measurementId;
-    }).observe(document, { childList: true, subtree: true });
+      if (!consent) return;
+      consent.dataset.measurementId = measurementId;
+      observer.disconnect();
+    });
+    observer.observe(document, { childList: true, subtree: true });
   }, { measurementId: value });
 }
 
