@@ -27,13 +27,13 @@ export function resolveHostTriple(platform: NodeJS.Platform, arch: string): stri
 }
 
 /**
- * Parse COMATE_BUNDLE_BACKENDS ('claude,opencode' when unset) into the set of
+ * Parse COMATE_BUNDLE_BACKENDS ('claude,opencode,codex' when unset) into the set of
  * agent backends to ship. Unknown entries are kept — the consumers only test
  * membership.
  */
 export function parseBundleBackends(envValue: string | undefined): Set<string> {
   return new Set(
-    (envValue ?? 'claude,opencode')
+    (envValue ?? 'claude,opencode,codex')
       .split(',')
       .map((entry) => entry.trim())
       .filter(Boolean),
