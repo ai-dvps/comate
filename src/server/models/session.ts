@@ -19,13 +19,6 @@ export interface ChatSession {
   approvalMode?: ApprovalMode;
   providerId?: string;
   fastMode?: boolean;
-  /**
-   * Claude Code output style applied at runtime creation (CLI 2.1.237+:
-   * 'default' | 'explanatory' | 'learning' | 'concise' or a custom style).
-   * Unset = CLI default. Applied via inline settings.outputStyle; takes effect
-   * the next time the session runtime is created.
-   */
-  outputStyle?: string;
   /** Bot that created this session, if any. */
   botId?: string;
   createdAt: string;
@@ -53,7 +46,6 @@ export interface CreateSessionInput {
   providerId?: string;
   backend?: string;
   fastMode?: boolean;
-  outputStyle?: string;
   source?: 'gui' | 'wecom' | 'feishu' | 'scheduled';
   customTitle?: string;
   /** Bot that created this session, if any. */
@@ -67,8 +59,6 @@ export interface UpdateSessionInput {
   approvalMode?: ApprovalMode;
   providerId?: string;
   fastMode?: boolean;
-  /** Set the output style; null clears it back to the CLI default. */
-  outputStyle?: string | null;
   /** Pre-select the backend on a draft; rejected once the session is locked (R4). */
   backend?: string;
 }

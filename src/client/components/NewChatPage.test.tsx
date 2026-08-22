@@ -144,7 +144,6 @@ describe('NewChatPage', () => {
       backend: 'opencode',
       providerId: 'provider-2',
       fastMode: true,
-      outputStyle: null,
       approvalMode: 'auto',
     })
   })
@@ -238,7 +237,6 @@ describe('NewChatPage', () => {
       backend: undefined,
       providerId: undefined,
       fastMode: false,
-      outputStyle: null,
       approvalMode: 'manual',
     })
   })

@@ -1,35 +1,19 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Check, Sparkles } from 'lucide-react'
-import { useChatStore } from '../stores/chat-store'
 import { useCommandsStore } from '../stores/commands-store'
+import { useAppSettings } from '../hooks/use-app-settings'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
-import { useState } from 'react'
 
-interface OutputStyleSelectCommonProps {
+interface OutputStyleSelectProps {
   workspaceId: string
   disabled?: boolean
   hideNameBelowSm?: boolean
 }
 
-interface SessionOutputStyleSelectProps extends OutputStyleSelectCommonProps {
-  mode?: 'session'
-  sessionId: string
-}
-
-interface NewChatOutputStyleSelectProps extends OutputStyleSelectCommonProps {
-  mode: 'new-chat'
-  outputStyle: string | null
-  onOutputStyleChange: (outputStyle: string | null) => void
-}
-
-type OutputStyleSelectProps =
-  | SessionOutputStyleSelectProps
-  | NewChatOutputStyleSelectProps
-
 /**
  * CLI built-in output styles (2.1.237+). 'default' is the sentinel for "no
- * explicit style" — it clears the session field back to the CLI default.
+ * explicit style" — it clears the app-global setting back to the CLI default.
  */
 const BUILTIN_OUTPUT_STYLES = ['default', 'explanatory', 'learning', 'concise'] as const
 
@@ -37,23 +21,37 @@ const STYLE_LABEL_KEYS: Record<string, string> = Object.fromEntries(
   BUILTIN_OUTPUT_STYLES.map((name) => [name, `outputStyle.${name}`]),
 )
 
+let outputStyleRequest: Promise<string | null | undefined> | null = null
+
+function loadOutputStyle(): Promise<string | null | undefined> {
+  if (!outputStyleRequest) {
+    outputStyleRequest = fetch('/api/settings/output-style')
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) =>
+        data && (data.outputStyle === null || typeof data.outputStyle === 'string')
+          ? data.outputStyle
+          : undefined,
+      )
+      .catch(() => undefined)
+      .finally(() => {
+        outputStyleRequest = null
+      })
+  }
+  return outputStyleRequest
+}
+
 /**
  * Output style selector (CLI 2.1.237+: Default / Explanatory / Learning /
- * Concise / workspace custom styles). The choice is persisted on the session
- * and applied via inline settings at runtime creation; changing it on a live
- * session rebuilds the runtime so the next turn uses the new style.
+ * Concise / workspace custom styles). The choice is app-global and applies to
+ * every Claude runtime; cached runtimes are rebuilt before their next turn.
  */
 export default function OutputStyleSelect(props: OutputStyleSelectProps) {
   const { workspaceId, disabled = false, hideNameBelowSm = false } = props
-  const isNewChat = props.mode === 'new-chat'
-  const sessionId = isNewChat ? null : props.sessionId
   const { t } = useTranslation('chat')
   const [open, setOpen] = useState(false)
-
-  const session = useChatStore((s) =>
-    sessionId ? s.sessions[workspaceId]?.find((ses) => ses.id === sessionId) : undefined,
-  )
-  const setSessionOutputStyle = useChatStore((s) => s.setSessionOutputStyle)
+  const [isLoaded, setIsLoaded] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const { outputStyle, setOutputStyle } = useAppSettings()
 
   const commandsByWorkspace = useCommandsStore((s) => s.commandsByWorkspace[workspaceId])
   const fetchCommands = useCommandsStore((s) => s.fetchCommands)
@@ -64,25 +62,47 @@ export default function OutputStyleSelect(props: OutputStyleSelectProps) {
     }
   }, [fetchCommands, commandsByWorkspace, workspaceId])
 
+  useEffect(() => {
+    let alive = true
+    void loadOutputStyle().then((value) => {
+      if (alive && value !== undefined) {
+        setOutputStyle(value)
+      }
+    }).finally(() => {
+      if (alive) setIsLoaded(true)
+    })
+    return () => {
+      alive = false
+    }
+  }, [setOutputStyle])
+
   // Built-ins first, then any custom style the CLI reports for this workspace.
   const extras = (commandsByWorkspace?.outputStyles ?? []).filter(
     (name) => !BUILTIN_OUTPUT_STYLES.includes(name as (typeof BUILTIN_OUTPUT_STYLES)[number]),
   )
   const styles = [...BUILTIN_OUTPUT_STYLES, ...extras]
 
-  const current = isNewChat ? props.outputStyle : session?.outputStyle ?? null
-  const effective = current ?? 'default'
+  const effective = outputStyle ?? 'default'
   const label = t(STYLE_LABEL_KEYS[effective] ?? effective)
 
-  const handleSelect = (style: string) => {
+  const handleSelect = async (style: string) => {
     setOpen(false)
     if (style === effective) return
-    // 'default' clears the explicit style; anything else sets it.
+    const previous = outputStyle
     const next = style === 'default' ? null : style
-    if (isNewChat) {
-      props.onOutputStyleChange(next)
-    } else {
-      void setSessionOutputStyle(workspaceId, props.sessionId, next)
+    setOutputStyle(next)
+    setIsSaving(true)
+    try {
+      const response = await fetch('/api/settings/output-style', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ outputStyle: next }),
+      })
+      if (!response.ok) throw new Error('Failed to save output style')
+    } catch {
+      setOutputStyle(previous)
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -91,7 +111,7 @@ export default function OutputStyleSelect(props: OutputStyleSelectProps) {
       <PopoverTrigger asChild>
         <button
           type="button"
-          disabled={disabled}
+          disabled={disabled || !isLoaded || isSaving}
           className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed text-accent hover:bg-surface-hover"
           title={t('outputStyle.selectorTitle')}
         >
@@ -114,7 +134,7 @@ export default function OutputStyleSelect(props: OutputStyleSelectProps) {
           return (
             <button
               key={style}
-              onClick={() => handleSelect(style)}
+              onClick={() => void handleSelect(style)}
               className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-xs rounded-md transition-colors ${
                 isActive
                   ? 'bg-accent/10 text-accent'

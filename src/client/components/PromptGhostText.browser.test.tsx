@@ -133,7 +133,11 @@ const appSettingsMock = vi.hoisted(() => ({
 }))
 
 vi.mock('../hooks/use-app-settings', () => ({
-  useAppSettings: () => ({ useModifierToSubmit: appSettingsMock.useModifierToSubmit }),
+  useAppSettings: () => ({
+    useModifierToSubmit: appSettingsMock.useModifierToSubmit,
+    outputStyle: null,
+    setOutputStyle: vi.fn(),
+  }),
 }))
 
 vi.mock('./ProviderSelector', () => ({

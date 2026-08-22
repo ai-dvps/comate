@@ -372,7 +372,6 @@ export interface CreateSessionOptions {
   providerId?: string
   backend?: string
   fastMode?: boolean
-  outputStyle?: string
   initialPrompt?: string
   signal?: AbortSignal
 }
@@ -394,8 +393,6 @@ export interface ChatSession {
   /** Agent backend the session is locked to; unset on drafts (pre-selectable). */
   backend?: string
   fastMode?: boolean
-  /** Claude Code output style (CLI 2.1.237+); null = CLI default. */
-  outputStyle?: string | null
   createdAt: string
   updatedAt: string
   summary?: string
@@ -611,7 +608,6 @@ export interface ChatState {
   refreshBotMessages: (workspaceId: string, sessionId: string) => Promise<void>
   setSessionApprovalMode: (workspaceId: string, sessionId: string, mode: ApprovalMode) => Promise<void>
   setSessionFastMode: (workspaceId: string, sessionId: string, fastMode: boolean) => Promise<void>
-  setSessionOutputStyle: (workspaceId: string, sessionId: string, outputStyle: string | null) => Promise<void>
   setSessionProvider: (workspaceId: string, sessionId: string, providerId: string | null) => Promise<void>
   setSessionBackend: (workspaceId: string, sessionId: string, backend: string) => Promise<void>
   deleteSession: (workspaceId: string, sessionId: string) => Promise<{ ok: boolean; error?: string }>
@@ -3501,7 +3497,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (options.providerId) body.providerId = options.providerId
       if (options.backend) body.backend = options.backend
       if (options.fastMode !== undefined) body.fastMode = options.fastMode
-      if (options.outputStyle !== undefined) body.outputStyle = options.outputStyle
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4548,47 +4543,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
           : session?.approvalMode
         const nextSessions = workspaceSessions.map((s) =>
           s.id === sessionId ? { ...s, approvalMode: prevMode } : s,
-        )
-        return {
-          sessions: { ...state.sessions, [workspaceId]: nextSessions },
-        }
-      })
-    }
-  },
-
-  setSessionOutputStyle: async (workspaceId: string, sessionId: string, outputStyle: string | null) => {
-    // Snapshot the previous value before the optimistic update so the revert
-    // restores the exact prior state instead of the newly-set value.
-    let previousOutputStyle: string | null | undefined = null
-    set((state) => {
-      const workspaceSessions = state.sessions[workspaceId] || []
-      const session = workspaceSessions.find((s) => s.id === sessionId)
-      previousOutputStyle = session?.outputStyle ?? null
-      const nextSessions = workspaceSessions.map((s) =>
-        s.id === sessionId ? { ...s, outputStyle } : s,
-      )
-      return {
-        sessions: { ...state.sessions, [workspaceId]: nextSessions },
-      }
-    })
-
-    try {
-      const res = await fetch(
-        `/api/workspaces/${workspaceId}/sessions/${sessionId}`,
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ outputStyle }),
-        },
-      )
-      if (!res.ok) throw new Error(i18next.t('common:failedToUpdateSession', 'Failed to update session'))
-    } catch (err) {
-      console.error('Failed to set session output style:', err)
-      // Revert optimistic update on error
-      set((state) => {
-        const workspaceSessions = state.sessions[workspaceId] || []
-        const nextSessions = workspaceSessions.map((s) =>
-          s.id === sessionId ? { ...s, outputStyle: previousOutputStyle } : s,
         )
         return {
           sessions: { ...state.sessions, [workspaceId]: nextSessions },

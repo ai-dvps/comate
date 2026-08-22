@@ -43,6 +43,11 @@ describe('getInitialSettings', () => {
     expect(settings.notificationSoundsVolume).toBe(100)
   })
 
+  it('loads outputStyle as an app-global preference', () => {
+    storage.set('app-settings', JSON.stringify({ outputStyle: 'concise' }))
+    expect(getInitialSettings().outputStyle).toBe('concise')
+  })
+
   it('loads a valid stored notificationSoundsVolume', () => {
     storage.set(
       'app-settings',
@@ -113,5 +118,18 @@ describe('useAppSettings', () => {
       result.current.setNotificationSoundsVolume(120)
     })
     expect(result.current.notificationSoundsVolume).toBe(100)
+  })
+
+  it('updates outputStyle for every hook consumer and persists it', () => {
+    const first = renderHook(() => useAppSettings())
+    const second = renderHook(() => useAppSettings())
+
+    act(() => {
+      first.result.current.setOutputStyle('learning')
+    })
+
+    expect(first.result.current.outputStyle).toBe('learning')
+    expect(second.result.current.outputStyle).toBe('learning')
+    expect(JSON.parse(storage.get('app-settings')!).outputStyle).toBe('learning')
   })
 })
