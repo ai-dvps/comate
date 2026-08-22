@@ -236,9 +236,9 @@ export default function PluginSettingsPage({ workspaceId, isOpen, onClose, prese
                               <>
                                 {updatingPluginId === plugin.id ? (
                                   // Updating — show spinner
-                                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-accent/5">
-                                    <Loader2 className="w-3.5 h-3.5 text-accent animate-spin" />
-                                    <span className="text-[11px] text-accent font-medium">{t('plugins.updating', 'Updating...')}</span>
+                                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-agent/5">
+                                    <Loader2 className="w-3.5 h-3.5 text-agent animate-spin" />
+                                    <span className="text-[11px] text-agent font-medium">{t('plugins.updating', 'Updating...')}</span>
                                   </div>
                                 ) : recentlyUpdatedId === plugin.id ? (
                                   // Just updated — show success

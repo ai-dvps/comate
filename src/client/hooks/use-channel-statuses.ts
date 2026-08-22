@@ -17,9 +17,9 @@ export const CHANNEL_STATUS_DOT: Record<ChannelStatus, string> = {
   disconnected: 'bg-text-tertiary',
   error: 'bg-warning',
   not_configured: 'bg-text-tertiary',
-  // Blue brand dot + pulse so the in-flight state reads as "working" without
+  // Cyan activity dot + pulse so the in-flight state reads as "working" without
   // relying on color alone (the rest of the dot language is green/grey/amber).
-  connecting: 'bg-blue-500 animate-pulse',
+  connecting: 'bg-agent animate-pulse',
 }
 
 export function getChannelStatusLabel(status: ChannelStatus, t: (key: string) => string, prefix: BotPrefix): string {

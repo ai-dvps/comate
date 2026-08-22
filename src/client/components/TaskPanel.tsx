@@ -30,7 +30,7 @@ const statusConfig = {
   },
   in_progress: {
     icon: Loader2,
-    iconClass: 'text-warning animate-spin',
+    iconClass: 'text-agent animate-spin',
     label: 'In progress',
   },
   completed: {
@@ -149,7 +149,7 @@ export default function TaskPanel({ sessionId }: TaskPanelProps) {
           </div>
         </div>
         {inProgressCount > 0 && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning shrink-0">
+          <span className="inline-flex items-center gap-1 rounded-full bg-agent/10 px-2 py-0.5 text-[11px] font-medium text-agent shrink-0">
             <Loader2 className="size-3 animate-spin" />
             {inProgressCount}
           </span>

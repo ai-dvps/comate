@@ -162,7 +162,7 @@ export default function BrowserStateBar({ sessionId, onDetach }: BrowserStateBar
             data-testid="browser-idle-close"
             onClick={() => void confirmIdleClose(sessionId)}
             className={cn(
-              'px-2 py-0.5 rounded text-[11px] font-medium bg-accent text-white hover:bg-accent/90 transition-colors',
+              'px-2 py-0.5 rounded text-[11px] font-medium bg-accent text-accent-foreground hover:bg-accent/90 transition-colors',
               FOCUS_CLASSES,
             )}
           >
@@ -205,7 +205,7 @@ export default function BrowserStateBar({ sessionId, onDetach }: BrowserStateBar
               aria-disabled="true"
               className={cn(
                 'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium',
-                'bg-accent/40 text-white/60 cursor-not-allowed',
+                'bg-accent/40 text-accent-foreground/60 cursor-not-allowed',
                 FOCUS_CLASSES,
               )}
             >
@@ -221,7 +221,7 @@ export default function BrowserStateBar({ sessionId, onDetach }: BrowserStateBar
               onClick={() => void takeover(sessionId)}
               className={cn(
                 'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium',
-                'bg-accent text-white hover:bg-accent/90 transition-colors',
+                'bg-accent text-accent-foreground hover:bg-accent/90 transition-colors',
                 FOCUS_CLASSES,
               )}
             >
@@ -239,7 +239,7 @@ export default function BrowserStateBar({ sessionId, onDetach }: BrowserStateBar
                 'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium',
                 state === 'handoff_pending'
                   ? 'border border-border text-text-secondary hover:text-text-primary hover:bg-surface-hover'
-                  : 'bg-accent text-white hover:bg-accent/90',
+                  : 'bg-accent text-accent-foreground hover:bg-accent/90',
                 'transition-colors',
                 FOCUS_CLASSES,
               )}
@@ -277,7 +277,7 @@ export default function BrowserStateBar({ sessionId, onDetach }: BrowserStateBar
               onClick={() => void retrySession(sessionId)}
               className={cn(
                 'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium',
-                'bg-accent text-white hover:bg-accent/90 transition-colors',
+                'bg-accent text-accent-foreground hover:bg-accent/90 transition-colors',
                 FOCUS_CLASSES,
               )}
             >

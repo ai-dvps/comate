@@ -84,7 +84,7 @@ export default function NewChatPage({
           <button
             type="button"
             onClick={onCreateWorkspace}
-            className="mt-6 inline-flex h-9 items-center gap-2 rounded-lg bg-accent px-4 text-sm font-medium text-white transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-work"
+            className="mt-6 inline-flex h-9 items-center gap-2 rounded-lg bg-accent px-4 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-work"
           >
             <FolderPlus className="h-4 w-4" aria-hidden="true" />
             {t('newChat.createWorkspace')}

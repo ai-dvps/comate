@@ -48,7 +48,7 @@ export default function BrowserDetachedPlaceholder({
           onClick={onRestore}
           className={cn(
             'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium',
-            'bg-accent text-white hover:bg-accent/90',
+            'bg-accent text-accent-foreground hover:bg-accent/90',
             FOCUS_CLASSES,
           )}
         >

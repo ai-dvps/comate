@@ -240,7 +240,7 @@ export function ScheduledTaskForm({ task, workspaces, degraded, onCancel, onSave
         <button
           onClick={() => void handleSubmit()}
           disabled={saving || !name.trim() || !instruction.trim()}
-          className="px-3 py-1.5 rounded-md text-xs bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
+          className="px-3 py-1.5 rounded-md text-xs bg-accent text-accent-foreground hover:bg-accent/90 disabled:opacity-50"
         >
           {t('form.save')}
         </button>

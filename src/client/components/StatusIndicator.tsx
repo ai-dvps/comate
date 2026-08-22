@@ -19,9 +19,9 @@ const ICON = {
 } as const
 
 const ICON_CLASS: Record<StatusIndicatorState, string> = {
-  'needs-me': 'text-warning',
+  'needs-me': 'text-attention',
   'finished-unread': 'text-success',
-  streaming: 'text-blue-500 animate-spin',
+  streaming: 'text-agent animate-spin',
 }
 
 function formatCount(count: number): string {

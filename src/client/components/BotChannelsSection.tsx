@@ -148,7 +148,7 @@ function ChannelCard({
           >
             <span
               className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                pending ? 'bg-blue-500 animate-pulse' : CHANNEL_STATUS_DOT[status]
+                pending ? 'bg-agent animate-pulse' : CHANNEL_STATUS_DOT[status]
               }`}
               aria-hidden="true"
             />
