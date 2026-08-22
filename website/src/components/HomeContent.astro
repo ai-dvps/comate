@@ -15,9 +15,9 @@ const { locale } = Astro.props;
 const contentLocale = getContentLocale(locale).toLowerCase();
 
 const homeEntries = await getCollection('home');
-const homeEntry =
-  homeEntries.find((e) => e.id === `${contentLocale}/hero`) ??
-  homeEntries.find((e) => e.id === `zh-cn/hero`);
+const homeEntry = getLocalizedEntries(homeEntries, locale).find(
+  (entry) => entry.id === `${contentLocale}/hero`
+);
 if (!homeEntry) {
   throw new Error(`Missing hero content for locale ${locale}`);
 }
