@@ -19,6 +19,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import type { SdkClient } from './sdk-client.js';
 import type { BackendId } from './agent-backends.js';
+import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 
 /** Backend-neutral identity for a persisted runtime conversation. */
 export interface BackendSessionRef {
@@ -47,6 +48,19 @@ export interface BackendAgentEvent<TEvent = unknown> {
   event: TEvent;
 }
 
+export interface BackendToolRequest {
+  requestId: string;
+  toolUseId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  title?: string;
+  description?: string;
+}
+
+export type BackendToolRequestHandler = (
+  request: BackendToolRequest,
+) => Promise<PermissionResult | null>;
+
 export interface BackendDriver {
   readonly backendId: BackendId;
   /** Whether the shared UI may stop one background task without closing the session. */
@@ -59,6 +73,8 @@ export interface BackendDriver {
   prepareAdmission?(clientTurnId: string): Promise<void>;
   /** Backend-owned content normalization; shared runtime never branches on backend id. */
   prepareUserContent?(content: unknown): unknown;
+  /** Route backend-native approvals and questions through the shared policy/UI. */
+  bindToolRequestHandler?(handler: BackendToolRequestHandler): void;
   createStreamingQuery(
     input: AsyncIterable<SDKUserMessage>,
     options: Options,

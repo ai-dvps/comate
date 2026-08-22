@@ -350,6 +350,17 @@ export class SessionRuntime {
       canUseTool,
       ...(Object.keys(hooks).length > 0 ? { hooks } : {}),
     };
+    this.driver.bindToolRequestHandler?.((request) => canUseTool(
+      request.toolName,
+      request.input,
+      {
+        signal: new AbortController().signal,
+        toolUseID: request.toolUseId,
+        requestId: request.requestId,
+        title: request.title,
+        description: request.description,
+      },
+    ));
     this.backgroundTasks.clear();
     this.backgroundTaskToolUseIds.clear();
     this.evaluateActivity();

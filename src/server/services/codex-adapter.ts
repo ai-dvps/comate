@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import type { BackendDriver } from './backend-driver.js';
+import type { BackendDriver, BackendToolRequestHandler } from './backend-driver.js';
 import { codexAppServerManager, type CodexAppServerManager } from './codex-app-server-manager.js';
+import { CodexEventMapper } from './codex-event-mapper.js';
 
 interface CodexAdapterDeps {
   directory: string;
@@ -44,11 +45,13 @@ export class CodexBackendDriver implements BackendDriver {
   private turnId?: string;
   private closed = false;
   private queue = new AsyncMessageQueue();
-  private startedItems = new Set<string>();
+  private readonly mapper: CodexEventMapper;
+  private toolRequestHandler?: BackendToolRequestHandler;
 
   constructor(private readonly deps: CodexAdapterDeps) {
     this.manager = deps.manager ?? codexAppServerManager;
     this.threadId = deps.backendSessionId;
+    this.mapper = new CodexEventMapper(deps.model ?? 'codex');
   }
 
   createStreamingQuery(input: AsyncIterable<SDKUserMessage>): { query: Query; messages: AsyncGenerator<SDKMessage> } {
@@ -67,19 +70,24 @@ export class CodexBackendDriver implements BackendDriver {
     return { query, messages: this.queue.iterate() };
   }
 
+  bindToolRequestHandler(handler: BackendToolRequestHandler): void {
+    this.toolRequestHandler = handler;
+  }
+
   private async run(input: AsyncIterable<SDKUserMessage>): Promise<void> {
     const client = await this.manager.ensureClient();
     const notification = (message: { method: string; params: Record<string, unknown> }) => this.onNotification(message);
-    const request = (message: { id: string | number; method: string }) => {
-      if (message.method === 'item/commandExecution/requestApproval' || message.method === 'item/fileChange/requestApproval') {
-        client.respond(message.id, { decision: 'decline' });
-      } else if (message.method === 'execCommandApproval' || message.method === 'applyPatchApproval') {
-        client.respond(message.id, { decision: { denied: { rejection: 'Approval UI is unavailable for this Codex session' } } });
-      } else if (message.method === 'item/tool/requestUserInput') {
-        client.respond(message.id, { answers: {} });
-      } else {
-        client.respond(message.id, undefined, { code: -32601, message: `Unsupported Codex server request: ${message.method}` });
-      }
+    const request = (message: {
+      id: string | number;
+      method: string;
+      params?: Record<string, unknown>;
+    }) => {
+      void this.onRequest(client, message).catch((error) => {
+        client.respond(message.id, undefined, {
+          code: -32603,
+          message: error instanceof Error ? error.message : 'Codex interaction failed',
+        });
+      });
     };
     client.on('notification', notification);
     client.on('request', request);
@@ -105,6 +113,123 @@ export class CodexBackendDriver implements BackendDriver {
     }
   }
 
+  private async onRequest(
+    client: Awaited<ReturnType<CodexAppServerManager['ensureClient']>>,
+    message: { id: string | number; method: string; params?: Record<string, unknown> },
+  ): Promise<void> {
+    const params = message.params ?? {};
+    const requestThreadId = params.threadId ?? params.conversationId;
+    if (typeof requestThreadId !== 'string' || requestThreadId !== this.threadId) return;
+    const requestId = String(message.id);
+    if (message.method === 'item/commandExecution/requestApproval') {
+      const itemId = String(params.itemId ?? requestId);
+      const result = await this.requestTool({
+        requestId,
+        toolUseId: itemId,
+        toolName: 'Bash',
+        input: { command: params.command, cwd: params.cwd },
+        title: typeof params.reason === 'string' ? params.reason : undefined,
+      });
+      client.respond(message.id, { decision: result?.behavior === 'allow' ? 'accept' : 'decline' });
+      return;
+    }
+    if (message.method === 'item/fileChange/requestApproval') {
+      const itemId = String(params.itemId ?? requestId);
+      const result = await this.requestTool({
+        requestId,
+        toolUseId: itemId,
+        toolName: 'Edit',
+        input: { grantRoot: params.grantRoot, reason: params.reason },
+        title: typeof params.reason === 'string' ? params.reason : undefined,
+      });
+      client.respond(message.id, { decision: result?.behavior === 'allow' ? 'accept' : 'decline' });
+      return;
+    }
+    if (message.method === 'execCommandApproval') {
+      const callId = String(params.callId ?? requestId);
+      const result = await this.requestTool({
+        requestId,
+        toolUseId: callId,
+        toolName: 'Bash',
+        input: { command: params.command, cwd: params.cwd },
+        title: typeof params.reason === 'string' ? params.reason : undefined,
+      });
+      client.respond(message.id, {
+        decision: result?.behavior === 'allow'
+          ? 'approved'
+          : { denied: { rejection: result?.message ?? 'Denied by Comate policy' } },
+      });
+      return;
+    }
+    if (message.method === 'applyPatchApproval') {
+      const callId = String(params.callId ?? requestId);
+      const result = await this.requestTool({
+        requestId,
+        toolUseId: callId,
+        toolName: 'Edit',
+        input: { fileChanges: params.fileChanges, grantRoot: params.grantRoot },
+        title: typeof params.reason === 'string' ? params.reason : undefined,
+      });
+      client.respond(message.id, {
+        decision: result?.behavior === 'allow'
+          ? 'approved'
+          : { denied: { rejection: result?.message ?? 'Denied by Comate policy' } },
+      });
+      return;
+    }
+    if (message.method === 'item/tool/requestUserInput') {
+      const questions = Array.isArray(params.questions)
+        ? params.questions.map((value) => {
+            const question = value as Record<string, unknown>;
+            return {
+              id: String(question.id ?? ''),
+              question: String(question.question ?? ''),
+              header: typeof question.header === 'string' ? question.header : undefined,
+              options: Array.isArray(question.options)
+                ? question.options.map((option) => {
+                    const entry = option as Record<string, unknown>;
+                    return {
+                      label: String(entry.label ?? ''),
+                      description: typeof entry.description === 'string' ? entry.description : undefined,
+                    };
+                  })
+                : [],
+              multiSelect: false,
+            };
+          })
+        : [];
+      const result = await this.requestTool({
+        requestId,
+        toolUseId: String(params.itemId ?? requestId),
+        toolName: 'AskUserQuestion',
+        input: { questions },
+      });
+      const updated = result?.behavior === 'allow'
+        ? result.updatedInput as { answers?: Record<string, string> } | undefined
+        : undefined;
+      const answers = Object.fromEntries(questions.map((question) => [
+        question.id,
+        { answers: updated?.answers?.[question.question] ? [updated.answers[question.question]] : [] },
+      ]));
+      client.respond(message.id, { answers });
+      return;
+    }
+    client.respond(message.id, undefined, {
+      code: -32601,
+      message: `Unsupported Codex server request: ${message.method}`,
+    });
+  }
+
+  private requestTool(
+    request: Parameters<BackendToolRequestHandler>[0],
+  ): ReturnType<BackendToolRequestHandler> {
+    if (!this.toolRequestHandler) return Promise.resolve({
+      behavior: 'deny',
+      message: 'Approval UI is unavailable for this Codex session',
+    });
+    return this.toolRequestHandler(request);
+  }
+
   private async ensureThread(): Promise<void> {
     if (this.threadId) {
       await this.manager.request('thread/resume', { threadId: this.threadId });
@@ -121,21 +246,8 @@ export class CodexBackendDriver implements BackendDriver {
   private onNotification(message: { method: string; params: Record<string, unknown> }): void {
     const params = message.params;
     if (params.threadId !== this.threadId) return;
-    if (message.method === 'item/agentMessage/delta') {
-      const itemId = String(params.itemId);
-      if (!this.startedItems.has(itemId)) {
-        this.startedItems.add(itemId);
-        this.queue.push({ type: 'stream_event', uuid: itemId, parent_tool_use_id: null, event: {
-          type: 'message_start', message: { id: itemId, role: 'assistant', model: this.deps.model ?? 'codex', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } },
-        } } as unknown as SDKMessage);
-        this.queue.push({ type: 'stream_event', uuid: itemId, parent_tool_use_id: null, event: {
-          type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' },
-        } } as unknown as SDKMessage);
-      }
-      this.queue.push({ type: 'stream_event', uuid: itemId, parent_tool_use_id: null, event: {
-        type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: String(params.delta ?? '') },
-      } } as unknown as SDKMessage);
-    } else if (message.method === 'turn/completed') {
+    for (const mapped of this.mapper.map(message.method, params)) this.queue.push(mapped);
+    if (message.method === 'turn/completed') {
       this.queue.push(resultMessage(this.threadId ?? '', undefined));
       this.turnId = undefined;
     }
