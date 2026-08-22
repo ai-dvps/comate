@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Output style selector in the prompt toolbar** — Claude Code's output style (Default, Explanatory, Learning, Concise, plus any workspace-custom styles the CLI reports) is now an app-global preference shared by every session; changing it rebuilds cached runtimes before their next turn.
+- **Claude Code output style setting** — Output style is now an app-global Claude Code preference under Settings → Agent; changing it applies to every Claude Code session and rebuilds cached runtimes before their next turn.
 - **Structured context-usage card** — Clicking the Context percentage in the status bar opens a breakdown card with a per-category segmented bar, auto-compact threshold marker, over-limit warning, and top token consumers across MCP tools, memory files, agents, and skills (CLI 2.1.237 data surface, replacing markdown-table parsing).
 - **Status bar now shows the session's reasoning effort** — When the CLI reports an effort level on session init (CLI 2.1.237+), it appears as a chip next to the context usage.
 - **Renderers for the new ProposeGoal and ReadNotifications tools** — The CLI 2.1.237 `/goal` proposal and notification-drain tool calls render as compact dedicated rows instead of raw JSON.

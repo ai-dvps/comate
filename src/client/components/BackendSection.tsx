@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { CheckCircle2, XCircle, Loader2, Cpu } from 'lucide-react'
 import { useBackendStore, type BackendId, type BackendInfo } from '../stores/backend-store'
 import { cn } from './ui/utils'
+import OutputStyleSetting from './OutputStyleSetting'
 
 const BACKEND_LABEL_KEYS: Record<string, string> = {
   claude: 'backend.claude',
@@ -166,6 +167,18 @@ export default function BackendSection() {
           {t('backend.noneAvailable')}
         </div>
       )}
+
+      <div className="mt-8 border-t border-border pt-6">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <h4 className="text-sm font-semibold text-text-primary">
+            {t('outputStyle.sectionTitle')}
+          </h4>
+          <span className="rounded-full border border-accent/20 bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
+            {t('outputStyle.claudeOnly')}
+          </span>
+        </div>
+        <OutputStyleSetting />
+      </div>
     </section>
   )
 }
