@@ -380,6 +380,8 @@
     "capabilityUndeclared": "Not available on this agent",
     "analyticsNotCounted": "Open Code sessions are not counted in analytics yet",
     "codexSessionManagementPartial": "Codex history, rename, and archive are available; richer item and fork UI parity is still limited",
+    "codexToolRenderingPartial": "Codex command, file, MCP, dynamic-tool, and collaboration items render through the shared UI; some specialized item types are still limited",
+    "codexInteractionPartial": "Codex approvals and user questions use the shared interaction UI; session-level policy amendments are not yet exposed",
     "codexAccount": "Codex account",
     "codexAccountDescription": "Uses the same native identity and configuration as Codex CLI.",
     "codexChatGptAccount": "ChatGPT account",

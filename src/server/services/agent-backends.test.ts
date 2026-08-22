@@ -18,7 +18,7 @@ import {
 describe('getCapability', () => {
   it('registers codex as a peer backend whose undeclared capabilities fail closed', () => {
     assert.ok(BACKEND_IDS.includes('codex'));
-    const entry = getCapability('codex', 'toolRendering');
+    const entry = getCapability('codex', 'browser');
     assert.equal(entry.state, 'unavailable');
     assert.equal(entry.reasonKey, 'backend.capabilityUndeclared');
   });

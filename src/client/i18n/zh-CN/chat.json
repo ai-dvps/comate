@@ -377,6 +377,8 @@
     "capabilityUndeclared": "当前智能体暂不支持",
     "analyticsNotCounted": "Open Code 会话暂不计入用量统计",
     "codexSessionManagementPartial": "Codex 已支持历史、重命名与归档；丰富条目和分叉界面仍有限制",
+    "codexToolRenderingPartial": "Codex 命令、文件、MCP、动态工具和协作条目已接入统一界面；部分专用条目类型仍有限制",
+    "codexInteractionPartial": "Codex 审批与用户提问已接入统一交互界面；尚未开放会话级策略修订",
     "codexAccount": "Codex 账户",
     "codexAccountDescription": "与 Codex CLI 共用原生身份和配置。",
     "codexChatGptAccount": "ChatGPT 账户",

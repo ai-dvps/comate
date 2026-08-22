@@ -157,6 +157,21 @@ const CAPABILITY_TABLE: Record<BackendId, Partial<Record<CapabilityId, Capabilit
   },
   codex: {
     streaming: { state: 'full', evidence: 'verified' },
+    toolRendering: {
+      state: 'degraded',
+      reasonKey: 'backend.codexToolRenderingPartial',
+      evidence: 'verified',
+    },
+    approvals: {
+      state: 'degraded',
+      reasonKey: 'backend.codexInteractionPartial',
+      evidence: 'verified',
+    },
+    askUserQuestion: {
+      state: 'degraded',
+      reasonKey: 'backend.codexInteractionPartial',
+      evidence: 'verified',
+    },
     sessionManagement: {
       state: 'degraded',
       reasonKey: 'backend.codexSessionManagementPartial',

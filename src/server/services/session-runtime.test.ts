@@ -2581,7 +2581,7 @@ describe('session-runtime fenced stop', { concurrency: false }, () => {
 
     await assert.rejects(
       runtime.stopBackgroundTask('task-1'),
-      /only supported for Claude Code sessions/,
+      /not supported by 'opencode'/,
     );
     assert.deepStrictEqual(sdk.calls.stopTask, []);
   });
