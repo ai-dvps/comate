@@ -16,8 +16,8 @@ describe('Comate theme contract', () => {
     expect(css.match(/--color-accent:/g)).toHaveLength(2)
     expect(css.match(/--color-agent:/g)).toHaveLength(2)
     expect(css.match(/--color-attention:/g)).toHaveLength(2)
-    expect(css).toContain('--color-accent: 221 78% 31%')
-    expect(css).toContain('--color-accent: 211 82% 67%')
+    expect(css).toContain('--color-accent: 221 83% 53%')
+    expect(css).toContain('--color-accent: 213 75% 72%')
   })
 
   it('exposes activity and attention as semantic Tailwind colors', async () => {
