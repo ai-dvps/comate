@@ -188,14 +188,6 @@ export const financeScenarioStages = [
   status?: LocalizedText;
 })[];
 
-export type PrimaryCtaSlotKey = 'home-primary' | 'home-closing' | 'download-primary';
-
-export const primaryCtaSlots = [
-  { key: 'home-primary', label: { zh: '首页主下载入口', en: 'Home primary download' } },
-  { key: 'home-closing', label: { zh: '首页收尾下载入口', en: 'Home closing download' } },
-  { key: 'download-primary', label: { zh: '下载页主入口', en: 'Download page primary action' } },
-] as const satisfies readonly LocalizedFact<PrimaryCtaSlotKey>[];
-
 export type CanonicalVocabularyKey =
   | 'product-category'
   | 'workspace'

@@ -170,8 +170,8 @@ for (const filePath of walk(DIST)) {
       errors.push(`Missing persistent analytics preference control in ${outputName}`);
     }
     const disclosure = outputName.startsWith('zh/')
-      ? '我们仅使用分析 Cookie 衡量下载操作'
-      : 'we use analytics cookies only to measure download actions';
+      ? '我们仅使用分析 Cookie 衡量匿名访问与下载操作'
+      : 'we use analytics cookies only to measure anonymous visits and download actions';
     if (!html.includes(disclosure)) {
       errors.push(`Missing localized analytics privacy disclosure in ${outputName}`);
     }

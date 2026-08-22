@@ -90,6 +90,12 @@ describe('analytics consent', () => {
       'G-TEST123',
       expect.objectContaining({ send_page_view: false, page_referrer: '', page_location: 'https://example.test/comate/en/download/' }),
     ]);
+    expect(dataLayer).toContainEqual([
+      'event',
+      'page_view',
+      expect.objectContaining({ page_referrer: '', page_location: 'https://example.test/comate/en/download/' }),
+    ]);
+    expect(dataLayer.filter((entry) => entry[0] === 'event' && entry[1] === 'page_view')).toHaveLength(1);
   });
 
   it('rejects unknown values, keys, and event names', () => {
@@ -145,6 +151,21 @@ describe('analytics consent', () => {
     expect(env.expireCookie).toHaveBeenCalledWith('_ga');
     expect(env.expireCookie).toHaveBeenCalledWith('_ga_TEST123');
     expect(env.dataLayer).toHaveLength(before);
+  });
+
+  it('keeps denial and revocation safe when browser storage is blocked', () => {
+    const blockedStorage = {
+      getItem: () => { throw new Error('storage blocked'); },
+      setItem: () => { throw new Error('storage blocked'); },
+      removeItem: () => { throw new Error('storage blocked'); },
+      key: () => { throw new Error('storage blocked'); },
+      get length(): number { throw new Error('storage blocked'); },
+    };
+    const analytics = createAnalytics('G-TEST123', environment({ storage: blockedStorage }));
+
+    expect(() => analytics.deny()).not.toThrow();
+    analytics.grant();
+    expect(() => analytics.revoke()).not.toThrow();
   });
 
   it('never blocks navigation when dispatch throws or callbacks fail', () => {

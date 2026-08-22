@@ -64,7 +64,7 @@ test('consented release click emits one allowlisted event and navigates immediat
   page.on('console', (message) => {
     if (!message.text().startsWith('COMATE_ANALYTICS:')) return;
     const command = JSON.parse(message.text().slice('COMATE_ANALYTICS:'.length)) as unknown[];
-    if (command[0] === 'event') events.push(command);
+    if (command[0] === 'event' && command[1] === 'release_download_click') events.push(command);
   });
 
   await page.goto('/comate/en/download/');
