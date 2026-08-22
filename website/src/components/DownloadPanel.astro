@@ -38,7 +38,7 @@ const providerSetupUrl = `${getRelativeLocaleUrl(locale, '/usage/')}#provider-se
             data-analytics-location={index === 0 ? 'download_primary' : 'download_secondary'}
             data-analytics-platform={platform.key}
             data-analytics-stage="github_releases"
-            class="mt-5 inline-flex min-h-12 items-center justify-center rounded-lg bg-accent px-4 py-3 text-center text-sm font-semibold text-accent-foreground no-underline hover:bg-accent-hover focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+            class="mt-5 inline-flex min-h-12 items-center justify-center rounded-lg bg-conversion px-4 py-3 text-center text-sm font-semibold text-conversion-foreground no-underline shadow-sm shadow-conversion/20 hover:bg-conversion-hover focus-visible:ring-2 focus-visible:ring-conversion focus-visible:ring-offset-2"
           >
             {t(`download.${platform.key}` as 'download.macos' | 'download.windows' | 'download.linux')}
           </a>
