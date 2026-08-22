@@ -112,7 +112,7 @@ export default function OutputStyleSelect(props: OutputStyleSelectProps) {
         <button
           type="button"
           disabled={disabled || !isLoaded || isSaving}
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed text-accent hover:bg-surface-hover"
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed text-text-secondary hover:bg-surface-hover hover:text-text-primary"
           title={t('outputStyle.selectorTitle')}
         >
           <Sparkles className="w-3.5 h-3.5" />
@@ -137,7 +137,7 @@ export default function OutputStyleSelect(props: OutputStyleSelectProps) {
               onClick={() => void handleSelect(style)}
               className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-xs rounded-md transition-colors ${
                 isActive
-                  ? 'bg-accent/10 text-accent'
+                  ? 'bg-surface-active text-text-primary'
                   : 'text-text-secondary hover:bg-surface-hover'
               }`}
             >

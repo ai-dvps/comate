@@ -30,7 +30,7 @@ export default function NewChatWorkspaceSelector({
           title={t('newChat.workspace')}
           className="inline-flex max-w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-medium text-text-primary transition-colors hover:bg-surface-hover active:bg-surface-active"
         >
-          <Folder className="h-4 w-4 shrink-0 text-accent" aria-hidden="true" />
+          <Folder className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
           <span className="max-w-64 truncate">{selectedWorkspace?.name ?? t('newChat.workspace')}</span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-tertiary" aria-hidden="true" />
         </button>
@@ -57,7 +57,7 @@ export default function NewChatWorkspaceSelector({
                 }}
                 className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors ${
                   isActive
-                    ? 'bg-accent/10 text-accent'
+                    ? 'bg-surface-active text-text-primary'
                     : 'text-text-secondary hover:bg-surface-hover'
                 }`}
               >

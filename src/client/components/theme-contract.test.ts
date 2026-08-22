@@ -63,4 +63,22 @@ describe('Comate theme contract', () => {
     expect(app).toContain("import comateIconUrl from '../../build/icon.png'")
     expect(app).not.toContain('from-orange-400 to-red-500')
   })
+
+  it('reserves blue for primary actions instead of ordinary shell controls', async () => {
+    const newChat = await source('src/client/components/NewChatPage.tsx')
+    const backend = await source('src/client/components/BackendSelector.tsx')
+    const provider = await source('src/client/components/ProviderSelector.tsx')
+    const outputStyle = await source('src/client/components/OutputStyleSelect.tsx')
+    const workspace = await source('src/client/components/NewChatWorkspaceSelector.tsx')
+    const commandCenter = await source('src/client/components/AgentCommandCenter.tsx')
+
+    expect(newChat).toContain('MessageSquarePlus className="h-5 w-5 text-text-secondary"')
+    expect(newChat).toContain('bg-accent px-4 text-sm font-medium text-accent-foreground')
+    expect(backend).toContain('text-text-secondary hover:bg-surface-hover hover:text-text-primary')
+    expect(provider).toContain('bg-surface-active text-text-secondary')
+    expect(outputStyle).toContain("'bg-surface-active text-text-primary'")
+    expect(workspace).toContain('Folder className="h-4 w-4 shrink-0 text-text-secondary"')
+    expect(commandCenter).toContain('WorkspaceFolderIcon')
+    expect(commandCenter).toContain('flex-shrink-0 text-text-secondary')
+  })
 })

@@ -36,7 +36,7 @@ function ProviderAvatar({ name, className = '' }: { name: string; className?: st
   const initial = name.charAt(0).toUpperCase()
   return (
     <div
-      className={`flex items-center justify-center rounded-full bg-accent/15 text-accent font-semibold ${className}`}
+      className={`flex items-center justify-center rounded-full bg-surface-active text-text-secondary font-semibold ${className}`}
     >
       {initial}
     </div>
@@ -165,7 +165,7 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
         <button
           type="button"
           disabled={disabled}
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed text-accent hover:bg-surface-hover"
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed text-text-secondary hover:bg-surface-hover hover:text-text-primary"
           title={t('provider.selectorTitle')}
         >
           <ProviderAvatar name={displayName} className="w-4 h-4 text-[9px]" />
@@ -198,7 +198,7 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
               onKeyDown={(e) => handleRowKey(e, provider.id)}
               className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-xs rounded-md transition-colors cursor-pointer ${
                 isActive
-                  ? 'bg-accent/10 text-accent'
+                  ? 'bg-surface-active text-text-primary'
                   : 'text-text-secondary hover:bg-surface-hover'
               }`}
             >

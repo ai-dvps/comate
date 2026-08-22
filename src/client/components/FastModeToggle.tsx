@@ -79,7 +79,7 @@ export default function FastModeToggle(props: FastModeToggleProps) {
           onClick={handleToggle}
           className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
             isFastMode
-              ? 'text-accent hover:bg-surface-hover'
+              ? 'bg-surface-active text-text-primary hover:bg-surface-hover'
               : 'text-text-tertiary hover:text-text-primary hover:bg-surface-hover'
           }`}
         >
