@@ -276,8 +276,6 @@
   },
   "outputStyle": {
     "selectorTitle": "输出风格",
-    "sectionTitle": "Claude Code 配置",
-    "claudeOnly": "仅 Claude Code",
     "description": "控制 Claude Code 在所有会话中的回复呈现方式。",
     "saving": "正在保存输出风格",
     "loadError": "无法加载输出风格设置。",
