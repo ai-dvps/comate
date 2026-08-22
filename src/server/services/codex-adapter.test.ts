@@ -341,6 +341,71 @@ describe('CodexBackendDriver interactions', () => {
     releaseInput();
     query.close();
   });
+
+  it('reports Codex token usage through the shared context surface', async () => {
+    const client = new FakeClient();
+    const manager = {
+      ensureClient: async () => client,
+      request: async (method: string) => {
+        if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+        if (method === 'turn/start') return { turn: { id: 'turn-1' } };
+        return {};
+      },
+    } as unknown as CodexAppServerManager;
+    const driver = new CodexBackendDriver({
+      directory: '/tmp/project',
+      model: 'gpt-codex',
+      onBackendSessionId: () => undefined,
+      manager,
+    });
+    let releaseInput!: () => void;
+    const hold = new Promise<void>((resolve) => { releaseInput = resolve; });
+    async function* input(): AsyncGenerator<SDKUserMessage> {
+      yield {
+        type: 'user',
+        uuid: 'message-1',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'hello' },
+      } as SDKUserMessage;
+      await hold;
+    }
+    const { query } = driver.createStreamingQuery(input(), {} as Options);
+    await waitFor(() => client.listenerCount('notification') === 1);
+
+    client.emit('notification', {
+      method: 'thread/tokenUsage/updated',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        tokenUsage: {
+          total: {
+            totalTokens: 120,
+            inputTokens: 80,
+            cachedInputTokens: 20,
+            cacheWriteInputTokens: 0,
+            outputTokens: 30,
+            reasoningOutputTokens: 10,
+          },
+          last: {},
+          modelContextWindow: 1_000,
+        },
+      },
+    });
+    const usage = await query.getContextUsage();
+
+    assert.strictEqual(usage.totalTokens, 120);
+    assert.strictEqual(usage.maxTokens, 1_000);
+    assert.strictEqual(usage.percentage, 12);
+    assert.strictEqual(usage.model, 'gpt-codex');
+    assert.deepStrictEqual(usage.categories.map((category) => [category.name, category.tokens]), [
+      ['input', 80],
+      ['cached input', 20],
+      ['output', 30],
+      ['reasoning', 10],
+    ]);
+    releaseInput();
+    query.close();
+  });
 });
 
 async function waitFor(predicate: () => boolean): Promise<void> {

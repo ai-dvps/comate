@@ -56,6 +56,16 @@ export class CodexBackendDriver implements BackendDriver {
   private queue = new AsyncMessageQueue();
   private readonly mapper: CodexEventMapper;
   private toolRequestHandler?: BackendToolRequestHandler;
+  private tokenUsage?: {
+    total: {
+      totalTokens: number;
+      inputTokens: number;
+      cachedInputTokens: number;
+      outputTokens: number;
+      reasoningOutputTokens: number;
+    };
+    modelContextWindow: number | null;
+  };
 
   constructor(private readonly deps: CodexAdapterDeps) {
     this.manager = deps.manager ?? codexAppServerManager;
@@ -77,6 +87,40 @@ export class CodexBackendDriver implements BackendDriver {
       close: () => {
         this.closed = true;
         this.queue.end();
+      },
+      getContextUsage: async () => {
+        const usage = this.tokenUsage?.total;
+        const totalTokens = usage?.totalTokens ?? 0;
+        const maxTokens = this.tokenUsage?.modelContextWindow ?? 0;
+        return {
+          totalTokens,
+          maxTokens,
+          rawMaxTokens: maxTokens,
+          percentage: maxTokens > 0 ? (totalTokens / maxTokens) * 100 : 0,
+          model: this.deps.model ?? 'codex',
+          categories: [
+            { name: 'input', tokens: usage?.inputTokens ?? 0, color: '#60a5fa' },
+            { name: 'cached input', tokens: usage?.cachedInputTokens ?? 0, color: '#34d399' },
+            { name: 'output', tokens: usage?.outputTokens ?? 0, color: '#a78bfa' },
+            { name: 'reasoning', tokens: usage?.reasoningOutputTokens ?? 0, color: '#f59e0b' },
+          ],
+        };
+      },
+      mcpServerStatus: async () => {
+        const response = await this.manager.request<{
+          data: Array<{
+            name: string;
+            tools: Record<string, { name: string; annotations?: unknown }>;
+          }>;
+        }>('mcpServerStatus/list', {});
+        return response.data.map((server) => ({
+          name: server.name,
+          status: 'connected',
+          tools: Object.values(server.tools).map((tool) => ({
+            name: tool.name,
+            annotations: codexToolAnnotations(tool.annotations),
+          })),
+        }));
       },
     } as unknown as Query;
     return { query, messages: this.queue.iterate() };
@@ -278,12 +322,24 @@ export class CodexBackendDriver implements BackendDriver {
   private onNotification(message: { method: string; params: Record<string, unknown> }): void {
     const params = message.params;
     if (params.threadId !== this.threadId) return;
+    if (message.method === 'thread/tokenUsage/updated') {
+      this.tokenUsage = params.tokenUsage as typeof this.tokenUsage;
+    }
     for (const mapped of this.mapper.map(message.method, params)) this.queue.push(mapped);
     if (message.method === 'turn/completed') {
       this.queue.push(resultMessage(this.threadId ?? '', undefined));
       this.turnId = undefined;
     }
   }
+}
+
+function codexToolAnnotations(value: unknown): { readOnly?: boolean; destructive?: boolean } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const annotations = value as Record<string, unknown>;
+  return {
+    ...(typeof annotations.readOnlyHint === 'boolean' ? { readOnly: annotations.readOnlyHint } : {}),
+    ...(typeof annotations.destructiveHint === 'boolean' ? { destructive: annotations.destructiveHint } : {}),
+  };
 }
 
 /**
