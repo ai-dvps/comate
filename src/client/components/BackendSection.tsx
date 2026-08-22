@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CheckCircle2, XCircle, Loader2, Cpu } from 'lucide-react'
+import { CheckCircle2, XCircle, Loader2, Cpu, ChevronDown } from 'lucide-react'
 import { useBackendStore, type BackendId, type BackendInfo } from '../stores/backend-store'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible'
 import { cn } from './ui/utils'
 import OutputStyleSetting from './OutputStyleSetting'
 
@@ -19,6 +20,40 @@ interface BackendOptionProps {
   children?: ReactNode
 }
 
+function AgentSettingsGroup({ backendLabel, children }: { backendLabel: string; children: ReactNode }) {
+  const { t } = useTranslation('chat')
+  const [isOpen, setIsOpen] = useState(true)
+
+  return (
+    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+      <div className="border-t border-border/70 bg-bg/30">
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            aria-label={t(isOpen ? 'backend.collapseSettings' : 'backend.expandSettings', {
+              backend: backendLabel,
+            })}
+            aria-expanded={isOpen}
+            className="flex min-h-9 w-full items-center justify-between gap-3 px-4 py-2 text-xs font-medium text-text-secondary transition-colors hover:bg-surface-hover/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 sm:pl-16 sm:pr-5"
+          >
+            <span>{t('backend.settings')}</span>
+            <ChevronDown
+              className={cn(
+                'h-3.5 w-3.5 flex-shrink-0 text-text-tertiary transition-transform duration-150 motion-reduce:transition-none',
+                isOpen && 'rotate-180',
+              )}
+              aria-hidden="true"
+            />
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="animate-settings-collapse divide-y divide-border/60 border-t border-border/60">
+          {children}
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
+  )
+}
+
 function BackendOption({
   backend,
   isDefault,
@@ -29,6 +64,7 @@ function BackendOption({
 }: BackendOptionProps) {
   const { t } = useTranslation('chat')
   const available = backend.availability.status === 'available'
+  const backendLabel = t(BACKEND_LABEL_KEYS[backend.id] ?? backend.id)
 
   return (
     <div
@@ -37,7 +73,7 @@ function BackendOption({
     >
       <label
         className={cn(
-          'group relative flex min-h-[76px] w-full items-center gap-3 px-4 py-3.5 transition-colors sm:px-5',
+          'group relative flex min-h-16 w-full items-center gap-3 px-4 py-2.5 transition-colors sm:px-5',
           isDefault && 'bg-accent/[0.055]',
           available && !selectionLocked && 'cursor-pointer hover:bg-surface-hover/70 active:bg-surface-hover',
           (!available || selectionLocked) && 'cursor-not-allowed',
@@ -55,7 +91,7 @@ function BackendOption({
 
         <span
           className={cn(
-            'flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border transition-colors',
+            'flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border transition-colors',
             isDefault
               ? 'border-accent/30 bg-accent/10 text-accent'
               : 'border-border bg-bg text-text-tertiary group-hover:text-text-secondary',
@@ -68,7 +104,7 @@ function BackendOption({
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="text-sm font-medium text-text-primary">
-              {t(BACKEND_LABEL_KEYS[backend.id] ?? backend.id)}
+              {backendLabel}
             </span>
             {isDefault && (
               <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[11px] font-medium leading-4 text-accent">
@@ -108,9 +144,7 @@ function BackendOption({
       </label>
 
       {children && (
-        <div className="border-t border-border/70 bg-bg/40 px-4 py-4 sm:pl-[4.25rem] sm:pr-5">
-          {children}
-        </div>
+        <AgentSettingsGroup backendLabel={backendLabel}>{children}</AgentSettingsGroup>
       )}
     </div>
   )

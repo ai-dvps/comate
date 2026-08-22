@@ -66,6 +66,21 @@ describe('BackendSection', () => {
     expect(claudeOption).toContainElement(screen.getByRole('combobox', { name: 'Output style' }))
   })
 
+  it('shows Agent settings by default and lets users collapse them', async () => {
+    const user = userEvent.setup()
+    renderSection()
+
+    const collapseSettings = screen.getByRole('button', { name: 'Collapse Claude Code settings' })
+    expect(collapseSettings).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('combobox', { name: 'Output style' })).toBeVisible()
+
+    await user.click(collapseSettings)
+
+    expect(screen.getByRole('button', { name: 'Expand Claude Code settings' })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('combobox', { name: 'Output style' })).not.toBeInTheDocument()
+    expect(setDefaultBackend).not.toHaveBeenCalled()
+  })
+
   it('saves output style from the Agent settings page', async () => {
     const user = userEvent.setup()
     renderSection()

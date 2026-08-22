@@ -81,13 +81,13 @@ export default function OutputStyleSetting() {
   }
 
   return (
-    <>
-      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_13rem] sm:items-center sm:gap-6">
+    <div className="px-4 py-2.5 sm:pl-16 sm:pr-5">
+      <div className="grid gap-2.5 sm:grid-cols-[minmax(0,1fr)_12rem] sm:items-center sm:gap-5">
         <div className="min-w-0">
           <label htmlFor="claude-output-style" className="text-sm font-medium text-text-primary">
             {t('outputStyle.selectorTitle')}
           </label>
-          <p id="claude-output-style-description" className="mt-1 max-w-lg text-xs leading-5 text-text-tertiary">
+          <p id="claude-output-style-description" className="mt-0.5 max-w-lg text-xs leading-4 text-text-tertiary">
             {t('outputStyle.description')}
           </p>
         </div>
@@ -101,7 +101,7 @@ export default function OutputStyleSetting() {
             <SelectTrigger
               id="claude-output-style"
               aria-describedby="claude-output-style-description"
-              className="h-11 min-w-0 bg-surface"
+              className="h-9 min-w-0 bg-surface py-1.5"
             >
               <SelectValue />
             </SelectTrigger>
@@ -126,10 +126,10 @@ export default function OutputStyleSetting() {
       </div>
 
       {error && (
-        <p role="alert" className="mt-3 text-xs text-destructive">
+        <p role="alert" className="mt-2 text-xs text-destructive">
           {error}
         </p>
       )}
-    </>
+    </div>
   )
 }
