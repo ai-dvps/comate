@@ -23,6 +23,7 @@ import { resolveCodexBinary } from '../utils/resolve-codex-binary.js';
 import { getAppSetting, setAppSetting } from '../storage/app-settings-store.js';
 import { diagLog } from '../utils/diag-logger.js';
 import type { BackendDriver, BackendSessionRef } from './backend-driver.js';
+import { CodexAppServerManager } from './codex-app-server-manager.js';
 
 export type BackendId = 'claude' | 'opencode' | 'codex';
 export const BACKEND_IDS: readonly BackendId[] = ['claude', 'opencode', 'codex'];
@@ -315,7 +316,36 @@ export async function getBackendAvailability(backend: BackendId): Promise<Backen
 function registerDefaultBackendRuntimes(): void {
   registerBackendRuntime('claude', { resolveBinaryPath: () => resolveSdkBinary() });
   registerBackendRuntime('opencode', { resolveBinaryPath: () => resolveOpencodeBinary() });
-  registerBackendRuntime('codex', { resolveBinaryPath: () => resolveCodexBinary() });
+  registerBackendRuntime('codex', {
+    resolveBinaryPath: () => resolveCodexBinary(),
+    healthCheck: codexAppServerHealthCheck,
+  });
+}
+
+export function codexProductionGate(
+  nodeEnv = process.env.NODE_ENV,
+  experimentalFlag = process.env.COMATE_ENABLE_EXPERIMENTAL_CODEX,
+): true | string {
+  if (nodeEnv === 'production' && experimentalFlag !== '1') {
+    return 'Codex is held behind the production parity gate; set COMATE_ENABLE_EXPERIMENTAL_CODEX=1 only for controlled evaluation';
+  }
+  return true;
+}
+
+async function codexAppServerHealthCheck(binaryPath: string): Promise<true | string> {
+  const gate = codexProductionGate();
+  if (gate !== true) return gate;
+  const executable = await defaultHealthCheck(binaryPath);
+  if (executable !== true) return executable;
+  const manager = new CodexAppServerManager();
+  try {
+    await manager.ensureClient();
+    return true;
+  } catch (error) {
+    return `app-server initialize failed: ${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    await manager.stop();
+  }
 }
 
 registerDefaultBackendRuntimes();

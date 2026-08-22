@@ -13,6 +13,7 @@ import {
   setDefaultBackend,
   clearDefaultBackend,
   resolveDefaultBackend,
+  codexProductionGate,
 } from './agent-backends.js';
 
 describe('getCapability', () => {
@@ -40,6 +41,15 @@ describe('getCapability', () => {
     const entry = getCapability('opencode', 'hooks');
     assert.equal(entry.state, 'unavailable');
     assert.ok(entry.reasonKey);
+  });
+});
+
+describe('Codex production parity gate', () => {
+  it('holds production selection closed unless controlled evaluation is explicit', () => {
+    assert.match(String(codexProductionGate('production', undefined)), /parity gate/i);
+    assert.equal(codexProductionGate('production', '1'), true);
+    assert.equal(codexProductionGate('development', undefined), true);
+    assert.equal(codexProductionGate('test', undefined), true);
   });
 });
 
