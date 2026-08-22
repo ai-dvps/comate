@@ -182,7 +182,7 @@ async function build() {
 
   // 5. Copy agent backend binaries to resources/ (variant-gated).
   // COMATE_BUNDLE_BACKENDS selects which runtimes ship: the default
-  // 'claude,opencode' produces the dual-backend flavor; 'opencode' produces
+  // The default ships all peer backends; explicit variants can omit any one.
   // the claude-free enterprise flavor (R12) — no claude binary is copied and
   // the assertion below fails the build if one slipped in anyway.
   const bundleBackends = parseBundleBackends(process.env.COMATE_BUNDLE_BACKENDS);
@@ -196,9 +196,12 @@ async function build() {
   for (const [backend, binaryName] of [
     ['claude', platform === 'win32' ? 'claude.exe' : 'claude'],
     ['opencode', platform === 'win32' ? 'opencode.exe' : 'opencode'],
+    ['codex', platform === 'win32' ? 'codex.exe' : 'codex'],
   ] as const) {
     if (!bundleBackends.has(backend)) {
-      const stalePath = join(resourcesDir, binaryName);
+      const stalePath = backend === 'codex'
+        ? join(resourcesDir, 'codex-runtime')
+        : join(resourcesDir, binaryName);
       if (existsSync(stalePath)) {
         rmSync(stalePath);
         console.log(`Removed stale ${backend} binary from resources (${stalePath})`);
@@ -251,9 +254,39 @@ async function build() {
     }
   }
 
+  if (bundleBackends.has('codex')) {
+    const codexBinaryName = platform === 'win32' ? 'codex.exe' : 'codex';
+    const codexPkg = `@openai/codex-${platform}-${arch}`;
+    const codexCpu = arch === 'arm64' ? 'aarch64' : 'x86_64';
+    const codexTriple = platform === 'darwin'
+      ? `${codexCpu}-apple-darwin`
+      : platform === 'linux'
+        ? `${codexCpu}-unknown-linux-musl`
+        : `${codexCpu}-pc-windows-msvc`;
+    const codexVendorSource = join(rootDir, 'node_modules', codexPkg, 'vendor', codexTriple);
+    const codexBinarySource = join(codexVendorSource, 'bin', codexBinaryName);
+    if (!existsSync(codexBinarySource)) {
+      throw new Error(`codex binary not found at ${codexBinarySource} (required by COMATE_BUNDLE_BACKENDS)`);
+    }
+    const codexVendorDest = join(resourcesDir, 'codex-runtime', 'vendor', codexTriple);
+    rmSync(codexVendorDest, { recursive: true, force: true });
+    mkdirSync(dirname(codexVendorDest), { recursive: true });
+    cpSync(codexVendorSource, codexVendorDest, { recursive: true });
+    console.log(`Copied Codex vendor runtime to ${codexVendorDest}`);
+  }
+
   // Variant assertion: resources must contain exactly the selected backends.
   const claudeBinaryPath = join(resourcesDir, platform === 'win32' ? 'claude.exe' : 'claude');
   const opencodeBinaryPath = join(resourcesDir, platform === 'win32' ? 'opencode.exe' : 'opencode');
+  const codexCpu = arch === 'arm64' ? 'aarch64' : 'x86_64';
+  const codexTriple = platform === 'darwin'
+    ? `${codexCpu}-apple-darwin`
+    : platform === 'linux'
+      ? `${codexCpu}-unknown-linux-musl`
+      : `${codexCpu}-pc-windows-msvc`;
+  const codexBinaryPath = join(
+    resourcesDir, 'codex-runtime', 'vendor', codexTriple, 'bin', platform === 'win32' ? 'codex.exe' : 'codex',
+  );
   const isFile = (p: string): boolean => {
     try {
       return statSync(p).isFile();
@@ -269,6 +302,11 @@ async function build() {
   if (bundleBackends.has('opencode') !== isFile(opencodeBinaryPath)) {
     throw new Error(
       `backend variant mismatch: opencode ${bundleBackends.has('opencode') ? 'missing from' : 'present in'} resources (${opencodeBinaryPath})`,
+    );
+  }
+  if (bundleBackends.has('codex') !== isFile(codexBinaryPath)) {
+    throw new Error(
+      `backend variant mismatch: codex ${bundleBackends.has('codex') ? 'missing from' : 'present in'} resources (${codexBinaryPath})`,
     );
   }
 
@@ -463,7 +501,7 @@ async function build() {
   // 11. Per-arch macOS resource trees. The single-runner dual-arch mac build
   // (build.yml: electron-builder --mac --x64 --arm64) packages BOTH apps from
   // one host-arch node_modules, but the resources tree carries native payloads
-  // (claude, opencode, rg, better_sqlite3.node) — shipping the host tree into
+  // (claude, opencode, codex, rg, better_sqlite3.node) — shipping the host tree into
   // the cross-arch app puts arm64-only Mach-O binaries on Intel Macs
   // (ERR_DLOPEN_FAILED / spawn failures). electron-builder.config.ts therefore
   // maps build/resources-darwin-${arch} (like the sidecar binary already does),
@@ -513,6 +551,28 @@ function stageNpmPackageFile(pkgName: string, version: string, pathInPkg: string
     }
     copyFileSync(extracted, dest);
     chmodSync(dest, 0o755);
+    console.log(`Staged ${spec}:${pathInPkg} -> ${dest}`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+function stageNpmPackageTree(pkgName: string, version: string, pathInPkg: string, dest: string) {
+  const tmp = mkdtempSync(join(tmpdir(), 'sidecar-cross-npm-tree-'));
+  try {
+    const spec = `${pkgName}@${version}`;
+    console.log(`> npm pack ${spec} (cross-arch runtime tree)`);
+    const out = execFileSync('npm', ['pack', spec, '--pack-destination', tmp], {
+      cwd: tmp,
+      encoding: 'utf8',
+    });
+    const tgzName = out.trim().split('\n').pop()!.trim();
+    execFileSync('tar', ['-xzf', join(tmp, tgzName), '-C', tmp, `package/${pathInPkg}`]);
+    const extracted = join(tmp, 'package', pathInPkg);
+    if (!existsSync(extracted)) throw new Error(`${spec} does not contain ${pathInPkg}`);
+    rmSync(dest, { recursive: true, force: true });
+    mkdirSync(dirname(dest), { recursive: true });
+    cpSync(extracted, dest, { recursive: true });
     console.log(`Staged ${spec}:${pathInPkg} -> ${dest}`);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -593,6 +653,19 @@ function stageDarwinPerArchResources(bundleBackends: Set<string>, isFile: (p: st
     stageNpmPackageFile(pkg, rootDeps[pkg], join('bin', 'opencode'), join(crossTree, 'opencode'));
   }
 
+  if (bundleBackends.has('codex')) {
+    const pkg = `@openai/codex-darwin-${crossArch}`;
+    const rootDeps = (readPkgJson(rootDir).optionalDependencies ?? {}) as Record<string, string>;
+    if (!rootDeps[pkg]) throw new Error(`${pkg} not pinned in package.json optionalDependencies`);
+    const triple = `${crossArch === 'arm64' ? 'aarch64' : 'x86_64'}-apple-darwin`;
+    stageNpmPackageTree(
+      pkg,
+      rootDeps[pkg],
+      join('vendor', triple),
+      join(crossTree, 'codex-runtime', 'vendor', triple),
+    );
+  }
+
   const rgPkg = `@vscode/ripgrep-darwin-${crossArch}`;
   const rgDeps = (readPkgJson(rootDir, 'node_modules', '@vscode', 'ripgrep')
     .optionalDependencies ?? {}) as Record<string, string>;
@@ -613,6 +686,9 @@ function stageDarwinPerArchResources(bundleBackends: Set<string>, isFile: (p: st
     const nativePayloads = [
       ...(bundleBackends.has('claude') ? ['claude'] : []),
       ...(bundleBackends.has('opencode') ? ['opencode'] : []),
+      ...(bundleBackends.has('codex')
+        ? [join('codex-runtime', 'vendor', `${treeArch === 'arm64' ? 'aarch64' : 'x86_64'}-apple-darwin`, 'bin', 'codex')]
+        : []),
       'rg',
       'better_sqlite3.node',
     ];
