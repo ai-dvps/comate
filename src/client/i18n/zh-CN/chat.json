@@ -369,6 +369,7 @@
     "selectorTitle": "智能体",
     "claude": "Claude Code",
     "opencode": "Open Code",
+    "codex": "Codex",
     "locked": "已锁定为 {{backend}}",
     "unavailableReadOnly": "该会话的智能体（{{backend}}）在当前安装中不可用，已切换为只读。",
     "noneAvailable": "无可用智能体",

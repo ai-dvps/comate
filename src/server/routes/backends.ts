@@ -51,11 +51,11 @@ router.get('/default', async (_req, res) => {
 router.put('/default', async (req, res) => {
   try {
     const backend = req.body?.backend as BackendId | undefined;
-    if (backend !== 'claude' && backend !== 'opencode') {
-      res.status(400).json({ error: "backend must be 'claude' or 'opencode'" });
+    if (!BACKEND_IDS.includes(backend as BackendId)) {
+      res.status(400).json({ error: "backend must be 'claude', 'opencode', or 'codex'" });
       return;
     }
-    await setDefaultBackend(backend);
+    await setDefaultBackend(backend as BackendId);
     res.json({ backend });
   } catch (error) {
     console.error('Failed to set default backend:', error);

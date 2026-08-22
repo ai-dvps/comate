@@ -9,6 +9,7 @@ import OutputStyleSetting from './OutputStyleSetting'
 const BACKEND_LABEL_KEYS: Record<string, string> = {
   claude: 'backend.claude',
   opencode: 'backend.opencode',
+  codex: 'backend.codex',
 }
 
 interface BackendOptionProps {

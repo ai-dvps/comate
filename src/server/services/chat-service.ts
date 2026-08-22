@@ -25,6 +25,8 @@ import {
   type BackendId,
 } from './agent-backends.js';
 import { OpencodeBackendDriver, buildServeConfig } from './opencode-adapter.js';
+import { CodexBackendDriver } from './codex-adapter.js';
+import { codexSessionService } from './codex-session-service.js';
 import {
   SessionRuntime,
   APPROVAL_TIMEOUT_DENY_MESSAGE,
@@ -727,7 +729,7 @@ export class ChatService {
     // different backend is a conflict, not a silent no-op. A change with a
     // live runtime closes it so the next use rebuilds on the new backend.
     if (input.backend !== undefined) {
-      if (input.backend !== 'claude' && input.backend !== 'opencode') {
+      if (input.backend !== 'claude' && input.backend !== 'opencode' && input.backend !== 'codex') {
         throw new ChatError(`Unknown agent backend '${input.backend}'`, 'INVALID_BACKEND', 400);
       }
       if (!localSession?.isDraft && localSession?.backend && localSession.backend !== input.backend) {
@@ -777,9 +779,12 @@ export class ChatService {
     }
 
     const isOpencodeBackend = localSession?.backend === 'opencode';
+    const isCodexBackend = localSession?.backend === 'codex';
 
     if (input.name) {
-      if (isOpencodeBackend) {
+      if (isCodexBackend && localSession?.backendSessionId) {
+        await codexSessionService.rename(localSession.backendSessionId, input.name);
+      } else if (isOpencodeBackend) {
         // opencode stores its own session title in its sqlite store; route the
         // rename through the opencode serve's PATCH /session/{id} so the title
         // is persisted on the backend side (and survives a Comate restart).
@@ -790,6 +795,9 @@ export class ChatService {
         await this.sdkClient.renameSession(id, input.name, { dir: workspace.folderPath });
       }
     }
+    if (isCodexBackend && localSession?.backendSessionId && input.isArchived === true) {
+      await codexSessionService.archive(localSession.backendSessionId);
+    }
 
     // Also update local DB for providerId and isArchived changes on non-draft sessions
     const localUpdates: Parameters<typeof workspaceStore.updateLocalSession>[1] = {};
@@ -798,7 +806,7 @@ export class ChatService {
     if (input.fastMode !== undefined) localUpdates.fastMode = input.fastMode;
     // For opencode sessions the title lives on the backend; mirror it locally
     // (name + custom_title) so the UI reflects the change without a round-trip.
-    if (input.name && isOpencodeBackend) {
+    if (input.name && (isOpencodeBackend || isCodexBackend)) {
       localUpdates.name = input.name;
       localUpdates.customTitle = input.name;
     }
@@ -820,7 +828,7 @@ export class ChatService {
     // opencode sessions have no claude .jsonl transcript, so getSessionInfo
     // (which scans project dirs for {id}.jsonl) would throw — return the
     // locally-mirrored session instead.
-    if (isOpencodeBackend) {
+    if (isOpencodeBackend || isCodexBackend) {
       const local = workspaceStore.getLocalSession(id);
       if (local) return local;
     }
@@ -1100,7 +1108,11 @@ export class ChatService {
     // Backend-aware loading (U7): opencode subagents are child sessions on
     // the session's serve, translated into the same SubagentState shape.
     const localSession = workspaceStore.getLocalSession(sessionId);
-    if (localSession?.backend === 'opencode' && localSession.backendSessionId) {
+    if (localSession?.backend === 'codex' && localSession.backendSessionId) {
+      // Codex subagent threads are surfaced by app-server notifications; the
+      // dedicated panel mapping lands with the richer item mapper.
+      return [];
+    } else if (localSession?.backend === 'opencode' && localSession.backendSessionId) {
       return this.loadOpencodeSubagents(
         sessionId,
         localSession.backendSessionId,
@@ -1285,7 +1297,9 @@ export class ChatService {
     // refresh.
     const localSession = workspaceStore.getLocalSession(sessionId);
     let sdkMessages: SessionMessage[];
-    if (localSession?.backend === 'opencode' && localSession.backendSessionId) {
+    if (localSession?.backend === 'codex' && localSession.backendSessionId) {
+      sdkMessages = await codexSessionService.loadMessages(localSession.backendSessionId);
+    } else if (localSession?.backend === 'opencode' && localSession.backendSessionId) {
       sdkMessages = await this.loadOpencodeSessionMessages(
         sessionId,
         localSession.backendSessionId,
@@ -1297,7 +1311,7 @@ export class ChatService {
     const sdkLoadMs = Date.now() - sdkLoadStartedAt;
 
     // If we successfully loaded messages from SDK, the session is real — sync it
-    if (sdkMessages.length > 0 && localSession?.backend !== 'opencode') {
+    if (sdkMessages.length > 0 && localSession?.backend !== 'opencode' && localSession?.backend !== 'codex') {
       try {
         const sdkSession = await this.sdkClient.getSessionInfo(sessionId, { dir: workspace.folderPath });
         if (sdkSession) {
@@ -1392,17 +1406,17 @@ export class ChatService {
    * Resolve the agent backend for a session (KTD-5/KTD-9). A locked session
    * reuses its stored backend; a draft resolves now, and the result is
    * persisted only after the runtime actually starts (review P2 — persisting
-   * on a failed first attempt cemented a failed lock). Bot sessions always
-   * resolve to claude regardless of the app default (R14).
+   * on a failed first attempt cemented a failed lock). Bot and scheduled
+   * sessions use the same selected app default unless already locked.
    */
   private async resolveSessionBackend(
     session: ChatSession,
-    isBotSession?: boolean,
+    _isBotSession?: boolean,
   ): Promise<BackendId> {
     if (session.backend) {
       return session.backend as BackendId;
     }
-    return isBotSession ? 'claude' : (await resolveDefaultBackend()).backend;
+    return (await resolveDefaultBackend()).backend;
   }
 
   async getOrCreateRuntime(
@@ -1457,17 +1471,15 @@ export class ChatService {
       diagLog(`[ChatService] runtime ${sessionId} session loaded elapsed=${Date.now() - startedAt}ms isDraft=${!!session.isDraft}`);
 
       const backend = await this.resolveSessionBackend(session, isBotSession);
-      if (backend === 'opencode') {
+      if (backend === 'opencode' || backend === 'codex') {
         const availability = await getBackendAvailability(backend);
         if (availability.status !== 'available') {
           throw new ChatError(
-            `Agent backend 'opencode' is not available${availability.reason ? `: ${availability.reason}` : ''}`,
+            `Agent backend '${backend}' is not available${availability.reason ? `: ${availability.reason}` : ''}`,
             'BACKEND_UNAVAILABLE',
             409,
           );
         }
-      } else if (backend !== 'claude') {
-        throw new ChatError(`Unknown agent backend '${backend}'`, 'BACKEND_UNAVAILABLE', 409);
       }
 
       // Verify non-draft sessions actually exist in SDK before resuming.
@@ -1553,8 +1565,15 @@ export class ChatService {
         diagLog(`[ChatService] runtime ${sessionId} testClaudeBinary elapsed=${Date.now() - testStart}ms`);
       }
 
-      const driver =
-        backend === 'opencode'
+      const driver = backend === 'codex'
+        ? new CodexBackendDriver({
+            directory: normalizeWindowsPath(workspace.folderPath),
+            backendSessionId: session.backendSessionId,
+            model: provider.model,
+            onBackendSessionId: (backendSessionId) =>
+              workspaceStore.updateSessionBackendSessionId(sessionId, backendSessionId),
+          })
+        : backend === 'opencode'
           ? new OpencodeBackendDriver({
               directory: normalizeWindowsPath(workspace.folderPath),
               comateSessionId: sessionId,
@@ -1766,7 +1785,7 @@ export class ChatService {
   /** Rebuild every cached runtime so the next turn observes app-global settings. */
   scheduleRebuildsForGlobalSettings(): void {
     for (const [sessionId, context] of this.runtimeContexts.entries()) {
-      if (workspaceStore.getLocalSession(sessionId)?.backend === 'opencode') continue;
+      if (['opencode', 'codex'].includes(workspaceStore.getLocalSession(sessionId)?.backend ?? '')) continue;
       this.scheduleRuntimeRebuild(sessionId, context);
     }
   }

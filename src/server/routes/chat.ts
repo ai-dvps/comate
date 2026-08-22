@@ -59,8 +59,8 @@ router.post('/sessions', async (req, res) => {
       res.status(400).json({ error: 'approvalMode must be one of: auto, readonly, manual' });
       return;
     }
-    if (backend !== undefined && !['claude', 'opencode'].includes(backend)) {
-      res.status(400).json({ error: 'backend must be one of: claude, opencode' });
+    if (backend !== undefined && !['claude', 'opencode', 'codex'].includes(backend)) {
+      res.status(400).json({ error: 'backend must be one of: claude, opencode, codex' });
       return;
     }
     if (fastMode !== undefined && typeof fastMode !== 'boolean') {
