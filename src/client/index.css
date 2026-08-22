@@ -379,8 +379,33 @@
     to { height: 0; opacity: 0; transform: translateY(-0.25rem); }
   }
 
+  /* Agent settings use the measured Radix height so both directions remain
+     smooth as more Agent-specific settings are added. */
+  .animate-settings-collapse {
+    overflow: hidden;
+  }
+
+  .animate-settings-collapse[data-state='open'] {
+    animation: settings-collapse-expand 180ms ease-out;
+  }
+
+  .animate-settings-collapse[data-state='closed'] {
+    animation: settings-collapse-contract 150ms ease-in;
+  }
+
+  @keyframes settings-collapse-expand {
+    from { height: 0; opacity: 0; }
+    to { height: var(--radix-collapsible-content-height); opacity: 1; }
+  }
+
+  @keyframes settings-collapse-contract {
+    from { height: var(--radix-collapsible-content-height); opacity: 1; }
+    to { height: 0; opacity: 0; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
-    .animate-process-item[data-state] {
+    .animate-process-item[data-state],
+    .animate-settings-collapse[data-state] {
       animation: none;
     }
   }
