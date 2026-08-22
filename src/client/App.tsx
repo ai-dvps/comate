@@ -349,6 +349,9 @@ function App() {
     options: {
       backend?: BackendId
       providerId?: string
+      codexModel?: string
+      codexEffort?: string
+      codexSpeed?: string
       fastMode: boolean
       approvalMode: ApprovalMode
     },
@@ -372,6 +375,9 @@ function App() {
         initialPrompt,
         backend: options.backend,
         providerId: options.providerId,
+        codexModel: options.codexModel,
+        codexEffort: options.codexEffort,
+        codexSpeed: options.codexSpeed,
         fastMode: options.fastMode,
         approvalMode: options.approvalMode,
         signal: abortController.signal,

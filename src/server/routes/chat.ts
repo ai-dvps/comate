@@ -46,7 +46,7 @@ router.get('/sessions', async (req, res) => {
 router.post('/sessions', async (req, res) => {
   try {
     const workspaceId = (req.params as { id: string }).id;
-    const { name, prompt, approvalMode, providerId, backend, fastMode } = req.body;
+    const { name, prompt, approvalMode, providerId, backend, fastMode, codexModel, codexEffort, codexSpeed } = req.body;
 
     const hasName = typeof name === 'string' && name.trim() !== '';
     const hasPrompt = typeof prompt === 'string' && prompt.trim() !== '';
@@ -67,6 +67,10 @@ router.post('/sessions', async (req, res) => {
       res.status(400).json({ error: 'fastMode must be a boolean' });
       return;
     }
+    if (!validOptionalCodexValue(codexModel) || !validOptionalCodexValue(codexEffort) || !validOptionalCodexValue(codexSpeed)) {
+      res.status(400).json({ error: 'Codex model, effort, and speed must be valid strings' });
+      return;
+    }
     const session = await chatService.createSession({
       workspaceId,
       name: hasName ? name.trim() : deriveFallbackSessionTitle(prompt as string),
@@ -74,6 +78,9 @@ router.post('/sessions', async (req, res) => {
       providerId,
       backend,
       fastMode,
+      codexModel,
+      codexEffort,
+      codexSpeed,
       source: 'gui',
     });
     res.status(201).json(session);
@@ -88,7 +95,7 @@ router.put('/sessions/:sessionId', async (req, res) => {
   try {
     const workspaceId = (req.params as unknown as { id: string }).id;
     const sessionId = req.params.sessionId;
-    const { name, isWip, providerId, isArchived, fastMode, backend } = req.body;
+    const { name, isWip, providerId, isArchived, fastMode, backend, codexModel, codexEffort, codexSpeed } = req.body;
 
     const hasName = name !== undefined && typeof name === 'string' && name.trim() !== '';
     const hasWip = isWip !== undefined && typeof isWip === 'boolean';
@@ -96,18 +103,28 @@ router.put('/sessions/:sessionId', async (req, res) => {
     const hasArchived = isArchived !== undefined && typeof isArchived === 'boolean';
     const hasFastMode = fastMode !== undefined && typeof fastMode === 'boolean';
     const hasBackend = backend !== undefined;
-    if (!hasName && !hasWip && !hasProviderId && !hasArchived && !hasFastMode && !hasBackend) {
-      res.status(400).json({ error: 'name, isWip, providerId, isArchived, fastMode, or backend is required' });
+    const hasCodexModel = codexModel !== undefined && validNullableCodexValue(codexModel);
+    const hasCodexEffort = codexEffort !== undefined && validNullableCodexValue(codexEffort);
+    const hasCodexSpeed = codexSpeed !== undefined && validNullableCodexValue(codexSpeed);
+    if ((codexModel !== undefined && !hasCodexModel) || (codexEffort !== undefined && !hasCodexEffort) || (codexSpeed !== undefined && !hasCodexSpeed)) {
+      res.status(400).json({ error: 'Codex model, effort, and speed must be null or valid strings' });
+      return;
+    }
+    if (!hasName && !hasWip && !hasProviderId && !hasArchived && !hasFastMode && !hasBackend && !hasCodexModel && !hasCodexEffort && !hasCodexSpeed) {
+      res.status(400).json({ error: 'No supported session update was provided' });
       return;
     }
 
-    const input: { name?: string; isWip?: boolean; providerId?: string; isArchived?: boolean; fastMode?: boolean; backend?: string } = {};
+    const input: { name?: string; isWip?: boolean; providerId?: string | null; isArchived?: boolean; fastMode?: boolean; backend?: string; codexModel?: string | null; codexEffort?: string | null; codexSpeed?: string | null } = {};
     if (hasName) input.name = name.trim();
     if (hasWip) input.isWip = isWip;
     if (hasProviderId) input.providerId = providerId;
     if (hasArchived) input.isArchived = isArchived;
     if (hasFastMode) input.fastMode = fastMode;
     if (hasBackend) input.backend = backend;
+    if (hasCodexModel) input.codexModel = codexModel;
+    if (hasCodexEffort) input.codexEffort = codexEffort;
+    if (hasCodexSpeed) input.codexSpeed = codexSpeed;
 
     const session = await chatService.updateSession(sessionId, input, workspaceId);
     if (!session) {
@@ -478,3 +495,11 @@ router.get('/sessions/:sessionId/workflows/:runId', async (req, res) => {
 });
 
 export default router;
+
+function validOptionalCodexValue(value: unknown): boolean {
+  return value === undefined || (typeof value === 'string' && value.length > 0 && value.length <= 200);
+}
+
+function validNullableCodexValue(value: unknown): value is string | null {
+  return value === null || (typeof value === 'string' && value.length > 0 && value.length <= 200);
+}

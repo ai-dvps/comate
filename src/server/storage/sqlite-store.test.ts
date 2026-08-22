@@ -1015,6 +1015,33 @@ describe('SqliteStore session fast mode', { concurrency: false }, () => {
   });
 });
 
+describe('SqliteStore Codex session settings', { concurrency: false }, () => {
+  it('persists and clears per-session model, effort, and speed', async () => {
+    const store = new SqliteStore(':memory:');
+    store.resetData();
+    const workspace = await store.create({ name: 'Codex Settings', folderPath: '/tmp/codex-settings' });
+    const session = store.createLocalSession(workspace.id, 'Codex');
+
+    const configured = store.updateLocalSession(session.id, {
+      codexModel: 'gpt-5.6-codex',
+      codexEffort: 'high',
+      codexSpeed: 'fast',
+    });
+    assert.strictEqual(configured?.codexModel, 'gpt-5.6-codex');
+    assert.strictEqual(configured?.codexEffort, 'high');
+    assert.strictEqual(configured?.codexSpeed, 'fast');
+
+    const cleared = store.updateLocalSession(session.id, {
+      codexModel: null,
+      codexEffort: null,
+      codexSpeed: null,
+    });
+    assert.strictEqual(cleared?.codexModel, undefined);
+    assert.strictEqual(cleared?.codexEffort, undefined);
+    assert.strictEqual(cleared?.codexSpeed, undefined);
+  });
+});
+
 describe('SqliteStore provider fast mode capability', { concurrency: false }, () => {
   let store: SqliteStore;
 

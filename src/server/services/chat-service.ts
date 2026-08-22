@@ -26,7 +26,7 @@ import {
 } from './agent-backends.js';
 import { OpencodeBackendDriver, buildServeConfig } from './opencode-adapter.js';
 import { CodexBackendDriver } from './codex-adapter.js';
-import { getCodexDefaultModel } from './codex-settings.js';
+import { getCodexDefaults } from './codex-settings.js';
 import { codexSessionService } from './codex-session-service.js';
 import {
   SessionRuntime,
@@ -671,6 +671,9 @@ export class ChatService {
       input.botId,
       input.backend,
       input.fastMode,
+      input.codexModel,
+      input.codexEffort,
+      input.codexSpeed,
     );
   }
 
@@ -697,6 +700,9 @@ export class ChatService {
           session.isArchived = localSession?.isArchived;
           session.approvalMode = localSession?.approvalMode;
           session.fastMode = localSession?.fastMode;
+          session.codexModel = localSession?.codexModel;
+          session.codexEffort = localSession?.codexEffort;
+          session.codexSpeed = localSession?.codexSpeed;
           session.botId = localSession?.botId;
           session.source = localSession?.source;
           workspaceStore.syncSdkSession(session);
@@ -725,6 +731,9 @@ export class ChatService {
     // Check local DB for current provider before update
     const localSession = workspaceStore.getLocalSession(id);
     const previousProviderId = localSession?.providerId;
+    const codexSettingsChanged = input.codexModel !== undefined
+      || input.codexEffort !== undefined
+      || input.codexSpeed !== undefined;
     // Backend changes are free while the session is a draft (R4: the lock
     // lands at the first message). Once the conversation has started, a
     // different backend is a conflict, not a silent no-op. A change with a
@@ -759,10 +768,13 @@ export class ChatService {
       if (input.providerId !== undefined) draftInput.providerId = input.providerId;
       if (input.isArchived !== undefined) draftInput.isArchived = input.isArchived;
       if (input.fastMode !== undefined) draftInput.fastMode = input.fastMode;
+      if (input.codexModel !== undefined) draftInput.codexModel = input.codexModel;
+      if (input.codexEffort !== undefined) draftInput.codexEffort = input.codexEffort;
+      if (input.codexSpeed !== undefined) draftInput.codexSpeed = input.codexSpeed;
       const updated = workspaceStore.updateLocalSession(id, draftInput);
 
       // Schedule rebuild if provider changed so next message creates a fresh runtime
-      if (input.providerId !== undefined && input.providerId !== previousProviderId) {
+      if ((input.providerId !== undefined && input.providerId !== previousProviderId) || codexSettingsChanged) {
         const runtime = this.getRuntimeIfExists(id);
         if (runtime) {
           sidecarLog(`[ChatService] scheduling rebuild for runtime ${id} due to provider change`);
@@ -805,6 +817,9 @@ export class ChatService {
     if (input.providerId !== undefined) localUpdates.providerId = input.providerId;
     if (input.isArchived !== undefined) localUpdates.isArchived = input.isArchived;
     if (input.fastMode !== undefined) localUpdates.fastMode = input.fastMode;
+    if (input.codexModel !== undefined) localUpdates.codexModel = input.codexModel;
+    if (input.codexEffort !== undefined) localUpdates.codexEffort = input.codexEffort;
+    if (input.codexSpeed !== undefined) localUpdates.codexSpeed = input.codexSpeed;
     // For opencode sessions the title lives on the backend; mirror it locally
     // (name + custom_title) so the UI reflects the change without a round-trip.
     if (input.name && (isOpencodeBackend || isCodexBackend)) {
@@ -816,13 +831,11 @@ export class ChatService {
     }
 
     // Close runtime if provider changed so next message creates a fresh one
-    if (input.providerId !== undefined && input.providerId !== previousProviderId) {
+    if ((input.providerId !== undefined && input.providerId !== previousProviderId) || codexSettingsChanged) {
       const runtime = this.getRuntimeIfExists(id);
       if (runtime) {
         sidecarLog(`[ChatService] closing runtime ${id} due to provider change`);
-        this.closeRuntime(id).catch((err) => {
-          console.error(`Failed to close runtime ${id} during provider switch:`, err);
-        });
+        await this.closeRuntime(id);
       }
     }
 
@@ -845,6 +858,9 @@ export class ChatService {
       session.approvalMode = localSession?.approvalMode;
       session.fastMode = localSession?.fastMode;
       session.providerId = localSession?.providerId;
+      session.codexModel = localSession?.codexModel;
+      session.codexEffort = localSession?.codexEffort;
+      session.codexSpeed = localSession?.codexSpeed;
       return session;
     }
     return workspaceStore.getLocalSession(id);
@@ -1617,7 +1633,7 @@ export class ChatService {
         ? new CodexBackendDriver({
             directory: normalizeWindowsPath(workspace.folderPath),
             backendSessionId: session.backendSessionId,
-            model: provider.id === 'codex-native' ? await getCodexDefaultModel() : provider.model,
+            ...await this.codexRuntimeSettings(session, provider.id === 'codex-native', provider.model),
             ...(provider.id !== 'codex-native' ? {
               provider: {
                 name: provider.name,
@@ -2363,6 +2379,23 @@ export class ChatService {
       }
     }
     return null;
+  }
+
+  private async codexRuntimeSettings(
+    session: ChatSession,
+    nativeAccount: boolean,
+    providerModel?: string,
+  ): Promise<{ model?: string; effort?: string; serviceTier?: string }> {
+    if (!nativeAccount) return providerModel ? { model: providerModel } : {};
+    const defaults = session.backendSessionId ? {} : await getCodexDefaults();
+    const model = session.codexModel ?? defaults.model;
+    const effort = session.codexEffort ?? defaults.effort;
+    const serviceTier = session.codexSpeed ?? defaults.speed;
+    return {
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
+      ...(serviceTier ? { serviceTier } : {}),
+    };
   }
 
   private async buildSdkOptions(

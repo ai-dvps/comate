@@ -421,6 +421,15 @@ export class SqliteStore {
     if (!sessionColumns.some(col => col.name === 'fast_mode')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN fast_mode INTEGER NOT NULL DEFAULT 0');
     }
+    if (!sessionColumns.some(col => col.name === 'codex_model')) {
+      this.db.exec('ALTER TABLE sessions ADD COLUMN codex_model TEXT');
+    }
+    if (!sessionColumns.some(col => col.name === 'codex_effort')) {
+      this.db.exec('ALTER TABLE sessions ADD COLUMN codex_effort TEXT');
+    }
+    if (!sessionColumns.some(col => col.name === 'codex_speed')) {
+      this.db.exec('ALTER TABLE sessions ADD COLUMN codex_speed TEXT');
+    }
     if (!sessionColumns.some(col => col.name === 'output_style')) {
       // CLI 2.1.237 output styles ('default' | 'explanatory' | 'learning' |
       // 'concise' | custom), applied at runtime creation.
@@ -2267,12 +2276,15 @@ export class SqliteStore {
     workspaceId: string,
     name: string,
     approvalMode?: string,
-    providerId?: string,
+    providerId?: string | null,
     source?: 'gui' | 'wecom' | 'feishu' | 'scheduled',
     customTitle?: string,
     botId?: string,
     backend?: string,
     fastMode = false,
+    codexModel?: string,
+    codexEffort?: string,
+    codexSpeed?: string,
   ): ChatSession {
     const now = new Date().toISOString();
     // KTD4/R6: true creation initializes the ordering key to now so the new
@@ -2286,9 +2298,12 @@ export class SqliteStore {
       isDraft: true,
       source,
       approvalMode: mode as ChatSession['approvalMode'],
-      providerId,
+      providerId: providerId ?? undefined,
       backend,
       fastMode,
+      codexModel,
+      codexEffort,
+      codexSpeed,
       botId,
       createdAt: now,
       updatedAt: now,
@@ -2296,13 +2311,13 @@ export class SqliteStore {
       lastTurnStartedAt: nowMs,
     };
     this.db.prepare(`
-      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, fast_mode, provider_id, bot_id, created_at, updated_at, custom_title, backend, last_turn_started_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(session.id, session.workspaceId, session.name, 1, 0, 0, source ?? null, mode, fastMode ? 1 : 0, providerId ?? null, botId ?? null, session.createdAt, session.updatedAt, customTitle ?? null, backend ?? null, nowMs);
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, fast_mode, provider_id, bot_id, created_at, updated_at, custom_title, backend, last_turn_started_at, codex_model, codex_effort, codex_speed)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(session.id, session.workspaceId, session.name, 1, 0, 0, source ?? null, mode, fastMode ? 1 : 0, providerId ?? null, botId ?? null, session.createdAt, session.updatedAt, customTitle ?? null, backend ?? null, nowMs, codexModel ?? null, codexEffort ?? null, codexSpeed ?? null);
     return session;
   }
 
-  updateLocalSession(id: string, input: { name?: string; isWip?: boolean; isArchived?: boolean; approvalMode?: string; providerId?: string | null; fastMode?: boolean; customTitle?: string | null }): ChatSession | null {
+  updateLocalSession(id: string, input: { name?: string; isWip?: boolean; isArchived?: boolean; approvalMode?: string; providerId?: string | null; fastMode?: boolean; codexModel?: string | null; codexEffort?: string | null; codexSpeed?: string | null; customTitle?: string | null }): ChatSession | null {
     const existing = this.getLocalSession(id);
     if (!existing) return null;
     const sets: string[] = [];
@@ -2334,6 +2349,18 @@ export class SqliteStore {
     if (input.fastMode !== undefined) {
       sets.push('fast_mode = ?');
       values.push(input.fastMode ? 1 : 0);
+    }
+    if (input.codexModel !== undefined) {
+      sets.push('codex_model = ?');
+      values.push(input.codexModel);
+    }
+    if (input.codexEffort !== undefined) {
+      sets.push('codex_effort = ?');
+      values.push(input.codexEffort);
+    }
+    if (input.codexSpeed !== undefined) {
+      sets.push('codex_speed = ?');
+      values.push(input.codexSpeed);
     }
     if (sets.length === 0) return existing;
     sets.push('updated_at = ?');
@@ -4694,6 +4721,9 @@ interface RawSessionRow {
   backend_session_id: string | null;
   bot_id: string | null;
   fast_mode: number;
+  codex_model: string | null;
+  codex_effort: string | null;
+  codex_speed: string | null;
   output_style: string | null;
   created_at: string;
   updated_at: string;
@@ -4719,6 +4749,9 @@ function parseSessionRow(row: RawSessionRow): ChatSession {
     backend: row.backend ?? undefined,
     backendSessionId: row.backend_session_id ?? undefined,
     fastMode: row.fast_mode === 1,
+    codexModel: row.codex_model ?? undefined,
+    codexEffort: row.codex_effort ?? undefined,
+    codexSpeed: row.codex_speed ?? undefined,
     botId: row.bot_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

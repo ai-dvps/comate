@@ -18,7 +18,11 @@ import type { GetAccountResponse } from '../generated/codex-protocol/v2/GetAccou
 import type { LoginAccountParams } from '../generated/codex-protocol/v2/LoginAccountParams.js';
 import type { LoginAccountResponse } from '../generated/codex-protocol/v2/LoginAccountResponse.js';
 import type { ModelListResponse } from '../generated/codex-protocol/v2/ModelListResponse.js';
-import { getCodexDefaultModel, setCodexDefaultModel } from '../services/codex-settings.js';
+import {
+  getCodexDefaults,
+  setCodexDefaults,
+  type CodexDefaults,
+} from '../services/codex-settings.js';
 
 export interface BackendRouteDeps {
   codexAccount: {
@@ -29,16 +33,16 @@ export interface BackendRouteDeps {
     listModels(): Promise<ModelListResponse>;
   };
   codexSettings: {
-    getDefaultModel(): Promise<string | undefined>;
-    setDefaultModel(model: string | null): Promise<void>;
+    getDefaults(): Promise<CodexDefaults>;
+    setDefaults(defaults: CodexDefaults): Promise<void>;
   };
 }
 
 const DEFAULT_DEPS: BackendRouteDeps = {
   codexAccount: codexAccountService,
   codexSettings: {
-    getDefaultModel: getCodexDefaultModel,
-    setDefaultModel: setCodexDefaultModel,
+    getDefaults: getCodexDefaults,
+    setDefaults: setCodexDefaults,
   },
 };
 
@@ -149,7 +153,7 @@ router.post('/codex/login/cancel', async (req, res) => {
 router.post('/codex/logout', async (_req, res) => {
   try {
     await deps.codexAccount.logout();
-    await deps.codexSettings.setDefaultModel(null);
+    await deps.codexSettings.setDefaults({});
     res.json({ ok: true });
   } catch (error) {
     codexAccountFailure('log out', error, res);
@@ -166,7 +170,7 @@ router.get('/codex/models', async (_req, res) => {
 
 router.get('/codex/model', async (_req, res) => {
   try {
-    res.json({ model: await deps.codexSettings.getDefaultModel() ?? null });
+    res.json({ model: (await deps.codexSettings.getDefaults()).model ?? null });
   } catch (error) {
     codexAccountFailure('read model preference', error, res);
   }
@@ -186,14 +190,79 @@ router.put('/codex/model', async (req, res) => {
         return;
       }
     }
-    await deps.codexSettings.setDefaultModel(model);
+    await deps.codexSettings.setDefaults(model === null ? {} : { model });
     res.json({ model });
   } catch (error) {
     codexAccountFailure('update model preference', error, res);
   }
 });
 
+router.get('/codex/defaults', async (_req, res) => {
+  try {
+    const defaults = await deps.codexSettings.getDefaults();
+    res.json({
+      model: defaults.model ?? null,
+      effort: defaults.effort ?? null,
+      speed: defaults.speed ?? null,
+    });
+  } catch (error) {
+    codexAccountFailure('read Codex defaults', error, res);
+  }
+});
+
+router.put('/codex/defaults', async (req, res) => {
+  const model = optionalCodexSetting(req.body?.model, 'model', res);
+  if (model === undefined) return;
+  const effort = optionalCodexSetting(req.body?.effort, 'effort', res);
+  if (effort === undefined) return;
+  const speed = optionalCodexSetting(req.body?.speed, 'speed', res);
+  if (speed === undefined) return;
+
+  try {
+    const available = await deps.codexAccount.listModels();
+    const selectedModel = model === null
+      ? available.data.find((entry) => !entry.hidden && entry.isDefault)
+      : available.data.find((entry) => !entry.hidden && entry.model === model);
+    if (!selectedModel) {
+      res.status(400).json({ error: 'The selected Codex model is not available for this account' });
+      return;
+    }
+    if (effort !== null && !selectedModel.supportedReasoningEfforts.some(
+      (option) => option.reasoningEffort === effort,
+    )) {
+      res.status(400).json({ error: 'The selected reasoning effort is not available for this model' });
+      return;
+    }
+    if (speed !== null && !selectedModel.serviceTiers.some((tier) => tier.id === speed)) {
+      res.status(400).json({ error: 'The selected speed is not available for this model' });
+      return;
+    }
+    const defaults = {
+      ...(model !== null ? { model } : {}),
+      ...(effort !== null ? { effort } : {}),
+      ...(speed !== null ? { speed } : {}),
+    };
+    await deps.codexSettings.setDefaults(defaults);
+    res.json({ model, effort, speed });
+  } catch (error) {
+    codexAccountFailure('update Codex defaults', error, res);
+  }
+});
+
   return router;
+}
+
+function optionalCodexSetting(
+  value: unknown,
+  name: string,
+  res: { status(code: number): { json(body: unknown): void } },
+): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== 'string' || value.length === 0 || value.length > 200) {
+    res.status(400).json({ error: `${name} must be null or a valid Codex value` });
+    return undefined;
+  }
+  return value;
 }
 
 function codexAccountFailure(

@@ -45,6 +45,8 @@ describe('Codex account store', () => {
       codexAccount: null,
       codexModels: [],
       codexDefaultModel: null,
+      codexDefaultEffort: null,
+      codexDefaultSpeed: null,
       codexAccountLoading: false,
       codexAccountError: null,
     })
@@ -93,19 +95,49 @@ describe('Codex account store', () => {
           data: [{ id: 'model-1', model: 'gpt-5.6-codex', displayName: 'GPT-5.6 Codex', hidden: false }],
         }),
       })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ model: 'gpt-5.6-codex' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ model: 'gpt-5.6-codex', effort: 'high', speed: 'fast' }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ model: null }) })
     vi.stubGlobal('fetch', fetchMock)
 
     await useBackendStore.getState().fetchCodexModels()
     expect(useBackendStore.getState().codexDefaultModel).toBe('gpt-5.6-codex')
+    expect(useBackendStore.getState().codexDefaultEffort).toBe('high')
+    expect(useBackendStore.getState().codexDefaultSpeed).toBe('fast')
 
-    await useBackendStore.getState().setCodexDefaultModel(null)
+    await useBackendStore.getState().setCodexDefaults({ model: null, effort: null, speed: null })
     expect(useBackendStore.getState().codexDefaultModel).toBeNull()
-    expect(fetchMock).toHaveBeenLastCalledWith('/api/backends/codex/model', {
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/backends/codex/defaults', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: null }),
+      body: JSON.stringify({ model: null, effort: null, speed: null }),
     })
+    expect(useBackendStore.getState().codexDefaultEffort).toBeNull()
+    expect(useBackendStore.getState().codexDefaultSpeed).toBeNull()
+  })
+
+  it('waits for an in-flight defaults save before logging out', async () => {
+    let resolveDefaults!: (response: Response) => void
+    const defaultsResponse = new Promise<Response>((resolve) => { resolveDefaults = resolve })
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => defaultsResponse)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const defaults = useBackendStore.getState().setCodexDefaults({
+      model: 'gpt-5.6-codex',
+      effort: 'high',
+      speed: 'fast',
+    })
+    const logout = useBackendStore.getState().logoutCodex()
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/backends/codex/defaults')
+
+    resolveDefaults({ ok: true, json: async () => ({}) } as Response)
+    await defaults
+    await logout
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/backends/codex/logout')
   })
 })

@@ -2151,6 +2151,68 @@ describe('setSessionProvider', () => {
     assert.strictEqual(useChatStore.getState().isRestartingRuntime['s1'], undefined)
   })
 
+  it('sends an explicit null when switching to the native Codex account', async () => {
+    useChatStore.setState({
+      sessions: { 'ws-1': [{ ...makeGuiSession(), backend: 'codex', providerId: 'p2' }] },
+    })
+
+    await useChatStore.getState().setSessionProvider('ws-1', 's1', null)
+
+    const fetchMock = vi.mocked(fetch)
+    assert.deepStrictEqual(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)), {
+      providerId: null,
+    })
+    assert.strictEqual(useChatStore.getState().sessions['ws-1'][0].providerId, undefined)
+  })
+
+  it('persists per-session Codex model, effort, and speed together', async () => {
+    await useChatStore.getState().setSessionCodexSettings('ws-1', 's1', {
+      codexModel: 'gpt-5.6-codex',
+      codexEffort: 'high',
+      codexSpeed: 'fast',
+    })
+
+    const session = useChatStore.getState().sessions['ws-1'][0]
+    assert.strictEqual(session.codexModel, 'gpt-5.6-codex')
+    assert.strictEqual(session.codexEffort, 'high')
+    assert.strictEqual(session.codexSpeed, 'fast')
+    const fetchMock = vi.mocked(fetch)
+    assert.deepStrictEqual(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)), {
+      codexModel: 'gpt-5.6-codex',
+      codexEffort: 'high',
+      codexSpeed: 'fast',
+    })
+  })
+
+  it('does not let an older failed Codex settings request roll back a newer choice', async () => {
+    let rejectFirstRequest: ((reason?: unknown) => void) | undefined
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => {
+        rejectFirstRequest = reject
+      }))
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const firstRequest = useChatStore.getState().setSessionCodexSettings('ws-1', 's1', {
+      codexModel: 'gpt-5.6-codex',
+      codexEffort: 'high',
+      codexSpeed: 'fast',
+    })
+    const firstRejection = expect(firstRequest).rejects.toThrow('stale request failed')
+    await useChatStore.getState().setSessionCodexSettings('ws-1', 's1', {
+      codexModel: 'gpt-5.7-codex',
+      codexEffort: 'medium',
+      codexSpeed: 'standard',
+    })
+    rejectFirstRequest?.(new Error('stale request failed'))
+    await firstRejection
+
+    const session = useChatStore.getState().sessions['ws-1'][0]
+    assert.strictEqual(session.codexModel, 'gpt-5.7-codex')
+    assert.strictEqual(session.codexEffort, 'medium')
+    assert.strictEqual(session.codexSpeed, 'standard')
+  })
+
   it('clears loading even if the post-switch subscribe fails', async () => {
     useChatStore.getState().setActiveSession('ws-1', 's1')
     await new Promise((r) => setTimeout(r, 0))

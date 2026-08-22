@@ -86,6 +86,29 @@ describe('chat route new chat creation', { concurrency: false }, () => {
     assert.strictEqual(persisted?.fastMode, true);
     assert.strictEqual(persisted?.approvalMode, 'auto');
   });
+
+  it('persists per-session Codex model, effort, and speed selections', async () => {
+    const handler = await importCreateSessionHandler();
+    const res = createMockRes();
+
+    await handler({
+      params: { id: 'ws-1' },
+      body: {
+        prompt: 'Start Codex with selected controls',
+        backend: 'codex',
+        codexModel: 'gpt-5.6-codex',
+        codexEffort: 'high',
+        codexSpeed: 'fast',
+      },
+    }, res);
+
+    assert.strictEqual(res.statusCode, 201);
+    const session = res.jsonBody as { id: string };
+    const persisted = workspaceStore.getLocalSession(session.id);
+    assert.strictEqual(persisted?.codexModel, 'gpt-5.6-codex');
+    assert.strictEqual(persisted?.codexEffort, 'high');
+    assert.strictEqual(persisted?.codexSpeed, 'fast');
+  });
 });
 
 describe('chat route Feishu user info', { concurrency: false }, () => {

@@ -167,6 +167,8 @@ function CodexAccountSetting() {
   const account = useBackendStore((state) => state.codexAccount)
   const models = useBackendStore((state) => state.codexModels)
   const defaultModel = useBackendStore((state) => state.codexDefaultModel)
+  const defaultEffort = useBackendStore((state) => state.codexDefaultEffort)
+  const defaultSpeed = useBackendStore((state) => state.codexDefaultSpeed)
   const loading = useBackendStore((state) => state.codexAccountLoading)
   const error = useBackendStore((state) => state.codexAccountError)
   const fetchAccount = useBackendStore((state) => state.fetchCodexAccount)
@@ -174,7 +176,7 @@ function CodexAccountSetting() {
   const cancelLogin = useBackendStore((state) => state.cancelCodexLogin)
   const logout = useBackendStore((state) => state.logoutCodex)
   const fetchModels = useBackendStore((state) => state.fetchCodexModels)
-  const setDefaultModel = useBackendStore((state) => state.setCodexDefaultModel)
+  const setDefaults = useBackendStore((state) => state.setCodexDefaults)
   const [apiKey, setApiKey] = useState('')
   const [pendingLogin, setPendingLogin] = useState<{ loginId: string; authUrl: string } | null>(null)
 
@@ -236,6 +238,17 @@ function CodexAccountSetting() {
   } else if (account?.type === 'amazonBedrock') {
     accountLabel = t('backend.codexBedrockAccount')
   }
+  const selectedModel = models.find((model) => model.model === defaultModel)
+    ?? models.find((model) => model.isDefault)
+  const updateDefaults = (patch: Partial<{ model: string | null; effort: string | null; speed: string | null }>) => {
+    const next = {
+      model: defaultModel,
+      effort: defaultEffort,
+      speed: defaultSpeed,
+      ...patch,
+    }
+    void setDefaults(next).catch(() => undefined)
+  }
 
   return (
     <div className="space-y-3 px-4 py-4 sm:px-5">
@@ -282,26 +295,64 @@ function CodexAccountSetting() {
             </button>
           </div>
           {models.length > 0 && (
-            <label className="block max-w-md">
-              <span className="mb-1.5 block text-xs font-medium text-text-secondary">
-                {t('backend.codexDefaultModel')}
-              </span>
-              <select
-                value={defaultModel ?? ''}
-                onChange={(event) => void setDefaultModel(event.target.value || null).catch(() => undefined)}
-                className="h-9 w-full rounded-md border border-border bg-bg px-3 text-xs text-text-primary outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20"
-              >
-                <option value="">{t('backend.codexNativeDefaultModel')}</option>
-                {models.map((model) => (
-                  <option key={model.id} value={model.model}>
-                    {model.displayName}{model.isDefault ? ` (${t('backend.codexCatalogDefault')})` : ''}
-                  </option>
-                ))}
-              </select>
-              <span className="mt-1 block text-xs leading-4 text-text-tertiary">
+            <div className="grid max-w-2xl gap-3 sm:grid-cols-3">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-text-secondary">
+                  {t('backend.codexDefaultModel')}
+                </span>
+                <select
+                  value={defaultModel ?? ''}
+                  onChange={(event) => updateDefaults({
+                    model: event.target.value || null,
+                    effort: null,
+                    speed: null,
+                  })}
+                  className="h-9 w-full rounded-md border border-border bg-bg px-3 text-xs text-text-primary outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20"
+                >
+                  <option value="">{t('backend.codexNativeDefaultModel')}</option>
+                  {models.map((model) => (
+                    <option key={model.id} value={model.model}>
+                      {model.displayName}{model.isDefault ? ` (${t('backend.codexCatalogDefault')})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-text-secondary">
+                  {t('backend.codexDefaultEffort')}
+                </span>
+                <select
+                  value={defaultEffort ?? ''}
+                  onChange={(event) => updateDefaults({ effort: event.target.value || null })}
+                  className="h-9 w-full rounded-md border border-border bg-bg px-3 text-xs text-text-primary outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20"
+                >
+                  <option value="">{t('backend.codexModelDefault')}</option>
+                  {selectedModel?.supportedReasoningEfforts.map((option) => (
+                    <option key={option.reasoningEffort} value={option.reasoningEffort}>
+                      {option.reasoningEffort}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-text-secondary">
+                  {t('backend.codexDefaultSpeed')}
+                </span>
+                <select
+                  value={defaultSpeed ?? ''}
+                  onChange={(event) => updateDefaults({ speed: event.target.value || null })}
+                  className="h-9 w-full rounded-md border border-border bg-bg px-3 text-xs text-text-primary outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20"
+                >
+                  <option value="">{t('backend.codexModelDefault')}</option>
+                  {selectedModel?.serviceTiers.map((tier) => (
+                    <option key={tier.id} value={tier.id}>{tier.name}</option>
+                  ))}
+                </select>
+              </label>
+              <span className="text-xs leading-4 text-text-tertiary sm:col-span-3">
                 {t('backend.codexDefaultModelDescription')}
               </span>
-            </label>
+            </div>
           )}
         </div>
       ) : pendingLogin ? (

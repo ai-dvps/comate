@@ -14,6 +14,62 @@ class FakeClient extends EventEmitter {
 }
 
 describe('CodexBackendDriver interactions', () => {
+  it('applies native model, effort, and speed to the thread and each turn', async () => {
+    const client = new FakeClient();
+    const requests: Array<{ method: string; params?: Record<string, unknown> }> = [];
+    const manager = {
+      ensureClient: async () => client,
+      request: async (method: string, params?: Record<string, unknown>) => {
+        requests.push({ method, params });
+        if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+        if (method === 'turn/start') return { turn: { id: 'turn-1' } };
+        return {};
+      },
+    } as unknown as CodexAppServerManager;
+    const driver = new CodexBackendDriver({
+      directory: '/tmp/project',
+      model: 'gpt-5.6-codex',
+      effort: 'high',
+      serviceTier: 'fast',
+      onBackendSessionId: () => undefined,
+      manager,
+    });
+    async function* input(): AsyncGenerator<SDKUserMessage> {
+      yield {
+        type: 'user',
+        uuid: 'message-settings',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'hello' },
+      } as SDKUserMessage;
+    }
+
+    driver.createStreamingQuery(input(), {} as Options);
+    await waitFor(() => requests.some((request) => request.method === 'turn/start'));
+
+    assert.deepStrictEqual(requests[0], {
+      method: 'thread/start',
+      params: {
+        cwd: '/tmp/project',
+        approvalPolicy: 'on-request',
+        sandbox: 'workspace-write',
+        config: { model_reasoning_effort: 'high' },
+        model: 'gpt-5.6-codex',
+        serviceTier: 'fast',
+      },
+    });
+    assert.deepStrictEqual(requests[1], {
+      method: 'turn/start',
+      params: {
+        threadId: 'thread-1',
+        clientUserMessageId: 'message-settings',
+        input: [{ type: 'text', text: 'hello', text_elements: [] }],
+        model: 'gpt-5.6-codex',
+        effort: 'high',
+        serviceTier: 'fast',
+      },
+    });
+  });
+
   it('ends the stream and rejects admission when app-server startup fails', async () => {
     const manager = {
       ensureClient: async () => { throw new Error('app-server unavailable'); },
@@ -284,7 +340,7 @@ describe('CodexBackendDriver interactions', () => {
     });
     const turnStart = requests.find((request) => request.method === 'turn/start');
     assert.ok(turnStart);
-    assert.ok(!Object.hasOwn(turnStart.params as object, 'model'));
+    assert.strictEqual((turnStart.params as { model?: string }).model, 'gpt-5.6-codex');
   });
 
   it('preserves ordered text and image input for app-server', () => {

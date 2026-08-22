@@ -193,6 +193,50 @@ describe('BackendSection', () => {
     expect(screen.getByLabelText('OpenAI API key')).toHaveValue('')
   })
 
+  it('offers model, effort, and speed defaults for a signed-in Codex account', async () => {
+    const setCodexDefaults = vi.fn().mockResolvedValue(undefined)
+    useBackendStore.setState((state) => ({
+      backends: [
+        ...state.backends,
+        { id: 'codex', availability: { status: 'available' as const }, capabilities: {} },
+      ],
+      codexAccount: { type: 'chatgpt', email: 'user@example.com', planType: 'plus' },
+      codexModels: [{
+        id: 'model-1',
+        model: 'gpt-5.6-codex',
+        displayName: 'GPT-5.6 Codex',
+        description: '',
+        hidden: false,
+        isDefault: true,
+        supportedReasoningEfforts: [
+          { reasoningEffort: 'medium', description: '' },
+          { reasoningEffort: 'high', description: '' },
+        ],
+        defaultReasoningEffort: 'medium',
+        serviceTiers: [{ id: 'fast', name: 'Fast', description: '' }],
+        defaultServiceTier: null,
+      }],
+      codexDefaultModel: 'gpt-5.6-codex',
+      codexDefaultEffort: null,
+      codexDefaultSpeed: null,
+      fetchCodexAccount: vi.fn().mockResolvedValue(undefined),
+      fetchCodexModels: vi.fn().mockResolvedValue(undefined),
+      setCodexDefaults,
+    }))
+    const user = userEvent.setup()
+    renderSection()
+
+    await user.selectOptions(screen.getByLabelText('Default effort'), 'high')
+    await user.selectOptions(screen.getByLabelText('Default speed'), 'fast')
+
+    expect(setCodexDefaults).toHaveBeenNthCalledWith(1, {
+      model: 'gpt-5.6-codex', effort: 'high', speed: null,
+    })
+    expect(setCodexDefaults).toHaveBeenNthCalledWith(2, {
+      model: 'gpt-5.6-codex', effort: null, speed: 'fast',
+    })
+  })
+
   it('renders loading, load-error, and empty states', async () => {
     const { rerender } = renderSection()
 

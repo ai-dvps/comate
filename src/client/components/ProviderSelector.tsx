@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
 import { useProviderStore } from '../stores/provider-store'
+import { useBackendStore, type BackendId, type CodexModel } from '../stores/backend-store'
 import {
   useProviderUsageStore,
   hasUsageSupport,
@@ -26,11 +27,88 @@ interface SessionProviderSelectorProps extends ProviderSelectorCommonProps {
 
 interface NewChatProviderSelectorProps extends ProviderSelectorCommonProps {
   mode: 'new-chat'
+  backendId?: BackendId | null
   providerId: string | null
   onProviderChange: (providerId: string | null) => void
+  codexModel?: string | null
+  codexEffort?: string | null
+  codexSpeed?: string | null
+  onCodexSettingsChange?: (settings: CodexSettingsSelection) => void
 }
 
 type ProviderSelectorProps = SessionProviderSelectorProps | NewChatProviderSelectorProps
+
+interface CodexSettingsSelection {
+  codexModel: string | null
+  codexEffort: string | null
+  codexSpeed: string | null
+}
+
+function CodexSettingsControls({
+  models,
+  selection,
+  defaults,
+  onChange,
+}: {
+  models: CodexModel[]
+  selection: CodexSettingsSelection
+  defaults: { model: string | null; effort: string | null; speed: string | null }
+  onChange: (settings: CodexSettingsSelection) => void
+}) {
+  const { t } = useTranslation('chat')
+  const effectiveModel = selection.codexModel ?? defaults.model
+  const selectedModel = models.find((model) => model.model === effectiveModel)
+    ?? models.find((model) => model.isDefault)
+  const selectClass = 'h-8 w-full rounded-md border border-border bg-bg px-2 text-[11px] text-text-primary outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20'
+
+  return (
+    <div className="grid gap-2 border-t border-border/70 px-2.5 py-2.5">
+      <label className="grid grid-cols-[4.5rem_1fr] items-center gap-2 text-[11px] text-text-tertiary">
+        <span>{t('provider.codexModel')}</span>
+        <select
+          value={selection.codexModel ?? ''}
+          onChange={(event) => onChange({
+            codexModel: event.target.value || null,
+            codexEffort: null,
+            codexSpeed: null,
+          })}
+          className={selectClass}
+        >
+          <option value="">{t('provider.codexUseDefault')}</option>
+          {models.map((model) => (
+            <option key={model.id} value={model.model}>{model.displayName}</option>
+          ))}
+        </select>
+      </label>
+      <label className="grid grid-cols-[4.5rem_1fr] items-center gap-2 text-[11px] text-text-tertiary">
+        <span>{t('provider.codexEffort')}</span>
+        <select
+          value={selection.codexEffort ?? ''}
+          onChange={(event) => onChange({ ...selection, codexEffort: event.target.value || null })}
+          className={selectClass}
+        >
+          <option value="">{t('provider.codexUseDefault')}</option>
+          {selectedModel?.supportedReasoningEfforts.map((option) => (
+            <option key={option.reasoningEffort} value={option.reasoningEffort}>{option.reasoningEffort}</option>
+          ))}
+        </select>
+      </label>
+      <label className="grid grid-cols-[4.5rem_1fr] items-center gap-2 text-[11px] text-text-tertiary">
+        <span>{t('provider.codexSpeed')}</span>
+        <select
+          value={selection.codexSpeed ?? ''}
+          onChange={(event) => onChange({ ...selection, codexSpeed: event.target.value || null })}
+          className={selectClass}
+        >
+          <option value="">{t('provider.codexUseDefault')}</option>
+          {selectedModel?.serviceTiers.map((tier) => (
+            <option key={tier.id} value={tier.id}>{tier.name}</option>
+          ))}
+        </select>
+      </label>
+    </div>
+  )
+}
 
 function ProviderAvatar({ name, className = '' }: { name: string; className?: string }) {
   const initial = name.charAt(0).toUpperCase()
@@ -112,17 +190,38 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
     sessionId ? s.sessions[workspaceId]?.find((ses) => ses.id === sessionId) : undefined,
   )
   const setSessionProvider = useChatStore((s) => s.setSessionProvider)
+  const setSessionCodexSettings = useChatStore((s) => s.setSessionCodexSettings)
 
   const providers = useProviderStore((s) => s.providers)
   const defaultProvider = useProviderStore((s) => s.providers.find((p) => p.isDefault))
   const fetchProviders = useProviderStore((s) => s.fetchProviders)
   const fetchUsage = useProviderUsageStore((s) => s.fetchUsage)
+  const defaultBackend = useBackendStore((s) => s.defaultBackend)
+  const codexAccount = useBackendStore((s) => s.codexAccount)
+  const codexModels = useBackendStore((s) => s.codexModels)
+  const codexDefaultModel = useBackendStore((s) => s.codexDefaultModel)
+  const codexDefaultEffort = useBackendStore((s) => s.codexDefaultEffort)
+  const codexDefaultSpeed = useBackendStore((s) => s.codexDefaultSpeed)
+  const fetchCodexAccount = useBackendStore((s) => s.fetchCodexAccount)
+  const fetchCodexModels = useBackendStore((s) => s.fetchCodexModels)
+  const activeBackend = (isNewChat ? props.backendId : session?.backend) ?? defaultBackend ?? 'claude'
 
   useEffect(() => {
     if (providers.length === 0) {
       fetchProviders()
     }
   }, [fetchProviders, providers.length])
+
+  useEffect(() => {
+    if (activeBackend !== 'codex') return
+    void fetchCodexAccount()
+  }, [activeBackend, fetchCodexAccount])
+
+  useEffect(() => {
+    if (activeBackend === 'codex' && codexAccount && codexModels.length === 0) {
+      void fetchCodexModels()
+    }
+  }, [activeBackend, codexAccount, codexModels.length, fetchCodexModels])
 
   // On open, fetch usage for each Kimi coding-plan provider (on-demand; the
   // client throttle prevents over-fetching, and the server always fetches
@@ -138,7 +237,10 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
   }, [open, providers, fetchUsage])
 
   const currentProviderId = isNewChat ? props.providerId : session?.providerId
-  const currentProvider = providers.find((p) => p.id === currentProviderId)
+  const availableProviders = activeBackend === 'codex'
+    ? providers.filter((provider) => provider.protocol === 'openai-responses')
+    : providers
+  const currentProvider = availableProviders.find((p) => p.id === currentProviderId)
   const isRestarting = useChatStore((s) => sessionId ? s.isRestartingRuntime[sessionId] ?? false : false)
 
   const handleSelect = (providerId: string | null) => {
@@ -150,6 +252,22 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
     setOpen(false)
   }
 
+  const codexSelection: CodexSettingsSelection = isNewChat
+    ? {
+        codexModel: props.codexModel ?? null,
+        codexEffort: props.codexEffort ?? null,
+        codexSpeed: props.codexSpeed ?? null,
+      }
+    : {
+        codexModel: session?.codexModel ?? null,
+        codexEffort: session?.codexEffort ?? null,
+        codexSpeed: session?.codexSpeed ?? null,
+      }
+  const handleCodexSettingsChange = (settings: CodexSettingsSelection) => {
+    if (isNewChat) props.onCodexSettingsChange?.(settings)
+    else void setSessionCodexSettings(workspaceId, props.sessionId, settings).catch(() => undefined)
+  }
+
   const handleRowKey = (e: React.KeyboardEvent, providerId: string) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
@@ -157,7 +275,10 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
     }
   }
 
-  const displayName = currentProvider?.name ?? defaultProvider?.name ?? t('provider.default')
+  const nativeCodexActive = Boolean(activeBackend === 'codex' && codexAccount && !currentProviderId)
+  const displayName = nativeCodexActive
+    ? t('provider.codexAccount')
+    : currentProvider?.name ?? (activeBackend === 'codex' ? t('provider.selectProvider') : defaultProvider?.name) ?? t('provider.default')
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -186,7 +307,30 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
         <div className="px-2 py-1 text-[10px] font-medium text-text-tertiary uppercase tracking-wider">
           {t('provider.selectProvider')}
         </div>
-        {providers.map((provider) => {
+        {activeBackend === 'codex' && codexAccount && (
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => handleSelect(null)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                handleSelect(null)
+              }
+            }}
+            className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-xs rounded-md transition-colors cursor-pointer ${
+              nativeCodexActive ? 'bg-surface-active text-text-primary' : 'text-text-secondary hover:bg-surface-hover'
+            }`}
+          >
+            <ProviderAvatar name="Codex" className="w-5 h-5 text-[10px] flex-shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="font-medium truncate">{t('provider.codexAccount')}</div>
+              <div className="text-[10px] text-text-tertiary truncate">{t('provider.codexManagedByCodex')}</div>
+            </div>
+            <Check className={`w-3.5 h-3.5 flex-shrink-0 ${nativeCodexActive ? '' : 'opacity-0'}`} />
+          </div>
+        )}
+        {availableProviders.map((provider) => {
           const isActive = provider.id === currentProviderId
           const showUsage = hasUsageSupport(provider.baseUrl)
           return (
@@ -216,10 +360,22 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
             </div>
           )
         })}
-        {providers.length === 0 && (
+        {availableProviders.length === 0 && !(activeBackend === 'codex' && codexAccount) && (
           <div className="px-2.5 py-2 text-xs text-text-tertiary text-center">
             {t('provider.noProviders')}
           </div>
+        )}
+        {nativeCodexActive && codexModels.length > 0 && (
+          <CodexSettingsControls
+            models={codexModels}
+            selection={codexSelection}
+            defaults={{
+              model: codexDefaultModel,
+              effort: codexDefaultEffort,
+              speed: codexDefaultSpeed,
+            }}
+            onChange={handleCodexSettingsChange}
+          />
         )}
       </PopoverContent>
     </Popover>

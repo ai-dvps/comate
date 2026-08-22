@@ -46,13 +46,62 @@ function fakeDeps(overrides: Partial<BackendRouteDeps['codexAccount']> = {}): Ba
       ...overrides,
     },
     codexSettings: {
-      getDefaultModel: async () => undefined,
-      setDefaultModel: async () => undefined,
+      getDefaults: async () => ({}),
+      setDefaults: async () => undefined,
     },
   };
 }
 
 describe('backend routes Codex account API', () => {
+  it('validates and persists model-specific effort and speed defaults', async () => {
+    let saved: unknown;
+    const deps = fakeDeps({
+      listModels: async () => ({
+        data: [{
+          model: 'gpt-5.6-codex',
+          hidden: false,
+          supportedReasoningEfforts: [{ reasoningEffort: 'medium', description: '' }, { reasoningEffort: 'high', description: '' }],
+          serviceTiers: [{ id: 'fast', name: 'Fast', description: '' }],
+        } as never],
+        nextCursor: null,
+      }),
+    });
+    deps.codexSettings.setDefaults = async (defaults) => { saved = defaults; };
+    const handler = getHandler(deps, 'put', '/codex/defaults');
+    const res = createMockRes();
+
+    await handler({ body: { model: 'gpt-5.6-codex', effort: 'high', speed: 'fast' } }, res);
+
+    assert.deepStrictEqual(saved, { model: 'gpt-5.6-codex', effort: 'high', speed: 'fast' });
+    assert.deepStrictEqual(res.jsonBody, { model: 'gpt-5.6-codex', effort: 'high', speed: 'fast' });
+  });
+
+  it('rejects effort and speed values unavailable for the selected model', async () => {
+    let saved = false;
+    const deps = fakeDeps({
+      listModels: async () => ({
+        data: [{
+          model: 'gpt-5.6-codex',
+          hidden: false,
+          supportedReasoningEfforts: [{ reasoningEffort: 'medium', description: '' }],
+          serviceTiers: [],
+        } as never],
+        nextCursor: null,
+      }),
+    });
+    deps.codexSettings.setDefaults = async () => { saved = true; };
+    const handler = getHandler(deps, 'put', '/codex/defaults');
+
+    const effortRes = createMockRes();
+    await handler({ body: { model: 'gpt-5.6-codex', effort: 'ultra', speed: null } }, effortRes);
+    assert.strictEqual(effortRes.statusCode, 400);
+
+    const speedRes = createMockRes();
+    await handler({ body: { model: 'gpt-5.6-codex', effort: null, speed: 'fast' } }, speedRes);
+    assert.strictEqual(speedRes.statusCode, 400);
+    assert.strictEqual(saved, false);
+  });
+
   it('validates and persists an account-visible default model', async () => {
     let saved: string | null | undefined;
     const deps = fakeDeps({
@@ -61,7 +110,7 @@ describe('backend routes Codex account API', () => {
         nextCursor: null,
       }),
     });
-    deps.codexSettings.setDefaultModel = async (model) => { saved = model; };
+    deps.codexSettings.setDefaults = async (defaults) => { saved = defaults.model ?? null; };
     const handler = getHandler(deps, 'put', '/codex/model');
     const res = createMockRes();
 
@@ -74,7 +123,7 @@ describe('backend routes Codex account API', () => {
   it('rejects a model outside the native account catalog', async () => {
     let saved = false;
     const deps = fakeDeps();
-    deps.codexSettings.setDefaultModel = async () => { saved = true; };
+    deps.codexSettings.setDefaults = async () => { saved = true; };
     const handler = getHandler(deps, 'put', '/codex/model');
     const res = createMockRes();
 
