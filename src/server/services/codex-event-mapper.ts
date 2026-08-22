@@ -42,7 +42,7 @@ export class CodexEventMapper {
   private started(turnId: string, item: ThreadItem): SDKMessage[] {
     if (item.type === 'agentMessage') return this.startPart(turnId, item.id, 'text');
     if (item.type === 'reasoning') return this.startPart(turnId, item.id, 'thinking');
-    const tool = toolProjection(item);
+    const tool = projectCodexToolItem(item);
     if (!tool) return [];
     return this.startTool(turnId, item.id, tool.name, tool.input);
   }
@@ -51,7 +51,7 @@ export class CodexEventMapper {
     if (item.type === 'agentMessage' || item.type === 'reasoning') {
       return this.stopPart(turnId, item.id);
     }
-    const tool = toolProjection(item);
+    const tool = projectCodexToolItem(item);
     if (!tool || this.completedTools.has(item.id)) return [];
     this.completedTools.add(item.id);
     return [
@@ -184,7 +184,7 @@ export class CodexEventMapper {
   }
 }
 
-function toolProjection(item: ThreadItem): {
+export function projectCodexToolItem(item: ThreadItem): {
   name: string;
   input: unknown;
   output: string;
