@@ -9,7 +9,9 @@ import { normalizeCodexProtocolImports } from './lib/codex-protocol.js';
 
 function snapshot(root: string, current = root): Map<string, Buffer> {
   const files = new Map<string, Buffer>();
-  for (const entry of readdirSync(current, { withFileTypes: true })) {
+  const entries = readdirSync(current, { withFileTypes: true })
+    .sort((left, right) => left.name.localeCompare(right.name));
+  for (const entry of entries) {
     const absolute = path.join(current, entry.name);
     if (entry.isDirectory()) {
       for (const [name, content] of snapshot(root, absolute)) files.set(name, content);
