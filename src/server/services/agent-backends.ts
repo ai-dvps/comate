@@ -21,9 +21,56 @@ import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
 import { resolveOpencodeBinary } from '../utils/resolve-opencode-binary.js';
 import { getAppSetting, setAppSetting } from '../storage/app-settings-store.js';
 import { diagLog } from '../utils/diag-logger.js';
+import type { BackendDriver, BackendSessionRef } from './backend-driver.js';
 
-export type BackendId = 'claude' | 'opencode';
-export const BACKEND_IDS: readonly BackendId[] = ['claude', 'opencode'];
+export type BackendId = 'claude' | 'opencode' | 'codex';
+export const BACKEND_IDS: readonly BackendId[] = ['claude', 'opencode', 'codex'];
+
+// ---------------------------------------------------------------------------
+// Backend service facets
+// ---------------------------------------------------------------------------
+
+export interface BackendHistoryFacet {
+  load(session: BackendSessionRef): Promise<unknown>;
+}
+
+export interface BackendSessionOperationsFacet {
+  rename?(session: BackendSessionRef, title: string): Promise<void>;
+  fork?(session: BackendSessionRef): Promise<BackendSessionRef>;
+  archive?(session: BackendSessionRef): Promise<void>;
+}
+
+export interface BackendAccountFacet {
+  read(): Promise<unknown>;
+}
+
+export interface BackendAnalyticsFacet {
+  readSession(session: BackendSessionRef): Promise<unknown>;
+}
+
+export interface BackendServices {
+  backendId: BackendId;
+  createDriver: (...args: unknown[]) => Pick<BackendDriver, 'backendId'> | BackendDriver;
+  history?: BackendHistoryFacet;
+  sessionOperations?: BackendSessionOperationsFacet;
+  account?: BackendAccountFacet;
+  analytics?: BackendAnalyticsFacet;
+}
+
+const backendServices = new Map<BackendId, BackendServices>();
+
+export function registerBackendServices(backend: BackendId, services: BackendServices): void {
+  if (services.backendId !== backend) {
+    throw new Error(`backend services identity mismatch for '${backend}'`);
+  }
+  backendServices.set(backend, services);
+}
+
+export function getBackendServices(backend: BackendId): BackendServices {
+  const services = backendServices.get(backend);
+  if (!services) throw new Error(`services for backend '${backend}' are not registered`);
+  return services;
+}
 
 // ---------------------------------------------------------------------------
 // Capability declaration table
@@ -107,6 +154,7 @@ const CAPABILITY_TABLE: Record<BackendId, Partial<Record<CapabilityId, Capabilit
     },
     hooks: { state: 'unavailable', reasonKey: 'backend.hooksNotWired', evidence: 'verified' },
   },
+  codex: {},
 };
 
 export function getCapability(backend: BackendId, capability: CapabilityId): CapabilityEntry {
@@ -130,6 +178,7 @@ export const CAPABILITY_IDS: readonly CapabilityId[] = [
   'modelSwitching',
   'analytics',
   'imageInput',
+  'scheduledGoalWrap',
 ];
 
 /** Fully-resolved capability table for one backend (defaults applied). */
@@ -245,6 +294,7 @@ registerDefaultBackendRuntimes();
 export function resetBackendRegistryForTests(): void {
   runtimeResolvers.clear();
   availabilityCache.clear();
+  backendServices.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -255,7 +305,7 @@ const DEFAULT_BACKEND_KEY = 'defaultBackend';
 
 export async function getDefaultBackend(): Promise<BackendId | undefined> {
   const value = await getAppSetting<string>(DEFAULT_BACKEND_KEY);
-  return value === 'claude' || value === 'opencode' ? value : undefined;
+  return BACKEND_IDS.includes(value as BackendId) ? value as BackendId : undefined;
 }
 
 export async function setDefaultBackend(backend: BackendId): Promise<void> {

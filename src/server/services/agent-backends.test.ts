@@ -2,7 +2,10 @@ import '../test-utils/test-env.js';
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  BACKEND_IDS,
   getCapability,
+  getBackendServices,
+  registerBackendServices,
   registerBackendRuntime,
   getBackendAvailability,
   resetBackendRegistryForTests,
@@ -13,6 +16,13 @@ import {
 } from './agent-backends.js';
 
 describe('getCapability', () => {
+  it('registers codex as a peer backend whose undeclared capabilities fail closed', () => {
+    assert.ok(BACKEND_IDS.includes('codex'));
+    const entry = getCapability('codex', 'streaming');
+    assert.equal(entry.state, 'unavailable');
+    assert.equal(entry.reasonKey, 'backend.capabilityUndeclared');
+  });
+
   it('returns the declared entry for a declared capability', () => {
     const entry = getCapability('opencode', 'analytics');
     assert.equal(entry.state, 'unavailable');
@@ -30,6 +40,25 @@ describe('getCapability', () => {
     const entry = getCapability('opencode', 'hooks');
     assert.equal(entry.state, 'unavailable');
     assert.ok(entry.reasonKey);
+  });
+});
+
+describe('backend service facets', () => {
+  beforeEach(() => {
+    resetBackendRegistryForTests();
+  });
+
+  it('fails closed when a backend has no service facet registration', () => {
+    assert.throws(() => getBackendServices('codex'), /services.*codex.*not registered/i);
+  });
+
+  it('returns explicitly registered facets without inventing missing capabilities', () => {
+    const services = {
+      backendId: 'codex' as const,
+      createDriver: () => ({ backendId: 'codex' as const }),
+    };
+    registerBackendServices('codex', services);
+    assert.equal(getBackendServices('codex'), services);
   });
 });
 
@@ -94,6 +123,8 @@ describe('default backend', () => {
   });
 
   it('round-trips an explicit setting', async () => {
+    await setDefaultBackend('codex');
+    assert.equal(await getDefaultBackend(), 'codex');
     await setDefaultBackend('opencode');
     assert.equal(await getDefaultBackend(), 'opencode');
     await setDefaultBackend('claude');
