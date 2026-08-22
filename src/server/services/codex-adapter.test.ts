@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { CodexAppServerManager } from './codex-app-server-manager.js';
-import { CodexBackendDriver } from './codex-adapter.js';
+import { CodexBackendDriver, codexUserInput } from './codex-adapter.js';
 
 class FakeClient extends EventEmitter {
   responses: Array<{ id: string | number; result?: unknown; error?: unknown }> = [];
@@ -14,6 +14,16 @@ class FakeClient extends EventEmitter {
 }
 
 describe('CodexBackendDriver interactions', () => {
+  it('preserves ordered text and image input for app-server', () => {
+    assert.deepStrictEqual(codexUserInput([
+      { type: 'text', text: 'What is shown?' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AQID' } },
+    ]), [
+      { type: 'text', text: 'What is shown?', text_elements: [] },
+      { type: 'image', url: 'data:image/png;base64,AQID' },
+    ]);
+  });
+
   it('routes command approval through the shared tool policy', async () => {
     const client = new FakeClient();
     const manager = {

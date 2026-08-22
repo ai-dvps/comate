@@ -172,6 +172,7 @@ const CAPABILITY_TABLE: Record<BackendId, Partial<Record<CapabilityId, Capabilit
       reasonKey: 'backend.codexInteractionPartial',
       evidence: 'verified',
     },
+    imageInput: { state: 'full', evidence: 'verified' },
     sessionManagement: {
       state: 'degraded',
       reasonKey: 'backend.codexSessionManagementPartial',
