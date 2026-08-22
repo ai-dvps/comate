@@ -8,11 +8,17 @@ Run commands from this directory:
 
 ```sh
 npm ci
+npx playwright install --with-deps chromium
 npm run check
 npm run test
 npm run build
 npm run test:e2e
+npm run test:browser
 ```
+
+The Playwright installation is a one-time prerequisite on a clean machine. Browser tests start `astro preview` without rebuilding, so they inspect the same `dist` output produced by the preceding build. The deploy workflow runs this complete sequence before it can upload a Pages artifact.
+
+After that one-time install, `npm run verify` runs the same local check-through-browser sequence. Set `PUBLIC_GA_MEASUREMENT_ID` before it only when intentionally exercising a non-secret public test or production value.
 
 ## Consented analytics
 
@@ -33,3 +39,5 @@ Before enabling production measurement, the release owner must record the named 
 - the symmetric low-volume rule: extend both windows in seven-day increments up to 42 days if either has fewer than 100 measured sessions or 20 key-event sessions; otherwise report the capped result as inconclusive
 
 Do not store visitor-level analytics exports in git. Local checks do not establish live GA4 reporting, legal approval, or baseline completion.
+
+The staged release, aggregate measurement record, production smoke checks, and two rollback targets are defined in [the website release and measurement runbook](../docs/operations/comate-website-release-measurement.md). Every unchecked item in that document is a release gate; the template must not be interpreted as evidence that a deployment or measurement window occurred.

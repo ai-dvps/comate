@@ -14,7 +14,9 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: `npm run build && npm run preview -- --host 127.0.0.1 --port ${port}`,
+    // The verification contract builds once before this command so the browser
+    // suite exercises the same static output that is uploaded to GitHub Pages.
+    command: `npm run preview -- --host 127.0.0.1 --port ${port}`,
     url: `http://127.0.0.1:${port}/comate/zh/`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

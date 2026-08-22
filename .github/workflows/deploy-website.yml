@@ -31,6 +31,10 @@ jobs:
         working-directory: website
         run: npm ci
 
+      - name: Install Playwright Chromium and system dependencies
+        working-directory: website
+        run: npx playwright install --with-deps chromium
+
       - name: Type and template check
         working-directory: website
         run: npm run check
@@ -48,6 +52,12 @@ jobs:
       - name: Verify built site
         working-directory: website
         run: npm run test:e2e
+
+      - name: Run browser and accessibility tests against built output
+        working-directory: website
+        env:
+          PUBLIC_GA_MEASUREMENT_ID: ${{ vars.PUBLIC_GA_MEASUREMENT_ID }}
+        run: npm run test:browser
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
