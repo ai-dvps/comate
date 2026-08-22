@@ -22,13 +22,42 @@ export interface BackendInfo {
   capabilities: Record<string, CapabilityEntry>
 }
 
+export type CodexAccount =
+  | { type: 'apiKey' }
+  | { type: 'chatgpt'; email: string | null; planType: string }
+  | { type: 'amazonBedrock'; usesCodexManagedCredentials: boolean }
+
+export interface CodexModel {
+  id: string
+  model: string
+  displayName: string
+  description: string
+  hidden: boolean
+  isDefault: boolean
+}
+
+export type CodexLoginResult =
+  | { type: 'apiKey' }
+  | { type: 'chatgpt'; loginId: string; authUrl: string }
+  | { type: 'chatgptDeviceCode'; loginId: string; verificationUrl: string; userCode: string }
+
 interface BackendState {
   backends: BackendInfo[]
   defaultBackend: BackendId | null
   isLoading: boolean
   error: string | null
+  codexAccount: CodexAccount | null
+  codexRequiresOpenaiAuth: boolean
+  codexModels: CodexModel[]
+  codexAccountLoading: boolean
+  codexAccountError: string | null
   fetchBackends: () => Promise<void>
   setDefaultBackend: (backend: BackendId) => Promise<void>
+  fetchCodexAccount: () => Promise<void>
+  startCodexLogin: (type: 'chatgpt' | 'apiKey', apiKey?: string) => Promise<CodexLoginResult>
+  cancelCodexLogin: (loginId: string) => Promise<void>
+  logoutCodex: () => Promise<void>
+  fetchCodexModels: () => Promise<void>
 }
 
 const API_BASE = '/api/backends'
@@ -41,6 +70,11 @@ export const useBackendStore = create<BackendState>((set) => ({
   defaultBackend: 'claude',
   isLoading: false,
   error: null,
+  codexAccount: null,
+  codexRequiresOpenaiAuth: true,
+  codexModels: [],
+  codexAccountLoading: false,
+  codexAccountError: null,
 
   fetchBackends: async () => {
     set({ isLoading: true, error: null })
@@ -74,7 +108,88 @@ export const useBackendStore = create<BackendState>((set) => ({
     if (!res.ok) throw new Error(i18next.t('common:failedToUpdateSession', 'Failed to update'))
     set({ defaultBackend: backend })
   },
+
+  fetchCodexAccount: async () => {
+    set({ codexAccountLoading: true, codexAccountError: null })
+    try {
+      const res = await fetch(`${API_BASE}/codex/account`)
+      if (!res.ok) throw new Error(await responseError(res))
+      const data = await res.json()
+      set({
+        codexAccount: data.account ?? null,
+        codexRequiresOpenaiAuth: Boolean(data.requiresOpenaiAuth),
+        codexAccountLoading: false,
+      })
+    } catch (err) {
+      set({
+        codexAccountError: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'),
+        codexAccountLoading: false,
+      })
+    }
+  },
+
+  startCodexLogin: async (type, apiKey) => {
+    set({ codexAccountLoading: true, codexAccountError: null })
+    try {
+      const res = await fetch(`${API_BASE}/codex/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(type === 'apiKey' ? { type, apiKey } : { type }),
+      })
+      if (!res.ok) throw new Error(await responseError(res))
+      const result = await res.json() as CodexLoginResult
+      set({ codexAccountLoading: false })
+      return result
+    } catch (err) {
+      const message = err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error')
+      set({ codexAccountError: message, codexAccountLoading: false })
+      throw new Error(message)
+    }
+  },
+
+  cancelCodexLogin: async (loginId) => {
+    const res = await fetch(`${API_BASE}/codex/login/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ loginId }),
+    })
+    if (!res.ok) throw new Error(await responseError(res))
+  },
+
+  logoutCodex: async () => {
+    set({ codexAccountLoading: true, codexAccountError: null })
+    try {
+      const res = await fetch(`${API_BASE}/codex/logout`, { method: 'POST' })
+      if (!res.ok) throw new Error(await responseError(res))
+      set({ codexAccount: null, codexModels: [], codexAccountLoading: false })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error')
+      set({ codexAccountError: message, codexAccountLoading: false })
+      throw new Error(message)
+    }
+  },
+
+  fetchCodexModels: async () => {
+    try {
+      const res = await fetch(`${API_BASE}/codex/models`)
+      if (!res.ok) throw new Error(await responseError(res))
+      const data = await res.json()
+      set({ codexModels: (data.data ?? []).filter((model: CodexModel) => !model.hidden) })
+    } catch (err) {
+      set({ codexAccountError: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error') })
+    }
+  },
 }))
+
+async function responseError(response: Response): Promise<string> {
+  try {
+    const body = await response.json() as { error?: unknown }
+    if (typeof body.error === 'string' && body.error) return body.error
+  } catch {
+    // Use the stable fallback below for non-JSON errors.
+  }
+  return i18next.t('common:fetchFailed', 'Fetch failed')
+}
 
 /** Availability lookup helper for components. */
 export function backendAvailability(

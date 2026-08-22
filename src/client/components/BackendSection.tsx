@@ -1,10 +1,21 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CheckCircle2, XCircle, Loader2, Cpu, ChevronDown } from 'lucide-react'
+import {
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  Cpu,
+  ChevronDown,
+  ExternalLink,
+  KeyRound,
+  LogOut,
+  RefreshCw,
+} from 'lucide-react'
 import { useBackendStore, type BackendId, type BackendInfo } from '../stores/backend-store'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible'
 import { cn } from './ui/utils'
 import OutputStyleSetting from './OutputStyleSetting'
+import { openUrlInBrowser } from '../lib/open-url'
 
 const BACKEND_LABEL_KEYS: Record<string, string> = {
   claude: 'backend.claude',
@@ -151,6 +162,181 @@ function BackendOption({
   )
 }
 
+function CodexAccountSetting() {
+  const { t } = useTranslation('chat')
+  const account = useBackendStore((state) => state.codexAccount)
+  const models = useBackendStore((state) => state.codexModels)
+  const loading = useBackendStore((state) => state.codexAccountLoading)
+  const error = useBackendStore((state) => state.codexAccountError)
+  const fetchAccount = useBackendStore((state) => state.fetchCodexAccount)
+  const startLogin = useBackendStore((state) => state.startCodexLogin)
+  const cancelLogin = useBackendStore((state) => state.cancelCodexLogin)
+  const logout = useBackendStore((state) => state.logoutCodex)
+  const fetchModels = useBackendStore((state) => state.fetchCodexModels)
+  const [apiKey, setApiKey] = useState('')
+  const [pendingLogin, setPendingLogin] = useState<{ loginId: string; authUrl: string } | null>(null)
+
+  useEffect(() => {
+    void fetchAccount()
+  }, [fetchAccount])
+
+  useEffect(() => {
+    if (account) void fetchModels()
+  }, [account, fetchModels])
+
+  useEffect(() => {
+    if (!pendingLogin) return
+    const timer = window.setInterval(() => {
+      void fetchAccount().then(() => {
+        if (useBackendStore.getState().codexAccount) setPendingLogin(null)
+      })
+    }, 2_000)
+    return () => window.clearInterval(timer)
+  }, [fetchAccount, pendingLogin])
+
+  const loginWithChatGpt = async () => {
+    try {
+      const result = await startLogin('chatgpt')
+      if (result.type !== 'chatgpt') return
+      setPendingLogin({ loginId: result.loginId, authUrl: result.authUrl })
+      await openUrlInBrowser(result.authUrl)
+    } catch {
+      // The store exposes the sanitized failure inline.
+    }
+  }
+
+  const loginWithApiKey = async () => {
+    if (!apiKey.trim()) return
+    try {
+      await startLogin('apiKey', apiKey.trim())
+      setApiKey('')
+      await fetchAccount()
+    } catch {
+      // The store exposes the sanitized failure inline.
+    }
+  }
+
+  const cancelPendingLogin = async () => {
+    if (!pendingLogin) return
+    try {
+      await cancelLogin(pendingLogin.loginId)
+      setPendingLogin(null)
+    } catch {
+      // A refresh remains available if cancellation fails.
+    }
+  }
+
+  const accountLabel = account?.type === 'chatgpt'
+    ? account.email || t('backend.codexChatGptAccount')
+    : account?.type === 'apiKey'
+      ? t('backend.codexApiKeyAccount')
+      : account?.type === 'amazonBedrock'
+        ? t('backend.codexBedrockAccount')
+        : null
+
+  return (
+    <div className="space-y-3 px-4 py-4 sm:px-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-medium text-text-primary">{t('backend.codexAccount')}</div>
+          <div className="mt-1 text-xs leading-4 text-text-tertiary">
+            {accountLabel ?? t('backend.codexAccountDescription')}
+          </div>
+        </div>
+        <button
+          type="button"
+          className="rounded-md p-1.5 text-text-tertiary hover:bg-surface-hover hover:text-text-primary disabled:opacity-50"
+          aria-label={t('backend.codexRefreshAccount')}
+          disabled={loading}
+          onClick={() => void fetchAccount()}
+        >
+          <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin motion-reduce:animate-none')} />
+        </button>
+      </div>
+
+      {error && <div role="alert" className="text-xs text-destructive">{error}</div>}
+
+      {account ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-md bg-green-500/10 px-2.5 py-1.5 text-xs text-green-600 dark:text-green-400">
+            <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('backend.codexSignedIn')}
+          </span>
+          {models.length > 0 && (
+            <span className="text-xs text-text-tertiary">
+              {t('backend.codexModelsAvailable', { count: models.length })}
+            </span>
+          )}
+          <button
+            type="button"
+            className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-text-secondary hover:bg-surface-hover hover:text-text-primary disabled:opacity-50"
+            disabled={loading}
+            onClick={() => void logout().catch(() => undefined)}
+          >
+            <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('backend.codexLogout')}
+          </button>
+        </div>
+      ) : pendingLogin ? (
+        <div className="space-y-2 rounded-lg border border-accent/20 bg-accent/[0.04] p-3">
+          <div className="text-xs leading-4 text-text-secondary">{t('backend.codexLoginPending')}</div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-white hover:bg-accent/90"
+              onClick={() => void openUrlInBrowser(pendingLogin.authUrl)}
+            >
+              <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+              {t('backend.codexOpenLogin')}
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-border px-2.5 py-1.5 text-xs text-text-secondary hover:bg-surface-hover"
+              onClick={() => void cancelPendingLogin()}
+            >
+              {t('common:cancel')}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-2 text-xs font-medium text-white hover:bg-accent/90 disabled:opacity-50"
+            disabled={loading}
+            onClick={() => void loginWithChatGpt()}
+          >
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('backend.codexLoginChatGpt')}
+          </button>
+          <div className="flex max-w-md items-center gap-2">
+            <div className="relative min-w-0 flex-1">
+              <KeyRound className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-tertiary" aria-hidden="true" />
+              <input
+                type="password"
+                autoComplete="off"
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+                aria-label={t('backend.codexApiKey')}
+                placeholder={t('backend.codexApiKeyPlaceholder')}
+                className="h-9 w-full rounded-md border border-border bg-bg pl-8 pr-3 text-xs text-text-primary outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20"
+              />
+            </div>
+            <button
+              type="button"
+              className="h-9 rounded-md border border-border px-3 text-xs text-text-secondary hover:bg-surface-hover hover:text-text-primary disabled:opacity-50"
+              disabled={loading || !apiKey.trim()}
+              onClick={() => void loginWithApiKey()}
+            >
+              {t('backend.codexUseApiKey')}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /**
  * Settings section for the app-level default agent backend (R2): pick the
  * default new sessions start with, and see each backend's availability
@@ -226,6 +412,7 @@ export default function BackendSection() {
               onSelect={(backendId) => void handleSelect(backendId)}
             >
               {backend.id === 'claude' ? <OutputStyleSetting /> : null}
+              {backend.id === 'codex' ? <CodexAccountSetting /> : null}
             </BackendOption>
           ))}
         </div>
