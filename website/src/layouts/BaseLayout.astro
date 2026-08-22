@@ -1,4 +1,6 @@
 ---
+import { getImage } from 'astro:assets';
+import appIcon from '../../../build/icon.png';
 import '../styles/global.css';
 import AnalyticsConsent from '../components/AnalyticsConsent.astro';
 
@@ -11,7 +13,6 @@ interface Props {
 const { title, description, ogImage } = Astro.props;
 const locale = Astro.currentLocale ?? 'zh';
 const htmlLang = locale === 'zh' ? 'zh-CN' : 'en';
-const base = import.meta.env.BASE_URL;
 const siteUrl = 'https://ai-dvps.github.io';
 const pageUrl = `${siteUrl}${Astro.url.pathname}`;
 const ogImageUrl = ogImage
@@ -19,6 +20,8 @@ const ogImageUrl = ogImage
     ? ogImage
     : `${siteUrl}${ogImage}`
   : undefined;
+const favicon = await getImage({ src: appIcon, width: 32, height: 32, format: 'png' });
+const touchIcon = await getImage({ src: appIcon, width: 180, height: 180, format: 'png' });
 ---
 
 <!DOCTYPE html>
@@ -36,8 +39,8 @@ const ogImageUrl = ogImage
     {ogImageUrl && <meta property="og:image" content={ogImageUrl} />}
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
-    <link rel="alternate icon" href={`${base}favicon.ico`} />
+    <link rel="icon" type="image/png" sizes="32x32" href={favicon.src} />
+    <link rel="apple-touch-icon" sizes="180x180" href={touchIcon.src} />
     <link rel="preconnect" href="https://fonts.bunny.net" />
     <link
       href="https://fonts.bunny.net/css?family=inter:300,400,500,600,700|jetbrains-mono:400,500,600&display=swap"

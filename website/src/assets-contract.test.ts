@@ -56,6 +56,24 @@ async function featureSources(locale: 'en' | 'zh-CN') {
 }
 
 describe('product evidence asset contract', () => {
+  it('uses the desktop app icon as the shared website brand source', async () => {
+    const [brandLogo, nav, footer, layout, redirect] = await Promise.all([
+      readFile(path.join(srcRoot, 'components/BrandLogo.astro'), 'utf8'),
+      readFile(path.join(srcRoot, 'components/Nav.astro'), 'utf8'),
+      readFile(path.join(srcRoot, 'components/Footer.astro'), 'utf8'),
+      readFile(path.join(srcRoot, 'layouts/BaseLayout.astro'), 'utf8'),
+      readFile(path.join(srcRoot, 'pages/index.astro'), 'utf8'),
+    ]);
+
+    expect(brandLogo).toContain("import appIcon from '../../../build/icon.png'");
+    expect(nav).toContain('<BrandLogo />');
+    expect(footer).toContain('<BrandLogo size={28} />');
+    expect(layout).toContain("import appIcon from '../../../build/icon.png'");
+    expect(layout).toContain('rel="apple-touch-icon"');
+    expect(redirect).toContain("import appIcon from '../../../build/icon.png'");
+    expect([nav, footer].join('\n')).not.toContain('<rect x="3" y="3"');
+  });
+
   it('keeps optimized WebP assets within the declared dimension and byte budgets', async () => {
     await Promise.all(assetContract.map(async ([name, width, height]) => {
       const bytes = await readFile(path.join(productRoot, name));
