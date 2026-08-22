@@ -5332,6 +5332,7 @@ describe('chat-service session backend resolution (KTD-5/KTD-9)', { concurrency:
     captured = undefined;
     SessionRuntime.open = (...args: unknown[]) => {
       captured = args;
+      const driver = args[10] as { backendId?: 'claude' | 'opencode' | 'codex' } | undefined;
       return {
         isClosed: () => false,
         getStatus: () => ({ pendingCount: 0, isProcessing: false, workspaceId: 'ws' }),
@@ -5346,7 +5347,7 @@ describe('chat-service session backend resolution (KTD-5/KTD-9)', { concurrency:
         removeBotEventHandler: () => {},
         setApprovalMode: () => {},
         getApprovalMode: () => 'manual' as const,
-        getBackendId: () => 'claude' as const,
+        getBackendId: () => driver?.backendId ?? 'claude' as const,
       } as unknown as SessionRuntime;
     };
   });
@@ -5397,13 +5398,28 @@ describe('chat-service session backend resolution (KTD-5/KTD-9)', { concurrency:
     assert.strictEqual(workspaceStore.getLocalSession(session.id)?.isDraft, false);
   });
 
-  it('bot sessions always lock to claude regardless of the stored default', async () => {
+  it('bot sessions lock to the selected available default backend', async () => {
+    registerBackendRuntime('opencode', {
+      resolveBinaryPath: () => '/fake/opencode',
+      healthCheck: async () => true,
+    });
     await setDefaultBackend('opencode');
     const { workspace, session } = await createFixture('wecom');
     await service.getOrCreateRuntime(session.id, workspace.id, true);
     assert.ok(captured, 'runtime opened');
     await service.pushMessage(session.id, workspace.id, 'bot message', true);
-    assert.strictEqual(workspaceStore.getLocalSession(session.id)?.backend, 'claude');
+    assert.strictEqual(workspaceStore.getLocalSession(session.id)?.backend, 'opencode');
+  });
+
+  it('does not fall back when the selected default backend is unavailable', async () => {
+    await setDefaultBackend('codex');
+    const { workspace, session } = await createFixture('gui');
+
+    await assert.rejects(
+      () => service.getOrCreateRuntime(session.id, workspace.id),
+      /codex|not available|unavailable/i,
+    );
+    assert.strictEqual(captured, undefined);
   });
 
   it('reuses the session locked backend instead of re-resolving', async () => {

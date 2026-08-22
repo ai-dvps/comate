@@ -1,7 +1,7 @@
 import { store, type SqliteStore } from '../storage/sqlite-store.js';
 import { schedulerService, SchedulerError, schedulerEvents } from './scheduler-service.js';
 import { nextCronFire, parseCron, CronParseError } from './cron-schedule.js';
-import { resolveDefaultBackend } from './agent-backends.js';
+import { getDefaultBackend } from './agent-backends.js';
 import type {
   CreateScheduledTaskInput,
   ScheduledTask,
@@ -78,7 +78,7 @@ export class ScheduledTasksService {
     validateInput(input);
     const workspace = await this.store.get(workspaceId);
     if (!workspace) throw new SchedulerError('NOT_FOUND', '任务所属工作区不存在');
-    const backend = (await resolveDefaultBackend()).backend;
+    const backend = (await getDefaultBackend()) ?? 'claude';
     const task = this.store.createScheduledTask({ ...input, workspaceId });
     const created = this.store.updateScheduledTask(task.id, {
       confirmedSnapshot: { folderPath: workspace.folderPath, backend, approvalMode: 'auto' },

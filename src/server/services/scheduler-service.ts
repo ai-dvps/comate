@@ -3,7 +3,7 @@ import { store as defaultStore, type SqliteStore } from '../storage/sqlite-store
 import { chatService } from './chat-service.js';
 import { nextCronFire } from './cron-schedule.js';
 import { buildGoalPrompt, GOAL_BLOCKED_PREFIX, GOAL_COMPLETE_MARKER } from './goal-wrapper.js';
-import { resolveDefaultBackend } from './agent-backends.js';
+import { getDefaultBackend } from './agent-backends.js';
 import { diagLog } from '../utils/diag-logger.js';
 import type { ScheduledTask, TaskRun, UpdateScheduledTaskInput } from '../models/scheduled-task.js';
 import type { ChatSession } from '../models/session.js';
@@ -62,6 +62,7 @@ interface ChatLike {
     name: string;
     source?: string;
     approvalMode?: string;
+    backend?: string;
   }): Promise<ChatSession>;
   pushMessage(
     sessionId: string,
@@ -100,7 +101,7 @@ export class SchedulerService {
     this.nowFn = deps.now ?? (() => new Date());
     this.chatOverride = deps.chat;
     this.store = deps.store ?? defaultStore;
-    this.resolveBackendFn = deps.resolveBackend ?? (async () => (await resolveDefaultBackend()).backend);
+    this.resolveBackendFn = deps.resolveBackend ?? (async () => (await getDefaultBackend()) ?? 'claude');
   }
 
   /**
@@ -362,6 +363,7 @@ export class SchedulerService {
           name: `${task.name} · ${fireAt.slice(0, 16).replace('T', ' ')}`,
           source: 'scheduled',
           approvalMode: 'auto',
+          backend: snapshot?.backend,
         });
         const run = this.store.createTaskRun({
           taskId: task.id,
