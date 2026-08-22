@@ -31,6 +31,11 @@ const t = useTranslations(locale);
     <div class="mt-8 flex flex-wrap items-center justify-center gap-4">
       <a
         href={getRelativeLocaleUrl(locale, '/download/')}
+        data-analytics-event="download_cta_click"
+        data-analytics-locale={locale}
+        data-analytics-location="home_closing"
+        data-analytics-platform="all"
+        data-analytics-stage="download_page"
         class="inline-flex min-h-12 items-center justify-center rounded-lg bg-accent px-8 py-3 text-base font-semibold text-accent-foreground no-underline shadow-lg shadow-accent/20 hover:bg-accent-hover hover:shadow-accent/30"
       >
         {t('nav.downloadCta')}

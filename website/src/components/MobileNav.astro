@@ -66,6 +66,11 @@ const { items } = Astro.props;
             <li>
               <a
                 href={item.href}
+                data-analytics-event={item.key === 'nav.download' ? 'download_cta_click' : undefined}
+                data-analytics-locale={item.key === 'nav.download' ? locale : undefined}
+                data-analytics-location={item.key === 'nav.download' ? 'mobile_nav_menu' : undefined}
+                data-analytics-platform={item.key === 'nav.download' ? 'all' : undefined}
+                data-analytics-stage={item.key === 'nav.download' ? 'download_page' : undefined}
                 class="block rounded-md px-3 py-3 text-base font-medium text-text-secondary no-underline hover:bg-surface-hover hover:text-text-primary"
               >
                 {t(item.key as UIKey)}
@@ -78,6 +83,11 @@ const { items } = Astro.props;
       <div class="mt-4 border-t border-border pt-4">
         <a
           href={getRelativeLocaleUrl(locale, '/download/')}
+          data-analytics-event="download_cta_click"
+          data-analytics-locale={locale}
+          data-analytics-location="mobile_nav_primary"
+          data-analytics-platform="all"
+          data-analytics-stage="download_page"
           class="flex min-h-12 items-center justify-center rounded-lg bg-accent px-4 py-3 text-base font-semibold text-accent-foreground no-underline hover:bg-accent-hover"
         >
           {t('nav.downloadCta')}

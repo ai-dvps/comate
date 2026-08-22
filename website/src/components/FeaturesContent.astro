@@ -31,6 +31,11 @@ const categories = [...new Set(entries.map((e) => e.data.category))];
     </div>
     <a
       href={getRelativeLocaleUrl(locale, '/download/')}
+      data-analytics-event="download_cta_click"
+      data-analytics-locale={locale}
+      data-analytics-location="features_header"
+      data-analytics-platform="all"
+      data-analytics-stage="download_page"
       class="inline-flex min-h-12 items-center justify-center rounded-lg bg-accent px-6 py-3 text-base font-semibold text-accent-foreground no-underline shadow-lg shadow-accent/20 hover:bg-accent-hover hover:shadow-accent/30"
     >
       {locale === 'zh' ? '立即下载体验' : 'Download and try it now'}
@@ -72,6 +77,11 @@ const categories = [...new Set(entries.map((e) => e.data.category))];
     </p>
     <a
       href={getRelativeLocaleUrl(locale, '/download/')}
+      data-analytics-event="download_cta_click"
+      data-analytics-locale={locale}
+      data-analytics-location="features_closing"
+      data-analytics-platform="all"
+      data-analytics-stage="download_page"
       class="mt-6 inline-flex min-h-12 items-center justify-center rounded-lg bg-accent px-8 py-3 text-base font-semibold text-accent-foreground no-underline shadow-lg shadow-accent/20 hover:bg-accent-hover"
     >
       {locale === 'zh' ? '立即下载' : 'Download now'}

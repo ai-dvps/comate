@@ -1,43 +1,35 @@
-# Astro Starter Kit: Minimal
+# Comate website
+
+The localized static site is built with Astro and published under `/comate` on GitHub Pages.
+
+## Development
+
+Run commands from this directory:
 
 ```sh
-npm create astro@latest -- --template minimal
+npm ci
+npm run check
+npm run test
+npm run build
+npm run test:e2e
 ```
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+## Consented analytics
 
-## 🚀 Project Structure
+Analytics is disabled when `PUBLIC_GA_MEASUREMENT_ID` is unset or invalid. Production receives this public value from the GitHub Actions repository variable with the same name. Do not commit a Measurement ID.
 
-Inside of your Astro project, you'll see the following folders and files:
+The site loads GA4 only after an explicit or persisted analytics grant. Rejecting, making no choice, or returning with a persisted denial loads no Google resource. Revoking consent persists denial, stops future site events, and removes known `_ga` cookies and site-owned analytics state; it cannot erase requests already sent before revocation. All ad consent remains denied, automatic page views are disabled, and events carry only enumerated locale, CTA location, platform, and destination-stage values. Download links never wait for analytics.
 
-```text
-/
-├── public/
-├── src/
-│   └── pages/
-│       └── index.astro
-└── package.json
-```
+`release_download_click` is the sole primary Key Event and is reserved for outbound actions on the Download page. `download_cta_click` is diagnostic. Enhanced Measurement outbound clicks must remain outside KPI reporting.
 
-Astro looks for `.astro` or `.md` files in the `src/pages/` directory. Each page is exposed as a route based on its file name.
+Before enabling production measurement, the release owner must record the named measurement owner and privacy/legal approver outside this repository and obtain approval for the bilingual disclosure. Freeze an aggregate-only measurement specification containing:
 
-There's nothing special about `src/components/`, but that's where we like to put any Astro/React/Vue/Svelte/Preact components.
+- GA4 property and recorded timezone
+- `release_download_click` Key Event and measured-session denominator
+- event-scoped dimensions: locale, CTA location, platform, destination stage
+- consent storage version, internal/developer filters, minimal retention, and exclusions
+- instrumentation production commit and deployment time
+- seven complete stabilization days and the 14-complete-day baseline start/end
+- the symmetric low-volume rule: extend both windows in seven-day increments up to 42 days if either has fewer than 100 measured sessions or 20 key-event sessions; otherwise report the capped result as inconclusive
 
-Any static assets, like images, can be placed in the `public/` directory.
-
-## 🧞 Commands
-
-All commands are run from the root of the project, from a terminal:
-
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `npm install`             | Installs dependencies                            |
-| `npm run dev`             | Starts local dev server at `localhost:4321`      |
-| `npm run build`           | Build your production site to `./dist/`          |
-| `npm run preview`         | Preview your build locally, before deploying     |
-| `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help` | Get help using the Astro CLI                     |
-
-## 👀 Want to learn more?
-
-Feel free to check [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
+Do not store visitor-level analytics exports in git. Local checks do not establish live GA4 reporting, legal approval, or baseline completion.
