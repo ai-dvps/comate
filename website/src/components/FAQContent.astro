@@ -12,7 +12,8 @@ const entries = getLocalizedEntries(allEntries, locale).sort((a, b) => a.data.or
 const rendered = await Promise.all(
   entries.map(async (entry) => {
     const { Content } = await render(entry);
-    return { data: entry.data, Content };
+    const id = entry.id.split('/').at(-1)?.replace(/^\d+-/, '') ?? entry.id;
+    return { data: entry.data, Content, id };
   })
 );
 ---
@@ -23,14 +24,14 @@ const rendered = await Promise.all(
   </h1>
   <p class="mt-4 max-w-2xl text-lg text-text-secondary">
     {locale === 'zh'
-      ? '关于 Comate 的用途、平台支持、更新记录和协作方式的常见疑问。'
-      : 'Common questions about Comate’s purpose, platform support, release notes, and how to get involved.'}
+      ? '了解模型 Provider、数据与权限边界、企业集成、平台支持、许可和网站分析偏好。'
+      : 'Answers about model Providers, data and permission boundaries, enterprise integrations, platforms, licensing, and analytics preferences.'}
   </p>
 
   <div class="mt-12 space-y-6">
     {
-      rendered.map(({ data, Content }) => (
-        <details class="group rounded-lg border border-border bg-surface p-6">
+      rendered.map(({ data, Content, id }) => (
+        <details id={id} class="group scroll-mt-24 rounded-lg border border-border bg-surface p-6">
           <summary class="cursor-pointer list-none text-lg font-semibold text-text-primary">
             <span class="flex items-center justify-between">
               {data.question}

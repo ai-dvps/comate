@@ -3,6 +3,9 @@ import { resolve, join, relative, extname } from 'node:path';
 import { readdirSync, statSync } from 'node:fs';
 
 const BASE = '/comate';
+const PUBLIC_ORIGIN = 'https://ai-dvps.github.io';
+const RELEASE_HOST = 'github.com';
+const RELEASE_PATH_PREFIX = '/ai-dvps/comate/releases';
 const DIST = resolve(import.meta.dirname, '../dist');
 const SRC = resolve(import.meta.dirname, '../src');
 
@@ -115,6 +118,7 @@ const expectedCtaLocations = new Set([
   'download_release_notes',
 ]);
 const foundCtaLocations = new Set();
+const canonicalOwners = new Map();
 
 for (const required of requiredPaths) {
   const filePath = toFilesystemPath(required);
@@ -133,6 +137,22 @@ for (const filePath of walk(DIST)) {
     if (!existsSync(resolved)) {
       errors.push(`Broken link in ${relative(DIST, filePath)}: ${url}`);
     }
+  }
+
+  if (/^(?:zh|en)\//.test(outputName)) {
+    const routePath = `/${outputName.replace(/index\.html$/, '')}`;
+    const expectedPageUrl = `${PUBLIC_ORIGIN}${BASE}${routePath}`;
+    const canonicalMatches = [...html.matchAll(/<link\b[^>]*rel=["']canonical["'][^>]*href=["']([^"']+)["'][^>]*>/gi)];
+    const ogMatches = [...html.matchAll(/<meta\b[^>]*property=["']og:url["'][^>]*content=["']([^"']+)["'][^>]*>/gi)];
+    if (canonicalMatches.length !== 1 || canonicalMatches[0]?.[1] !== expectedPageUrl) {
+      errors.push(`Canonical URL is not exactly ${expectedPageUrl} in ${outputName}`);
+    }
+    if (ogMatches.length !== 1 || ogMatches[0]?.[1] !== expectedPageUrl) {
+      errors.push(`Open Graph URL is not exactly ${expectedPageUrl} in ${outputName}`);
+    }
+    const priorOwner = canonicalOwners.get(expectedPageUrl);
+    if (priorOwner) errors.push(`Duplicate canonical route ${expectedPageUrl}: ${priorOwner} and ${outputName}`);
+    canonicalOwners.set(expectedPageUrl, outputName);
   }
 
   for (const [, location] of html.matchAll(/data-analytics-location="([a-z_]+)"/g)) {
@@ -158,6 +178,10 @@ for (const filePath of walk(DIST)) {
   }
 
   if (/^(?:zh|en)\/download\/index\.html$/.test(outputName)) {
+    const platformKeys = [...html.matchAll(/data-platform-download="(macos|windows|linux)"/g)].map((match) => match[1]);
+    if (platformKeys.join(',') !== 'macos,windows,linux') {
+      errors.push(`Download platforms must stay in stable macOS, Windows, Linux order in ${outputName}`);
+    }
     for (const anchor of html.match(/<a\b[^>]*>/g) ?? []) {
       if (!anchor.includes('data-analytics-location="download_')) continue;
       if (!anchor.includes('data-analytics-event="release_download_click"')) {
@@ -166,6 +190,33 @@ for (const filePath of walk(DIST)) {
       if (!anchor.includes('data-analytics-stage="github_releases"')) {
         errors.push(`Release link lacks the destination-stage hook in ${outputName}: ${anchor}`);
       }
+      const href = anchor.match(/href="([^"]+)"/)?.[1];
+      try {
+        const destination = new URL(href ?? '');
+        if (destination.protocol !== 'https:' || destination.hostname !== RELEASE_HOST || !destination.pathname.startsWith(RELEASE_PATH_PREFIX)) {
+          errors.push(`Release link uses an unapproved destination in ${outputName}: ${href}`);
+        }
+      } catch {
+        errors.push(`Release link is not an absolute HTTPS URL in ${outputName}: ${href ?? '(missing)'}`);
+      }
+    }
+    if (!html.includes('id="provider-prerequisite"') || !html.includes('#provider-setup')) {
+      errors.push(`Provider prerequisite is not adjacent to download decisions in ${outputName}`);
+    }
+  }
+
+  if (/^(?:zh|en)\/(?:download|about|faq)\/index\.html$/.test(outputName)) {
+    const staleClaims = [
+      /Claude Code/i,
+      /Tauri/i,
+      /macOS 13(?:\.0)?\+/i,
+      /future (?:Linux|.*Linux.*demand)/i,
+      /未来.*Linux/,
+      /supports? (?:only )?macOS and Windows/i,
+      /仅支持.*macOS.*Windows/,
+    ];
+    for (const claim of staleClaims) {
+      if (claim.test(html)) errors.push(`Forbidden stale product claim ${claim} in ${outputName}`);
     }
   }
 

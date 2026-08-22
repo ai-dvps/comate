@@ -5,55 +5,26 @@ import Footer from '../../components/Footer.astro';
 import LanguagePicker from '../../components/LanguagePicker.astro';
 ---
 
-<BaseLayout title="关于 — Comate" description="关于 Comate">
-  <Nav>
-    <LanguagePicker slot="language-picker" />
-    <LanguagePicker slot="language-picker-mobile" />
-  </Nav>
-
-  <main class="mx-auto max-w-3xl px-4 py-16 md:py-24">
-    <h1 class="text-4xl font-bold text-text-primary md:text-5xl">关于 Comate</h1>
-
-    <section class="mt-8 space-y-4 text-text-secondary">
-      <p>
-        Comate 是一款面向开发者和团队的桌面端 AI 工作区。我们将 Claude Code 的能力封装进原生 Tauri 应用，让你可以在一个统一的界面中管理工作区、进行多轮对话、浏览项目文件、跟踪任务，并通过 WeCom 机器人与团队协作。
-      </p>
-      <p>
-        我们的目标不是做一个“更好的聊天窗口”，而是把 AI 变成日常工作流的一部分：以项目文件夹为起点，让每次对话都保留上下文，让每个工具调用都清晰可见。
-      </p>
+<BaseLayout title="关于 Comate — 通用 Agent 任务工作区" description="了解 Comate 如何让个人在组织环境中掌控工作区、模型选择、权限和扩展。">
+  <Nav><LanguagePicker slot="language-picker" /><LanguagePicker slot="language-picker-mobile" /></Nav>
+  <main class="mx-auto max-w-4xl px-4 py-16 md:py-24">
+    <p class="text-sm font-semibold uppercase tracking-wide text-accent">关于 Comate</p>
+    <h1 class="mt-3 max-w-3xl text-4xl font-bold leading-tight text-text-primary md:text-6xl">把 Agent 带进真实工作，控制权仍然属于你</h1>
+    <section class="mt-8 max-w-3xl space-y-4 text-lg leading-8 text-text-secondary">
+      <p>Comate 是面向个人专业人士的通用 Agent 任务工作区。它把会话、任务执行、文件、工具与进度组织在一个桌面环境中，适配多种日常工作。</p>
+      <p>你可以管理自己的工作区，选择 Agent 后端与模型 Provider，明确授予工具权限，并通过 Skills、MCP 及组织批准的集成扩展日常工作。</p>
     </section>
-
-    <section class="mt-10">
-      <h2 class="text-xl font-semibold text-text-primary">适用场景</h2>
-      <ul class="mt-4 list-disc space-y-2 pl-5 text-text-secondary">
-        <li>需要同时管理多个项目的独立开发者</li>
-        <li>希望把 AI 会话与代码仓库对齐的小团队</li>
-        <li>需要通过 WeCom 机器人共享 AI 能力的组织</li>
-        <li>追求本地优先、数据可控的桌面体验的用户</li>
-      </ul>
+    <section class="mt-12 grid gap-5 md:grid-cols-2" aria-labelledby="principles-title">
+      <h2 id="principles-title" class="md:col-span-2 text-2xl font-semibold text-text-primary">我们的产品原则</h2>
+      <article class="rounded-xl border border-border bg-surface p-6"><h3 class="font-semibold text-text-primary">个人可控</h3><p class="mt-2 leading-7 text-text-secondary">工作区归你管理；模型、Provider、权限和扩展均有明确选择。</p></article>
+      <article class="rounded-xl border border-border bg-surface p-6"><h3 class="font-semibold text-text-primary">适配组织环境</h3><p class="mt-2 leading-7 text-text-secondary">连接企业内部模型、IM 与 Skill Market 时，仍遵循组织的身份、权限和数据边界。</p></article>
+      <article class="rounded-xl border border-border bg-surface p-6"><h3 class="font-semibold text-text-primary">过程透明</h3><p class="mt-2 leading-7 text-text-secondary">任务状态、工具调用、权限请求与结果都保持可见，便于你随时介入。</p></article>
+      <article class="rounded-xl border border-border bg-surface p-6"><h3 class="font-semibold text-text-primary">开放扩展</h3><p class="mt-2 leading-7 text-text-secondary">项目采用 Apache License 2.0 开源；源码、版本与问题跟踪均公开在 GitHub。</p></article>
     </section>
-
-    <section class="mt-10">
-      <h2 class="text-xl font-semibold text-text-primary">开源协议</h2>
-      <p class="mt-4 text-text-secondary">
-        Comate 采用 Apache License 2.0 开源。你可以在
-        <a
-          href="https://github.com/ai-dvps/comate"
-          class="text-accent underline-offset-2 hover:text-accent-hover"
-        >GitHub</a>
-        上查看源码、提交 Issue 或参与贡献。
-      </p>
-    </section>
-
-    <section class="mt-10">
-      <a
-        href="/comate/zh/faq/"
-        class="inline-flex items-center rounded-md bg-accent px-5 py-2.5 font-medium text-accent-foreground no-underline hover:bg-accent-hover"
-      >
-        查看常见问题
-      </a>
-    </section>
+    <div class="mt-12 flex flex-wrap gap-3">
+      <a href="/comate/zh/faq/" class="inline-flex min-h-11 items-center rounded-lg bg-accent px-5 py-2.5 font-semibold text-accent-foreground no-underline hover:bg-accent-hover">查看常见问题</a>
+      <a href="https://github.com/ai-dvps/comate" class="inline-flex min-h-11 items-center rounded-lg border border-border px-5 py-2.5 font-semibold text-text-primary no-underline hover:bg-surface-hover">查看 GitHub 仓库</a>
+    </div>
   </main>
-
   <Footer />
 </BaseLayout>

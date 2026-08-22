@@ -4,63 +4,31 @@ import Nav from '../../components/Nav.astro';
 import Footer from '../../components/Footer.astro';
 import LanguagePicker from '../../components/LanguagePicker.astro';
 import DownloadPanel from '../../components/DownloadPanel.astro';
-
-const locale = 'en';
-const releasesUrl = 'https://github.com/ai-dvps/comate/releases';
 ---
 
-<BaseLayout title="Download Comate" description="Download the Comate desktop app for macOS and Windows.">
-  <Nav>
-    <LanguagePicker slot="language-picker" />
-    <LanguagePicker slot="language-picker-mobile" />
-  </Nav>
-
-  <main class="mx-auto max-w-4xl px-4 py-16 md:py-24">
-    <DownloadPanel locale={locale} />
-
+<BaseLayout title="Download Comate — macOS, Windows, and Linux" description="Download the Comate general-purpose Agent task workspace. macOS, Windows, and Linux builds are published through the official GitHub Releases page.">
+  <Nav><LanguagePicker slot="language-picker" /><LanguagePicker slot="language-picker-mobile" /></Nav>
+  <main class="mx-auto max-w-6xl px-4 py-16 md:py-24">
+    <DownloadPanel locale="en" />
     <div class="reveal mt-8 grid gap-6 md:grid-cols-2">
-      <div class="rounded-2xl border border-border bg-surface p-6">
+      <section class="rounded-2xl border border-border bg-surface p-6">
         <h2 class="text-xl font-semibold text-text-primary">Installation</h2>
-        <ol class="mt-4 list-decimal space-y-3 pl-5 text-text-secondary">
-          <li>Visit GitHub Releases and download the installer for your platform (.dmg or .msi).</li>
-          <li>Run the installer and follow the prompts.</li>
-          <li>Allow the developer verification on first launch, then create or join a workspace.</li>
+        <ol class="mt-4 list-decimal space-y-3 pl-5 leading-7 text-text-secondary">
+          <li>Choose the installer for your platform and processor on the official GitHub Releases page.</li>
+          <li>Follow that release’s instructions to install and start Comate.</li>
+          <li>Create a Workspace and draft Session; configure model credentials or a Provider before running an Agent.</li>
         </ol>
-      </div>
-
-      <div class="rounded-2xl border border-border bg-surface p-6">
-        <h2 class="text-xl font-semibold text-text-primary">System requirements</h2>
-        <ul class="mt-4 space-y-2 text-text-secondary">
-          <li class="flex items-center gap-2">
-            <svg class="h-5 w-5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              ><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg
-            >
-            <span>macOS 12 or later / Windows 10 or later</span>
-          </li>
-          <li class="flex items-center gap-2">
-            <svg class="h-5 w-5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              ><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg
-            >
-            <span>About 200 MB free disk space</span>
-          </li>
-          <li class="flex items-center gap-2">
-            <svg class="h-5 w-5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              ><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg
-            >
-            <span>Internet connection for first-run setup</span>
-          </li>
+      </section>
+      <section class="rounded-2xl border border-border bg-surface p-6">
+        <h2 class="text-xl font-semibold text-text-primary">Before you download</h2>
+        <ul class="mt-4 list-disc space-y-3 pl-5 leading-7 text-text-secondary">
+          <li>macOS: choose the build for Apple silicon or Intel Mac.</li>
+          <li>Windows: use a supported 64-bit Windows system.</li>
+          <li>Linux: x64 AppImage and Debian packages are available.</li>
+          <li>Follow the current compatibility and installation notes for that release.</li>
         </ul>
-      </div>
-    </div>
-
-    <div class="reveal mt-8 text-center">
-      <p class="text-sm text-text-tertiary">
-        Release notes are published on
-        <a href={releasesUrl} class="underline-offset-2">GitHub Releases</a>
-        .
-      </p>
+      </section>
     </div>
   </main>
-
   <Footer />
 </BaseLayout>
