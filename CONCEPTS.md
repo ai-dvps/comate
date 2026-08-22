@@ -2,6 +2,11 @@
 
 > Shared domain vocabulary for this project — entities, named processes, and status concepts with project-specific meaning. Seeded with core domain vocabulary, then accretes as ce-compound and ce-compound-refresh process learnings; direct edits are fine. Glossary only, not a spec or catch-all.
 
+## Product identity
+
+### 通用 Agent 任务工作区 (general-purpose Agent task workspace)
+Comate 面向身处组织中的个人专业用户的产品定位：以桌面工作区承载研究、分析、写作、运营、项目管理和开发等通用任务，连接用户或企业选择的 Agent 后端、模型、Skills、MCP、文件、浏览器、自动化与 IM。个人任务完成是主叙事，企业模型、权限与集成用于证明它能在真实组织边界内受控运行；编程只是其中一个场景，不是产品类别。
+
 ## Steel vendoring
 
 > **Historical (retired in U9, Tauri→Electron migration):** the vendored Steel
