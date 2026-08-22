@@ -21,6 +21,8 @@ export default {
         accent: 'hsl(var(--color-accent) / <alpha-value>)',
         'accent-hover': 'hsl(var(--color-accent-hover) / <alpha-value>)',
         'accent-foreground': 'hsl(var(--color-accent-foreground) / <alpha-value>)',
+        agent: 'hsl(var(--color-agent) / <alpha-value>)',
+        attention: 'hsl(var(--color-attention) / <alpha-value>)',
         'text-primary': 'hsl(var(--color-text-primary) / <alpha-value>)',
         'text-secondary': 'hsl(var(--color-text-secondary) / <alpha-value>)',
         'text-tertiary': 'hsl(var(--color-text-tertiary) / <alpha-value>)',

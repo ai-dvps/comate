@@ -131,7 +131,7 @@ function Calendar({ value, onSelect, minDate }: CalendarProps) {
                 dayCellBase,
                 inMonth ? 'text-text-primary' : 'text-text-tertiary opacity-50',
                 isToday && !selected && 'ring-1 ring-accent/60',
-                selected ? 'bg-accent text-white hover:bg-accent/90' : !disabled && 'hover:bg-surface-hover',
+                selected ? 'bg-accent text-accent-foreground hover:bg-accent/90' : !disabled && 'hover:bg-surface-hover',
                 disabled && 'cursor-not-allowed opacity-30 hover:bg-transparent',
               )}
             >

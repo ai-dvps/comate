@@ -220,7 +220,7 @@ describe('PermissionsSubTab', () => {
     const shellCard = screen.getByText('Shell').closest('div.border')!;
     const toggleButtons = shellCard.querySelectorAll('button');
     // Ask button should be highlighted
-    expect(toggleButtons[1].className).toContain('bg-warning');
+    expect(toggleButtons[1].className).toContain('bg-attention');
   });
 
   it('renders ask state on an override row', () => {
@@ -237,7 +237,7 @@ describe('PermissionsSubTab', () => {
     const bashRow = screen.getByText('Bash').closest('div.flex')!;
     const overrideButtons = bashRow.querySelectorAll('button');
     // Order: inherit, alwaysAllow, ask, alwaysDeny — ask button should be highlighted
-    expect(overrideButtons[2].className).toContain('bg-warning');
+    expect(overrideButtons[2].className).toContain('bg-attention');
   });
 
   it('F4 flow: select preset → toggle one override → policy persists with both (integration)', () => {

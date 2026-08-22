@@ -695,8 +695,8 @@ export default function AgentCommandCenter({
                   </button>
                   {wecomStatus ? <BotConnectionStatus channel="WeCom" status={wecomStatus} /> : null}
                   {feishuStatus ? <BotConnectionStatus channel="Feishu" status={feishuStatus} /> : null}
-                  {needsUser > 0 ? <span className="rounded bg-warning/15 px-1 text-[9px] font-medium text-warning" title="Needs user">{needsUser}</span> : null}
-                  {running > 0 ? <span className="text-[9px] tabular-nums text-accent" title="Running">{running}</span> : null}
+                  {needsUser > 0 ? <span className="rounded bg-attention/15 px-1 text-[9px] font-medium text-attention" title="Needs user">{needsUser}</span> : null}
+                  {running > 0 ? <span className="text-[9px] tabular-nums text-agent" title="Running">{running}</span> : null}
                   {unread > 0 ? <span className="text-[9px] tabular-nums text-text-secondary" title="Completed unread">{unread}</span> : null}
                   <button
                     ref={(button) => {
@@ -769,7 +769,7 @@ export default function AgentCommandCenter({
                               <button
                                 type="button"
                                 onClick={() => void createWorkspaceSession(workspace.id, workspaceSessions.length + 1)}
-                                className="rounded bg-accent px-2 py-1 text-[10px] font-medium text-white hover:bg-accent/90"
+                                className="rounded bg-accent px-2 py-1 text-[10px] font-medium text-accent-foreground hover:bg-accent/90"
                               >
                                 {tc('create')}
                               </button>
@@ -824,7 +824,7 @@ export default function AgentCommandCenter({
                                   )
                                 : <Sparkles className="h-3.5 w-3.5 text-text-tertiary" aria-hidden="true" />}
                             {(isStreaming[session.id] || sessionActivity[session.id]?.active) ? (
-                              <span className="absolute bottom-0 right-0 h-1.5 w-1.5 rounded-full bg-accent ring-1 ring-chrome" title="Running" />
+                              <span className="absolute bottom-0 right-0 h-1.5 w-1.5 rounded-full bg-agent ring-1 ring-chrome" title="Running" />
                             ) : null}
                             </span>
                             <span
@@ -848,7 +848,7 @@ export default function AgentCommandCenter({
                                 </span>
                               </span>
                               {status?.pendingKind ? (
-                                <span className="flex-shrink-0 whitespace-nowrap rounded bg-warning/15 px-1 font-medium text-warning">
+                                <span className="flex-shrink-0 whitespace-nowrap rounded bg-attention/15 px-1 font-medium text-attention">
                                   {status.pendingKind === 'approval' ? t('shell.approval') : t('shell.question')}
                                 </span>
                               ) : null}

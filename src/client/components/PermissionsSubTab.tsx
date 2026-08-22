@@ -319,7 +319,7 @@ function DecisionToggle({
         type="button"
         onClick={() => onChange('ask')}
         className={`px-2 py-1 text-[10px] font-medium ${
-          value === 'ask' ? 'bg-warning/20 text-warning' : 'text-text-secondary hover:bg-border/50'
+          value === 'ask' ? 'bg-attention/15 text-attention' : 'text-text-secondary hover:bg-border/50'
         }`}
       >
         {t('wecom.defaultToggle.ask')}
@@ -379,7 +379,7 @@ function ToolOverrideRow({
           onClick={() => onChange('ask')}
           className={`px-2 py-0.5 text-[10px] ${
             value === 'ask'
-              ? 'bg-warning/20 text-warning'
+              ? 'bg-attention/15 text-attention'
               : 'text-text-tertiary hover:bg-border/50'
           }`}
         >
