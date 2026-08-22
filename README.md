@@ -8,7 +8,7 @@ Your friendly AI workspace companion.
 
 ## Overview
 
-Comate is a desktop AI workspace that brings Claude Code into a polished, native app experience. Organize multiple projects in folder-backed workspaces, chat with AI through streaming sessions, explore files, and manage tasks — all in one place.
+Comate is a desktop AI workspace for Claude Code, OpenCode, and an experimental Codex CLI backend. Organize multiple projects in folder-backed workspaces, chat with AI through streaming sessions, explore files, and manage tasks — all in one place. Agent choice is configured in Settings and locked per session; each agent remains the source of truth for its own account and conversation data.
 
 ## Features
 

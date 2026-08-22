@@ -20,6 +20,41 @@ Generated from the capability declaration table (`src/server/services/agent-back
 | analytics | unavailable (declared) | verified | KTD-10: opencode sessions not counted in v1; noted in the analytics UI |
 | hooks | unavailable (both backends) | verified | Ground truth: hook scripts have no consumer on either backend; execution is its own work item |
 
+## Capability matrix (Codex backend)
+
+This matrix covers the bundled `@openai/codex` 0.149.0 app-server integration added on 2026-08-22. Codex owns its account, configuration, threads, and transcript data under its own `CODEX_HOME`; Comate stores only the backend selection and Codex thread identifier needed to reconnect the UI.
+
+| Capability | State | Evidence | Conformance path / boundary |
+|---|---|---|---|
+| streaming | full | verified | `codex-adapter.test.ts`, `codex-event-mapper.test.ts`: text, reasoning, result, error, and token-usage notifications map into the shared stream |
+| toolRendering | degraded | verified | Command execution and file changes render through the shared tool surface; not every Codex item type has a dedicated Claude-equivalent renderer |
+| approvals | degraded | verified | Command/file approval requests round-trip through `requestApproval`; Codex owns the approval policy, while reconnecting an already-pending request is not yet supported |
+| askUserQuestion | degraded | verified | `tool/requestUserInput` maps into the shared question flow; reconnecting an already-pending question is not yet supported |
+| imageInput | full | verified | Ordered local and data-URL image inputs map to native Codex user-input items in `codex-adapter.test.ts` |
+| sessionManagement | degraded | verified | New/resumed threads and history reload use Codex `thread/start`, `thread/resume`, and `thread/read`; fork/delete/rename do not yet have full UI parity |
+| subagents | degraded | verified | `codex-session-service.test.ts` and chat-service tests reconstruct child threads and histories; live child activity and per-child stop controls are limited |
+| model selection | degraded | verified | Settings select a native catalog model for new Codex threads; existing threads retain their Codex-owned model and there is no mid-session switch |
+| skills | degraded | verified | Workspace/global `.claude/skills` roots are registered through `skills/extraRoots/set`; Claude slash-command invocation semantics are not emulated |
+| MCP status | degraded | verified | Safe stdio MCP definitions and native `mcpServerStatus` are supported; remote bearer-token MCP definitions are intentionally excluded |
+| context usage | full | verified | `thread/tokenUsage/updated` feeds the shared context meter with input, cached, output, reasoning, window, and model values |
+| browser | unavailable | verified | Built-in browser MCP requires an Authorization-bearing remote server; credentials are not copied into Codex configuration or thread metadata |
+| slashCommands | unavailable | verified | Codex skills are discoverable, but Claude slash-command syntax and execution routing are not equivalent |
+| todos | unavailable | verified | Codex plan notifications are not yet projected into Comate's Claude task/todo UI |
+| analytics | unavailable | verified | The persistent Analytics dashboard currently reads Claude JSONL only; live Codex context usage remains available |
+| hooks | unavailable | verified | No cross-backend hook execution surface is wired for Codex |
+| scheduledGoalWrap | unavailable | verified | Scheduled goals use the selected default backend, but Codex-specific wrap-up/tool parity is not implemented |
+
+### Codex release gate
+
+- Production selection is blocked unless `COMATE_ENABLE_EXPERIMENTAL_CODEX=1`; development and tests may exercise Codex directly.
+- Enabling the flag is for controlled evaluation, not a declaration of Claude Code capability parity. The unavailable and degraded rows above remain release blockers for general availability.
+- Backend selection is exact and session-locked. If the selected Codex backend, account, thread, or explicit enterprise Provider is unavailable, the operation fails visibly; it never falls back to Claude Code or OpenCode.
+- Native Codex login and thread data remain Codex-owned. An explicit enterprise Provider is accepted only with protocol `openai-responses`; incompatible or incomplete Providers fail closed.
+- Provider API responses expose only `authTokenPresent`, never the stored token. Leaving the secret blank while editing retains the previous value.
+- Protocol drift is checked by `npm run test:codex-protocol`; real app-server initialization is checked by `npm run verify:codex-app-server`.
+
+Operational setup and recovery details are in [`docs/operations/codex-backend.md`](../operations/codex-backend.md).
+
 ## Acceptance Examples status
 
 | AE | Status | Proof |
