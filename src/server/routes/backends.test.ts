@@ -7,7 +7,7 @@ type Handler = (req: { body?: unknown }, res: ReturnType<typeof createMockRes>) 
 
 function getHandler(
   deps: BackendRouteDeps,
-  method: 'get' | 'post',
+  method: 'get' | 'post' | 'put',
   routePath: string,
 ): Handler {
   const router = createBackendRouter(deps);
@@ -45,10 +45,45 @@ function fakeDeps(overrides: Partial<BackendRouteDeps['codexAccount']> = {}): Ba
       listModels: async () => ({ data: [], nextCursor: null }),
       ...overrides,
     },
+    codexSettings: {
+      getDefaultModel: async () => undefined,
+      setDefaultModel: async () => undefined,
+    },
   };
 }
 
 describe('backend routes Codex account API', () => {
+  it('validates and persists an account-visible default model', async () => {
+    let saved: string | null | undefined;
+    const deps = fakeDeps({
+      listModels: async () => ({
+        data: [{ model: 'gpt-5.6-codex', hidden: false } as never],
+        nextCursor: null,
+      }),
+    });
+    deps.codexSettings.setDefaultModel = async (model) => { saved = model; };
+    const handler = getHandler(deps, 'put', '/codex/model');
+    const res = createMockRes();
+
+    await handler({ body: { model: 'gpt-5.6-codex' } }, res);
+
+    assert.strictEqual(saved, 'gpt-5.6-codex');
+    assert.deepStrictEqual(res.jsonBody, { model: 'gpt-5.6-codex' });
+  });
+
+  it('rejects a model outside the native account catalog', async () => {
+    let saved = false;
+    const deps = fakeDeps();
+    deps.codexSettings.setDefaultModel = async () => { saved = true; };
+    const handler = getHandler(deps, 'put', '/codex/model');
+    const res = createMockRes();
+
+    await handler({ body: { model: 'unknown-model' } }, res);
+
+    assert.strictEqual(res.statusCode, 400);
+    assert.strictEqual(saved, false);
+  });
+
   it('returns native account state without exposing credentials', async () => {
     const handler = getHandler(fakeDeps({
       read: async () => ({

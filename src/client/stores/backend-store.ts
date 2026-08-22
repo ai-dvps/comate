@@ -49,6 +49,7 @@ interface BackendState {
   codexAccount: CodexAccount | null
   codexRequiresOpenaiAuth: boolean
   codexModels: CodexModel[]
+  codexDefaultModel: string | null
   codexAccountLoading: boolean
   codexAccountError: string | null
   fetchBackends: () => Promise<void>
@@ -58,6 +59,7 @@ interface BackendState {
   cancelCodexLogin: (loginId: string) => Promise<void>
   logoutCodex: () => Promise<void>
   fetchCodexModels: () => Promise<void>
+  setCodexDefaultModel: (model: string | null) => Promise<void>
 }
 
 const API_BASE = '/api/backends'
@@ -73,6 +75,7 @@ export const useBackendStore = create<BackendState>((set) => ({
   codexAccount: null,
   codexRequiresOpenaiAuth: true,
   codexModels: [],
+  codexDefaultModel: null,
   codexAccountLoading: false,
   codexAccountError: null,
 
@@ -161,7 +164,7 @@ export const useBackendStore = create<BackendState>((set) => ({
     try {
       const res = await fetch(`${API_BASE}/codex/logout`, { method: 'POST' })
       if (!res.ok) throw new Error(await responseError(res))
-      set({ codexAccount: null, codexModels: [], codexAccountLoading: false })
+      set({ codexAccount: null, codexModels: [], codexDefaultModel: null, codexAccountLoading: false })
     } catch (err) {
       const message = err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error')
       set({ codexAccountError: message, codexAccountLoading: false })
@@ -171,12 +174,37 @@ export const useBackendStore = create<BackendState>((set) => ({
 
   fetchCodexModels: async () => {
     try {
-      const res = await fetch(`${API_BASE}/codex/models`)
-      if (!res.ok) throw new Error(await responseError(res))
-      const data = await res.json()
-      set({ codexModels: (data.data ?? []).filter((model: CodexModel) => !model.hidden) })
+      const [modelsRes, preferenceRes] = await Promise.all([
+        fetch(`${API_BASE}/codex/models`),
+        fetch(`${API_BASE}/codex/model`),
+      ])
+      if (!modelsRes.ok) throw new Error(await responseError(modelsRes))
+      if (!preferenceRes.ok) throw new Error(await responseError(preferenceRes))
+      const modelsData = await modelsRes.json()
+      const preferenceData = await preferenceRes.json()
+      set({
+        codexModels: (modelsData.data ?? []).filter((model: CodexModel) => !model.hidden),
+        codexDefaultModel: typeof preferenceData.model === 'string' ? preferenceData.model : null,
+      })
     } catch (err) {
       set({ codexAccountError: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error') })
+    }
+  },
+
+  setCodexDefaultModel: async (model) => {
+    set({ codexAccountError: null })
+    try {
+      const res = await fetch(`${API_BASE}/codex/model`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model }),
+      })
+      if (!res.ok) throw new Error(await responseError(res))
+      set({ codexDefaultModel: model })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error')
+      set({ codexAccountError: message })
+      throw new Error(message)
     }
   },
 }))

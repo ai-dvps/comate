@@ -166,6 +166,7 @@ function CodexAccountSetting() {
   const { t } = useTranslation('chat')
   const account = useBackendStore((state) => state.codexAccount)
   const models = useBackendStore((state) => state.codexModels)
+  const defaultModel = useBackendStore((state) => state.codexDefaultModel)
   const loading = useBackendStore((state) => state.codexAccountLoading)
   const error = useBackendStore((state) => state.codexAccountError)
   const fetchAccount = useBackendStore((state) => state.fetchCodexAccount)
@@ -173,6 +174,7 @@ function CodexAccountSetting() {
   const cancelLogin = useBackendStore((state) => state.cancelCodexLogin)
   const logout = useBackendStore((state) => state.logoutCodex)
   const fetchModels = useBackendStore((state) => state.fetchCodexModels)
+  const setDefaultModel = useBackendStore((state) => state.setCodexDefaultModel)
   const [apiKey, setApiKey] = useState('')
   const [pendingLogin, setPendingLogin] = useState<{ loginId: string; authUrl: string } | null>(null)
 
@@ -257,7 +259,8 @@ function CodexAccountSetting() {
       {error && <div role="alert" className="text-xs text-destructive">{error}</div>}
 
       {account ? (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center gap-1.5 rounded-md bg-green-500/10 px-2.5 py-1.5 text-xs text-green-600 dark:text-green-400">
             <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
             {t('backend.codexSignedIn')}
@@ -276,6 +279,29 @@ function CodexAccountSetting() {
             <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
             {t('backend.codexLogout')}
           </button>
+          </div>
+          {models.length > 0 && (
+            <label className="block max-w-md">
+              <span className="mb-1.5 block text-xs font-medium text-text-secondary">
+                {t('backend.codexDefaultModel')}
+              </span>
+              <select
+                value={defaultModel ?? ''}
+                onChange={(event) => void setDefaultModel(event.target.value || null).catch(() => undefined)}
+                className="h-9 w-full rounded-md border border-border bg-bg px-3 text-xs text-text-primary outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20"
+              >
+                <option value="">{t('backend.codexNativeDefaultModel')}</option>
+                {models.map((model) => (
+                  <option key={model.id} value={model.model}>
+                    {model.displayName}{model.isDefault ? ` (${t('backend.codexCatalogDefault')})` : ''}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1 block text-xs leading-4 text-text-tertiary">
+                {t('backend.codexDefaultModelDescription')}
+              </span>
+            </label>
+          )}
         </div>
       ) : pendingLogin ? (
         <div className="space-y-2 rounded-lg border border-accent/20 bg-accent/[0.04] p-3">

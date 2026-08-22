@@ -26,6 +26,7 @@ import {
 } from './agent-backends.js';
 import { OpencodeBackendDriver, buildServeConfig } from './opencode-adapter.js';
 import { CodexBackendDriver } from './codex-adapter.js';
+import { getCodexDefaultModel } from './codex-settings.js';
 import { codexSessionService } from './codex-session-service.js';
 import {
   SessionRuntime,
@@ -1579,6 +1580,7 @@ export class ChatService {
         ? new CodexBackendDriver({
             directory: normalizeWindowsPath(workspace.folderPath),
             backendSessionId: session.backendSessionId,
+            model: await getCodexDefaultModel(),
             onBackendSessionId: (backendSessionId) =>
               workspaceStore.updateSessionBackendSessionId(sessionId, backendSessionId),
           })
