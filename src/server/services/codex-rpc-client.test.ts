@@ -1,3 +1,4 @@
+import '../test-utils/test-env.js';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { describe, it } from 'node:test';
