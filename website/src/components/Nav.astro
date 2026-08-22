@@ -52,6 +52,11 @@ function isActive(href: string) {
         navItems.map((item) => (
           <a
             href={item.href}
+            data-analytics-event={item.key === 'nav.download' ? 'download_cta_click' : undefined}
+            data-analytics-locale={item.key === 'nav.download' ? locale : undefined}
+            data-analytics-location={item.key === 'nav.download' ? 'nav_menu' : undefined}
+            data-analytics-platform={item.key === 'nav.download' ? 'all' : undefined}
+            data-analytics-stage={item.key === 'nav.download' ? 'download_page' : undefined}
             class:list={[
               'rounded-md px-3 py-2 text-sm font-medium no-underline transition-colors duration-200',
               isActive(item.href)
@@ -70,6 +75,11 @@ function isActive(href: string) {
       <slot name="language-picker" />
       <a
         href={getRelativeLocaleUrl(locale, '/download/')}
+        data-analytics-event="download_cta_click"
+        data-analytics-locale={locale}
+        data-analytics-location="nav_primary"
+        data-analytics-platform="all"
+        data-analytics-stage="download_page"
         class="ml-2 inline-flex min-h-9 items-center justify-center rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground no-underline hover:bg-accent-hover"
       >
         {t('nav.downloadCta')}

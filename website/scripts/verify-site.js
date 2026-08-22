@@ -4,6 +4,7 @@ import { readdirSync, statSync } from 'node:fs';
 
 const BASE = '/comate';
 const DIST = resolve(import.meta.dirname, '../dist');
+const SRC = resolve(import.meta.dirname, '../src');
 
 const requiredPaths = [
   '/comate/',
@@ -40,6 +41,18 @@ function* walk(dir) {
   }
 }
 
+function* walkSource(dir) {
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    const stats = statSync(full);
+    if (stats.isDirectory()) {
+      yield* walkSource(full);
+    } else if (stats.isFile() && /\.(?:astro|ts|js)$/.test(entry) && !/\.test\./.test(entry)) {
+      yield full;
+    }
+  }
+}
+
 function extractUrls(html) {
   const urls = [];
   const push = (raw) => {
@@ -62,21 +75,22 @@ function extractUrls(html) {
 }
 
 function resolveUrl(url, sourceFile) {
-  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('//')) {
+  const cleanUrl = url.split(/[?#]/)[0];
+  if (cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://') || cleanUrl.startsWith('//')) {
     return null;
   }
 
-  if (url.startsWith(BASE)) {
-    return toFilesystemPath(url);
+  if (cleanUrl.startsWith(BASE)) {
+    return toFilesystemPath(cleanUrl);
   }
 
-  if (url.startsWith('/')) {
-    return toFilesystemPath(url);
+  if (cleanUrl.startsWith('/')) {
+    return toFilesystemPath(cleanUrl);
   }
 
-  if (url.startsWith('.') || url.startsWith('?')) {
+  if (cleanUrl.startsWith('.') || url.startsWith('?')) {
     const sourceDir = resolve(sourceFile, '..');
-    const resolved = resolve(sourceDir, url.split('?')[0]);
+    const resolved = resolve(sourceDir, cleanUrl);
     return resolved.startsWith(DIST) ? resolved : null;
   }
 
@@ -84,6 +98,22 @@ function resolveUrl(url, sourceFile) {
 }
 
 const errors = [];
+const expectedCtaLocations = new Set([
+  'nav_menu',
+  'nav_primary',
+  'mobile_nav_menu',
+  'mobile_nav_primary',
+  'footer_product',
+  'home_hero',
+  'home_closing',
+  'features_header',
+  'features_closing',
+  'download_primary',
+  'download_secondary',
+  'download_all_releases',
+  'download_release_notes',
+]);
+const foundCtaLocations = new Set();
 
 for (const required of requiredPaths) {
   const filePath = toFilesystemPath(required);
@@ -94,6 +124,7 @@ for (const required of requiredPaths) {
 
 for (const filePath of walk(DIST)) {
   const html = readFileSync(filePath, 'utf-8');
+  const outputName = relative(DIST, filePath);
   const urls = extractUrls(html);
   for (const url of urls) {
     const resolved = resolveUrl(url, filePath);
@@ -101,6 +132,52 @@ for (const filePath of walk(DIST)) {
     if (!existsSync(resolved)) {
       errors.push(`Broken link in ${relative(DIST, filePath)}: ${url}`);
     }
+  }
+
+  for (const [, location] of html.matchAll(/data-analytics-location="([a-z_]+)"/g)) {
+    foundCtaLocations.add(location);
+  }
+
+  if (/^(?:zh|en)\//.test(outputName)) {
+    if (!html.includes('id="analytics-consent"')) {
+      errors.push(`Missing analytics consent controls in ${outputName}`);
+    }
+    if (!html.includes('data-analytics-choice="accept"') || !html.includes('data-analytics-choice="reject"')) {
+      errors.push(`Consent choices are incomplete in ${outputName}`);
+    }
+    if (!html.includes('data-analytics-preferences')) {
+      errors.push(`Missing persistent analytics preference control in ${outputName}`);
+    }
+    const disclosure = outputName.startsWith('zh/')
+      ? '我们仅使用分析 Cookie 衡量下载操作'
+      : 'we use analytics cookies only to measure download actions';
+    if (!html.includes(disclosure)) {
+      errors.push(`Missing localized analytics privacy disclosure in ${outputName}`);
+    }
+  }
+
+  if (/^(?:zh|en)\/download\/index\.html$/.test(outputName)) {
+    for (const anchor of html.match(/<a\b[^>]*>/g) ?? []) {
+      if (!anchor.includes('data-analytics-location="download_')) continue;
+      if (!anchor.includes('data-analytics-event="release_download_click"')) {
+        errors.push(`Release link lacks the primary analytics hook in ${outputName}: ${anchor}`);
+      }
+      if (!anchor.includes('data-analytics-stage="github_releases"')) {
+        errors.push(`Release link lacks the destination-stage hook in ${outputName}: ${anchor}`);
+      }
+    }
+  }
+
+}
+
+for (const location of expectedCtaLocations) {
+  if (!foundCtaLocations.has(location)) errors.push(`Missing CTA analytics hook: ${location}`);
+}
+
+for (const filePath of walkSource(SRC)) {
+  const source = readFileSync(filePath, 'utf-8');
+  if (/G-[A-Z0-9]{6,}/.test(source)) {
+    errors.push(`Hard-coded GA4 Measurement ID in ${relative(SRC, filePath)}`);
   }
 }
 
@@ -112,4 +189,6 @@ if (errors.length) {
   process.exit(1);
 }
 
-console.log(`Site verification passed. ${requiredPaths.length} required pages and all internal links are reachable.`);
+console.log(
+  `Site verification passed. ${requiredPaths.length} required pages, internal links, consent privacy controls, and CTA hooks are valid.`,
+);

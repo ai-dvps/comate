@@ -28,6 +28,11 @@ const latestReleaseUrl = 'https://github.com/ai-dvps/comate/releases/latest';
       <a
         id="download-primary"
         href={latestReleaseUrl}
+        data-analytics-event="release_download_click"
+        data-analytics-locale={locale}
+        data-analytics-location="download_primary"
+        data-analytics-platform="macos"
+        data-analytics-stage="github_releases"
         class="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-accent px-6 py-3 text-base font-semibold text-accent-foreground no-underline shadow-lg shadow-accent/20 hover:bg-accent-hover hover:shadow-accent/30"
       >
         <svg
@@ -49,6 +54,11 @@ const latestReleaseUrl = 'https://github.com/ai-dvps/comate/releases/latest';
       <a
         id="download-secondary"
         href={latestReleaseUrl}
+        data-analytics-event="release_download_click"
+        data-analytics-locale={locale}
+        data-analytics-location="download_secondary"
+        data-analytics-platform="windows"
+        data-analytics-stage="github_releases"
         class="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-border bg-bg px-6 py-3 text-base font-semibold text-text-primary no-underline hover:border-border-hover hover:bg-surface-hover"
       >
         <span id="download-secondary-text">{t('download.windows')}</span>
@@ -59,6 +69,11 @@ const latestReleaseUrl = 'https://github.com/ai-dvps/comate/releases/latest';
   <div class="mt-6 flex flex-wrap items-center gap-4 border-t border-border pt-6 text-sm text-text-secondary">
     <a
       href={releasesUrl}
+      data-analytics-event="release_download_click"
+      data-analytics-locale={locale}
+      data-analytics-location="download_all_releases"
+      data-analytics-platform="all"
+      data-analytics-stage="github_releases"
       class="inline-flex items-center gap-1 no-underline hover:text-accent"
     >
       {t('download.allReleases')}
@@ -78,6 +93,11 @@ const latestReleaseUrl = 'https://github.com/ai-dvps/comate/releases/latest';
     <span class="hidden text-border-hover sm:inline">·</span>
     <a
       href={`${releasesUrl}#:~:text=Release%20Notes`}
+      data-analytics-event="release_download_click"
+      data-analytics-locale={locale}
+      data-analytics-location="download_release_notes"
+      data-analytics-platform="all"
+      data-analytics-stage="github_releases"
       class="no-underline hover:text-accent"
     >
       {t('download.releaseNotes')}
@@ -103,13 +123,17 @@ const latestReleaseUrl = 'https://github.com/ai-dvps/comate/releases/latest';
       if (isWindows) {
         primaryText.textContent = winText;
         primary.href = winHref;
+        primary.dataset.analyticsPlatform = 'windows';
         secondaryText.textContent = macText;
         secondary.href = macHref;
+        secondary.dataset.analyticsPlatform = 'macos';
       } else {
         primaryText.textContent = macText;
         primary.href = macHref;
+        primary.dataset.analyticsPlatform = 'macos';
         secondaryText.textContent = winText;
         secondary.href = winHref;
+        secondary.dataset.analyticsPlatform = 'windows';
       }
     })();
   </script>

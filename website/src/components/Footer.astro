@@ -62,6 +62,11 @@ const legalLinks = [
               <li>
                 <a
                   href={item.href}
+                  data-analytics-event={item.key === 'nav.download' ? 'download_cta_click' : undefined}
+                  data-analytics-locale={item.key === 'nav.download' ? locale : undefined}
+                  data-analytics-location={item.key === 'nav.download' ? 'footer_product' : undefined}
+                  data-analytics-platform={item.key === 'nav.download' ? 'all' : undefined}
+                  data-analytics-stage={item.key === 'nav.download' ? 'download_page' : undefined}
                   class="text-sm text-text-secondary no-underline hover:text-text-primary"
                 >
                   {t(item.key as UIKey)}
@@ -114,8 +119,16 @@ const legalLinks = [
     </div>
 
     <div class="mt-12 flex flex-col items-center justify-between gap-4 border-t border-border pt-8 text-sm text-text-tertiary sm:flex-row">
-      <span>© {new Date().getFullYear()} Comate. {t('footer.license')}.</span>
+      <div class="max-w-2xl text-center sm:text-left">
+        <span>© {new Date().getFullYear()} Comate. {t('footer.license')}.</span>
+        <p id="analytics-privacy" class="mt-2 text-xs leading-relaxed">{t('footer.analyticsPrivacy')}</p>
+      </div>
       <div class="flex items-center gap-4">
+        <button
+          type="button"
+          data-analytics-preferences
+          class="rounded px-1 py-1 text-sm underline underline-offset-2 hover:text-text-secondary focus-visible:ring-2 focus-visible:ring-accent"
+        >{t('footer.analyticsPreferences')}</button>
         <a
           href="https://github.com/ai-dvps/comate"
           target="_blank"

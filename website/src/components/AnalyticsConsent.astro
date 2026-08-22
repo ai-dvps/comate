@@ -1,0 +1,108 @@
+---
+import { useTranslations, type Lang } from '../i18n/utils.js';
+
+const locale = (Astro.currentLocale ?? 'zh') as Lang;
+const t = useTranslations(locale);
+const measurementId = import.meta.env.PUBLIC_GA_MEASUREMENT_ID ?? '';
+---
+
+<aside
+  id="analytics-consent"
+  data-measurement-id={measurementId}
+  data-locale={locale}
+  hidden
+  aria-labelledby="analytics-consent-title"
+  class="fixed inset-x-3 bottom-3 z-[70] mx-auto max-w-3xl rounded-xl border border-border bg-bg p-4 shadow-2xl sm:inset-x-6 sm:p-5"
+>
+  <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div class="max-w-xl">
+      <h2 id="analytics-consent-title" class="text-base font-semibold text-text-primary">
+        {t('analytics.title')}
+      </h2>
+      <p class="mt-1 text-sm leading-relaxed text-text-secondary">
+        {t('analytics.description')}
+        <a
+          href={`${Astro.url.pathname.includes('/en/') ? '/comate/en' : '/comate/zh'}/faq/#analytics-privacy`}
+          class="ml-1 font-medium text-accent underline underline-offset-2"
+        >{t('analytics.learnMore')}</a>
+      </p>
+    </div>
+    <div class="grid shrink-0 grid-cols-2 gap-2">
+      <button
+        type="button"
+        data-analytics-choice="reject"
+        class="min-h-11 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-semibold text-text-primary hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-accent"
+      >{t('analytics.reject')}</button>
+      <button
+        type="button"
+        data-analytics-choice="accept"
+        class="min-h-11 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-semibold text-text-primary hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-accent"
+      >{t('analytics.accept')}</button>
+    </div>
+  </div>
+</aside>
+
+<script>
+  import { createAnalytics, createBrowserEnvironment, type AnalyticsPayload } from '../lib/analytics';
+
+  function startAnalytics() {
+    const consent = document.querySelector<HTMLElement>('#analytics-consent');
+    if (!consent || consent.dataset.initialized === 'true') return;
+    consent.dataset.initialized = 'true';
+
+    const analytics = createAnalytics(consent.dataset.measurementId ?? '', createBrowserEnvironment());
+    analytics.bootstrap();
+
+    const showPreferences = (moveFocus = true) => {
+      consent.hidden = false;
+      if (moveFocus) consent.querySelector<HTMLElement>('[data-analytics-choice]')?.focus();
+    };
+    const hidePreferences = () => {
+      consent.hidden = true;
+    };
+
+    if (analytics.consent === 'unknown') showPreferences(false);
+
+    consent.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-analytics-choice]');
+      if (!button) return;
+      if (button.dataset.analyticsChoice === 'accept') {
+        analytics.grant();
+      } else if (analytics.consent === 'granted') {
+        analytics.revoke();
+      } else {
+        analytics.deny();
+      }
+      hidePreferences();
+      document.querySelector<HTMLElement>('[data-analytics-preferences]')?.focus();
+    });
+
+    document.addEventListener('click', (event) => {
+      const target = event.target as HTMLElement;
+      if (target.closest('[data-analytics-preferences]')) {
+        showPreferences();
+        return;
+      }
+
+      const link = target.closest<HTMLAnchorElement>('[data-analytics-event]');
+      if (!link) return;
+      const payload = {
+        locale: link.dataset.analyticsLocale,
+        cta_location: link.dataset.analyticsLocation,
+        platform: link.dataset.analyticsPlatform,
+        destination_stage: link.dataset.analyticsStage,
+      } as AnalyticsPayload;
+      if (link.dataset.analyticsEvent === 'release_download_click') {
+        analytics.trackReleaseDownload(payload);
+      } else if (link.dataset.analyticsEvent === 'download_cta_click') {
+        analytics.trackDownloadCta(payload);
+      }
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startAnalytics, { once: true });
+  } else {
+    startAnalytics();
+  }
+</script>

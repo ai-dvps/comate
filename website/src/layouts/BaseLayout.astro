@@ -1,5 +1,6 @@
 ---
 import '../styles/global.css';
+import AnalyticsConsent from '../components/AnalyticsConsent.astro';
 
 interface Props {
   title: string;
@@ -108,5 +109,6 @@ const ogImageUrl = ogImage
   </head>
   <body class="min-h-screen bg-bg text-text-primary">
     <slot />
+    <AnalyticsConsent />
   </body>
 </html>

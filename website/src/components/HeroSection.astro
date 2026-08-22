@@ -54,6 +54,11 @@ const t = useTranslations(locale);
         <div class="mt-2 flex flex-wrap items-center gap-4">
           <a
             href={getRelativeLocaleUrl(locale, ctaHref)}
+            data-analytics-event="download_cta_click"
+            data-analytics-locale={locale}
+            data-analytics-location="home_hero"
+            data-analytics-platform="all"
+            data-analytics-stage="download_page"
             class="inline-flex min-h-12 items-center justify-center rounded-lg bg-accent px-6 py-3 text-base font-semibold text-accent-foreground no-underline shadow-lg shadow-accent/20 hover:bg-accent-hover hover:shadow-accent/30 focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
           >
             {ctaText}
