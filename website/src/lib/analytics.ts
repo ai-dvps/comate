@@ -46,6 +46,14 @@ interface StorageLike {
   key(index: number): string | null;
 }
 
+const UNAVAILABLE_STORAGE: StorageLike = {
+  length: 0,
+  getItem: () => null,
+  setItem: () => undefined,
+  removeItem: () => undefined,
+  key: () => null,
+};
+
 export interface AnalyticsEnvironment {
   dataLayer: unknown[][];
   location: { origin: string; pathname: string };
@@ -108,8 +116,9 @@ function clearOwnedAnalyticsState(environment: AnalyticsEnvironment) {
   }
 
   const ownedKeys: string[] = [];
-  for (let index = 0; index < environment.storage.length; index += 1) {
-    const key = environment.storage.key(index);
+  const storageLength = safeStorage(() => environment.storage.length, 0);
+  for (let index = 0; index < storageLength; index += 1) {
+    const key = safeStorage(() => environment.storage.key(index), null);
     if (key?.startsWith(OWNED_STORAGE_PREFIX) && key !== CONSENT_STORAGE_KEY) {
       ownedKeys.push(key);
     }
@@ -173,12 +182,18 @@ export function createAnalytics(
       return false;
     }
     command('js', new Date());
+    const pageLocation = sanitizedPageLocation(environment.location);
     command('config', measurementId, {
       send_page_view: false,
       allow_google_signals: false,
       allow_ad_personalization_signals: false,
-      page_location: sanitizedPageLocation(environment.location),
+      page_location: pageLocation,
       page_referrer: '',
+    });
+    command('event', 'page_view', {
+      page_location: pageLocation,
+      page_referrer: '',
+      transport_type: 'beacon',
     });
     initialized = true;
     return true;
@@ -251,7 +266,7 @@ export function createBrowserEnvironment(): AnalyticsEnvironment {
   return {
     dataLayer: browserWindow.dataLayer,
     location: window.location,
-    storage: window.localStorage,
+    storage: safeStorage(() => window.localStorage, UNAVAILABLE_STORAGE),
     loadTag(measurementId) {
       if (document.querySelector('script[data-comate-google-tag]')) return;
       const script = document.createElement('script');

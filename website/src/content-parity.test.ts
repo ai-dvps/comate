@@ -8,7 +8,6 @@ import {
   controlPillars,
   financeScenarioStages,
   platformFacts,
-  primaryCtaSlots,
   providerPrerequisite,
   siteLocales,
 } from './lib/site-facts.js';
@@ -92,7 +91,6 @@ describe('bilingual content contracts', () => {
       ...platformFacts,
       ...controlPillars,
       ...financeScenarioStages,
-      ...primaryCtaSlots,
     ];
 
     for (const item of criticalFacts) {

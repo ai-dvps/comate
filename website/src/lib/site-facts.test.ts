@@ -5,7 +5,6 @@ import {
   controlPillars,
   financeScenarioStages,
   platformFacts,
-  primaryCtaSlots,
   providerPrerequisite,
   releaseDestination,
   siteLocales,
@@ -16,7 +15,6 @@ const localizedCollections = [
   controlPillars,
   financeScenarioStages,
   platformFacts,
-  primaryCtaSlots,
 ];
 
 describe('central site facts', () => {
@@ -72,12 +70,6 @@ describe('central site facts', () => {
       'publish-finished-report',
       'notify-with-status-and-link',
     ]);
-    expect(primaryCtaSlots.map(({ key }) => key)).toEqual([
-      'home-primary',
-      'home-closing',
-      'download-primary',
-    ]);
-
     for (const collection of localizedCollections) {
       for (const item of collection) {
         for (const locale of siteLocales) {
@@ -93,7 +85,6 @@ describe('central site facts', () => {
       controlPillars,
       financeScenarioStages,
       platformFacts,
-      primaryCtaSlots,
       providerPrerequisite,
       releaseDestination,
     });

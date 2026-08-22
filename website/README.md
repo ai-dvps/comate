@@ -24,7 +24,7 @@ After that one-time install, `npm run verify` runs the same local check-through-
 
 Analytics is disabled when `PUBLIC_GA_MEASUREMENT_ID` is unset or invalid. Production receives this public value from the GitHub Actions repository variable with the same name. Do not commit a Measurement ID.
 
-The site loads GA4 only after an explicit or persisted analytics grant. Rejecting, making no choice, or returning with a persisted denial loads no Google resource. Revoking consent persists denial, stops future site events, and removes known `_ga` cookies and site-owned analytics state; it cannot erase requests already sent before revocation. All ad consent remains denied, automatic page views are disabled, and events carry only enumerated locale, CTA location, platform, and destination-stage values. Download links never wait for analytics.
+The site loads GA4 only after an explicit or persisted analytics grant. Rejecting, making no choice, or returning with a persisted denial loads no Google resource. Revoking consent persists denial, stops future site events, and removes known `_ga` cookies and site-owned analytics state; it cannot erase requests already sent before revocation. All ad consent remains denied. Each granted page load sends one explicit `page_view` with only the normalized site path; download events carry only enumerated locale, CTA location, platform, and destination-stage values. Download links never wait for analytics.
 
 `release_download_click` is the sole primary Key Event and is reserved for outbound actions on the Download page. `download_cta_click` is diagnostic. Enhanced Measurement outbound clicks must remain outside KPI reporting.
 
