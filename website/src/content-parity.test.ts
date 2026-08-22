@@ -96,4 +96,22 @@ describe('bilingual content contracts', () => {
       expect(providerPrerequisite.disclosure[locale]).toBeTruthy();
     }
   });
+
+  it('keeps the complete finance flow and control proof bilingual', () => {
+    expect(financeScenarioStages.map(({ key }) => key)).toEqual([
+      'request-through-im',
+      'acknowledge-with-task-id',
+      'use-approved-intelligence',
+      'collect-and-analyze',
+      'request-permission-or-attention',
+      'publish-finished-report',
+      'notify-with-status-and-link',
+    ]);
+    expect(controlPillars).toHaveLength(5);
+
+    for (const locale of siteLocales) {
+      expect(financeScenarioStages.map(({ label }) => label[locale])).toHaveLength(7);
+      expect(controlPillars.map(({ label }) => label[locale])).toHaveLength(5);
+    }
+  });
 });

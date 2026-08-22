@@ -1,0 +1,51 @@
+---
+import type { Lang } from '../i18n/utils.js';
+import { controlPillars } from '../lib/site-facts.js';
+
+interface Props { locale: Lang }
+const { locale } = Astro.props;
+
+const descriptions = locale === 'zh'
+  ? [
+      '工作区与本地上下文由你选择和维护。',
+      '按团队技术栈选择任务执行引擎与模型服务。',
+      '敏感操作在执行前清楚展示并等待授权。',
+      '通过受控的 Skills 与 MCP 连接专业工具。',
+      '接入企业内部模型、IM 与 Skill Market。',
+    ]
+  : [
+      'You choose and maintain the Workspace and its local context.',
+      'Select a task execution engine and model service for your stack.',
+      'Sensitive actions stay visible and wait for approval before execution.',
+      'Connect specialist tools through governed Skills and MCP.',
+      'Fit internal models, IM, and a Skill Market into existing boundaries.',
+    ];
+---
+
+<section class="mx-auto max-w-6xl px-4 py-16 md:py-24" aria-labelledby="control-heading">
+  <div class="grid gap-10 lg:grid-cols-[0.8fr_1.2fr] lg:gap-16">
+    <div>
+      <p class="font-mono text-sm font-semibold uppercase tracking-wider text-accent">
+        {locale === 'zh' ? '企业环境中的个人生产力' : 'Personal productivity in enterprise environments'}
+      </p>
+      <h2 id="control-heading" class="mt-3 text-3xl font-bold tracking-tight text-text-primary md:text-4xl">
+        {locale === 'zh' ? '能力可以扩展，边界始终清晰' : 'Extensible capability, explicit boundaries'}
+      </h2>
+      <p class="mt-5 text-lg leading-8 text-text-secondary">
+        {locale === 'zh'
+          ? 'Comate 让个人用 Agent 推进日常工作，同时保留企业所需的环境适配、权限确认与执行可见性。'
+          : 'Comate helps individuals move daily work forward with Agents while preserving the environment fit, permission decisions, and execution visibility enterprises need.'}
+      </p>
+    </div>
+
+    <ol class="grid gap-px overflow-hidden rounded-2xl border border-border bg-border sm:grid-cols-2" data-control-pillars>
+      {controlPillars.map((pillar, index) => (
+        <li class:list={["bg-surface p-6", index === controlPillars.length - 1 && "sm:col-span-2"]} data-control-pillar={pillar.key}>
+          <span class="font-mono text-xs text-text-tertiary">{String(index + 1).padStart(2, '0')}</span>
+          <h3 class="mt-3 text-lg font-semibold text-text-primary">{pillar.label[locale]}</h3>
+          <p class="mt-2 text-sm leading-6 text-text-secondary">{descriptions[index]}</p>
+        </li>
+      ))}
+    </ol>
+  </div>
+</section>
