@@ -21,7 +21,7 @@ import type { StatusResult } from '../websocket/types.js';
 import { SdkClient } from './sdk-client.js';
 import {
   getBackendAvailability,
-  resolveDefaultBackend,
+  getDefaultBackend,
   type BackendId,
 } from './agent-backends.js';
 import { OpencodeBackendDriver, buildServeConfig } from './opencode-adapter.js';
@@ -1415,7 +1415,7 @@ export class ChatService {
     if (session.backend) {
       return session.backend as BackendId;
     }
-    return (await resolveDefaultBackend()).backend;
+    return (await getDefaultBackend()) ?? 'claude';
   }
 
   async getOrCreateRuntime(

@@ -22,7 +22,7 @@ import type { SseEvent } from '../types/message.js';
 let store: SqliteStore;
 let current: Date;
 let pushed: { sessionId: string; message: string; handler?: (id: number, e: SseEvent) => void }[];
-let createdSessions: { workspaceId: string; name: string; source?: string; approvalMode?: string }[];
+let createdSessions: { workspaceId: string; name: string; source?: string; approvalMode?: string; backend?: string }[];
 let failNextPush: Error | null;
 let failNextCreate: Error | null;
 let autoComplete: boolean;
@@ -31,7 +31,7 @@ let fakeBackend: string;
 let lastSessionId: string;
 
 const fakeChat = {
-  async createSession(input: { workspaceId: string; name: string; source?: string; approvalMode?: string }) {
+  async createSession(input: { workspaceId: string; name: string; source?: string; approvalMode?: string; backend?: string }) {
     if (failNextCreate) {
       const err = failNextCreate;
       failNextCreate = null;
@@ -40,7 +40,7 @@ const fakeChat = {
     createdSessions.push(input);
     // Mirror production: the backend lock is written at the first message.
     const session = store.createLocalSession(input.workspaceId, input.name, 'auto', undefined, input.source as never);
-    store.updateSessionBackend(session.id, fakeBackend);
+    store.updateSessionBackend(session.id, input.backend ?? fakeBackend);
     store.updateSessionBackendSessionId(session.id, `sdk-${session.id}`);
     lastSessionId = session.id;
     return session as never;
@@ -103,11 +103,20 @@ beforeEach(() => {
 describe('tick firing (KTD-1 window semantics)', () => {
   it('fires an in-window active task: session created with auto approval and completed via result handler (AE1 path, KTD-9)', async () => {
     const wsId = await makeWorkspace();
-    const task = activate(makeTask(wsId, { scheduleType: 'once', cronExpr: null, scheduleTime: '2026-07-24T08:59:50' }), '2026-07-24T08:59:50.000Z');
+    const created = makeTask(wsId, {
+      scheduleType: 'once',
+      cronExpr: null,
+      scheduleTime: '2026-07-24T08:59:50',
+    });
+    const confirmed = store.updateScheduledTask(created.id, {
+      confirmedSnapshot: { folderPath: '/tmp/ws-a', backend: 'claude', approvalMode: 'auto' },
+    })!;
+    const task = activate(confirmed, '2026-07-24T08:59:50.000Z');
     await service().tickForTest();
     assert.equal(createdSessions.length, 1);
     assert.equal(createdSessions[0].source, 'scheduled');
     assert.equal(createdSessions[0].approvalMode, 'auto');
+    assert.equal(createdSessions[0].backend, 'claude');
     assert.equal(pushed.length, 1);
     const runs = store.listTaskRuns(task.id);
     assert.equal(runs.length, 1);
