@@ -39,11 +39,12 @@ const icons: Record<string, string> = {
 };
 
 const iconPath = icon && icons[icon] ? icons[icon] : icons['prompt-input'];
-const from = gradientFrom ?? '255 85% 60%';
-const to = gradientTo ?? '190 90% 50%';
+const from = gradientFrom ?? '24 95% 38%';
+const to = gradientTo ?? '28 82% 48%';
 ---
 
 <article
+  data-feature-card
   class={cn(
     'group flex flex-col rounded-xl border border-border bg-surface p-5 shadow-sm transition-all duration-200 ease-out hover:-translate-y-1 hover:border-border-hover hover:shadow-lg',
     compact ? 'gap-3' : 'gap-4'
@@ -88,5 +89,8 @@ const to = gradientTo ?? '190 90% 50%';
     <p class={cn('leading-relaxed text-text-secondary', compact ? 'text-sm' : 'text-sm')}>
       {description}
     </p>
+    <div class="feature-detail prose prose-sm mt-3 max-w-none border-t border-border pt-3 text-text-secondary">
+      <slot />
+    </div>
   </div>
 </article>

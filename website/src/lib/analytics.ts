@@ -14,6 +14,7 @@ const CTA_LOCATIONS = [
   'home_closing',
   'features_header',
   'features_closing',
+  'usage_closing',
   'download_primary',
   'download_secondary',
   'download_all_releases',

@@ -5,8 +5,8 @@ interface Props { locale: Lang }
 const { locale } = Astro.props;
 const t = useTranslations(locale);
 const capabilities = locale === 'zh'
-  ? [['工作区与会话', '把任务、资料与历史会话按工作上下文组织起来。'], ['异步任务跟踪', '离开会话后继续执行，并清楚展示进度与待办。'], ['权限确认', '敏感工具和数据访问在执行前等待明确批准。'], ['Skills 与 MCP', '把 Agent 连接到专业流程、工具和企业能力。'], ['企业 IM 协作', '从日常沟通入口发起任务、接收确认与结果通知。'], ['Provider 选择', '按个人或组织环境配置模型服务与执行后端。']]
-  : [['Workspaces and Sessions', 'Organize tasks, material, and Session history around each work context.'], ['Asynchronous task tracking', 'Keep work running after you leave and see progress and attention states clearly.'], ['Permission decisions', 'Sensitive tools and data access wait for explicit approval before execution.'], ['Skills and MCP', 'Connect Agents to specialist workflows, tools, and enterprise capabilities.'], ['Enterprise IM collaboration', 'Start tasks and receive acknowledgements and outcomes where daily work happens.'], ['Provider choice', 'Configure model services and execution backends for personal or organization environments.']];
+  ? [['工作区与会话', '把任务、资料与历史会话按工作上下文组织起来。'], ['异步与定时任务', '离开会话后继续执行，并清楚展示进度、计划与待关注状态。'], ['权限确认', '敏感工具和数据访问在执行前等待明确批准。'], ['Skills、MCP 与 SkillHub', '把 Agent 连接到获批的专业流程、工具和企业能力。'], ['企业 IM 协作', '从日常沟通入口发起任务、接收确认与结果通知。'], ['Agent 与模型选择', '分别选择任务执行所用的 Agent 后端，并通过 Provider 配置模型服务。']]
+  : [['Workspaces and Sessions', 'Organize tasks, material, and Session history around each work context.'], ['Async and scheduled tasks', 'Keep work running after you leave and see progress, schedules, and attention states clearly.'], ['Permission decisions', 'Sensitive tools and data access wait for explicit approval before execution.'], ['Skills, MCP, and SkillHub', 'Connect Agents to approved specialist workflows, tools, and enterprise capabilities.'], ['Enterprise IM collaboration', 'Start tasks and receive acknowledgements and outcomes where daily work happens.'], ['Agent and model choice', 'Choose the Agent backend that executes tasks, then configure model access separately through a Provider.']];
 ---
 
 <section class="mx-auto max-w-6xl px-4 py-16 md:py-24" aria-labelledby="capabilities-heading">

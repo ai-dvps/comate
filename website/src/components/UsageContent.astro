@@ -1,6 +1,8 @@
 ---
 import { getCollection, render } from 'astro:content';
+import { getRelativeLocaleUrl } from 'astro:i18n';
 import { getLocalizedEntries, type Lang } from '../i18n/utils.js';
+import { providerPrerequisite } from '../lib/site-facts.js';
 
 interface Props {
   locale: Lang;
@@ -12,7 +14,7 @@ const entries = getLocalizedEntries(allEntries, locale).sort((a, b) => a.data.st
 const rendered = await Promise.all(
   entries.map(async (entry) => {
     const { Content } = await render(entry);
-    return { data: entry.data, Content };
+    return { id: entry.id, data: entry.data, Content };
   })
 );
 ---
@@ -23,14 +25,25 @@ const rendered = await Promise.all(
   </h1>
   <p class="mt-4 max-w-2xl text-lg text-text-secondary">
     {locale === 'zh'
-      ? '从下载安装到第一次与 AI 协作，只需几步即可上手 Comate。'
-      : 'From download to your first AI collaboration — get started with Comate in a few steps.'}
+      ? '从选择安装包、配置模型 Provider，到完成并复核第一个任务。'
+      : 'From choosing an installer and configuring a model Provider to completing and reviewing your first task.'}
   </p>
+
+  <aside class="mt-8 rounded-xl border border-accent/30 bg-accent/5 p-5" data-provider-disclosure="usage">
+    <h2 class="font-semibold text-text-primary">{locale === 'zh' ? '先了解执行前提' : 'Know the execution prerequisite'}</h2>
+    <p class="mt-2 text-sm leading-6 text-text-secondary">{providerPrerequisite.disclosure[locale]}</p>
+  </aside>
 
   <ol class="mt-12 space-y-8">
     {
-      rendered.map(({ data, Content }, index) => (
-        <li class="relative rounded-lg border border-border bg-surface p-6">
+      rendered.map(({ id, data, Content }, index) => (
+        <li
+          id={data.step === 2 ? 'provider-setup' : undefined}
+          class="relative scroll-mt-24 rounded-lg border border-border bg-surface p-6"
+          data-usage-step
+          data-usage-step-number={data.step}
+          data-content-id={id}
+        >
           <span class="absolute -top-3 left-6 inline-flex h-7 w-7 items-center justify-center rounded-full bg-accent text-sm font-semibold text-accent-foreground">
             {index + 1}
           </span>
@@ -42,4 +55,18 @@ const rendered = await Promise.all(
       ))
     }
   </ol>
+
+  <div class="mt-12 rounded-2xl border border-border bg-surface p-7 text-center">
+    <h2 class="text-2xl font-semibold text-text-primary">{locale === 'zh' ? '准备开始？' : 'Ready to begin?'}</h2>
+    <p class="mx-auto mt-2 max-w-xl text-text-secondary">{locale === 'zh' ? '先选择适合当前设备的安装包，再按以上顺序完成配置。' : 'Choose the installer for this device, then follow the setup sequence above.'}</p>
+    <a
+      href={getRelativeLocaleUrl(locale, '/download/')}
+      data-analytics-event="download_cta_click"
+      data-analytics-locale={locale}
+      data-analytics-location="usage_closing"
+      data-analytics-platform="all"
+      data-analytics-stage="download_page"
+      class="mt-5 inline-flex min-h-12 items-center justify-center rounded-lg bg-accent px-7 py-3 font-semibold text-accent-foreground no-underline hover:bg-accent-hover"
+    >{locale === 'zh' ? '前往下载' : 'Go to Download'}</a>
+  </div>
 </main>

@@ -1,0 +1,12 @@
+---
+title: Configure a model Provider and verify it
+step: 2
+---
+
+In **Settings → Providers**, add the endpoint, model, and credentials for a model service you or your organization supplies. The **Provider** configures model access; it is separate from the **Agent backend** that executes the task.
+
+Save the Provider to run the endpoint reachability check, then select it for the Session. Comate does not include a free model Provider or free inference.
+
+**If no Provider is configured:** you may still create a Workspace and draft a Session, but Agent execution cannot complete. Return here before running the task.
+
+**If the credential or endpoint check fails:** do not rely on “save anyway” for your first run. Verify the endpoint, API key, model name, network access, and any enterprise proxy or certificate requirement, then retry the save/check.
