@@ -178,6 +178,11 @@ const CAPABILITY_TABLE: Record<BackendId, Partial<Record<CapabilityId, Capabilit
       reasonKey: 'backend.codexSessionManagementPartial',
       evidence: 'declared',
     },
+    subagents: {
+      state: 'degraded',
+      reasonKey: 'backend.codexSubagentsPartial',
+      evidence: 'verified',
+    },
   },
 };
 
