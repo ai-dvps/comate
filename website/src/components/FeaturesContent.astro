@@ -1,5 +1,5 @@
 ---
-import { getCollection } from 'astro:content';
+import { getCollection, render } from 'astro:content';
 import { getRelativeLocaleUrl } from 'astro:i18n';
 import { getLocalizedEntries, type Lang } from '../i18n/utils.js';
 import FeatureCard from './FeatureCard.astro';
@@ -10,7 +10,11 @@ interface Props {
 
 const { locale } = Astro.props;
 const allEntries = await getCollection('features');
-const entries = getLocalizedEntries(allEntries, locale).sort((a, b) => a.data.order - b.data.order);
+const localizedEntries = getLocalizedEntries(allEntries, locale).sort((a, b) => a.data.order - b.data.order);
+const entries = await Promise.all(localizedEntries.map(async (entry) => {
+  const { Content } = await render(entry);
+  return { ...entry, Content };
+}));
 
 const categories = [...new Set(entries.map((e) => e.data.category))];
 ---
@@ -24,8 +28,8 @@ const categories = [...new Set(entries.map((e) => e.data.category))];
       <p class="mt-4 text-lg text-text-secondary">
         {
           locale === 'zh'
-            ? 'Comate 将 AI 工作区、文件管理、团队协作和桌面体验融为一体。'
-            : 'Comate brings together AI workspaces, file management, team collaboration, and a polished desktop experience.'
+            ? 'Comate 围绕任务结果组织上下文、Agent、模型、工具与权限，让个人效率与企业管控同时成立。'
+            : 'Comate organizes context, Agents, models, tools, and permissions around task outcomes—for individual momentum with enterprise control.'
         }
       </p>
     </div>
@@ -43,9 +47,9 @@ const categories = [...new Set(entries.map((e) => e.data.category))];
   </div>
 
   {
-    categories.map((category) => (
-      <div class="reveal mt-12 first:mt-0">
-        <h2 class="mb-4 text-xl font-semibold text-text-primary">{category}</h2>
+    categories.map((category, categoryIndex) => (
+      <section class="reveal mt-12 first:mt-0" data-feature-group data-feature-group-order={categoryIndex + 1} aria-labelledby={`feature-group-${categoryIndex + 1}`}>
+        <h2 id={`feature-group-${categoryIndex + 1}`} class="mb-4 text-xl font-semibold text-text-primary">{category}</h2>
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {entries
             .filter((e) => e.data.category === category)
@@ -59,10 +63,12 @@ const categories = [...new Set(entries.map((e) => e.data.category))];
                 imageAlt={entry.data.imageAlt}
                 gradientFrom={entry.data.gradientFrom}
                 gradientTo={entry.data.gradientTo}
-              />
+              >
+                <entry.Content />
+              </FeatureCard>
             ))}
         </div>
-      </div>
+      </section>
     ))
   }
 
@@ -72,8 +78,8 @@ const categories = [...new Set(entries.map((e) => e.data.category))];
     </h2>
     <p class="mx-auto mt-3 max-w-xl text-text-secondary">
       {locale === 'zh'
-        ? '下载 Comate，创建工作区，与你的第一个项目开始对话。'
-        : 'Download Comate, create a workspace, and start talking to your first project.'}
+        ? '下载 Comate，配置你选择的模型 Provider，然后把第一个真实任务交给 Agent。'
+        : 'Download Comate, configure your chosen model Provider, and give an Agent your first real task.'}
     </p>
     <a
       href={getRelativeLocaleUrl(locale, '/download/')}

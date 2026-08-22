@@ -1,11 +1,11 @@
 ---
-title: Security & Control
-description: Workspace-scoped API key isolation, bot user isolation, tool permission policies, Bash allowlists, and audit logs provide controlled boundaries for team use.
-category: Security
+title: Put decisions at the right boundary
+description: Workspace-scoped credentials, user isolation, tool permission policies, allowlists, and audit records make sensitive actions explicit and reviewable.
+category: Desktop continuity and governance
 order: 10
 icon: security
 image: /comate/images/features/security.svg
 imageAlt: Security and control screenshot
 ---
 
-Each workspace configures its own provider and API keys independently. WeCom/Feishu bot users are isolated by role for file access, transcripts, Bash commands, and skill invocations. Admins can configure tool-permission presets and Bash allowlists; sensitive actions are written to sanitized audit logs.
+Each Workspace configures its Provider credentials independently. Tool requests can pause for **Allow**, **Allow always**, or **Deny**; bot roles further constrain file, transcript, command, and Skill access. Policies reduce risk but do not replace an organization's own security review.
