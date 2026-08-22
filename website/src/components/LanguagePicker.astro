@@ -1,12 +1,12 @@
 ---
 import { getRelativeLocaleUrl } from 'astro:i18n';
-import { type Lang } from '../i18n/utils.js';
+import { stripLocalePrefix, type Lang } from '../i18n/utils.js';
 
 const locale = (Astro.currentLocale ?? 'zh') as Lang;
 const currentPath = Astro.url.pathname;
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
 const pathWithoutBase = currentPath.startsWith(basePath) ? currentPath.slice(basePath.length) : currentPath;
-const strippedPath = pathWithoutBase.replace(/^\/(zh|en)(?=\/|$)/, '') || '/';
+const strippedPath = stripLocalePrefix(pathWithoutBase) || '/';
 const accessibleLabel = locale === 'zh' ? '切换语言' : 'Switch language';
 
 const locales: { code: Lang; label: string }[] = [

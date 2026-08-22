@@ -1,4 +1,5 @@
 ---
+import { getRelativeLocaleUrl } from 'astro:i18n';
 import { useTranslations, type Lang } from '../i18n/utils.js';
 
 const locale = (Astro.currentLocale ?? 'zh') as Lang;
@@ -22,7 +23,7 @@ const measurementId = import.meta.env.PUBLIC_GA_MEASUREMENT_ID ?? '';
       <p class="mt-1 text-sm leading-relaxed text-text-secondary">
         {t('analytics.description')}
         <a
-          href={`${Astro.url.pathname.includes('/en/') ? '/comate/en' : '/comate/zh'}/faq/#analytics-privacy`}
+          href={`${getRelativeLocaleUrl(locale, '/faq/')}#analytics-privacy`}
           class="ml-1 font-medium text-accent underline underline-offset-2"
         >{t('analytics.learnMore')}</a>
       </p>
