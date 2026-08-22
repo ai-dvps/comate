@@ -5,6 +5,37 @@ import type { CodexAppServerManager } from './codex-app-server-manager.js';
 import { CodexSessionService } from './codex-session-service.js';
 
 describe('CodexSessionService history projection', () => {
+  it('lists only child threads of the requested Codex parent across pages', async () => {
+    const requests: unknown[] = [];
+    const manager = {
+      request: async (_method: string, params: unknown) => {
+        requests.push(params);
+        const cursor = (params as { cursor?: string | null }).cursor;
+        return cursor === null
+          ? {
+              data: [
+                { id: 'child-1', parentThreadId: 'parent-1' },
+                { id: 'other', parentThreadId: 'parent-2' },
+              ],
+              nextCursor: 'page-2',
+            }
+          : {
+              data: [{ id: 'child-2', parentThreadId: 'parent-1' }],
+              nextCursor: null,
+            };
+      },
+    } as unknown as CodexAppServerManager;
+    const service = new CodexSessionService(manager);
+
+    const children = await service.listSubagents('parent-1', '/tmp/project');
+
+    assert.deepStrictEqual(children.map((thread) => thread.id), ['child-1', 'child-2']);
+    assert.deepStrictEqual(requests, [
+      { cursor: null, limit: 100, cwd: '/tmp/project', useStateDbOnly: true },
+      { cursor: 'page-2', limit: 100, cwd: '/tmp/project', useStateDbOnly: true },
+    ]);
+  });
+
   it('reconstructs text, reasoning, command, and result messages from Codex-owned history', async () => {
     const manager = {
       request: async () => ({

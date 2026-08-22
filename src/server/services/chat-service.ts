@@ -1110,9 +1110,26 @@ export class ChatService {
     // the session's serve, translated into the same SubagentState shape.
     const localSession = workspaceStore.getLocalSession(sessionId);
     if (localSession?.backend === 'codex' && localSession.backendSessionId) {
-      // Codex subagent threads are surfaced by app-server notifications; the
-      // dedicated panel mapping lands with the richer item mapper.
-      return [];
+      try {
+        const children = await codexSessionService.listSubagents(
+          localSession.backendSessionId,
+          dir,
+        );
+        const incompleteState = runtime && this.runtimeActivity(runtime).active ? 'running' : 'error';
+        const states = await Promise.all(children.map(async (child) => {
+          const messages = await codexSessionService.loadMessages(child.id);
+          return reconstructSubagentState(
+            child.id,
+            messages,
+            child.name ?? child.agentNickname ?? child.agentRole ?? `Agent ${child.id.slice(-6)}`,
+            { incompleteState },
+          );
+        }));
+        return states.filter((state): state is SubagentState => state !== null);
+      } catch (err) {
+        console.error(`Failed to load Codex subagents for ${sessionId}:`, err);
+        return [];
+      }
     } else if (localSession?.backend === 'opencode' && localSession.backendSessionId) {
       return this.loadOpencodeSubagents(
         sessionId,

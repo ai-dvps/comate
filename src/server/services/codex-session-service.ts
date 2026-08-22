@@ -1,6 +1,8 @@
 import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { ThreadItem } from '../generated/codex-protocol/v2/ThreadItem.js';
 import type { ThreadReadResponse } from '../generated/codex-protocol/v2/ThreadReadResponse.js';
+import type { Thread } from '../generated/codex-protocol/v2/Thread.js';
+import type { ThreadListResponse } from '../generated/codex-protocol/v2/ThreadListResponse.js';
 import { codexAppServerManager, type CodexAppServerManager } from './codex-app-server-manager.js';
 import { projectCodexToolItem } from './codex-event-mapper.js';
 
@@ -23,6 +25,22 @@ export class CodexSessionService {
 
   async archive(threadId: string): Promise<void> {
     await this.manager.request('thread/archive', { threadId });
+  }
+
+  async listSubagents(parentThreadId: string, cwd: string): Promise<Thread[]> {
+    const children: Thread[] = [];
+    let cursor: string | null = null;
+    do {
+      const response: ThreadListResponse = await this.manager.request<ThreadListResponse>('thread/list', {
+        cursor,
+        limit: 100,
+        cwd,
+        useStateDbOnly: true,
+      });
+      children.push(...response.data.filter((thread) => thread.parentThreadId === parentThreadId));
+      cursor = response.nextCursor;
+    } while (cursor);
+    return children;
   }
 }
 

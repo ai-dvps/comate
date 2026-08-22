@@ -379,6 +379,7 @@
     "codexSessionManagementPartial": "Codex 已支持历史、重命名与归档；丰富条目和分叉界面仍有限制",
     "codexToolRenderingPartial": "Codex 命令、文件、MCP、动态工具和协作条目已接入统一界面；部分专用条目类型仍有限制",
     "codexInteractionPartial": "Codex 审批与用户提问已接入统一交互界面；尚未开放会话级策略修订",
+    "codexSubagentsPartial": "Codex 子线程已显示在子 Agent 面板；实时活动和单独停止控制仍有限制",
     "codexAccount": "Codex 账户",
     "codexAccountDescription": "与 Codex CLI 共用原生身份和配置。",
     "codexChatGptAccount": "ChatGPT 账户",
