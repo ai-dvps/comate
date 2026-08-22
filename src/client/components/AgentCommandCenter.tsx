@@ -688,7 +688,7 @@ export default function AgentCommandCenter({
                     className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs font-medium text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                   >
                     <WorkspaceFolderIcon
-                      className="h-3.5 w-3.5 flex-shrink-0 text-accent"
+                      className="h-3.5 w-3.5 flex-shrink-0 text-text-secondary"
                       aria-hidden="true"
                     />
                     <span className="truncate">{workspace.name}</span>
@@ -896,7 +896,7 @@ export default function AgentCommandCenter({
                           ...current,
                           [workspace.id]: visibleCount + 5,
                         }))}
-                        className="flex h-8 w-full items-center justify-start rounded-md px-2 text-[10px] font-medium text-accent hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                        className="flex h-8 w-full items-center justify-start rounded-md px-2 text-[10px] font-medium text-text-secondary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                         aria-label={t('shell.showMoreSessionsInWorkspace', { workspace: workspace.name })}
                       >
                         {t('shell.showMore')}
@@ -938,7 +938,7 @@ export default function AgentCommandCenter({
           aria-haspopup="menu"
           aria-expanded={userMenuOpen}
         >
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent/15 text-[9px] font-semibold text-accent">D</span>
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-surface-active text-[9px] font-semibold text-text-secondary">D</span>
           <span className="truncate">{t('shell.developer')}</span>
           <CircleUserRound className="ml-auto h-3.5 w-3.5 text-text-tertiary" aria-hidden="true" />
         </button>

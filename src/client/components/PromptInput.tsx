@@ -1593,7 +1593,7 @@ export default function PromptInput(props: PromptInputProps) {
               data-testid="session-activity-details"
             >
               <div className="flex min-w-0 items-start gap-2">
-                <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-accent/10 text-accent">
+                <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-agent/10 text-agent">
                   {activity?.phase === 'stopping' ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
                   ) : (

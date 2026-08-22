@@ -77,7 +77,7 @@ export default function NewChatPage({
       <main className="flex h-full w-full items-center justify-center bg-work px-6" data-testid="new-chat-workspace-gate">
         <div className="flex max-w-sm flex-col items-center text-center">
           <span className="mb-5 flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-surface shadow-sm">
-            <FolderPlus className="h-5 w-5 text-accent" aria-hidden="true" />
+            <FolderPlus className="h-5 w-5 text-text-secondary" aria-hidden="true" />
           </span>
           <h1 className="text-lg font-semibold text-text-primary">{t('newChat.workspaceGateTitle')}</h1>
           <p className="mt-2 text-sm leading-6 text-text-secondary">{t('newChat.workspaceGateDescription')}</p>
@@ -99,7 +99,7 @@ export default function NewChatPage({
       <div className="flex min-h-0 flex-1 items-center justify-center">
         <div className="text-center">
           <span className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-2xl border border-border bg-surface shadow-sm">
-            <MessageSquarePlus className="h-5 w-5 text-accent" aria-hidden="true" />
+            <MessageSquarePlus className="h-5 w-5 text-text-secondary" aria-hidden="true" />
           </span>
           <h1 className="text-xl font-semibold tracking-tight text-text-primary">{t('newChat.title')}</h1>
           <p className="mt-1.5 text-sm text-text-secondary">{t('newChat.description')}</p>
