@@ -151,14 +151,18 @@ vi.mock('../hooks/use-app-settings', () => {
 })
 vi.mock('../lib/use-badge-sync', () => ({ useBadgeSync: () => {} }))
 vi.mock('../lib/use-notification-sounds', () => ({ useNotificationSounds: () => {} }))
+let leftPanelInitiallyCollapsed = false
 vi.mock('../hooks/use-sidebar-width', () => ({
-  useSidebarWidth: () => ({
-    width: 240,
-    expandedWidth: 240,
-    setWidth: vi.fn(),
-    isCollapsed: false,
-    toggleCollapse: vi.fn(),
-  }),
+  useSidebarWidth: () => {
+    const [isCollapsed, setIsCollapsed] = useState(leftPanelInitiallyCollapsed)
+    return {
+      width: isCollapsed ? 0 : 240,
+      expandedWidth: 240,
+      setWidth: vi.fn(),
+      isCollapsed,
+      toggleCollapse: () => setIsCollapsed((collapsed) => !collapsed),
+    }
+  },
 }))
 let rightPanelInitiallyCollapsed = false
 vi.mock('../hooks/use-right-panel-width', () => ({
@@ -270,6 +274,7 @@ describe('App layout', () => {
     mockWorkspaceStore.activeWorkspaceId = null
     mockWorkspaceStore.openWorkspaceIds = []
     mockWorkspaceStore.workspaces = []
+    leftPanelInitiallyCollapsed = false
     rightPanelInitiallyCollapsed = false
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
     vi.mocked(isWindows).mockResolvedValue(false)
@@ -648,6 +653,11 @@ describe('App layout', () => {
     await waitFor(() => {
       expect(titlebar).toHaveAttribute('data-left-collapsed', 'false')
       expect(titlebar).toHaveAttribute('data-right-collapsed', 'true')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle left panel' }))
+    await waitFor(() => {
+      expect(titlebar).toHaveAttribute('data-left-collapsed', 'true')
     })
   })
 
