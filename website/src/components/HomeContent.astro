@@ -32,7 +32,7 @@ const features = getLocalizedEntries(allFeatures, locale)
   .map((entry) => ({ ...entry.data }));
 ---
 
-<div class="space-y-4">
+<main class="space-y-4">
   <HeroSection
     locale={locale}
     headline={headline ?? title}
@@ -54,4 +54,4 @@ const features = getLocalizedEntries(allFeatures, locale)
   <section class="mx-auto max-w-3xl px-4 pb-16 text-center text-text-tertiary">
     <Content />
   </section>
-</div>
+</main>

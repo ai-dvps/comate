@@ -4,7 +4,10 @@ import { type Lang } from '../i18n/utils.js';
 
 const locale = (Astro.currentLocale ?? 'zh') as Lang;
 const currentPath = Astro.url.pathname;
-const strippedPath = currentPath.replace(/^\/(zh|en)\//, '/');
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
+const pathWithoutBase = currentPath.startsWith(basePath) ? currentPath.slice(basePath.length) : currentPath;
+const strippedPath = pathWithoutBase.replace(/^\/(zh|en)(?=\/|$)/, '') || '/';
+const accessibleLabel = locale === 'zh' ? '切换语言' : 'Switch language';
 
 const locales: { code: Lang; label: string }[] = [
   { code: 'zh', label: '中文' },
@@ -13,10 +16,10 @@ const locales: { code: Lang; label: string }[] = [
 ---
 
 <div class="relative">
-  <label class="sr-only" for="language-picker">Switch language</label>
   <select
-    id="language-picker"
-    class="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-text-primary hover:border-border-hover focus-visible:ring-2 focus-visible:ring-accent"
+    data-language-picker
+    aria-label={accessibleLabel}
+    class="min-h-11 rounded-md border border-border bg-surface px-3 py-2 text-sm text-text-primary hover:border-border-hover focus-visible:ring-2 focus-visible:ring-accent"
     onchange="window.location.href = this.value"
   >
     {
