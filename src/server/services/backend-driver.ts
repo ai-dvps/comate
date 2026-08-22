@@ -79,7 +79,8 @@ export class ClaudeBackendDriver implements BackendDriver {
         !('type' in block) || block.type !== 'image' ||
         !('name' in block)
       ) return block;
-      const { name: _name, ...withoutDisplayName } = block as Record<string, unknown>;
+      const withoutDisplayName = { ...block } as Record<string, unknown>;
+      delete withoutDisplayName.name;
       return withoutDisplayName;
     });
   }

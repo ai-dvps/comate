@@ -1411,7 +1411,6 @@ export class ChatService {
    */
   private async resolveSessionBackend(
     session: ChatSession,
-    _isBotSession?: boolean,
   ): Promise<BackendId> {
     if (session.backend) {
       return session.backend as BackendId;
@@ -1470,7 +1469,7 @@ export class ChatService {
       }
       diagLog(`[ChatService] runtime ${sessionId} session loaded elapsed=${Date.now() - startedAt}ms isDraft=${!!session.isDraft}`);
 
-      const backend = await this.resolveSessionBackend(session, isBotSession);
+      const backend = await this.resolveSessionBackend(session);
       if (backend === 'opencode' || backend === 'codex') {
         const availability = await getBackendAvailability(backend);
         if (availability.status !== 'available') {

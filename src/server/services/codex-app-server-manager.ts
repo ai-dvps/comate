@@ -2,8 +2,7 @@ import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:c
 import { EventEmitter } from 'node:events';
 import { sanitizeSubprocessEnv } from '../utils/sanitize-env.js';
 import { CODEX_EXPECTED_VERSION, resolveCodexBinary } from '../utils/resolve-codex-binary.js';
-import { CodexRpcClient } from './codex-rpc-client.js';
-import { CodexRpcError } from './codex-rpc-client.js';
+import { CodexRpcClient, CodexRpcError } from './codex-rpc-client.js';
 
 export class CodexAppServerManager extends EventEmitter {
   private process?: ChildProcessWithoutNullStreams;

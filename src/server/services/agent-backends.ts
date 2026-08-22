@@ -155,7 +155,14 @@ const CAPABILITY_TABLE: Record<BackendId, Partial<Record<CapabilityId, Capabilit
     },
     hooks: { state: 'unavailable', reasonKey: 'backend.hooksNotWired', evidence: 'verified' },
   },
-  codex: {},
+  codex: {
+    streaming: { state: 'full', evidence: 'verified' },
+    sessionManagement: {
+      state: 'degraded',
+      reasonKey: 'backend.codexSessionManagementPartial',
+      evidence: 'declared',
+    },
+  },
 };
 
 export function getCapability(backend: BackendId, capability: CapabilityId): CapabilityEntry {

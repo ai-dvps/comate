@@ -379,6 +379,7 @@
     "fallbackNotice": "Default agent unavailable — using {{backend}}",
     "capabilityUndeclared": "Not available on this agent",
     "analyticsNotCounted": "Open Code sessions are not counted in analytics yet",
+    "codexSessionManagementPartial": "Codex history, rename, and archive are available; richer item and fork UI parity is still limited",
     "defaultDescription": "Default agent for new sessions. Availability reflects the runtime binaries bundled in this install.",
     "available": "Available",
     "unavailable": "Unavailable",

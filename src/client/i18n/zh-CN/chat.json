@@ -376,6 +376,7 @@
     "fallbackNotice": "默认智能体不可用，已回退到 {{backend}}",
     "capabilityUndeclared": "当前智能体暂不支持",
     "analyticsNotCounted": "Open Code 会话暂不计入用量统计",
+    "codexSessionManagementPartial": "Codex 已支持历史、重命名与归档；丰富条目和分叉界面仍有限制",
     "defaultDescription": "新会话的默认智能体。可用性取决于本安装包内置的运行时二进制。",
     "available": "可用",
     "unavailable": "不可用",

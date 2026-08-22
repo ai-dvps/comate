@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Options, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { BackendDriver } from './backend-driver.js';
 import { codexAppServerManager, type CodexAppServerManager } from './codex-app-server-manager.js';
 
@@ -70,7 +70,19 @@ export class CodexBackendDriver implements BackendDriver {
   private async run(input: AsyncIterable<SDKUserMessage>): Promise<void> {
     const client = await this.manager.ensureClient();
     const notification = (message: { method: string; params: Record<string, unknown> }) => this.onNotification(message);
+    const request = (message: { id: string | number; method: string }) => {
+      if (message.method === 'item/commandExecution/requestApproval' || message.method === 'item/fileChange/requestApproval') {
+        client.respond(message.id, { decision: 'decline' });
+      } else if (message.method === 'execCommandApproval' || message.method === 'applyPatchApproval') {
+        client.respond(message.id, { decision: { denied: { rejection: 'Approval UI is unavailable for this Codex session' } } });
+      } else if (message.method === 'item/tool/requestUserInput') {
+        client.respond(message.id, { answers: {} });
+      } else {
+        client.respond(message.id, undefined, { code: -32601, message: `Unsupported Codex server request: ${message.method}` });
+      }
+    };
     client.on('notification', notification);
+    client.on('request', request);
     try {
       await this.ensureThread();
       for await (const message of input) {
@@ -88,6 +100,7 @@ export class CodexBackendDriver implements BackendDriver {
       this.queue.push(resultMessage(this.threadId ?? '', error));
     } finally {
       client.off('notification', notification);
+      client.off('request', request);
       this.queue.end();
     }
   }
