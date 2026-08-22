@@ -8,7 +8,7 @@
 import { create } from 'zustand'
 import i18next from 'i18next'
 
-export type BackendId = 'claude' | 'opencode'
+export type BackendId = 'claude' | 'opencode' | 'codex'
 export type CapabilityState = 'full' | 'degraded' | 'unavailable'
 
 export interface CapabilityEntry {

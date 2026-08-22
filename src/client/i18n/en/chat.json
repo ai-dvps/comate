@@ -372,6 +372,7 @@
     "selectorTitle": "Agent",
     "claude": "Claude Code",
     "opencode": "Open Code",
+    "codex": "Codex",
     "locked": "Locked to {{backend}}",
     "unavailableReadOnly": "This session's agent ({{backend}}) is unavailable in this install — read-only.",
     "noneAvailable": "No agent available",

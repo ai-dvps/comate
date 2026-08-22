@@ -27,6 +27,7 @@ type BackendSelectorProps = SessionBackendSelectorProps | NewChatBackendSelector
 const BACKEND_LABEL_KEYS: Record<string, string> = {
   claude: 'backend.claude',
   opencode: 'backend.opencode',
+  codex: 'backend.codex',
 }
 
 /**

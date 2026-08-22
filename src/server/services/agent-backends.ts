@@ -19,6 +19,7 @@
 import { spawn } from 'node:child_process';
 import { resolveSdkBinary } from '../utils/resolve-sdk-binary.js';
 import { resolveOpencodeBinary } from '../utils/resolve-opencode-binary.js';
+import { resolveCodexBinary } from '../utils/resolve-codex-binary.js';
 import { getAppSetting, setAppSetting } from '../storage/app-settings-store.js';
 import { diagLog } from '../utils/diag-logger.js';
 import type { BackendDriver, BackendSessionRef } from './backend-driver.js';
@@ -286,6 +287,7 @@ export async function getBackendAvailability(backend: BackendId): Promise<Backen
 function registerDefaultBackendRuntimes(): void {
   registerBackendRuntime('claude', { resolveBinaryPath: () => resolveSdkBinary() });
   registerBackendRuntime('opencode', { resolveBinaryPath: () => resolveOpencodeBinary() });
+  registerBackendRuntime('codex', { resolveBinaryPath: () => resolveCodexBinary() });
 }
 
 registerDefaultBackendRuntimes();
