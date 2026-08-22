@@ -15,14 +15,6 @@ import { deriveFallbackSessionTitle } from '../utils/session-title.js';
 
 const router = Router({ mergeParams: true });
 
-/**
- * Output styles are an open set (CLI 2.1.237 built-ins: default, explanatory,
- * learning, concise — plus workspace/user custom styles), so validate shape
- * only: non-empty, reasonably bounded identifier.
- */
-function isValidOutputStyle(value: unknown): value is string {
-  return typeof value === 'string' && value.trim() !== '' && value.length <= 64;
-}
 const WORKFLOW_ID_RE = /^[a-zA-Z0-9_-]+$/;
 diagLog('[Route] chat module loaded');
 
@@ -54,7 +46,7 @@ router.get('/sessions', async (req, res) => {
 router.post('/sessions', async (req, res) => {
   try {
     const workspaceId = (req.params as { id: string }).id;
-    const { name, prompt, approvalMode, providerId, backend, fastMode, outputStyle } = req.body;
+    const { name, prompt, approvalMode, providerId, backend, fastMode } = req.body;
 
     const hasName = typeof name === 'string' && name.trim() !== '';
     const hasPrompt = typeof prompt === 'string' && prompt.trim() !== '';
@@ -75,11 +67,6 @@ router.post('/sessions', async (req, res) => {
       res.status(400).json({ error: 'fastMode must be a boolean' });
       return;
     }
-    if (outputStyle !== undefined && !isValidOutputStyle(outputStyle)) {
-      res.status(400).json({ error: 'outputStyle must be a non-empty string of at most 64 characters' });
-      return;
-    }
-
     const session = await chatService.createSession({
       workspaceId,
       name: hasName ? name.trim() : deriveFallbackSessionTitle(prompt as string),
@@ -87,7 +74,6 @@ router.post('/sessions', async (req, res) => {
       providerId,
       backend,
       fastMode,
-      ...(outputStyle !== undefined && { outputStyle }),
       source: 'gui',
     });
     res.status(201).json(session);
@@ -102,7 +88,7 @@ router.put('/sessions/:sessionId', async (req, res) => {
   try {
     const workspaceId = (req.params as unknown as { id: string }).id;
     const sessionId = req.params.sessionId;
-    const { name, isWip, providerId, isArchived, fastMode, backend, outputStyle } = req.body;
+    const { name, isWip, providerId, isArchived, fastMode, backend } = req.body;
 
     const hasName = name !== undefined && typeof name === 'string' && name.trim() !== '';
     const hasWip = isWip !== undefined && typeof isWip === 'boolean';
@@ -110,24 +96,17 @@ router.put('/sessions/:sessionId', async (req, res) => {
     const hasArchived = isArchived !== undefined && typeof isArchived === 'boolean';
     const hasFastMode = fastMode !== undefined && typeof fastMode === 'boolean';
     const hasBackend = backend !== undefined;
-    const hasOutputStyle = outputStyle !== undefined;
-    if (hasOutputStyle && outputStyle !== null && !isValidOutputStyle(outputStyle)) {
-      res.status(400).json({ error: 'outputStyle must be a non-empty string of at most 64 characters' });
+    if (!hasName && !hasWip && !hasProviderId && !hasArchived && !hasFastMode && !hasBackend) {
+      res.status(400).json({ error: 'name, isWip, providerId, isArchived, fastMode, or backend is required' });
       return;
     }
 
-    if (!hasName && !hasWip && !hasProviderId && !hasArchived && !hasFastMode && !hasBackend && !hasOutputStyle) {
-      res.status(400).json({ error: 'name, isWip, providerId, isArchived, fastMode, outputStyle, or backend is required' });
-      return;
-    }
-
-    const input: { name?: string; isWip?: boolean; providerId?: string; isArchived?: boolean; fastMode?: boolean; outputStyle?: string | null; backend?: string } = {};
+    const input: { name?: string; isWip?: boolean; providerId?: string; isArchived?: boolean; fastMode?: boolean; backend?: string } = {};
     if (hasName) input.name = name.trim();
     if (hasWip) input.isWip = isWip;
     if (hasProviderId) input.providerId = providerId;
     if (hasArchived) input.isArchived = isArchived;
     if (hasFastMode) input.fastMode = fastMode;
-    if (hasOutputStyle) input.outputStyle = outputStyle === null ? null : (outputStyle as string);
     if (hasBackend) input.backend = backend;
 
     const session = await chatService.updateSession(sessionId, input, workspaceId);

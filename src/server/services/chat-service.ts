@@ -99,6 +99,7 @@ import { getSidecarBaseUrl } from '../utils/self-port.js';
 import { buildBrowserMcpClientConnection } from './browser-mcp-client-config.js';
 import { SCHEDULED_TASKS_MCP_KEY, getScheduledTasksMcpToken } from './scheduled-tasks-mcp.js';
 import { makeScheduledRunStopHook } from './goal-stop-hook.js';
+import { getOutputStyle } from './output-style-app-settings.js';
 import {
   SESSION_TOKEN_ENV,
   WECOM_CONTEXT_FILE_ENV,
@@ -408,10 +409,12 @@ export class ChatService {
    * close() resolves the session's pending cards with its generic deny.
    */
   private readonly runtimeClosingListeners = new Set<(sessionId: string) => void>();
+  private readonly getGlobalOutputStyle: () => Promise<string | null>;
   readonly serverNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
-  constructor(sdkClient?: SdkClient) {
+  constructor(sdkClient?: SdkClient, outputStyleLoader: () => Promise<string | null> = getOutputStyle) {
     this.sdkClient = sdkClient ?? new SdkClient();
+    this.getGlobalOutputStyle = outputStyleLoader;
     browserApiBrokerService.configureApprovalRequester(async ({
       taskId,
       method,
@@ -665,7 +668,6 @@ export class ChatService {
       input.botId,
       input.backend,
       input.fastMode,
-      input.outputStyle,
     );
   }
 
@@ -692,7 +694,6 @@ export class ChatService {
           session.isArchived = localSession?.isArchived;
           session.approvalMode = localSession?.approvalMode;
           session.fastMode = localSession?.fastMode;
-          session.outputStyle = localSession?.outputStyle;
           session.botId = localSession?.botId;
           session.source = localSession?.source;
           workspaceStore.syncSdkSession(session);
@@ -721,18 +722,6 @@ export class ChatService {
     // Check local DB for current provider before update
     const localSession = workspaceStore.getLocalSession(id);
     const previousProviderId = localSession?.providerId;
-    // Output style is applied at runtime creation (inline settings), so a
-    // change must rebuild a live runtime for the new style to take effect on
-    // the next turn.
-    const previousOutputStyle = localSession?.outputStyle;
-    const outputStyleChanged =
-      input.outputStyle !== undefined && input.outputStyle !== previousOutputStyle;
-    if (input.outputStyle !== undefined) {
-      workspaceStore.updateLocalSession(id, {
-        outputStyle: input.outputStyle === null ? null : input.outputStyle,
-      });
-    }
-
     // Backend changes are free while the session is a draft (R4: the lock
     // lands at the first message). Once the conversation has started, a
     // different backend is a conflict, not a silent no-op. A change with a
@@ -774,18 +763,6 @@ export class ChatService {
         const runtime = this.getRuntimeIfExists(id);
         if (runtime) {
           sidecarLog(`[ChatService] scheduling rebuild for runtime ${id} due to provider change`);
-          this.scheduleRuntimeRebuild(id, this.runtimeContexts.get(id));
-        }
-      }
-
-      // Output style is baked into the runtime options, so a live runtime must
-      // rebuild for the change to apply on the next turn.
-      if (outputStyleChanged) {
-        const runtime = this.getRuntimeIfExists(id);
-        if (runtime) {
-          sidecarLog(
-            `[ChatService] scheduling rebuild for runtime ${id} due to output style change`,
-          );
           this.scheduleRuntimeRebuild(id, this.runtimeContexts.get(id));
         }
       }
@@ -840,20 +817,6 @@ export class ChatService {
       }
     }
 
-    // Output style change on a live (non-draft) session: rebuild the runtime
-    // so the next turn runs with the new style.
-    if (outputStyleChanged) {
-      const runtime = this.getRuntimeIfExists(id);
-      if (runtime) {
-        sidecarLog(
-          `[ChatService] closing runtime ${id} due to output style change`,
-        );
-        this.closeRuntime(id).catch((err) => {
-          console.error(`Failed to close runtime ${id} during output style change:`, err);
-        });
-      }
-    }
-
     // opencode sessions have no claude .jsonl transcript, so getSessionInfo
     // (which scans project dirs for {id}.jsonl) would throw — return the
     // locally-mirrored session instead.
@@ -872,7 +835,6 @@ export class ChatService {
       session.isArchived = localSession?.isArchived;
       session.approvalMode = localSession?.approvalMode;
       session.fastMode = localSession?.fastMode;
-      session.outputStyle = localSession?.outputStyle;
       session.providerId = localSession?.providerId;
       return session;
     }
@@ -1573,7 +1535,7 @@ export class ChatService {
         await ensureSandboxProbe();
       }
 
-      const options = this.buildSdkOptions(workspace, session, isBotSession, botUserId, provider);
+      const options = await this.buildSdkOptions(workspace, session, isBotSession, botUserId, provider);
       if (session.source === 'scheduled' && backend === 'claude') {
         // U4 (KTD-3, path B): scheduled runs get the completion evaluator —
         // a programmatic Stop hook that continues the session until the goal
@@ -1798,6 +1760,14 @@ export class ChatService {
     }
     if (count > 0) {
       sidecarLog(`[ChatService] scheduled ${count} runtime rebuilds for bot ${botId}`);
+    }
+  }
+
+  /** Rebuild every cached runtime so the next turn observes app-global settings. */
+  scheduleRebuildsForGlobalSettings(): void {
+    for (const [sessionId, context] of this.runtimeContexts.entries()) {
+      if (workspaceStore.getLocalSession(sessionId)?.backend === 'opencode') continue;
+      this.scheduleRuntimeRebuild(sessionId, context);
     }
   }
 
@@ -2175,7 +2145,7 @@ export class ChatService {
       throw new ChatError('Session not found', 'SESSION_NOT_FOUND', 404);
     }
 
-    const options = this.buildSdkOptions(workspace, session);
+    const options = await this.buildSdkOptions(workspace, session);
     await this.testClaudeBinary(options.pathToClaudeCodeExecutable, workspace.folderPath, options.env || process.env);
     const { query, messages: rawMessages } = this.sdkClient.createQuery(message, options);
 
@@ -2321,13 +2291,13 @@ export class ChatService {
     return null;
   }
 
-  private buildSdkOptions(
+  private async buildSdkOptions(
     workspace: Workspace,
     session: ChatSession,
     isBotSession?: boolean,
     botUserId?: string,
     provider?: Provider,
-  ): import('@anthropic-ai/claude-agent-sdk').Options {
+  ): Promise<import('@anthropic-ai/claude-agent-sdk').Options> {
     const claudeSettings = loadClaudeSettings();
     let { env } = buildClaudeEnv(claudeSettings);
 
@@ -2529,10 +2499,7 @@ export class ChatService {
 
     // CLI 2.1.237 output style ('default' | 'explanatory' | 'learning' |
     // 'concise' | custom). Unset lets the CLI decide.
-    const outputStyle =
-      typeof session.outputStyle === 'string' && session.outputStyle.trim() !== ''
-        ? session.outputStyle
-        : undefined;
+    const outputStyle = (await this.getGlobalOutputStyle()) ?? undefined;
     if (outputStyle) {
       sidecarLog(`[ChatService.buildSdkOptions] outputStyle=${outputStyle}`);
     }

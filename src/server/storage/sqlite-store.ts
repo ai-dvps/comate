@@ -2273,7 +2273,6 @@ export class SqliteStore {
     botId?: string,
     backend?: string,
     fastMode = false,
-    outputStyle?: string,
   ): ChatSession {
     const now = new Date().toISOString();
     // KTD4/R6: true creation initializes the ordering key to now so the new
@@ -2290,7 +2289,6 @@ export class SqliteStore {
       providerId,
       backend,
       fastMode,
-      outputStyle,
       botId,
       createdAt: now,
       updatedAt: now,
@@ -2298,13 +2296,13 @@ export class SqliteStore {
       lastTurnStartedAt: nowMs,
     };
     this.db.prepare(`
-      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, fast_mode, output_style, provider_id, bot_id, created_at, updated_at, custom_title, backend, last_turn_started_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(session.id, session.workspaceId, session.name, 1, 0, 0, source ?? null, mode, fastMode ? 1 : 0, outputStyle ?? null, providerId ?? null, botId ?? null, session.createdAt, session.updatedAt, customTitle ?? null, backend ?? null, nowMs);
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, approval_mode, fast_mode, provider_id, bot_id, created_at, updated_at, custom_title, backend, last_turn_started_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(session.id, session.workspaceId, session.name, 1, 0, 0, source ?? null, mode, fastMode ? 1 : 0, providerId ?? null, botId ?? null, session.createdAt, session.updatedAt, customTitle ?? null, backend ?? null, nowMs);
     return session;
   }
 
-  updateLocalSession(id: string, input: { name?: string; isWip?: boolean; isArchived?: boolean; approvalMode?: string; providerId?: string | null; fastMode?: boolean; outputStyle?: string | null; customTitle?: string | null }): ChatSession | null {
+  updateLocalSession(id: string, input: { name?: string; isWip?: boolean; isArchived?: boolean; approvalMode?: string; providerId?: string | null; fastMode?: boolean; customTitle?: string | null }): ChatSession | null {
     const existing = this.getLocalSession(id);
     if (!existing) return null;
     const sets: string[] = [];
@@ -2336,10 +2334,6 @@ export class SqliteStore {
     if (input.fastMode !== undefined) {
       sets.push('fast_mode = ?');
       values.push(input.fastMode ? 1 : 0);
-    }
-    if (input.outputStyle !== undefined) {
-      sets.push('output_style = ?');
-      values.push(input.outputStyle ?? null);
     }
     if (sets.length === 0) return existing;
     sets.push('updated_at = ?');
@@ -2433,8 +2427,8 @@ export class SqliteStore {
     const discoveredKey = session.lastModified ?? Date.parse(session.createdAt);
     const initialKey = Number.isFinite(discoveredKey) ? discoveredKey : null;
     this.db.prepare(`
-      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, provider_id, bot_id, created_at, updated_at, summary, last_modified, first_prompt, git_branch, custom_title, fast_mode, output_style, last_turn_started_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, workspace_id, name, is_draft, is_wip, is_archived, source, provider_id, bot_id, created_at, updated_at, summary, last_modified, first_prompt, git_branch, custom_title, fast_mode, last_turn_started_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         is_draft = excluded.is_draft,
@@ -2447,8 +2441,7 @@ export class SqliteStore {
         first_prompt = excluded.first_prompt,
         git_branch = excluded.git_branch,
         custom_title = excluded.custom_title,
-        fast_mode = COALESCE(sessions.fast_mode, excluded.fast_mode, 0),
-        output_style = COALESCE(sessions.output_style, excluded.output_style)
+        fast_mode = COALESCE(sessions.fast_mode, excluded.fast_mode, 0)
     `).run(
       session.id,
       session.workspaceId,
@@ -2467,7 +2460,6 @@ export class SqliteStore {
       session.gitBranch ?? null,
       session.customTitle ?? null,
       session.fastMode ? 1 : 0,
-      session.outputStyle ?? null,
       initialKey
     );
   }
@@ -4723,7 +4715,6 @@ function parseSessionRow(row: RawSessionRow): ChatSession {
     backend: row.backend ?? undefined,
     backendSessionId: row.backend_session_id ?? undefined,
     fastMode: row.fast_mode === 1,
-    outputStyle: row.output_style ?? undefined,
     botId: row.bot_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

@@ -4534,8 +4534,8 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
   }
 
   class TestChatService extends ChatService {
-    constructor() {
-      super(new MockSdkClient());
+    constructor(outputStyleLoader?: () => Promise<string | null>) {
+      super(new MockSdkClient(), outputStyleLoader);
     }
     protected override async testClaudeBinary(): Promise<void> {}
   }
@@ -4857,6 +4857,45 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
   it('passes fastMode false when provider does not support fast mode', async () => {
     const { options } = await setupGuiSession({ fastMode: true, providerModel: 'claude-3-opus' });
     assert.strictEqual((options.settings as Record<string, unknown>)?.fastMode, false);
+  });
+
+  it('applies the app-global output style to every new Claude runtime', async () => {
+    service = new TestChatService(async () => 'concise');
+    const { options } = await setupGuiSession({ providerModel: 'claude-3-5-haiku' });
+    assert.strictEqual((options.settings as Record<string, unknown>)?.outputStyle, 'concise');
+  });
+
+  it('omits outputStyle when the app-global setting delegates to the CLI default', async () => {
+    service = new TestChatService(async () => null);
+    const { options } = await setupGuiSession({ providerModel: 'claude-3-5-haiku' });
+    assert.strictEqual((options.settings as Record<string, unknown>)?.outputStyle, undefined);
+  });
+
+  it('does not rebuild opencode runtimes for a Claude-only global setting', async () => {
+    const workspace = await workspaceStore.create({
+      name: 'Global Settings Workspace',
+      folderPath: fs.mkdtempSync(path.join(os.tmpdir(), 'chat-global-settings-')),
+    });
+    const claudeSession = workspaceStore.createLocalSession(
+      workspace.id, 'Claude Session', undefined, undefined, 'gui', undefined, undefined, 'claude',
+    );
+    const opencodeSession = workspaceStore.createLocalSession(
+      workspace.id, 'OpenCode Session', undefined, undefined, 'gui', undefined, undefined, 'opencode',
+    );
+    const internal = service as unknown as {
+      runtimeContexts: Map<string, { workspaceId: string }>;
+    };
+    internal.runtimeContexts.set(claudeSession.id, { workspaceId: workspace.id });
+    internal.runtimeContexts.set(opencodeSession.id, { workspaceId: workspace.id });
+    const scheduled: string[] = [];
+    service.scheduleRuntimeRebuild = ((sessionId: string) => {
+      scheduled.push(sessionId);
+      return undefined;
+    }) as typeof service.scheduleRuntimeRebuild;
+
+    service.scheduleRebuildsForGlobalSettings();
+
+    assert.deepStrictEqual(scheduled, [claudeSession.id]);
   });
 });
 

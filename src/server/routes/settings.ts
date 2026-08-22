@@ -5,12 +5,16 @@ import {
   setBrowserAllowInsecureCerts,
 } from '../services/browser-app-settings.js';
 import { getNightWindow, setNightWindow } from '../services/todo-app-settings.js';
+import {
+  getOutputStyle,
+  isValidOutputStyle,
+  setOutputStyle,
+} from '../services/output-style-app-settings.js';
+import { chatService } from '../services/chat-service.js';
 
 /**
- * App-global settings surface. Currently exposes the embedded-browser
- * "allow insecure certificates" toggle — the only app-level preference the
- * server must read (at Chrome spawn), so it is persisted server-side here
- * rather than in the client-local (localStorage) app prefs.
+ * App-global settings surface. Preferences needed by server-side runtimes are
+ * persisted here rather than only in the client's localStorage settings.
  *
  *   GET /api/settings/browser        → { allowInsecureCerts: boolean }   (default true)
  *   PUT /api/settings/browser  body  → { allowInsecureCerts: boolean }   → echoes stored value
@@ -22,12 +26,20 @@ import { getNightWindow, setNightWindow } from '../services/todo-app-settings.js
 export interface SettingsRouteDeps {
   getAllowInsecureCerts: () => Promise<boolean>;
   setAllowInsecureCerts: (value: boolean) => Promise<void>;
+  getOutputStyle: () => Promise<string | null>;
+  setOutputStyle: (value: string | null) => Promise<void>;
+  scheduleChatRuntimeRebuilds: () => Promise<void>;
 }
 
 export function createSettingsRouter(overrides?: Partial<SettingsRouteDeps>): Router {
   const deps: SettingsRouteDeps = {
     getAllowInsecureCerts: getBrowserAllowInsecureCerts,
     setAllowInsecureCerts: setBrowserAllowInsecureCerts,
+    getOutputStyle,
+    setOutputStyle,
+    scheduleChatRuntimeRebuilds: async () => {
+      chatService.scheduleRebuildsForGlobalSettings();
+    },
     ...overrides,
   };
 
@@ -55,6 +67,31 @@ export function createSettingsRouter(overrides?: Partial<SettingsRouteDeps>): Ro
     } catch (err) {
       diagWarn('[settings] failed to save browser settings:', err);
       res.status(500).json({ error: 'Failed to save browser settings' });
+    }
+  });
+
+  router.get('/output-style', async (_req, res) => {
+    try {
+      res.json({ outputStyle: await deps.getOutputStyle() });
+    } catch (err) {
+      diagWarn('[settings] failed to read output style:', err);
+      res.status(500).json({ error: 'Failed to read output style' });
+    }
+  });
+
+  router.put('/output-style', async (req, res) => {
+    const value = req.body?.outputStyle;
+    if (value !== null && !isValidOutputStyle(value)) {
+      res.status(400).json({ error: 'outputStyle must be null or a non-empty string of at most 64 characters' });
+      return;
+    }
+    try {
+      await deps.setOutputStyle(value);
+      await deps.scheduleChatRuntimeRebuilds();
+      res.json({ outputStyle: value });
+    } catch (err) {
+      diagWarn('[settings] failed to save output style:', err);
+      res.status(500).json({ error: 'Failed to save output style' });
     }
   });
 

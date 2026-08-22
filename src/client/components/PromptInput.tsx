@@ -158,8 +158,6 @@ interface NewChatPromptInputProps extends PromptInputCommonProps {
   onProviderChange: (providerId: string | null) => void
   fastMode: boolean
   onFastModeChange: (fastMode: boolean) => void
-  outputStyle: string | null
-  onOutputStyleChange: (outputStyle: string | null) => void
   approvalMode: ApprovalMode
   onApprovalModeChange: (approvalMode: ApprovalMode) => void
 }
@@ -1838,10 +1836,7 @@ export default function PromptInput(props: PromptInputProps) {
                     )}
                     {showStyle && (
                       <OutputStyleSelect
-                        mode="new-chat"
                         workspaceId={workspaceId}
-                        outputStyle={props.outputStyle}
-                        onOutputStyleChange={props.onOutputStyleChange}
                         disabled={disabled}
                         hideNameBelowSm
                       />
@@ -1861,7 +1856,7 @@ export default function PromptInput(props: PromptInputProps) {
                     <BackendSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} hideNameBelowSm />
                     {showProvider && <ProviderSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} hideNameBelowSm />}
                     {showFast && <FastModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} />}
-                    {showStyle && <OutputStyleSelect workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} hideNameBelowSm />}
+                    {showStyle && <OutputStyleSelect workspaceId={workspaceId} disabled={isComposerLocked || isRestarting} hideNameBelowSm />}
                     {showApproval && <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} />}
                   </>
                 ) : null}

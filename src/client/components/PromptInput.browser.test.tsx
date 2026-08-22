@@ -235,7 +235,11 @@ const toolbarControlMock = vi.hoisted(() => ({
 }))
 
 vi.mock('../hooks/use-app-settings', () => ({
-  useAppSettings: () => ({ useModifierToSubmit: appSettingsMock.useModifierToSubmit }),
+  useAppSettings: () => ({
+    useModifierToSubmit: appSettingsMock.useModifierToSubmit,
+    outputStyle: null,
+    setOutputStyle: vi.fn(),
+  }),
 }))
 
 vi.mock('./ProviderSelector', () => ({
@@ -471,8 +475,6 @@ describe('PromptInput browser', () => {
         providerId={null}
         onProviderChange={vi.fn()}
         fastMode={false}
-        outputStyle={null}
-        onOutputStyleChange={vi.fn()}
         onFastModeChange={vi.fn()}
         approvalMode="manual"
         onApprovalModeChange={vi.fn()}
@@ -505,8 +507,6 @@ describe('PromptInput browser', () => {
         providerId={null}
         onProviderChange={vi.fn()}
         fastMode={false}
-        outputStyle={null}
-        onOutputStyleChange={vi.fn()}
         onFastModeChange={vi.fn()}
         approvalMode="manual"
         onApprovalModeChange={vi.fn()}
@@ -540,8 +540,6 @@ describe('PromptInput browser', () => {
             providerId={null}
             onProviderChange={vi.fn()}
             fastMode={false}
-            outputStyle={null}
-            onOutputStyleChange={vi.fn()}
             onFastModeChange={vi.fn()}
             approvalMode="manual"
             onApprovalModeChange={vi.fn()}
@@ -579,8 +577,6 @@ describe('PromptInput browser', () => {
           providerId={null}
           onProviderChange={vi.fn()}
           fastMode={false}
-          outputStyle={null}
-          onOutputStyleChange={vi.fn()}
           onFastModeChange={vi.fn()}
           approvalMode="manual"
           onApprovalModeChange={vi.fn()}
@@ -614,8 +610,6 @@ describe('PromptInput browser', () => {
           providerId={null}
           onProviderChange={vi.fn()}
           fastMode={false}
-          outputStyle={null}
-          onOutputStyleChange={vi.fn()}
           onFastModeChange={vi.fn()}
           approvalMode="manual"
           onApprovalModeChange={vi.fn()}
@@ -972,8 +966,6 @@ describe('PromptInput browser', () => {
         providerId={null}
         onProviderChange={vi.fn()}
         fastMode={false}
-        outputStyle={null}
-        onOutputStyleChange={vi.fn()}
         onFastModeChange={vi.fn()}
         approvalMode="manual"
         onApprovalModeChange={vi.fn()}

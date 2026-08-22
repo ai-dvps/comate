@@ -349,7 +349,6 @@ function App() {
       backend?: BackendId
       providerId?: string
       fastMode: boolean
-      outputStyle: string | null
       approvalMode: ApprovalMode
     },
   ) => {
@@ -373,7 +372,6 @@ function App() {
         backend: options.backend,
         providerId: options.providerId,
         fastMode: options.fastMode,
-        ...(options.outputStyle !== null && { outputStyle: options.outputStyle }),
         approvalMode: options.approvalMode,
         signal: abortController.signal,
       })
