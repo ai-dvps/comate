@@ -99,7 +99,7 @@ export class CodexBackendDriver implements BackendDriver {
         const response = await this.manager.request<{ turn: { id: string } }>('turn/start', {
           threadId: this.threadId,
           clientUserMessageId: clientTurnId,
-          input: [{ type: 'text', text: textContent(message.message.content), text_elements: [] }],
+          input: codexUserInput(message.message.content),
           ...(this.deps.model ? { model: this.deps.model } : {}),
         });
         this.turnId = response.turn.id;
@@ -254,10 +254,36 @@ export class CodexBackendDriver implements BackendDriver {
   }
 }
 
-function textContent(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return String(content ?? '');
-  return content.map((part) => typeof part === 'object' && part && 'text' in part ? String(part.text) : '').join('\n');
+export function codexUserInput(content: unknown): Array<Record<string, unknown>> {
+  if (typeof content === 'string') {
+    return [{ type: 'text', text: content, text_elements: [] }];
+  }
+  if (!Array.isArray(content)) {
+    return [{ type: 'text', text: String(content ?? ''), text_elements: [] }];
+  }
+  const input: Array<Record<string, unknown>> = [];
+  for (const value of content) {
+    if (!value || typeof value !== 'object') continue;
+    const block = value as {
+      type?: unknown;
+      text?: unknown;
+      source?: { type?: unknown; media_type?: unknown; data?: unknown };
+    };
+    if (block.type === 'text' && typeof block.text === 'string') {
+      input.push({ type: 'text', text: block.text, text_elements: [] });
+    } else if (
+      block.type === 'image' &&
+      block.source?.type === 'base64' &&
+      typeof block.source.media_type === 'string' &&
+      typeof block.source.data === 'string'
+    ) {
+      input.push({
+        type: 'image',
+        url: `data:${block.source.media_type};base64,${block.source.data}`,
+      });
+    }
+  }
+  return input.length > 0 ? input : [{ type: 'text', text: '', text_elements: [] }];
 }
 
 function resultMessage(sessionId: string, error?: unknown): SDKMessage {
