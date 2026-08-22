@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Agent settings now use consistent responsive spacing** — The Agent configuration page now aligns with the other Settings tabs, keeps comfortable gutters from compact windows through desktop widths, and presents availability and default state in clearer accessible selection cards.
 - **Electron updater manifests are generated even without signing credentials** — Release builds now always emit and validate `latest-mac.yml`, `latest.yml`, `latest-linux.yml`, and their available blockmaps. Unsigned macOS and Windows packages are still uploaded, with the release notes explicitly warning that they are unsigned, alongside the metadata required by Electron auto-update.
 - **Desktop update checks now report real failures** — Manual and automatic checks no longer record a failed feed request as successful, packaged builds without an updater feed show a localized recovery message, and signed release jobs verify every packaged architecture contains an exact `ai-dvps/comate` updater configuration.
 - **New-session form next to a workspace now submits on Cmd/Ctrl+Enter** — The inline session-name input no longer creates a session on a plain Enter press; it now requires `Cmd+Enter` (macOS) or `Ctrl+Enter` (Windows/Linux), matching the composer shortcut and preventing accidental submissions.
