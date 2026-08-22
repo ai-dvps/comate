@@ -157,6 +157,42 @@ describe('BackendSection', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not switch agent')
   })
 
+  it('offers native ChatGPT and API-key login for Codex', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/codex/account')) {
+        return { ok: true, json: async () => ({ account: null, requiresOpenaiAuth: true }) }
+      }
+      if (url.endsWith('/codex/login') && init?.method === 'POST') {
+        return { ok: true, json: async () => ({ type: 'apiKey' }) }
+      }
+      return { ok: true, json: async () => ({ data: [], nextCursor: null }) }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    useBackendStore.setState((state) => ({
+      backends: [
+        ...state.backends,
+        { id: 'codex', availability: { status: 'available' as const }, capabilities: {} },
+      ],
+      codexAccount: null,
+      codexAccountError: null,
+    }))
+    const user = userEvent.setup()
+    renderSection()
+
+    expect(await screen.findByRole('button', { name: 'Sign in with ChatGPT' })).toBeInTheDocument()
+    await user.type(screen.getByLabelText('OpenAI API key'), 'sk-secret')
+    await user.click(screen.getByRole('button', { name: 'Use API key' }))
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/backends/codex/login', expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ type: 'apiKey', apiKey: 'sk-secret' }),
+      }))
+    })
+    expect(screen.getByLabelText('OpenAI API key')).toHaveValue('')
+  })
+
   it('renders loading, load-error, and empty states', async () => {
     const { rerender } = renderSection()
 
