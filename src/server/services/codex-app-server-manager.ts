@@ -9,6 +9,8 @@ export class CodexAppServerManager extends EventEmitter {
   private client?: CodexRpcClient;
   private starting?: Promise<CodexRpcClient>;
   private generation = 0;
+  private readonly skillRoots = new Set<string>();
+  private skillRootsUpdate: Promise<void> = Promise.resolve();
 
   async ensureClient(): Promise<CodexRpcClient> {
     if (this.client && this.process?.exitCode === null) return this.client;
@@ -28,6 +30,19 @@ export class CodexAppServerManager extends EventEmitter {
         delayMs *= 2;
       }
     }
+  }
+
+  /** Keep the process-wide Codex skill catalog aware of Comate's skill roots. */
+  async registerSkillRoots(roots: string[]): Promise<void> {
+    for (const root of roots) this.skillRoots.add(root);
+    this.skillRootsUpdate = this.skillRootsUpdate
+      .catch(() => undefined)
+      .then(async () => {
+        await this.request('skills/extraRoots/set', {
+          extraRoots: [...this.skillRoots].sort(),
+        });
+      });
+    await this.skillRootsUpdate;
   }
 
   private async start(): Promise<CodexRpcClient> {

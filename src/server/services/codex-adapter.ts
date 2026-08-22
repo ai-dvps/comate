@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
+import path from 'node:path';
 import type { Options, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { BackendDriver, BackendToolRequestHandler } from './backend-driver.js';
 import { codexAppServerManager, type CodexAppServerManager } from './codex-app-server-manager.js';
@@ -102,6 +104,10 @@ export class CodexBackendDriver implements BackendDriver {
     client.on('notification', notification);
     client.on('request', request);
     try {
+      await this.manager.registerSkillRoots?.([
+        path.join(this.deps.directory, '.claude', 'skills'),
+        path.join(homedir(), '.claude', 'skills'),
+      ]);
       await this.ensureThread(options);
       for await (const message of input) {
         if (this.closed) break;
