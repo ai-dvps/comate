@@ -33,78 +33,82 @@ function BackendOption({
   return (
     <div
       data-backend-option={backend.id}
-      className={cn(
-        'w-full overflow-hidden rounded-xl border text-left transition-[background-color,border-color,box-shadow]',
-        'focus-within:outline-none focus-within:ring-2 focus-within:ring-accent/40 focus-within:ring-offset-2 focus-within:ring-offset-bg',
-        isDefault && 'border-accent/60 bg-accent/[0.07] shadow-sm',
-        !isDefault && available && 'border-border bg-surface hover:border-accent/30',
-        !isDefault && !available && 'border-border/70 bg-surface/60',
-      )}
+      className="w-full text-left"
     >
       <label
         className={cn(
-          'group flex min-h-[76px] w-full items-center gap-4 px-4 py-3.5',
-          available && !selectionLocked && 'cursor-pointer hover:bg-surface-hover/70',
+          'group relative flex min-h-[76px] w-full items-center gap-3 px-4 py-3.5 transition-colors sm:px-5',
+          isDefault && 'bg-accent/[0.055]',
+          available && !selectionLocked && 'cursor-pointer hover:bg-surface-hover/70 active:bg-surface-hover',
           (!available || selectionLocked) && 'cursor-not-allowed',
-          !available && 'opacity-60',
+          !available && 'opacity-55',
         )}
       >
         <input
           type="radio"
           name="default-agent-backend"
-          className="sr-only"
           checked={isDefault}
           onChange={() => onSelect(backend.id)}
           disabled={!available || selectionLocked}
+          className="peer sr-only"
         />
 
         <span
           className={cn(
-            'flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg border transition-colors',
+            'flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border transition-colors',
             isDefault
               ? 'border-accent/30 bg-accent/10 text-accent'
               : 'border-border bg-bg text-text-tertiary group-hover:text-text-secondary',
           )}
           aria-hidden="true"
         >
-          <Cpu className="h-4.5 w-4.5" />
+          <Cpu className="h-4 w-4" />
         </span>
 
         <span className="min-w-0 flex-1">
-          <span className="block text-sm font-medium text-text-primary">
-            {t(BACKEND_LABEL_KEYS[backend.id] ?? backend.id)}
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="text-sm font-medium text-text-primary">
+              {t(BACKEND_LABEL_KEYS[backend.id] ?? backend.id)}
+            </span>
+            {isDefault && (
+              <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[11px] font-medium leading-4 text-accent">
+                {t('backend.isDefault')}
+              </span>
+            )}
           </span>
-          <span className="mt-1 flex items-start gap-1.5 text-[11px] leading-4 text-text-tertiary">
+          <span className="mt-1 flex items-start gap-1.5 text-xs leading-4 text-text-tertiary">
             {available ? (
               <>
-                <CheckCircle2 className="mt-0.5 h-3 w-3 flex-shrink-0 text-green-500" aria-hidden="true" />
+                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-green-500" aria-hidden="true" />
                 <span>{t('backend.available')}</span>
               </>
             ) : (
               <>
-                <XCircle className="mt-0.5 h-3 w-3 flex-shrink-0 text-destructive" aria-hidden="true" />
+                <XCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-destructive" aria-hidden="true" />
                 <span>{backend.availability.reason ?? t('backend.unavailable')}</span>
               </>
             )}
           </span>
         </span>
 
-        {isSaving ? (
-          <Loader2 className="h-4 w-4 flex-shrink-0 animate-spin text-accent motion-reduce:animate-none" aria-hidden="true" />
-        ) : isDefault ? (
-          <span className="flex-shrink-0 rounded-full border border-accent/20 bg-accent/10 px-2.5 py-1 text-[10px] font-medium text-accent">
-            {t('backend.isDefault')}
-          </span>
-        ) : null}
+        <span
+          className={cn(
+            'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border transition-[border-color,box-shadow]',
+            'peer-focus-visible:ring-2 peer-focus-visible:ring-accent/40 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-surface',
+            isDefault || isSaving ? 'border-accent bg-accent' : 'border-text-tertiary/50 bg-bg',
+          )}
+          aria-hidden="true"
+        >
+          {isSaving ? (
+            <Loader2 className="h-3 w-3 animate-spin text-white motion-reduce:animate-none" />
+          ) : isDefault ? (
+            <span className="h-2 w-2 rounded-full bg-white" />
+          ) : null}
+        </span>
       </label>
 
       {children && (
-        <div
-          className={cn(
-            'border-t px-4 py-4 sm:pl-[4.75rem]',
-            isDefault ? 'border-accent/15 bg-accent/[0.025]' : 'border-border/70 bg-bg/30',
-          )}
-        >
+        <div className="border-t border-border/70 bg-bg/40 px-4 py-4 sm:pl-[4.25rem] sm:pr-5">
           {children}
         </div>
       )}
@@ -172,7 +176,11 @@ export default function BackendSection() {
           <span className="sr-only">{t('common:loading')}</span>
         </div>
       ) : backends.length > 0 ? (
-        <div className="space-y-3" role="radiogroup" aria-labelledby="backend-settings-title">
+        <div
+          className="divide-y divide-border/70 overflow-hidden rounded-xl border border-border bg-surface shadow-sm"
+          role="radiogroup"
+          aria-labelledby="backend-settings-title"
+        >
           {backends.map((backend) => (
             <BackendOption
               key={backend.id}
