@@ -10,6 +10,10 @@ interface Props {
 const locale = (Astro.currentLocale ?? 'zh') as Lang;
 const t = useTranslations(locale);
 const { items } = Astro.props;
+const menuLabel = locale === 'zh' ? '打开主菜单' : 'Open primary menu';
+const navigationLabel = locale === 'zh' ? '移动端主导航' : 'Mobile primary navigation';
+const themeLabel = locale === 'zh' ? '切换明暗主题' : 'Toggle light or dark theme';
+const themeText = locale === 'zh' ? '明暗主题' : 'Color theme';
 ---
 
 <div class="md:hidden">
@@ -18,6 +22,7 @@ const { items } = Astro.props;
     id="mobile-nav-toggle"
     aria-expanded="false"
     aria-controls="mobile-nav-panel"
+    aria-label={menuLabel}
     class="inline-flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-surface-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent"
   >
     <svg
@@ -57,9 +62,9 @@ const { items } = Astro.props;
   <div
     id="mobile-nav-panel"
     hidden
-    class="absolute left-0 right-0 top-14 border-b border-border bg-bg shadow-lg"
+    class="absolute left-0 right-0 top-16 border-b border-border bg-bg shadow-md"
   >
-    <nav aria-label={t('nav.home')} class="mx-auto max-w-6xl px-4 py-4">
+    <nav aria-label={navigationLabel} class="mx-auto max-w-6xl px-4 py-4">
       <ul class="flex flex-col gap-1">
         {
           items.map((item) => (
@@ -95,8 +100,8 @@ const { items } = Astro.props;
       </div>
 
       <div class="mt-4 flex items-center gap-3 border-t border-border pt-4">
-        <ThemeToggle label={t('languagePicker.label')} />
-        <span class="text-sm text-text-secondary">{t('languagePicker.label')}</span>
+        <ThemeToggle label={themeLabel} />
+        <span class="text-sm text-text-secondary">{themeText}</span>
       </div>
     </nav>
   </div>
@@ -111,9 +116,15 @@ const { items } = Astro.props;
 
       function set(open) {
         toggle.setAttribute('aria-expanded', String(open));
+        toggle.setAttribute('aria-label', open
+          ? (document.documentElement.lang === 'zh-CN' ? '关闭主菜单' : 'Close primary menu')
+          : (document.documentElement.lang === 'zh-CN' ? '打开主菜单' : 'Open primary menu'));
         panel.hidden = !open;
         iconOpen.classList.toggle('hidden', open);
         iconClose.classList.toggle('hidden', !open);
+        if (open) {
+          panel.querySelector('a, button, select')?.focus();
+        }
       }
 
       toggle.addEventListener('click', () => {
@@ -122,6 +133,17 @@ const { items } = Astro.props;
 
       panel.querySelectorAll('a').forEach((link) => {
         link.addEventListener('click', () => set(false));
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape' || panel.hidden) return;
+        set(false);
+        toggle.focus();
+      });
+
+      document.addEventListener('click', (event) => {
+        if (panel.hidden || !(event.target instanceof Node)) return;
+        if (!panel.contains(event.target) && !toggle.contains(event.target)) set(false);
       });
     })();
   </script>

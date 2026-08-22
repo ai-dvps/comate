@@ -52,17 +52,19 @@ const ogImageUrl = ogImage
           } else {
             root.classList.remove('dark');
           }
+          root.dataset.theme = theme;
         }
         let theme;
         try {
           theme = localStorage.getItem(STORAGE_KEY);
         } catch {}
-        if (!theme) {
+        if (theme !== 'light' && theme !== 'dark') {
           theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         }
         apply(theme);
         function onToggle() {
           const isDark = root.classList.toggle('dark');
+          root.dataset.theme = isDark ? 'dark' : 'light';
           try {
             localStorage.setItem(STORAGE_KEY, isDark ? 'dark' : 'light');
           } catch {}
