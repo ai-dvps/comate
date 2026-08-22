@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Experimental Codex CLI agent backend** — Settings can select Codex as the default Agent for new GUI, Bot, and scheduled sessions while each session remains locked to its original Agent. Codex keeps ownership of its native login, model catalog, threads, and transcripts; explicitly compatible enterprise Providers use the OpenAI Responses protocol without exposing stored tokens. Production selection remains behind `COMATE_ENABLE_EXPERIMENTAL_CODEX=1` until the documented Claude Code parity gaps are closed.
+- **Experimental Codex CLI agent backend** — Settings can select Codex as the default Agent for new GUI, Bot, and scheduled sessions while each session remains locked to its original Agent. A signed-in Codex Account appears as a native Provider with selectable model, reasoning effort, and speed; compatible third-party Providers use the OpenAI Responses protocol without exposing stored tokens. Codex keeps ownership of its login, threads, and transcripts. Production selection remains behind `COMATE_ENABLE_EXPERIMENTAL_CODEX=1` until the documented Claude Code parity gaps are closed.
 - **Comate's website now explains complete Agent workflows** — The bilingual product site now walks through a controlled finance-report task, presents current desktop product evidence, offers platform-specific downloads, and measures visits and download actions only after consent.
 
 ### Changed

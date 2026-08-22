@@ -86,6 +86,7 @@ export function mergeSessionStatusEntry(
 const sessionSubscriptions = new Map<string, { close: () => void; timer?: ReturnType<typeof setTimeout>; workspaceId: string }>()
 const lastEventId = new Map<string, string>()
 const workspacePollIntervals = new Map<string, ReturnType<typeof setInterval>>()
+const codexSettingsMutationIds = new Map<string, number>()
 
 interface WorkflowPollEntry {
   timer?: ReturnType<typeof setTimeout>
@@ -372,6 +373,9 @@ export interface CreateSessionOptions {
   providerId?: string
   backend?: string
   fastMode?: boolean
+  codexModel?: string
+  codexEffort?: string
+  codexSpeed?: string
   initialPrompt?: string
   signal?: AbortSignal
 }
@@ -393,6 +397,9 @@ export interface ChatSession {
   /** Agent backend the session is locked to; unset on drafts (pre-selectable). */
   backend?: string
   fastMode?: boolean
+  codexModel?: string
+  codexEffort?: string
+  codexSpeed?: string
   createdAt: string
   updatedAt: string
   summary?: string
@@ -609,6 +616,11 @@ export interface ChatState {
   setSessionApprovalMode: (workspaceId: string, sessionId: string, mode: ApprovalMode) => Promise<void>
   setSessionFastMode: (workspaceId: string, sessionId: string, fastMode: boolean) => Promise<void>
   setSessionProvider: (workspaceId: string, sessionId: string, providerId: string | null) => Promise<void>
+  setSessionCodexSettings: (
+    workspaceId: string,
+    sessionId: string,
+    settings: { codexModel: string | null; codexEffort: string | null; codexSpeed: string | null },
+  ) => Promise<void>
   setSessionBackend: (workspaceId: string, sessionId: string, backend: string) => Promise<void>
   deleteSession: (workspaceId: string, sessionId: string) => Promise<{ ok: boolean; error?: string }>
 }
@@ -3497,6 +3509,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (options.providerId) body.providerId = options.providerId
       if (options.backend) body.backend = options.backend
       if (options.fastMode !== undefined) body.fastMode = options.fastMode
+      if (options.codexModel) body.codexModel = options.codexModel
+      if (options.codexEffort) body.codexEffort = options.codexEffort
+      if (options.codexSpeed) body.codexSpeed = options.codexSpeed
       const res = await fetch(`/api/workspaces/${workspaceId}/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4629,6 +4644,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setSessionProvider: async (workspaceId: string, sessionId: string, providerId: string | null) => {
+    const previousProviderId = get().sessions[workspaceId]?.find((session) => session.id === sessionId)?.providerId
     // Optimistic update
     set((state) => {
       const workspaceSessions = state.sessions[workspaceId] || []
@@ -4652,7 +4668,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ providerId: providerId ?? undefined }),
+          body: JSON.stringify({ providerId }),
         },
       )
       if (!res.ok) throw new Error(i18next.t('common:failedToUpdateSession', 'Failed to update session'))
@@ -4670,15 +4686,67 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Revert optimistic update on error
       set((state) => {
         const workspaceSessions = state.sessions[workspaceId] || []
-        const session = workspaceSessions.find((s) => s.id === sessionId)
-        const prevProviderId = session?.providerId
         const nextSessions = workspaceSessions.map((s) =>
-          s.id === sessionId ? { ...s, providerId: prevProviderId } : s,
+          s.id === sessionId ? { ...s, providerId: previousProviderId } : s,
         )
         return {
           sessions: { ...state.sessions, [workspaceId]: nextSessions },
         }
       })
+    }
+  },
+
+  setSessionCodexSettings: async (workspaceId, sessionId, settings) => {
+    const mutationKey = `${workspaceId}:${sessionId}`
+    const mutationId = (codexSettingsMutationIds.get(mutationKey) ?? 0) + 1
+    codexSettingsMutationIds.set(mutationKey, mutationId)
+    const previous = get().sessions[workspaceId]?.find((session) => session.id === sessionId)
+    set((state) => ({
+      sessions: {
+        ...state.sessions,
+        [workspaceId]: (state.sessions[workspaceId] ?? []).map((session) => session.id === sessionId
+          ? {
+              ...session,
+              codexModel: settings.codexModel ?? undefined,
+              codexEffort: settings.codexEffort ?? undefined,
+              codexSpeed: settings.codexSpeed ?? undefined,
+            }
+          : session),
+      },
+    }))
+    try {
+      const hadActiveSubscription = sessionSubscriptions.has(sessionId)
+      const res = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings),
+      })
+      if (!res.ok) throw new Error(i18next.t('common:failedToUpdateSession', 'Failed to update session'))
+      if (codexSettingsMutationIds.get(mutationKey) !== mutationId) return
+      codexSettingsMutationIds.delete(mutationKey)
+      if (hadActiveSubscription) {
+        set((state) => ({
+          isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: true },
+        }))
+        subscribeToSession(set, get, workspaceId, sessionId)
+      }
+    } catch (error) {
+      if (codexSettingsMutationIds.get(mutationKey) !== mutationId) throw error
+      codexSettingsMutationIds.delete(mutationKey)
+      set((state) => ({
+        sessions: {
+          ...state.sessions,
+          [workspaceId]: (state.sessions[workspaceId] ?? []).map((session) => session.id === sessionId
+            ? {
+                ...session,
+                codexModel: previous?.codexModel,
+                codexEffort: previous?.codexEffort,
+                codexSpeed: previous?.codexSpeed,
+              }
+            : session),
+        },
+      }))
+      throw error
     }
   },
 }))

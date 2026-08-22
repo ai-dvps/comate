@@ -20,6 +20,9 @@ interface NewChatPageProps {
     options: {
       backend?: BackendId
       providerId?: string
+      codexModel?: string
+      codexEffort?: string
+      codexSpeed?: string
       fastMode: boolean
       approvalMode: ApprovalMode
     },
@@ -31,6 +34,9 @@ interface NewChatPageProps {
 interface NewChatComposerOptions {
   backendId: BackendId | null
   providerId: string | null
+  codexModel: string | null
+  codexEffort: string | null
+  codexSpeed: string | null
   fastMode: boolean
   approvalMode: ApprovalMode
 }
@@ -38,6 +44,9 @@ interface NewChatComposerOptions {
 const DEFAULT_COMPOSER_OPTIONS: NewChatComposerOptions = {
   backendId: null,
   providerId: null,
+  codexModel: null,
+  codexEffort: null,
+  codexSpeed: null,
   fastMode: false,
   approvalMode: 'manual',
 }
@@ -139,6 +148,10 @@ export default function NewChatPage({
               onBackendChange={(backendId) => updateComposerOptions({ backendId })}
               providerId={composerOptions.providerId}
               onProviderChange={(providerId) => updateComposerOptions({ providerId })}
+              codexModel={composerOptions.codexModel}
+              codexEffort={composerOptions.codexEffort}
+              codexSpeed={composerOptions.codexSpeed}
+              onCodexSettingsChange={(settings) => updateComposerOptions(settings)}
               fastMode={composerOptions.fastMode}
               onFastModeChange={(fastMode) => updateComposerOptions({ fastMode })}
               approvalMode={composerOptions.approvalMode}
@@ -148,6 +161,9 @@ export default function NewChatPage({
                 void onSubmit(workspaceId, turn, {
                   backend: composerOptions.backendId ?? undefined,
                   providerId: composerOptions.providerId ?? undefined,
+                  codexModel: composerOptions.codexModel ?? undefined,
+                  codexEffort: composerOptions.codexEffort ?? undefined,
+                  codexSpeed: composerOptions.codexSpeed ?? undefined,
                   fastMode: composerOptions.fastMode,
                   approvalMode: composerOptions.approvalMode,
                 })

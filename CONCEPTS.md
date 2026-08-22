@@ -77,7 +77,7 @@ A distribution/install form of the app that ships without the Claude Code runtim
 A session is bound to the backend selected at its first message and cannot switch afterward, because transcripts are not portable across runtimes. When the locked backend is unavailable in the current install, the session opens read-only with a notice.
 
 ### Bot 会话 (bot session)
-由远程 IM 入口（WeCom、feishu）创建的会话，判定依据是会话来源（source 为 `wecom`/`feishu`，即 `isBotSession`），与 GUI 会话和定时执行会话在权限派生、可用工具面与消息呈现路径上分流；此类会话固定运行在 claude 后端，不随后端默认值切换。
+由远程 IM 入口（WeCom、feishu）创建的会话，判定依据是会话来源（source 为 `wecom`/`feishu`，即 `isBotSession`），与 GUI 会话和定时执行会话在权限派生、可用工具面与消息呈现路径上分流。新 Bot 会话使用创建时设置中选定的默认 Agent，并在首个回合锁定该后端；修改默认 Agent 不会改变已有 Bot 会话，用户创建新的 Bot 会话后才会使用新默认值。
 
 ### 子代理事件通道 (subagent event channel)
 由 Task 工具派生的子代理所产生的 SDK 消息因携带 parent_tool_use_id 而被服务端分流，不进入主会话的 tool_use 事件流；而是经独立的 subagent_delta 事件送达客户端，并在历史加载时由专门的重建逻辑还原。派生会话级状态（如任务列表、会话变更文件）时，主通道和该通道是两个独立的采集点，漏掉任一都会静默丢失子代理的工具调用。

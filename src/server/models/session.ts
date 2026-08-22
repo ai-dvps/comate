@@ -19,6 +19,9 @@ export interface ChatSession {
   approvalMode?: ApprovalMode;
   providerId?: string;
   fastMode?: boolean;
+  codexModel?: string;
+  codexEffort?: string;
+  codexSpeed?: string;
   /** Bot that created this session, if any. */
   botId?: string;
   createdAt: string;
@@ -43,9 +46,12 @@ export interface CreateSessionInput {
   workspaceId: string;
   name: string;
   approvalMode?: ApprovalMode;
-  providerId?: string;
+  providerId?: string | null;
   backend?: string;
   fastMode?: boolean;
+  codexModel?: string;
+  codexEffort?: string;
+  codexSpeed?: string;
   source?: 'gui' | 'wecom' | 'feishu' | 'scheduled';
   customTitle?: string;
   /** Bot that created this session, if any. */
@@ -57,8 +63,11 @@ export interface UpdateSessionInput {
   isWip?: boolean;
   isArchived?: boolean;
   approvalMode?: ApprovalMode;
-  providerId?: string;
+  providerId?: string | null;
   fastMode?: boolean;
+  codexModel?: string | null;
+  codexEffort?: string | null;
+  codexSpeed?: string | null;
   /** Pre-select the backend on a draft; rejected once the session is locked (R4). */
   backend?: string;
 }

@@ -18,9 +18,11 @@ The gate only enables selection. It does not remove the known capability gaps do
 
 On startup, the health check resolves the bundled Codex executable and initializes the real app-server. A failed initialization leaves Codex unavailable.
 
-## Native account and model
+## Native account and runtime defaults
 
-Use Settings to sign in through Codex and choose the default model. The model list comes from the active native Codex account. The preference is applied only when a new Codex thread is created; resumed threads retain their Codex-owned model. Signing out clears the saved preference.
+Use Settings to sign in through Codex and choose the default model, reasoning effort, and speed for new Codex threads. The available values come from the active native Codex account's model catalog. Changing the model resets effort and speed to that model's defaults. Signing out clears all three saved preferences.
+
+When Codex is the active Agent, the chat Provider selector shows the signed-in **Codex Account** as a native option alongside compatible third-party Providers. A session can override model, effort, and speed before its first turn. Those explicit session values remain attached to that session; Agent defaults are not reapplied when an existing Codex thread is resumed.
 
 Comate does not copy account credentials into its Provider records or session database.
 

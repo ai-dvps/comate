@@ -34,6 +34,10 @@ export interface CodexModel {
   description: string
   hidden: boolean
   isDefault: boolean
+  supportedReasoningEfforts: Array<{ reasoningEffort: string; description: string }>
+  defaultReasoningEffort: string
+  serviceTiers: Array<{ id: string; name: string; description: string }>
+  defaultServiceTier: string | null
 }
 
 export type CodexLoginResult =
@@ -50,6 +54,8 @@ interface BackendState {
   codexRequiresOpenaiAuth: boolean
   codexModels: CodexModel[]
   codexDefaultModel: string | null
+  codexDefaultEffort: string | null
+  codexDefaultSpeed: string | null
   codexAccountLoading: boolean
   codexAccountError: string | null
   fetchBackends: () => Promise<void>
@@ -59,12 +65,14 @@ interface BackendState {
   cancelCodexLogin: (loginId: string) => Promise<void>
   logoutCodex: () => Promise<void>
   fetchCodexModels: () => Promise<void>
-  setCodexDefaultModel: (model: string | null) => Promise<void>
+  setCodexDefaults: (defaults: { model: string | null; effort: string | null; speed: string | null }) => Promise<void>
 }
 
 const API_BASE = '/api/backends'
+let codexDefaultsMutationId = 0
+const pendingCodexDefaultsRequests = new Set<Promise<void>>()
 
-export const useBackendStore = create<BackendState>((set) => ({
+export const useBackendStore = create<BackendState>((set, get) => ({
   backends: [],
   // The app-level default agent is 'claude' from first paint; the server
   // confirms or overrides this on fetch. Avoids the "nothing selected, must
@@ -76,6 +84,8 @@ export const useBackendStore = create<BackendState>((set) => ({
   codexRequiresOpenaiAuth: true,
   codexModels: [],
   codexDefaultModel: null,
+  codexDefaultEffort: null,
+  codexDefaultSpeed: null,
   codexAccountLoading: false,
   codexAccountError: null,
 
@@ -162,9 +172,20 @@ export const useBackendStore = create<BackendState>((set) => ({
   logoutCodex: async () => {
     set({ codexAccountLoading: true, codexAccountError: null })
     try {
+      while (pendingCodexDefaultsRequests.size > 0) {
+        await Promise.allSettled([...pendingCodexDefaultsRequests])
+      }
       const res = await fetch(`${API_BASE}/codex/logout`, { method: 'POST' })
       if (!res.ok) throw new Error(await responseError(res))
-      set({ codexAccount: null, codexModels: [], codexDefaultModel: null, codexAccountLoading: false })
+      set({
+        codexAccount: null,
+        codexModels: [],
+        codexDefaultModel: null,
+        codexDefaultEffort: null,
+        codexDefaultSpeed: null,
+        codexAccountLoading: false,
+        codexAccountError: null,
+      })
     } catch (err) {
       const message = err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error')
       set({ codexAccountError: message, codexAccountLoading: false })
@@ -176,7 +197,7 @@ export const useBackendStore = create<BackendState>((set) => ({
     try {
       const [modelsRes, preferenceRes] = await Promise.all([
         fetch(`${API_BASE}/codex/models`),
-        fetch(`${API_BASE}/codex/model`),
+        fetch(`${API_BASE}/codex/defaults`),
       ])
       if (!modelsRes.ok) throw new Error(await responseError(modelsRes))
       if (!preferenceRes.ok) throw new Error(await responseError(preferenceRes))
@@ -185,27 +206,44 @@ export const useBackendStore = create<BackendState>((set) => ({
       set({
         codexModels: (modelsData.data ?? []).filter((model: CodexModel) => !model.hidden),
         codexDefaultModel: typeof preferenceData.model === 'string' ? preferenceData.model : null,
+        codexDefaultEffort: typeof preferenceData.effort === 'string' ? preferenceData.effort : null,
+        codexDefaultSpeed: typeof preferenceData.speed === 'string' ? preferenceData.speed : null,
       })
     } catch (err) {
       set({ codexAccountError: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error') })
     }
   },
 
-  setCodexDefaultModel: async (model) => {
-    set({ codexAccountError: null })
-    try {
-      const res = await fetch(`${API_BASE}/codex/model`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model }),
+  setCodexDefaults: (defaults) => {
+    const request = (async () => {
+      const mutationId = ++codexDefaultsMutationId
+      const previous = {
+        codexDefaultModel: get().codexDefaultModel,
+        codexDefaultEffort: get().codexDefaultEffort,
+        codexDefaultSpeed: get().codexDefaultSpeed,
+      }
+      set({
+        codexDefaultModel: defaults.model,
+        codexDefaultEffort: defaults.effort,
+        codexDefaultSpeed: defaults.speed,
+        codexAccountError: null,
       })
-      if (!res.ok) throw new Error(await responseError(res))
-      set({ codexDefaultModel: model })
-    } catch (err) {
-      const message = err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error')
-      set({ codexAccountError: message })
-      throw new Error(message)
-    }
+      try {
+        const res = await fetch(`${API_BASE}/codex/defaults`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(defaults),
+        })
+        if (!res.ok) throw new Error(await responseError(res))
+      } catch (err) {
+        const message = err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error')
+        if (mutationId === codexDefaultsMutationId) set({ ...previous, codexAccountError: message })
+        throw new Error(message)
+      }
+    })()
+    pendingCodexDefaultsRequests.add(request)
+    void request.finally(() => pendingCodexDefaultsRequests.delete(request)).catch(() => undefined)
+    return request
   },
 }))
 

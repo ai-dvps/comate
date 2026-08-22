@@ -154,6 +154,14 @@ interface NewChatPromptInputProps extends PromptInputCommonProps {
   onBackendChange: (backendId: BackendId) => void
   providerId: string | null
   onProviderChange: (providerId: string | null) => void
+  codexModel?: string | null
+  codexEffort?: string | null
+  codexSpeed?: string | null
+  onCodexSettingsChange?: (settings: {
+    codexModel: string | null
+    codexEffort: string | null
+    codexSpeed: string | null
+  }) => void
   fastMode: boolean
   onFastModeChange: (fastMode: boolean) => void
   approvalMode: ApprovalMode
@@ -1815,8 +1823,13 @@ export default function PromptInput(props: PromptInputProps) {
                       <ProviderSelector
                         mode="new-chat"
                         workspaceId={workspaceId}
+                        backendId={props.backendId}
                         providerId={props.providerId}
                         onProviderChange={props.onProviderChange}
+                        codexModel={props.codexModel ?? null}
+                        codexEffort={props.codexEffort ?? null}
+                        codexSpeed={props.codexSpeed ?? null}
+                        onCodexSettingsChange={props.onCodexSettingsChange ?? (() => undefined)}
                         disabled={disabled}
                         hideNameBelowSm
                       />

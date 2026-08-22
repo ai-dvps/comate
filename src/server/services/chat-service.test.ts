@@ -5446,6 +5446,11 @@ describe('chat-service session backend resolution (KTD-5/KTD-9)', { concurrency:
       'gui',
     );
     workspaceStore.updateSessionBackend(session.id, 'codex');
+    workspaceStore.updateLocalSession(session.id, {
+      codexModel: 'gpt-5.6-codex',
+      codexEffort: 'high',
+      codexSpeed: 'fast',
+    });
 
     await service.getOrCreateRuntime(session.id, workspace.id);
 
@@ -5461,6 +5466,11 @@ describe('chat-service session backend resolution (KTD-5/KTD-9)', { concurrency:
       updatedAt: (captured[9] as Provider).updatedAt,
     });
     assert.strictEqual((captured[10] as { backendId?: string }).backendId, 'codex');
+    const driverDeps = (captured[10] as unknown as { deps: Record<string, unknown> }).deps;
+    assert.strictEqual(driverDeps.directory, folderPath);
+    assert.strictEqual(driverDeps.model, 'gpt-5.6-codex');
+    assert.strictEqual(driverDeps.effort, 'high');
+    assert.strictEqual(driverDeps.serviceTier, 'fast');
   });
 
   it('rejects an explicit Anthropic provider for a Codex session without native fallback', async () => {
@@ -5677,6 +5687,42 @@ describe('chat-service backend review fixes (P1/P2)', { concurrency: false }, ()
     };
     await assert.rejects(() => service.getOrCreateRuntime(session.id, workspace.id));
     assert.strictEqual(workspaceStore.getLocalSession(session.id)?.backend, undefined);
+  });
+
+  it('waits for runtime close before a non-draft Codex settings update resolves', async () => {
+    const { workspace, session } = await createFixture('gui', 'codex');
+    workspaceStore.clearDraftFlag(session.id);
+
+    let releaseClose!: () => void;
+    let markCloseStarted!: () => void;
+    const closeStarted = new Promise<void>((resolve) => { markCloseStarted = resolve; });
+    const closeReleased = new Promise<void>((resolve) => { releaseClose = resolve; });
+    const runtime = {
+      isClosed: () => false,
+      close: async () => {
+        markCloseStarted();
+        await closeReleased;
+      },
+    } as unknown as SessionRuntime;
+    (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.set(session.id, runtime);
+
+    let updateResolved = false;
+    const update = service.updateSession(
+      session.id,
+      { codexEffort: 'high' },
+      workspace.id,
+    ).then((result) => {
+      updateResolved = true;
+      return result;
+    });
+
+    await closeStarted;
+    await Promise.resolve();
+    assert.strictEqual(updateResolved, false, 'settings update must wait for runtime.close()');
+
+    releaseClose();
+    const updated = await update;
+    assert.strictEqual(updated?.codexEffort, 'high');
   });
 
   it('opencode history loads via the backend-aware REST path (P1)', async () => {

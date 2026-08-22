@@ -12,6 +12,7 @@ import { getStorageDir } from './data-dir.js';
 const SETTINGS_FILE = 'app-settings.json';
 
 type AppSettingsData = Record<string, unknown>;
+let mutationQueue = Promise.resolve();
 
 const settingsPath = (): string => join(getStorageDir(), SETTINGS_FILE);
 
@@ -47,11 +48,19 @@ export async function getAppSetting<T>(key: string): Promise<T | undefined> {
 }
 
 export async function setAppSetting(key: string, value: unknown): Promise<void> {
-  const data = await readSettings();
-  if (value === undefined) {
-    delete data[key];
-  } else {
-    data[key] = value;
-  }
-  await writeSettings(data);
+  await setAppSettings({ [key]: value });
+}
+
+/** Apply related preferences in one serialized read-modify-write cycle. */
+export async function setAppSettings(values: Record<string, unknown>): Promise<void> {
+  const mutation = mutationQueue.then(async () => {
+    const data = await readSettings();
+    for (const [key, value] of Object.entries(values)) {
+      if (value === undefined) delete data[key];
+      else data[key] = value;
+    }
+    await writeSettings(data);
+  });
+  mutationQueue = mutation.catch(() => undefined);
+  await mutation;
 }

@@ -5,7 +5,25 @@ import i18n from '../i18n'
 import ProviderSelector from './ProviderSelector'
 
 const setSessionProvider = vi.fn()
-const sessions = {
+const setSessionCodexSettings = vi.fn()
+const backendState = vi.hoisted(() => ({
+  defaultBackend: 'claude' as 'claude' | 'codex',
+  codexAccount: null as null | { type: 'chatgpt'; email: string; planType: string },
+  codexModels: [] as unknown[],
+  codexDefaultModel: null as string | null,
+  codexDefaultEffort: null as string | null,
+  codexDefaultSpeed: null as string | null,
+  fetchCodexAccount: vi.fn(),
+  fetchCodexModels: vi.fn(),
+}))
+const sessions: Record<string, Array<{
+  id: string
+  providerId: string | null
+  backend?: 'claude' | 'codex'
+  codexModel?: string | null
+  codexEffort?: string | null
+  codexSpeed?: string | null
+}>> = {
   'ws-1': [{ id: 'session-1', providerId: null }],
 }
 
@@ -14,14 +32,19 @@ vi.mock('../stores/chat-store', () => ({
     sessions,
     isRestartingRuntime: {},
     setSessionProvider,
+    setSessionCodexSettings,
   }),
+}))
+
+vi.mock('../stores/backend-store', () => ({
+  useBackendStore: (selector: (state: unknown) => unknown) => selector(backendState),
 }))
 
 vi.mock('../stores/provider-store', () => ({
   useProviderStore: (selector: (state: unknown) => unknown) => selector({
     providers: [
-      { id: 'provider-1', name: 'Provider One', baseUrl: 'https://one.example', isDefault: true },
-      { id: 'provider-2', name: 'Provider Two', baseUrl: 'https://two.example', isDefault: false },
+      { id: 'provider-1', name: 'Provider One', baseUrl: 'https://one.example', protocol: 'anthropic', isDefault: true },
+      { id: 'provider-2', name: 'Provider Two', baseUrl: 'https://two.example', protocol: 'openai-responses', isDefault: false },
     ],
     fetchProviders: vi.fn(),
   }),
@@ -43,6 +66,50 @@ vi.mock('../stores/provider-usage-store', () => ({
 describe('ProviderSelector', () => {
   beforeEach(() => {
     setSessionProvider.mockClear()
+    setSessionCodexSettings.mockClear()
+    backendState.defaultBackend = 'claude'
+    backendState.codexAccount = null
+    backendState.codexModels = []
+    sessions['ws-1'] = [{ id: 'session-1', providerId: null }]
+  })
+
+  it('shows the signed-in Codex account with model, effort, and speed controls', () => {
+    backendState.defaultBackend = 'codex'
+    backendState.codexAccount = { type: 'chatgpt', email: 'user@example.com', planType: 'plus' }
+    backendState.codexModels = [{
+      id: 'model-1',
+      model: 'gpt-5.6-codex',
+      displayName: 'GPT-5.6 Codex',
+      isDefault: true,
+      supportedReasoningEfforts: [{ reasoningEffort: 'high', description: '' }],
+      serviceTiers: [{ id: 'fast', name: 'Fast', description: '' }],
+    }]
+    const onCodexSettingsChange = vi.fn()
+    render(
+      <I18nextProvider i18n={i18n}>
+        <ProviderSelector
+          mode="new-chat"
+          workspaceId="ws-1"
+          backendId="codex"
+          providerId={null}
+          onProviderChange={vi.fn()}
+          codexModel={null}
+          codexEffort={null}
+          codexSpeed={null}
+          onCodexSettingsChange={onCodexSettingsChange}
+        />
+      </I18nextProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /Codex Account/i }))
+    expect(screen.getAllByText('Codex Account')).toHaveLength(2)
+    expect(screen.queryByText('Provider One')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Effort'), { target: { value: 'high' } })
+    fireEvent.change(screen.getByLabelText('Speed'), { target: { value: 'fast' } })
+
+    expect(onCodexSettingsChange).toHaveBeenCalledWith({
+      codexModel: null, codexEffort: 'high', codexSpeed: null,
+    })
   })
 
   it('selects a provider without requiring an existing session in New Chat mode', () => {
@@ -76,5 +143,43 @@ describe('ProviderSelector', () => {
     fireEvent.click(screen.getByText('Provider Two'))
 
     expect(setSessionProvider).toHaveBeenCalledWith('ws-1', 'session-1', 'provider-2')
+  })
+
+  it('handles a rejected session Codex settings request at the event boundary', async () => {
+    backendState.defaultBackend = 'codex'
+    backendState.codexAccount = { type: 'chatgpt', email: 'user@example.com', planType: 'plus' }
+    backendState.codexModels = [{
+      id: 'model-1',
+      model: 'gpt-5.6-codex',
+      displayName: 'GPT-5.6 Codex',
+      isDefault: true,
+      supportedReasoningEfforts: [{ reasoningEffort: 'high', description: '' }],
+      serviceTiers: [],
+    }]
+    sessions['ws-1'] = [{
+      id: 'session-1',
+      providerId: null,
+      backend: 'codex',
+      codexModel: null,
+      codexEffort: null,
+      codexSpeed: null,
+    }]
+    setSessionCodexSettings.mockRejectedValueOnce(new Error('save failed'))
+
+    render(
+      <I18nextProvider i18n={i18n}>
+        <ProviderSelector workspaceId="ws-1" sessionId="session-1" />
+      </I18nextProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /Codex Account/i }))
+    fireEvent.change(screen.getByLabelText('Effort'), { target: { value: 'high' } })
+    await Promise.resolve()
+
+    expect(setSessionCodexSettings).toHaveBeenCalledWith('ws-1', 'session-1', {
+      codexModel: null,
+      codexEffort: 'high',
+      codexSpeed: null,
+    })
   })
 })

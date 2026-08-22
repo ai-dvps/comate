@@ -10,6 +10,8 @@ interface CodexAdapterDeps {
   directory: string;
   backendSessionId?: string;
   model?: string;
+  effort?: string;
+  serviceTier?: string;
   provider?: CodexProviderOverride;
   onBackendSessionId(id: string): void;
   manager?: CodexAppServerManager;
@@ -179,6 +181,9 @@ export class CodexBackendDriver implements BackendDriver {
           threadId: this.threadId,
           clientUserMessageId: clientTurnId,
           input: codexUserInput(message.message.content),
+          ...(this.deps.model ? { model: this.deps.model } : {}),
+          ...(this.deps.effort ? { effort: this.deps.effort } : {}),
+          ...(this.deps.serviceTier ? { serviceTier: this.deps.serviceTier } : {}),
         });
         this.turnId = response.turn.id;
         this.pendingAdmissions.get(clientTurnId)?.resolve();
@@ -328,7 +333,8 @@ export class CodexBackendDriver implements BackendDriver {
         cwd: this.deps.directory,
         approvalPolicy: 'on-request',
         sandbox: 'workspace-write',
-        config: codexThreadConfig(options, this.deps.provider),
+        config: this.threadConfig(options),
+        ...(this.deps.serviceTier ? { serviceTier: this.deps.serviceTier } : {}),
         ...(this.deps.provider ? {
           modelProvider: 'comate-enterprise',
           ...(this.deps.model ? { model: this.deps.model } : {}),
@@ -340,12 +346,20 @@ export class CodexBackendDriver implements BackendDriver {
       cwd: this.deps.directory,
       approvalPolicy: 'on-request',
       sandbox: 'workspace-write',
-      config: codexThreadConfig(options, this.deps.provider),
+      config: this.threadConfig(options),
+      ...(this.deps.serviceTier ? { serviceTier: this.deps.serviceTier } : {}),
       ...(this.deps.provider ? { modelProvider: 'comate-enterprise' } : {}),
       ...(this.deps.model ? { model: this.deps.model } : {}),
     });
     this.threadId = response.thread.id;
     this.deps.onBackendSessionId(this.threadId);
+  }
+
+  private threadConfig(options: Options): Record<string, unknown> {
+    return {
+      ...codexThreadConfig(options, this.deps.provider),
+      ...(this.deps.effort ? { model_reasoning_effort: this.deps.effort } : {}),
+    };
   }
 
   private onNotification(message: { method: string; params: Record<string, unknown> }): void {
