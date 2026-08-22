@@ -65,9 +65,12 @@ describe('central site facts', () => {
     ]);
     expect(financeScenarioStages.map(({ key }) => key)).toEqual([
       'request-through-im',
+      'acknowledge-with-task-id',
       'use-approved-intelligence',
       'collect-and-analyze',
+      'request-permission-or-attention',
       'publish-finished-report',
+      'notify-with-status-and-link',
     ]);
     expect(primaryCtaSlots.map(({ key }) => key)).toEqual([
       'home-primary',

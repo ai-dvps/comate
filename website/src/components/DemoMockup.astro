@@ -1,105 +1,30 @@
 ---
-import { useTranslations, type Lang } from '../i18n/utils.js';
+import type { Lang } from '../i18n/utils.js';
 
-interface Props {
-  locale: Lang;
-}
-
+interface Props { locale: Lang }
 const { locale } = Astro.props;
-const t = useTranslations(locale);
-
-const messages = {
-  zh: {
-    userMessage: '帮我在 store.ts 里加一个按创建时间排序的 selector。',
-    aiIntro: '已添加 `selectSortedByCreatedAt`，并补上了对应单元测试。',
-    fileName: 'store.ts',
-    diff: '+12 −2',
-    code: 'export const selectSortedByCreatedAt = (state: State) =>\n  [...state.items].sort((a, b) => b.createdAt - a.createdAt);',
-  },
-  en: {
-    userMessage: 'Add a selector in store.ts that sorts items by creation time.',
-    aiIntro: 'Added `selectSortedByCreatedAt` and the corresponding unit test.',
-    fileName: 'store.ts',
-    diff: '+12 −2',
-    code: 'export const selectSortedByCreatedAt = (state: State) =>\n  [...state.items].sort((a, b) => b.createdAt - a.createdAt);',
-  },
-};
-
-const m = messages[locale] ?? messages.en;
+const copy = locale === 'zh'
+  ? { workspace: '季度运营复盘', request: '汇总销售、费用与客户反馈，整理本季度运营复盘。', ack: '任务 OPS-128 已创建。我会在后台推进，需要确认时通知你。', status: '后台执行中', steps: ['连接已批准的数据源', '整理事实与异常项', '生成复盘报告'], footer: '你可以离开此会话；状态会持续更新', caption: '任务请求、执行进度和需要你处理的事项，都在一个 Workspace 中。' }
+  : { workspace: 'Quarterly operations review', request: 'Combine sales, costs, and customer feedback into our quarterly operations review.', ack: 'Task OPS-128 is created. I will work in the background and notify you when input is needed.', status: 'Working in background', steps: ['Connect approved data sources', 'Organize facts and anomalies', 'Draft the review report'], footer: 'You can leave this Session; status will keep updating', caption: 'Task requests, execution progress, and items needing your attention stay in one Workspace.' };
 ---
 
-<div class="relative mx-auto w-full max-w-xl">
-  <div
-    class="relative overflow-hidden rounded-xl border border-border bg-surface shadow-2xl shadow-accent/5 dark:shadow-black/30"
-  >
-    <div class="flex items-center gap-2 border-b border-border bg-bg/80 px-4 py-3">
-      <div class="flex gap-1.5">
-        <span class="h-3 w-3 rounded-full bg-destructive/80"></span>
-        <span class="h-3 w-3 rounded-full bg-warning/80"></span>
-        <span class="h-3 w-3 rounded-full bg-success/80"></span>
-      </div>
-      <span class="ml-2 text-xs text-text-tertiary">Comate — workspace/</span>
+<figure class="relative mx-auto w-full max-w-xl">
+  <div class="overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl shadow-black/10 dark:shadow-black/30">
+    <div class="flex items-center justify-between border-b border-border bg-bg/70 px-4 py-3">
+      <div class="flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full bg-accent" aria-hidden="true"></span><span class="text-sm font-semibold text-text-primary">{copy.workspace}</span></div>
+      <span class="font-mono text-xs text-text-tertiary">Workspace</span>
     </div>
-
-    <div class="grid grid-cols-3 divide-x divide-border">
-      <div class="col-span-1 hidden p-3 sm:block">
-        <div class="mb-2 text-xs font-medium text-text-tertiary">EXPLORER</div>
-        <ul class="space-y-1.5 text-sm text-text-secondary">
-          <li class="flex items-center gap-1.5">
-            <svg class="h-4 w-4 text-accent-secondary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              ><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg
-            >
-            <span>src/</span>
-          </li>
-          <li class="flex items-center gap-1.5 pl-5">
-            <svg class="h-4 w-4 text-text-tertiary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              ><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg
-            >
-            <span>api.ts</span>
-          </li>
-          <li class="flex items-center gap-1.5 pl-5">
-            <svg class="h-4 w-4 text-text-tertiary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              ><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg
-            >
-            <span class="text-text-primary">store.ts</span>
-          </li>
-        </ul>
-      </div>
-
-      <div class="col-span-3 flex flex-col gap-4 p-4 sm:col-span-2">
-        <div class="flex items-start gap-3">
-          <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-sm font-bold text-accent-foreground"
-          >C</div>
-          <div class="rounded-2xl rounded-tl-none border border-border bg-bg px-4 py-2.5 text-sm text-text-primary shadow-sm"
-          >
-            {m.userMessage}
-          </div>
-        </div>
-
-        <div class="flex items-start gap-3">
-          <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-hover text-sm font-bold text-text-secondary"
-          >AI</div>
-          <div class="space-y-3 rounded-2xl rounded-tl-none border border-border bg-surface px-4 py-3 text-sm text-text-primary shadow-sm"
-          >
-            <p>{m.aiIntro}</p>
-            <div class="overflow-hidden rounded-lg border border-border bg-bg">
-              <div class="flex items-center justify-between border-b border-border bg-surface-hover px-3 py-1.5 text-xs text-text-tertiary"
-              >
-                <span>{m.fileName}</span>
-                <span class="text-success">{m.diff}</span>
-              </div>
-              <pre class="overflow-x-auto p-3 text-xs leading-relaxed text-text-secondary"
-              ><code><span class="text-accent-secondary">export</span> <span class="text-accent-secondary">const</span> selectSortedByCreatedAt = (state: State) =>
-  [...state.items].sort((a, b) => b.createdAt - a.createdAt);
-</code></pre>
-            </div>
-          </div>
-        </div>
-      </div>
+    <div class="space-y-5 p-5 sm:p-6">
+      <div class="ml-auto max-w-[88%] rounded-2xl rounded-br-sm bg-text-primary px-4 py-3 text-sm leading-6 text-bg">{copy.request}</div>
+      <div class="max-w-[92%] rounded-2xl rounded-bl-sm border border-border bg-bg px-4 py-3 text-sm leading-6 text-text-primary">{copy.ack}</div>
+      <section class="rounded-xl border border-border bg-bg/60 p-4" aria-label={copy.status}>
+        <div class="flex items-center justify-between gap-4"><p class="font-mono text-xs font-semibold uppercase tracking-wide text-accent">OPS-128</p><p class="flex items-center gap-2 text-xs text-text-secondary"><span class="h-2 w-2 rounded-full bg-warning" aria-hidden="true"></span>{copy.status}</p></div>
+        <ol class="mt-4 space-y-3">
+          {copy.steps.map((step, index) => <li class="flex items-center gap-3 text-sm text-text-secondary"><span class:list={["h-1.5 w-1.5 rounded-full", index === 0 ? "bg-success" : index === 1 ? "bg-accent" : "bg-border-hover"]} aria-hidden="true"></span><span>{step}</span></li>)}
+        </ol>
+      </section>
+      <p class="border-t border-border pt-4 text-center text-xs text-text-tertiary">{copy.footer}</p>
     </div>
   </div>
-
-  <p class="mt-4 text-center text-sm text-text-tertiary">
-    {t('home.demoCaption')}
-  </p>
-</div>
+  <figcaption class="mt-4 text-center text-sm leading-6 text-text-tertiary">{copy.caption}</figcaption>
+</figure>

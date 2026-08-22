@@ -1,6 +1,7 @@
 ---
 import { getRelativeLocaleUrl } from 'astro:i18n';
 import { useTranslations, type Lang } from '../i18n/utils.js';
+import { providerPrerequisite } from '../lib/site-facts.js';
 
 interface Props {
   locale: Lang;
@@ -8,6 +9,7 @@ interface Props {
 
 const { locale } = Astro.props;
 const t = useTranslations(locale);
+const providerSetupHref = `${getRelativeLocaleUrl(locale, '/usage/')}#provider-setup`;
 ---
 
 <section class="reveal mx-auto max-w-6xl px-4 py-16 md:py-24">
@@ -21,11 +23,11 @@ const t = useTranslations(locale);
     </div>
 
     <h2 class="mx-auto max-w-2xl text-3xl font-bold tracking-tight text-text-primary md:text-4xl">
-      {t('cta.headline')}
+      {locale === 'zh' ? '让下一个复杂任务，从一个清晰的 Workspace 开始' : 'Start your next complex task in a clear Workspace'}
     </h2>
 
     <p class="mx-auto mt-4 max-w-xl text-lg text-text-secondary">
-      {t('cta.description')}
+      {locale === 'zh' ? '下载 Comate，先创建 Workspace，再按环境配置模型服务。' : 'Download Comate, create your Workspace, then configure the model service for your environment.'}
     </p>
 
     <div class="mt-8 flex flex-wrap items-center justify-center gap-4">
@@ -47,5 +49,10 @@ const t = useTranslations(locale);
         {t('nav.faq')}
       </a>
     </div>
+
+    <p class="mx-auto mt-6 max-w-2xl text-sm leading-6 text-text-tertiary" data-provider-disclosure="home_closing">
+      {providerPrerequisite.disclosure[locale]}{' '}
+      <a href={providerSetupHref} class="font-medium">{locale === 'zh' ? '查看配置说明' : 'View setup guidance'}</a>
+    </p>
   </div>
 </section>

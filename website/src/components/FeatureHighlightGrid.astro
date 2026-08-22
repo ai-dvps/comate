@@ -1,77 +1,24 @@
 ---
 import { getRelativeLocaleUrl } from 'astro:i18n';
 import { useTranslations, type Lang } from '../i18n/utils.js';
-import FeatureCard from './FeatureCard.astro';
-
-interface Feature {
-  title: string;
-  description: string;
-  category: string;
-  icon?: string;
-  image?: string;
-  imageAlt?: string;
-  gradientFrom?: string;
-  gradientTo?: string;
-}
-
-interface Props {
-  locale: Lang;
-  features: Feature[];
-}
-
-const { locale, features } = Astro.props;
+interface Props { locale: Lang }
+const { locale } = Astro.props;
 const t = useTranslations(locale);
+const capabilities = locale === 'zh'
+  ? [['工作区与会话', '把任务、资料与历史会话按工作上下文组织起来。'], ['异步任务跟踪', '离开会话后继续执行，并清楚展示进度与待办。'], ['权限确认', '敏感工具和数据访问在执行前等待明确批准。'], ['Skills 与 MCP', '把 Agent 连接到专业流程、工具和企业能力。'], ['企业 IM 协作', '从日常沟通入口发起任务、接收确认与结果通知。'], ['Provider 选择', '按个人或组织环境配置模型服务与执行后端。']]
+  : [['Workspaces and Sessions', 'Organize tasks, material, and Session history around each work context.'], ['Asynchronous task tracking', 'Keep work running after you leave and see progress and attention states clearly.'], ['Permission decisions', 'Sensitive tools and data access wait for explicit approval before execution.'], ['Skills and MCP', 'Connect Agents to specialist workflows, tools, and enterprise capabilities.'], ['Enterprise IM collaboration', 'Start tasks and receive acknowledgements and outcomes where daily work happens.'], ['Provider choice', 'Configure model services and execution backends for personal or organization environments.']];
 ---
 
-<section class="mx-auto max-w-6xl px-4 py-16 md:py-24">
+<section class="mx-auto max-w-6xl px-4 py-16 md:py-24" aria-labelledby="capabilities-heading">
   <div class="mb-10 flex flex-col items-start justify-between gap-4 md:flex-row md:items-end">
     <div class="max-w-2xl">
-      <h2 class="text-3xl font-bold tracking-tight text-text-primary md:text-4xl">
-        {locale === 'zh' ? '为开发者打造的核心能力' : 'Built for the way you work'}
-      </h2>
-      <p class="mt-4 text-lg text-text-secondary">
-        {
-          locale === 'zh'
-            ? '从工作区管理到团队协作，Comate 把 AI 能力落到每一个开发场景。'
-            : 'From workspace management to team collaboration, Comate brings AI into every development workflow.'
-        }
-      </p>
+      <p class="font-mono text-sm font-semibold uppercase tracking-wider text-accent">{locale === 'zh' ? '通用任务能力' : 'General-purpose task capabilities'}</p>
+      <h2 id="capabilities-heading" class="mt-3 text-3xl font-bold tracking-tight text-text-primary md:text-4xl">{locale === 'zh' ? '从一句请求，到持续推进的工作' : 'From one request to work that keeps moving'}</h2>
+      <p class="mt-4 text-lg leading-8 text-text-secondary">{locale === 'zh' ? '围绕任务本身组织上下文、工具、权限和进度，而不是把 Comate 限定在某一种职业。' : 'Organize context, tools, permissions, and progress around the task itself—without limiting Comate to one profession.'}</p>
     </div>
-    <a
-      href={getRelativeLocaleUrl(locale, '/features/')}
-      class="inline-flex items-center gap-1 text-base font-medium no-underline"
-    >
-      {t('home.featureCta')}
-      <svg
-        class="h-4 w-4"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        aria-hidden="true"
-      >
-        <path d="M5 12h14M12 5l7 7-7 7" />
-      </svg>
-    </a>
+    <a href={getRelativeLocaleUrl(locale, '/features/')} class="inline-flex min-h-11 items-center gap-1 font-medium no-underline">{t('home.featureCta')} <span aria-hidden="true">→</span></a>
   </div>
-
-  <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-    {
-      features.map((feature) => (
-        <FeatureCard
-          title={feature.title}
-          description={feature.description}
-          category={feature.category}
-          icon={feature.icon}
-          image={feature.image}
-          imageAlt={feature.imageAlt}
-          gradientFrom={feature.gradientFrom}
-          gradientTo={feature.gradientTo}
-          compact
-        />
-      ))
-    }
-  </div>
+  <ul class="grid gap-px overflow-hidden rounded-2xl border border-border bg-border sm:grid-cols-2 lg:grid-cols-3">
+    {capabilities.map(([title, description], index) => <li class="reveal bg-surface p-6"><span class="font-mono text-xs text-text-tertiary">{String(index + 1).padStart(2, '0')}</span><h3 class="mt-5 text-lg font-semibold text-text-primary">{title}</h3><p class="mt-2 text-sm leading-6 text-text-secondary">{description}</p></li>)}
+  </ul>
 </section>

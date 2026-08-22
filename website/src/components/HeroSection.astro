@@ -1,7 +1,8 @@
 ---
 import { getRelativeLocaleUrl } from 'astro:i18n';
-import { useTranslations, type Lang } from '../i18n/utils.js';
+import type { Lang } from '../i18n/utils.js';
 import DemoMockup from './DemoMockup.astro';
+import { providerPrerequisite } from '../lib/site-facts.js';
 
 interface Props {
   locale: Lang;
@@ -14,7 +15,7 @@ interface Props {
 }
 
 const { locale, headline, subheadline, ctaText, ctaHref, secondaryCtaText, secondaryCtaHref } = Astro.props;
-const t = useTranslations(locale);
+const providerSetupHref = `${getRelativeLocaleUrl(locale, '/usage/')}#provider-setup`;
 ---
 
 <section class="relative overflow-hidden px-4 pt-16 pb-20 md:pt-24 md:pb-32">
@@ -36,11 +37,8 @@ const t = useTranslations(locale);
     <div class="grid items-center gap-12 lg:grid-cols-2 lg:gap-16">
       <div class="flex flex-col items-start gap-6">
         <div class="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1 text-sm text-text-secondary shadow-sm">
-          <span class="relative flex h-2 w-2">
-            <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75"></span>
-            <span class="relative inline-flex h-2 w-2 rounded-full bg-success"></span>
-          </span>
-          {t('home.trustBadge')}
+          <span class="h-2 w-2 rounded-full bg-accent" aria-hidden="true"></span>
+          {locale === 'zh' ? '通用 Agent 任务工作区' : 'General-purpose Agent task workspace'}
         </div>
 
         <h1 class="text-balance text-4xl font-bold tracking-tight text-text-primary md:text-5xl lg:text-6xl">
@@ -74,6 +72,13 @@ const t = useTranslations(locale);
             )
           }
         </div>
+
+        <aside class="max-w-xl border-l-2 border-accent/50 pl-4 text-sm leading-6 text-text-secondary" data-provider-disclosure="home_hero">
+          <p>{providerPrerequisite.disclosure[locale]}</p>
+          <a class="mt-1 inline-flex font-medium" href={providerSetupHref}>
+            {locale === 'zh' ? '查看 Provider 配置方法' : 'See how to configure a Provider'}
+          </a>
+        </aside>
       </div>
 
       <div class="reveal">

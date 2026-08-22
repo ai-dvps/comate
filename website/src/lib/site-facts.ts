@@ -96,14 +96,21 @@ export const controlPillars = [
 
 export type FinanceScenarioStageKey =
   | 'request-through-im'
+  | 'acknowledge-with-task-id'
   | 'use-approved-intelligence'
   | 'collect-and-analyze'
-  | 'publish-finished-report';
+  | 'request-permission-or-attention'
+  | 'publish-finished-report'
+  | 'notify-with-status-and-link';
 
 export const financeScenarioStages = [
   {
     key: 'request-through-im',
     label: { zh: '通过获批的 IM 发起请求', en: 'Request through an approved IM channel' },
+  },
+  {
+    key: 'acknowledge-with-task-id',
+    label: { zh: '即时确认并返回任务 ID', en: 'Acknowledge immediately with a task ID' },
   },
   {
     key: 'use-approved-intelligence',
@@ -114,8 +121,16 @@ export const financeScenarioStages = [
     label: { zh: '收集并分析财务数据', en: 'Collect and analyze finance data' },
   },
   {
+    key: 'request-permission-or-attention',
+    label: { zh: '需要时请求权限或人工关注', en: 'Request permission or human attention when needed' },
+  },
+  {
     key: 'publish-finished-report',
     label: { zh: '把完成的报告发布回工作场景', en: 'Publish the finished report back to the work context' },
+  },
+  {
+    key: 'notify-with-status-and-link',
+    label: { zh: '通过 IM 通知最终状态与报告链接', en: 'Send final status and report link through IM' },
   },
 ] as const satisfies readonly LocalizedFact<FinanceScenarioStageKey>[];
 
