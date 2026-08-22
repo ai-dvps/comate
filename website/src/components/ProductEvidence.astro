@@ -1,0 +1,114 @@
+---
+import type { Lang } from '../i18n/utils.js';
+import ProductScreenshot from './ProductScreenshot.astro';
+
+interface Props {
+  locale: Lang;
+  variant?: 'home' | 'usage';
+}
+
+const { locale, variant = 'home' } = Astro.props;
+
+const evidence = [
+  {
+    key: 'request',
+    src: '/comate/images/product/finance-request.webp',
+    detail: '/comate/images/product/finance-request-detail.webp',
+    title: { zh: '从 IM 请求到可跟踪任务', en: 'From an IM request to a trackable task' },
+    alt: {
+      zh: 'Comate 桌面应用中的 Northstar Finance 工作区：企业 IM 请求已创建为 FIN-042，并显示四步任务清单。',
+      en: 'The Northstar Finance workspace in the Comate desktop app, where an enterprise IM request has become task FIN-042 with a four-step task list.',
+    },
+  },
+  {
+    key: 'progress',
+    src: '/comate/images/product/finance-progress.webp',
+    detail: '/comate/images/product/finance-progress-detail.webp',
+    title: { zh: '调用获批能力并持续显示进度', en: 'Use approved capabilities with visible progress' },
+    alt: {
+      zh: 'Comate 正在通过获批的 finance-data Skill 收集合成财务数据，任务面板显示一项完成、一项进行中。',
+      en: 'Comate collecting synthetic finance data through the approved finance-data Skill while the task panel shows one completed and one in-progress step.',
+    },
+  },
+  {
+    key: 'approval',
+    src: '/comate/images/product/finance-approval.webp',
+    detail: '/comate/images/product/finance-approval-detail.webp',
+    title: { zh: '受限数据访问前等待明确批准', en: 'Pause for an explicit restricted-data decision' },
+    alt: {
+      zh: 'Comate 的权限确认面板：FIN-042 在读取受限的 West Forecast 合成工作簿前暂停，等待允许或拒绝。',
+      en: 'Comate permission panel pausing FIN-042 before reading the synthetic restricted West Forecast workbook, with Allow and Deny decisions.',
+    },
+  },
+  {
+    key: 'report',
+    src: '/comate/images/product/finance-report.webp',
+    detail: '/comate/images/product/finance-report-detail.webp',
+    title: { zh: '分析数据并发布内部报告', en: 'Analyze the data and publish the internal report' },
+    alt: {
+      zh: 'Comate 会话展示合成财务分析结果：收入、运营成本和区域差异，并记录内部报告发布步骤。',
+      en: 'A Comate Session showing synthetic finance findings for revenue, operating cost, and regional variance, plus the internal report publishing step.',
+    },
+  },
+  {
+    key: 'notification',
+    src: '/comate/images/product/finance-notification.webp',
+    detail: '/comate/images/product/finance-notification-detail.webp',
+    title: { zh: '把完成状态与报告链接返回 IM', en: 'Return completion and the report link to IM' },
+    alt: {
+      zh: 'Comate 中的 FIN-042 完成消息，包含合成财务摘要和使用保留 example 域名的内部报告链接。',
+      en: 'The FIN-042 completion message in Comate with a synthetic finance summary and an internal report link on a reserved example domain.',
+    },
+  },
+] as const;
+
+const shown = variant === 'usage' ? evidence.slice(3) : evidence;
+---
+
+<section
+  class:list={[
+    'mx-auto w-full px-4',
+    variant === 'home' ? 'max-w-6xl py-16 md:py-24' : 'max-w-3xl pb-8',
+  ]}
+  aria-labelledby={`product-evidence-${variant}`}
+  data-product-evidence={variant}
+>
+  <div class="max-w-2xl">
+    <p class="text-sm font-semibold uppercase tracking-[0.18em] text-accent">
+      {locale === 'zh' ? '当前产品实景' : 'Current product evidence'}
+    </p>
+    <h2 id={`product-evidence-${variant}`} class="mt-3 text-3xl font-bold tracking-tight text-text-primary md:text-4xl">
+      {variant === 'home'
+        ? locale === 'zh'
+          ? '一项日常工作，始终在同一个任务上下文里'
+          : 'One everyday job, kept in one task context'
+        : locale === 'zh'
+          ? '完成任务后复核结果与去向'
+          : 'Review the outcome and destination after completion'}
+    </h2>
+    <p class="mt-4 leading-7 text-text-secondary">
+      {locale === 'zh'
+        ? '以下画面来自当前 Comate 桌面界面；组织、任务、金额、路径和报告地址均为合成演示数据。'
+        : 'These screens come from the current Comate desktop interface; organization, task, amount, path, and report details are synthetic demonstration data.'}
+    </p>
+  </div>
+
+  <div class:list={['mt-8 grid gap-5', variant === 'home' ? 'md:grid-cols-2' : 'sm:grid-cols-2']}>
+    {shown.map((item, index) => (
+      <figure class:list={['overflow-hidden rounded-2xl border border-border bg-surface shadow-sm', variant === 'home' && index === 0 && 'md:col-span-2']} data-product-stage={item.key}>
+        <ProductScreenshot
+          src={variant === 'home' && index === 0 ? item.src : item.detail}
+          alt={item.alt[locale]}
+          width={variant === 'home' && index === 0 ? 1440 : 960}
+          height={variant === 'home' && index === 0 ? 900 : 600}
+          loading={variant === 'home' && index === 0 ? 'eager' : 'lazy'}
+          class="aspect-[16/10] w-full bg-white object-cover object-top"
+        />
+        <figcaption class="border-t border-border px-5 py-4 text-sm font-medium text-text-primary">
+          <span class="mr-2 text-accent">{String(index + 1).padStart(2, '0')}</span>
+          {item.title[locale]}
+        </figcaption>
+      </figure>
+    ))}
+  </div>
+</section>
