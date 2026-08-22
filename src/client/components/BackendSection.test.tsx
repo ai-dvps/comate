@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { I18nextProvider } from 'react-i18next'
@@ -19,6 +19,10 @@ function renderSection() {
 describe('BackendSection', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ outputStyle: null }),
+    }))
     setDefaultBackend.mockResolvedValue(undefined)
     useBackendStore.setState({
       backends: [
@@ -41,12 +45,39 @@ describe('BackendSection', () => {
     })
   })
 
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   it('exposes agent choices as a single-select group', () => {
     renderSection()
 
     expect(screen.getByRole('radiogroup', { name: 'Agent' })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /Claude Code/ })).toBeChecked()
     expect(screen.getByRole('radio', { name: /Open Code/ })).not.toBeChecked()
+  })
+
+  it('exposes output style as a Claude Code-only agent setting', () => {
+    renderSection()
+
+    expect(screen.getByRole('combobox', { name: 'Output style' })).toBeInTheDocument()
+    expect(screen.getByText('Claude Code only')).toBeInTheDocument()
+  })
+
+  it('saves output style from the Agent settings page', async () => {
+    renderSection()
+
+    const outputStyle = screen.getByRole('combobox', { name: 'Output style' })
+    await waitFor(() => expect(outputStyle).toBeEnabled())
+    await userEvent.selectOptions(outputStyle, 'concise')
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith('/api/settings/output-style', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ outputStyle: 'concise' }),
+      })
+    })
   })
 
   it('prevents selecting an unavailable agent', async () => {
