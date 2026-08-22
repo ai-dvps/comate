@@ -82,17 +82,17 @@ export default function OutputStyleSetting() {
 
   return (
     <>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 sm:pr-6">
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_13rem] sm:items-center sm:gap-6">
+        <div className="min-w-0">
           <label htmlFor="claude-output-style" className="text-sm font-medium text-text-primary">
             {t('outputStyle.selectorTitle')}
           </label>
-          <p id="claude-output-style-description" className="mt-1 text-xs leading-5 text-text-tertiary">
+          <p id="claude-output-style-description" className="mt-1 max-w-lg text-xs leading-5 text-text-tertiary">
             {t('outputStyle.description')}
           </p>
         </div>
 
-        <div className="flex flex-shrink-0 items-center gap-2">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_1rem] items-center gap-2">
           <Select
             value={effective}
             onValueChange={(value) => void handleChange(value)}
@@ -101,7 +101,7 @@ export default function OutputStyleSetting() {
             <SelectTrigger
               id="claude-output-style"
               aria-describedby="claude-output-style-description"
-              className="h-10 w-full min-w-44 sm:w-48"
+              className="h-11 min-w-0 bg-surface"
             >
               <SelectValue />
             </SelectTrigger>
@@ -113,11 +113,15 @@ export default function OutputStyleSetting() {
               ))}
             </SelectContent>
           </Select>
-          {isSaving && (
-            <span role="status" aria-label={t('outputStyle.saving')}>
+          <span
+            className="flex h-4 w-4 items-center justify-center"
+            role={isSaving ? 'status' : undefined}
+            aria-label={isSaving ? t('outputStyle.saving') : undefined}
+          >
+            {isSaving ? (
               <Loader2 className="h-4 w-4 animate-spin text-text-tertiary motion-reduce:animate-none" aria-hidden="true" />
-            </span>
-          )}
+            ) : null}
+          </span>
         </div>
       </div>
 
