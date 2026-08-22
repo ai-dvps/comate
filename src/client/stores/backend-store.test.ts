@@ -44,6 +44,7 @@ describe('Codex account store', () => {
     useBackendStore.setState({
       codexAccount: null,
       codexModels: [],
+      codexDefaultModel: null,
       codexAccountLoading: false,
       codexAccountError: null,
     })
@@ -82,5 +83,29 @@ describe('Codex account store', () => {
       body: JSON.stringify({ type: 'apiKey', apiKey: 'sk-secret' }),
     })
     expect(JSON.stringify(useBackendStore.getState())).not.toContain('sk-secret')
+  })
+
+  it('loads and updates the default model for new Codex sessions', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [{ id: 'model-1', model: 'gpt-5.6-codex', displayName: 'GPT-5.6 Codex', hidden: false }],
+        }),
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ model: 'gpt-5.6-codex' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ model: null }) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await useBackendStore.getState().fetchCodexModels()
+    expect(useBackendStore.getState().codexDefaultModel).toBe('gpt-5.6-codex')
+
+    await useBackendStore.getState().setCodexDefaultModel(null)
+    expect(useBackendStore.getState().codexDefaultModel).toBeNull()
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/backends/codex/model', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: null }),
+    })
   })
 })

@@ -103,7 +103,6 @@ export class CodexBackendDriver implements BackendDriver {
           threadId: this.threadId,
           clientUserMessageId: clientTurnId,
           input: codexUserInput(message.message.content),
-          ...(this.deps.model ? { model: this.deps.model } : {}),
         });
         this.turnId = response.turn.id;
       }

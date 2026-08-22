@@ -54,6 +54,7 @@ describe('CodexBackendDriver interactions', () => {
     } as unknown as CodexAppServerManager;
     const driver = new CodexBackendDriver({
       directory: '/tmp/project',
+      model: 'gpt-5.6-codex',
       onBackendSessionId: () => undefined,
       manager,
     });
@@ -82,8 +83,12 @@ describe('CodexBackendDriver interactions', () => {
             project: { command: '/usr/bin/project-mcp', args: ['serve'] },
           },
         },
+        model: 'gpt-5.6-codex',
       },
     });
+    const turnStart = requests.find((request) => request.method === 'turn/start');
+    assert.ok(turnStart);
+    assert.ok(!Object.hasOwn(turnStart.params as object, 'model'));
   });
 
   it('preserves ordered text and image input for app-server', () => {

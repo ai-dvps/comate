@@ -18,6 +18,7 @@ import type { GetAccountResponse } from '../generated/codex-protocol/v2/GetAccou
 import type { LoginAccountParams } from '../generated/codex-protocol/v2/LoginAccountParams.js';
 import type { LoginAccountResponse } from '../generated/codex-protocol/v2/LoginAccountResponse.js';
 import type { ModelListResponse } from '../generated/codex-protocol/v2/ModelListResponse.js';
+import { getCodexDefaultModel, setCodexDefaultModel } from '../services/codex-settings.js';
 
 export interface BackendRouteDeps {
   codexAccount: {
@@ -27,9 +28,19 @@ export interface BackendRouteDeps {
     logout(): Promise<void>;
     listModels(): Promise<ModelListResponse>;
   };
+  codexSettings: {
+    getDefaultModel(): Promise<string | undefined>;
+    setDefaultModel(model: string | null): Promise<void>;
+  };
 }
 
-const DEFAULT_DEPS: BackendRouteDeps = { codexAccount: codexAccountService };
+const DEFAULT_DEPS: BackendRouteDeps = {
+  codexAccount: codexAccountService,
+  codexSettings: {
+    getDefaultModel: getCodexDefaultModel,
+    setDefaultModel: setCodexDefaultModel,
+  },
+};
 
 export function createBackendRouter(overrides: Partial<BackendRouteDeps> = {}): Router {
   const deps = { ...DEFAULT_DEPS, ...overrides };
@@ -138,6 +149,7 @@ router.post('/codex/login/cancel', async (req, res) => {
 router.post('/codex/logout', async (_req, res) => {
   try {
     await deps.codexAccount.logout();
+    await deps.codexSettings.setDefaultModel(null);
     res.json({ ok: true });
   } catch (error) {
     codexAccountFailure('log out', error, res);
@@ -149,6 +161,35 @@ router.get('/codex/models', async (_req, res) => {
     res.json(await deps.codexAccount.listModels());
   } catch (error) {
     codexAccountFailure('list models', error, res);
+  }
+});
+
+router.get('/codex/model', async (_req, res) => {
+  try {
+    res.json({ model: await deps.codexSettings.getDefaultModel() ?? null });
+  } catch (error) {
+    codexAccountFailure('read model preference', error, res);
+  }
+});
+
+router.put('/codex/model', async (req, res) => {
+  const model = req.body?.model;
+  if (model !== null && (typeof model !== 'string' || model.length === 0 || model.length > 200)) {
+    res.status(400).json({ error: 'model must be null or a valid Codex model id' });
+    return;
+  }
+  try {
+    if (model !== null) {
+      const available = await deps.codexAccount.listModels();
+      if (!available.data.some((entry) => !entry.hidden && entry.model === model)) {
+        res.status(400).json({ error: 'The selected Codex model is not available for this account' });
+        return;
+      }
+    }
+    await deps.codexSettings.setDefaultModel(model);
+    res.json({ model });
+  } catch (error) {
+    codexAccountFailure('update model preference', error, res);
   }
 });
 
