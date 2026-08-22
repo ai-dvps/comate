@@ -254,6 +254,7 @@ function App() {
   const handleToggleLeft = useCallback(() => {
     if (forcedExpandedSide === 'left') {
       setForcedExpandedSide(null)
+      if (!isSidebarCollapsed) toggleSidebarCollapse()
       return
     }
     if (isLeftEffectivelyCollapsed) {
