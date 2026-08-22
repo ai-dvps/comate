@@ -197,17 +197,6 @@ vi.mock('../stores/commands-store', () => ({
     })),
     }
   },
-  // OutputStyleSelect reads available styles from the raw store hook; the
-  // empty map keeps it on the built-in style list in these tests.
-  useCommandsStore: (selector: (state: unknown) => unknown) =>
-    selector({
-      commandsByWorkspace: {},
-      loadingByWorkspace: {},
-      errorByWorkspace: {},
-      fetchCommands: vi.fn(async () => {}),
-      refreshCommands: vi.fn(async () => {}),
-      clearCommandsForWorkspace: vi.fn(),
-    }),
 }))
 
 const filesMock = vi.hoisted(() => ({
@@ -237,8 +226,6 @@ const toolbarControlMock = vi.hoisted(() => ({
 vi.mock('../hooks/use-app-settings', () => ({
   useAppSettings: () => ({
     useModifierToSubmit: appSettingsMock.useModifierToSubmit,
-    outputStyle: null,
-    setOutputStyle: vi.fn(),
   }),
 }))
 
@@ -494,6 +481,7 @@ describe('PromptInput browser', () => {
     expect(screen.getByTitle('Agent')).toBeInTheDocument()
     expect(screen.getByTestId('fast-mode-toggle')).toBeInTheDocument()
     expect(screen.getByTestId('approval-mode-toggle')).toBeInTheDocument()
+    expect(screen.queryByTitle('Output style')).not.toBeInTheDocument()
     expect(inputCardElement()).not.toHaveClass('border', 'shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)]')
   })
 

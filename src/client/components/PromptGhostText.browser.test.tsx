@@ -102,17 +102,6 @@ vi.mock('../stores/commands-store', () => ({
       succeeded: true,
     })),
   }),
-  // OutputStyleSelect reads available styles from the raw store hook; the
-  // empty map keeps it on the built-in style list in these tests.
-  useCommandsStore: (selector: (state: unknown) => unknown) =>
-    selector({
-      commandsByWorkspace: {},
-      loadingByWorkspace: {},
-      errorByWorkspace: {},
-      fetchCommands: vi.fn(async () => {}),
-      refreshCommands: vi.fn(async () => {}),
-      clearCommandsForWorkspace: vi.fn(),
-    }),
 }))
 
 const filesMock = vi.hoisted(() => ({
@@ -133,11 +122,7 @@ const appSettingsMock = vi.hoisted(() => ({
 }))
 
 vi.mock('../hooks/use-app-settings', () => ({
-  useAppSettings: () => ({
-    useModifierToSubmit: appSettingsMock.useModifierToSubmit,
-    outputStyle: null,
-    setOutputStyle: vi.fn(),
-  }),
+  useAppSettings: () => ({ useModifierToSubmit: appSettingsMock.useModifierToSubmit }),
 }))
 
 vi.mock('./ProviderSelector', () => ({
