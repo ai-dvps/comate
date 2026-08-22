@@ -69,10 +69,18 @@ export class CodexAppServerManager extends EventEmitter {
       client.close(new Error(`Codex app-server exited (${code ?? signal ?? 'unknown'})`));
       this.emit('exit', { code, signal, generation });
     });
-    await client.request('initialize', {
-      clientInfo: { name: 'comate', title: 'Comate', version: '0.3.1' },
-      capabilities: null,
-    }, 10_000);
+    try {
+      await client.request('initialize', {
+        clientInfo: { name: 'comate', title: 'Comate', version: '0.3.1' },
+        capabilities: null,
+      }, 10_000);
+    } catch (error) {
+      if (this.process === child) this.process = undefined;
+      if (this.client === client) this.client = undefined;
+      client.close(error instanceof Error ? error : new Error(String(error)));
+      if (child.exitCode === null) child.kill('SIGTERM');
+      throw error;
+    }
     return client;
   }
 

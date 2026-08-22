@@ -30,4 +30,16 @@ describe('CodexRpcClient', () => {
     await assert.rejects(request, (error: CodexRpcError) => error.code === -32001);
     client.close();
   });
+
+  it('rejects pending requests when the writable stream breaks', async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const client = new CodexRpcClient(input, output);
+    const request = client.request('thread/list');
+
+    output.emit('error', new Error('broken pipe'));
+
+    await assert.rejects(request, /broken pipe/);
+    client.close();
+  });
 });

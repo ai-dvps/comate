@@ -53,9 +53,14 @@ export class CodexBackendDriver implements BackendDriver {
   private threadId?: string;
   private turnId?: string;
   private closed = false;
+  private ended = false;
   private queue = new AsyncMessageQueue();
   private readonly mapper: CodexEventMapper;
   private toolRequestHandler?: BackendToolRequestHandler;
+  private readonly pendingAdmissions = new Map<
+    string,
+    { resolve(): void; reject(error: unknown): void }
+  >();
   private tokenUsage?: {
     total: {
       totalTokens: number;
@@ -73,6 +78,16 @@ export class CodexBackendDriver implements BackendDriver {
     this.mapper = new CodexEventMapper(deps.model ?? 'codex');
   }
 
+  prepareAdmission(clientTurnId: string): Promise<void> {
+    if (this.closed || this.ended) return Promise.reject(new Error('Codex session is closed'));
+    if (this.pendingAdmissions.has(clientTurnId)) {
+      return Promise.reject(new Error(`Codex turn ${clientTurnId} is already pending admission`));
+    }
+    return new Promise<void>((resolve, reject) => {
+      this.pendingAdmissions.set(clientTurnId, { resolve, reject });
+    });
+  }
+
   createStreamingQuery(
     input: AsyncIterable<SDKUserMessage>,
     options: Options,
@@ -86,6 +101,7 @@ export class CodexBackendDriver implements BackendDriver {
       },
       close: () => {
         this.closed = true;
+        this.rejectPendingAdmissions(new Error('Codex session closed before turn admission'));
         this.queue.end();
       },
       getContextUsage: async () => {
@@ -131,23 +147,26 @@ export class CodexBackendDriver implements BackendDriver {
   }
 
   private async run(input: AsyncIterable<SDKUserMessage>, options: Options): Promise<void> {
-    const client = await this.manager.ensureClient();
+    let client: Awaited<ReturnType<CodexAppServerManager['ensureClient']>> | undefined;
     const notification = (message: { method: string; params: Record<string, unknown> }) => this.onNotification(message);
     const request = (message: {
       id: string | number;
       method: string;
       params?: Record<string, unknown>;
     }) => {
-      void this.onRequest(client, message).catch((error) => {
-        client.respond(message.id, undefined, {
+      if (!client) return;
+      const activeClient = client;
+      void this.onRequest(activeClient, message).catch((error) => {
+        activeClient.respond(message.id, undefined, {
           code: -32603,
           message: error instanceof Error ? error.message : 'Codex interaction failed',
         });
       });
     };
-    client.on('notification', notification);
-    client.on('request', request);
     try {
+      client = await this.manager.ensureClient();
+      client.on('notification', notification);
+      client.on('request', request);
       await this.manager.registerSkillRoots?.([
         path.join(this.deps.directory, '.claude', 'skills'),
         path.join(homedir(), '.claude', 'skills'),
@@ -162,17 +181,27 @@ export class CodexBackendDriver implements BackendDriver {
           input: codexUserInput(message.message.content),
         });
         this.turnId = response.turn.id;
+        this.pendingAdmissions.get(clientTurnId)?.resolve();
+        this.pendingAdmissions.delete(clientTurnId);
       }
     } catch (error) {
+      this.rejectPendingAdmissions(error);
       this.queue.push(resultMessage(
         this.threadId ?? '',
         redactCodexError(error, this.deps.provider?.bearerToken),
       ));
     } finally {
-      client.off('notification', notification);
-      client.off('request', request);
+      this.ended = true;
+      this.rejectPendingAdmissions(new Error('Codex session ended before turn admission'));
+      client?.off('notification', notification);
+      client?.off('request', request);
       this.queue.end();
     }
+  }
+
+  private rejectPendingAdmissions(error: unknown): void {
+    for (const admission of this.pendingAdmissions.values()) admission.reject(error);
+    this.pendingAdmissions.clear();
   }
 
   private async onRequest(

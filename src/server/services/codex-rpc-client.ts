@@ -23,6 +23,7 @@ export class CodexRpcClient extends EventEmitter {
     this.lines.on('line', (line) => this.receive(line));
     input.once('end', () => this.close(new Error('Codex app-server closed stdout')));
     input.once('error', (error) => this.close(error));
+    output.on('error', (error) => this.close(error));
   }
 
   request<T>(method: string, params?: unknown, timeoutMs = 30_000): Promise<T> {

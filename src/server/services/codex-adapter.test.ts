@@ -14,6 +14,102 @@ class FakeClient extends EventEmitter {
 }
 
 describe('CodexBackendDriver interactions', () => {
+  it('ends the stream and rejects admission when app-server startup fails', async () => {
+    const manager = {
+      ensureClient: async () => { throw new Error('app-server unavailable'); },
+    } as unknown as CodexAppServerManager;
+    const driver = new CodexBackendDriver({
+      directory: '/tmp/project',
+      onBackendSessionId: () => undefined,
+      manager,
+    });
+    async function* input(): AsyncGenerator<SDKUserMessage> {
+      yield {
+        type: 'user',
+        uuid: 'message-startup-failure',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'hello' },
+      } as SDKUserMessage;
+    }
+
+    const admission = driver.prepareAdmission('message-startup-failure');
+    const { messages } = driver.createStreamingQuery(input(), {} as Options);
+
+    await assert.rejects(admission, /app-server unavailable/);
+    const result = await messages.next();
+    assert.strictEqual(result.done, false);
+    assert.match(JSON.stringify(result.value), /app-server unavailable/);
+    assert.strictEqual((await messages.next()).done, true);
+  });
+
+  it('settles admission only after Codex accepts turn/start', async () => {
+    const client = new FakeClient();
+    let acceptTurn!: () => void;
+    const turnAccepted = new Promise<void>((resolve) => { acceptTurn = resolve; });
+    const manager = {
+      ensureClient: async () => client,
+      request: async (method: string) => {
+        if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+        if (method === 'turn/start') {
+          await turnAccepted;
+          return { turn: { id: 'turn-1' } };
+        }
+        return {};
+      },
+    } as unknown as CodexAppServerManager;
+    const driver = new CodexBackendDriver({
+      directory: '/tmp/project',
+      onBackendSessionId: () => undefined,
+      manager,
+    });
+    async function* input(): AsyncGenerator<SDKUserMessage> {
+      yield {
+        type: 'user',
+        uuid: 'message-admission',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'hello' },
+      } as SDKUserMessage;
+    }
+
+    let admitted = false;
+    const admission = driver.prepareAdmission('message-admission').then(() => { admitted = true; });
+    driver.createStreamingQuery(input(), {} as Options);
+    await waitFor(() => client.listenerCount('notification') === 1);
+    assert.strictEqual(admitted, false);
+    acceptTurn();
+    await admission;
+    assert.strictEqual(admitted, true);
+  });
+
+  it('rejects admission when Codex rejects turn/start', async () => {
+    const client = new FakeClient();
+    const manager = {
+      ensureClient: async () => client,
+      request: async (method: string) => {
+        if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+        if (method === 'turn/start') throw new Error('turn rejected');
+        return {};
+      },
+    } as unknown as CodexAppServerManager;
+    const driver = new CodexBackendDriver({
+      directory: '/tmp/project',
+      onBackendSessionId: () => undefined,
+      manager,
+    });
+    async function* input(): AsyncGenerator<SDKUserMessage> {
+      yield {
+        type: 'user',
+        uuid: 'message-rejected',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'hello' },
+      } as SDKUserMessage;
+    }
+
+    const admission = driver.prepareAdmission('message-rejected');
+    driver.createStreamingQuery(input(), {} as Options);
+    await assert.rejects(admission, /turn rejected/);
+  });
+
   it('passes stdio command metadata without copying MCP credential fields', () => {
     const options = {
       mcpServers: {
