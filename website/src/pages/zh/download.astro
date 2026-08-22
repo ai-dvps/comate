@@ -4,63 +4,31 @@ import Nav from '../../components/Nav.astro';
 import Footer from '../../components/Footer.astro';
 import LanguagePicker from '../../components/LanguagePicker.astro';
 import DownloadPanel from '../../components/DownloadPanel.astro';
-
-const locale = 'zh';
-const releasesUrl = 'https://github.com/ai-dvps/comate/releases';
 ---
 
-<BaseLayout title="下载 Comate" description="下载 Comate 桌面应用，支持 macOS 和 Windows。">
-  <Nav>
-    <LanguagePicker slot="language-picker" />
-    <LanguagePicker slot="language-picker-mobile" />
-  </Nav>
-
-  <main class="mx-auto max-w-4xl px-4 py-16 md:py-24">
-    <DownloadPanel locale={locale} />
-
+<BaseLayout title="下载 Comate — macOS、Windows 与 Linux" description="下载 Comate 通用 Agent 任务工作区。macOS、Windows 和 Linux 版本均通过官方 GitHub Releases 发布。">
+  <Nav><LanguagePicker slot="language-picker" /><LanguagePicker slot="language-picker-mobile" /></Nav>
+  <main class="mx-auto max-w-6xl px-4 py-16 md:py-24">
+    <DownloadPanel locale="zh" />
     <div class="reveal mt-8 grid gap-6 md:grid-cols-2">
-      <div class="rounded-2xl border border-border bg-surface p-6">
+      <section class="rounded-2xl border border-border bg-surface p-6">
         <h2 class="text-xl font-semibold text-text-primary">安装步骤</h2>
-        <ol class="mt-4 list-decimal space-y-3 pl-5 text-text-secondary">
-          <li>访问 GitHub Releases，下载适合系统的安装包（.dmg 或 .msi）。</li>
-          <li>运行安装程序并按提示完成安装。</li>
-          <li>首次打开时允许开发者身份验证，然后创建或加入工作区。</li>
+        <ol class="mt-4 list-decimal space-y-3 pl-5 leading-7 text-text-secondary">
+          <li>在官方 GitHub Releases 中选择与你的平台和处理器匹配的安装包。</li>
+          <li>按照该版本的说明安装并启动 Comate。</li>
+          <li>创建工作区和草稿会话；运行 Agent 前，按设置指南配置模型凭据或 Provider。</li>
         </ol>
-      </div>
-
-      <div class="rounded-2xl border border-border bg-surface p-6">
-        <h2 class="text-xl font-semibold text-text-primary">系统要求</h2>
-        <ul class="mt-4 space-y-2 text-text-secondary">
-          <li class="flex items-center gap-2">
-            <svg class="h-5 w-5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              ><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg
-            >
-            <span>macOS 12 或更高版本 / Windows 10 或更高版本</span>
-          </li>
-          <li class="flex items-center gap-2">
-            <svg class="h-5 w-5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              ><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg
-            >
-            <span>约 200 MB 可用磁盘空间</span>
-          </li>
-          <li class="flex items-center gap-2">
-            <svg class="h-5 w-5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              ><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg
-            >
-            <span>首次运行需要联网完成环境准备</span>
-          </li>
+      </section>
+      <section class="rounded-2xl border border-border bg-surface p-6">
+        <h2 class="text-xl font-semibold text-text-primary">下载前确认</h2>
+        <ul class="mt-4 list-disc space-y-3 pl-5 leading-7 text-text-secondary">
+          <li>macOS：选择 Apple 芯片或 Intel Mac 对应的安装包。</li>
+          <li>Windows：使用受支持的 64 位 Windows 系统。</li>
+          <li>Linux：提供 x64 AppImage 与 Debian 软件包。</li>
+          <li>以对应版本说明中的当前兼容性和安装要求为准。</li>
         </ul>
-      </div>
-    </div>
-
-    <div class="reveal mt-8 text-center">
-      <p class="text-sm text-text-tertiary">
-        更新记录同样托管在
-        <a href={releasesUrl} class="underline-offset-2">GitHub Releases</a>
-        上。
-      </p>
+      </section>
     </div>
   </main>
-
   <Footer />
 </BaseLayout>
