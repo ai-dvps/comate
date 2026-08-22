@@ -1526,11 +1526,22 @@ export class ChatService {
       }
 
       const optionsStart = Date.now();
-      const provider = session.providerId
+      let provider = session.providerId
         ? workspaceStore.getProvider(session.providerId)
         : workspaceStore.getDefaultProvider();
 
-      if (!provider) {
+      if (!provider && backend === 'codex') {
+        const now = new Date().toISOString();
+        provider = {
+          id: 'codex-native',
+          name: 'Codex native account',
+          baseUrl: '',
+          authToken: '',
+          isDefault: false,
+          createdAt: now,
+          updatedAt: now,
+        };
+      } else if (!provider) {
         throw new ChatError(
           'No LLM provider configured. Add a provider in Settings.',
           'PROVIDER_NOT_FOUND',
@@ -1568,7 +1579,6 @@ export class ChatService {
         ? new CodexBackendDriver({
             directory: normalizeWindowsPath(workspace.folderPath),
             backendSessionId: session.backendSessionId,
-            model: provider.model,
             onBackendSessionId: (backendSessionId) =>
               workspaceStore.updateSessionBackendSessionId(sessionId, backendSessionId),
           })

@@ -5415,6 +5415,37 @@ describe('chat-service session backend resolution (KTD-5/KTD-9)', { concurrency:
     assert.strictEqual(workspaceStore.getLocalSession(session.id)?.backend, 'claude');
   });
 
+  it('starts a native Codex session without a configured LLM provider', async () => {
+    registerBackendRuntime('codex', {
+      resolveBinaryPath: () => '/fake/codex',
+      healthCheck: async () => true,
+    });
+    const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'comate-codex-native-'));
+    const workspace = await workspaceStore.create({ name: 'W', folderPath });
+    const session = workspaceStore.createLocalSession(
+      workspace.id,
+      'S',
+      undefined,
+      undefined,
+      'gui',
+    );
+    workspaceStore.updateSessionBackend(session.id, 'codex');
+
+    await service.getOrCreateRuntime(session.id, workspace.id);
+
+    assert.ok(captured, 'runtime opened');
+    assert.deepStrictEqual(captured[9], {
+      id: 'codex-native',
+      name: 'Codex native account',
+      baseUrl: '',
+      authToken: '',
+      isDefault: false,
+      createdAt: (captured[9] as Provider).createdAt,
+      updatedAt: (captured[9] as Provider).updatedAt,
+    });
+    assert.strictEqual((captured[10] as { backendId?: string }).backendId, 'codex');
+  });
+
   it('rejects with a clear error when the session backend has no registered runtime', async () => {
     const { workspace, session } = await createFixture('gui');
     workspaceStore.updateSessionBackend(session.id, 'opencode');
