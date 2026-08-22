@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-08-22
+
+### Added
+
+- **Comate's website now explains complete Agent workflows** — The bilingual product site now walks through a controlled finance-report task, presents current desktop product evidence, offers platform-specific downloads, and measures visits and download actions only after consent.
+
+### Changed
+
+- **Agent settings are clearer and more compact** — Claude Code options now live in a polished collapsible group with responsive spacing, while Output style is an app-global preference that applies consistently across sessions.
+- **Desktop and website colors now follow the Comate brand** — Primary actions, activity, attention states, work surfaces, and supporting website visuals use a shared logo-derived color system with improved light and dark mode balance.
+
+### Fixed
+
+- **The left sidebar collapses on the first click** — The shell no longer requires a second interaction before responding to the collapse control.
+- **Website release and analytics checks are more robust** — Download trust decisions, consent handling, release metadata, and shared bilingual content now have stricter automated coverage.
+
 ## [0.3.0] - 2026-08-20
 
 ### Added
