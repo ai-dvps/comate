@@ -3,7 +3,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { SessionRuntime } from './session-runtime.js';
 import type { SdkClient } from './sdk-client.js';
-import type { Query, SDKMessage, Options } from '@anthropic-ai/claude-agent-sdk';
+import type { Query, SDKMessage, SDKUserMessage, Options } from '@anthropic-ai/claude-agent-sdk';
 import type { SseEvent } from '../types/message.js';
 import type { Provider } from '../models/provider.js';
 
@@ -2743,6 +2743,37 @@ describe('session-runtime backend driver seam (KTD-1)', { concurrency: false }, 
     assert.strictEqual(driverCalls, 1);
     assert.strictEqual(sdkCalls, 0);
     void runtime;
+  });
+
+  it('delegates user-content preparation to the driver instead of branching on backend id', async () => {
+    let received: unknown;
+    const messages = (async function* () {})();
+    const driver = {
+      backendId: 'codex' as const,
+      prepareUserContent: (content: unknown) => ({ wrapped: content }),
+      createStreamingQuery: (input: AsyncIterable<SDKUserMessage>) => {
+        void (async () => {
+          for await (const message of input) {
+            received = message.message.content;
+            break;
+          }
+        })();
+        return {
+          query: { interrupt: async () => {}, close: () => {}, stopTask: async () => {} },
+          messages,
+        };
+      },
+    };
+    const sdkClient = { createStreamingQuery: () => assert.fail('unexpected sdk call') } as unknown as SdkClient;
+    const runtime = SessionRuntime.open(
+      's1', 'ws1', 'nonce', {} as Options, sdkClient,
+      undefined, undefined, undefined, undefined, undefined, driver as never,
+    );
+
+    runtime.pushMessage('hello');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepStrictEqual(received, { wrapped: 'hello' });
+    await runtime.close();
   });
 });
 

@@ -1088,12 +1088,7 @@ export class SessionRuntime {
     this.stopFenceActive = false;
     const uuid = clientTurnId ?? randomUUID();
     const admission = this.driver.prepareAdmission?.(uuid) ?? Promise.resolve();
-    const providerContent = this.driver.backendId === 'claude' && Array.isArray(content)
-      ? content.map((block) => {
-          if (block.type !== 'image' || block.name === undefined) return block;
-          return { type: block.type, source: block.source };
-        })
-      : content;
+    const providerContent = (this.driver.prepareUserContent?.(content) ?? content) as RuntimeUserContent;
     const msg: SDKUserMessage = {
       type: 'user',
       message: { role: 'user', content: providerContent },
@@ -1346,9 +1341,9 @@ export class SessionRuntime {
   }
 
   stopBackgroundTask(taskId: string): Promise<boolean> {
-    if (this.driver.backendId !== 'claude') {
+    if (!this.driver.supportsIndividualTaskStop) {
       return Promise.reject(
-        new Error('Individual background task stopping is only supported for Claude Code sessions'),
+        new Error(`Individual background task stopping is not supported by '${this.driver.backendId}'`),
       );
     }
     if (!this.backgroundTasks.has(taskId)) return Promise.resolve(false);
