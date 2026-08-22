@@ -14,7 +14,7 @@ class FakeClient extends EventEmitter {
 }
 
 describe('CodexBackendDriver interactions', () => {
-  it('passes only credential-free stdio MCP configuration to Codex', () => {
+  it('passes stdio command metadata without copying MCP credential fields', () => {
     const options = {
       mcpServers: {
         project: {
@@ -38,6 +38,106 @@ describe('CodexBackendDriver interactions', () => {
       },
     });
     assert.doesNotMatch(JSON.stringify(config), /top-secret|browser-secret|Authorization|PROJECT_TOKEN/);
+  });
+
+  it('reapplies an in-memory enterprise provider when resuming a Codex thread', async () => {
+    const client = new FakeClient();
+    const requests: Array<{ method: string; params?: unknown }> = [];
+    const manager = {
+      ensureClient: async () => client,
+      request: async (method: string, params?: unknown) => {
+        requests.push({ method, params });
+        if (method === 'turn/start') return { turn: { id: 'turn-1' } };
+        return {};
+      },
+    } as unknown as CodexAppServerManager;
+    const driver = new CodexBackendDriver({
+      directory: '/tmp/project',
+      backendSessionId: 'thread-existing',
+      model: 'enterprise-model',
+      provider: {
+        name: 'Enterprise',
+        baseUrl: 'https://llm.example.com/v1',
+        bearerToken: 'enterprise-secret',
+      },
+      onBackendSessionId: () => undefined,
+      manager,
+    });
+    async function* input(): AsyncGenerator<SDKUserMessage> {
+      yield {
+        type: 'user',
+        uuid: 'message-1',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'hello' },
+      } as SDKUserMessage;
+    }
+
+    driver.createStreamingQuery(input(), {} as Options);
+    await waitFor(() => requests.some((request) => request.method === 'turn/start'));
+
+    assert.deepStrictEqual(requests[0], {
+      method: 'thread/resume',
+      params: {
+        threadId: 'thread-existing',
+        cwd: '/tmp/project',
+        approvalPolicy: 'on-request',
+        sandbox: 'workspace-write',
+        config: codexThreadConfig({} as Options, {
+          name: 'Enterprise',
+          baseUrl: 'https://llm.example.com/v1',
+          bearerToken: 'enterprise-secret',
+        }),
+        modelProvider: 'comate-enterprise',
+        model: 'enterprise-model',
+      },
+    });
+  });
+
+  it('uses an explicit in-memory Responses provider override', () => {
+    assert.deepStrictEqual(codexThreadConfig({} as Options, {
+      name: 'Enterprise OpenAI',
+      baseUrl: 'https://llm.example.com/v1',
+      bearerToken: 'enterprise-secret',
+    }), {
+      model_providers: {
+        'comate-enterprise': {
+          name: 'Enterprise OpenAI',
+          base_url: 'https://llm.example.com/v1',
+          wire_api: 'responses',
+          requires_openai_auth: false,
+          experimental_bearer_token: 'enterprise-secret',
+        },
+      },
+    });
+  });
+
+  it('redacts an enterprise bearer from app-server failures', async () => {
+    const client = new FakeClient();
+    const manager = {
+      ensureClient: async () => client,
+      request: async () => { throw new Error('provider rejected enterprise-secret'); },
+    } as unknown as CodexAppServerManager;
+    const driver = new CodexBackendDriver({
+      directory: '/tmp/project',
+      provider: {
+        name: 'Enterprise',
+        baseUrl: 'https://llm.example.com/v1',
+        bearerToken: 'enterprise-secret',
+      },
+      onBackendSessionId: () => undefined,
+      manager,
+    });
+    async function* input(): AsyncGenerator<SDKUserMessage> {
+      // The failure occurs before a turn is admitted.
+      yield* [] as SDKUserMessage[];
+    }
+
+    const { messages } = driver.createStreamingQuery(input(), {} as Options);
+    const result = await messages.next();
+
+    assert.strictEqual(result.done, false);
+    assert.doesNotMatch(JSON.stringify(result.value), /enterprise-secret/);
+    assert.match(JSON.stringify(result.value), /\[REDACTED\]/);
   });
 
   it('starts Codex with shared approval policy, workspace sandbox, and safe MCP overrides', async () => {

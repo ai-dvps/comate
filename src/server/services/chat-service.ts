@@ -1527,17 +1527,20 @@ export class ChatService {
       }
 
       const optionsStart = Date.now();
-      let provider = session.providerId
-        ? workspaceStore.getProvider(session.providerId)
-        : workspaceStore.getDefaultProvider();
+      let provider = backend === 'codex' && !session.providerId
+        ? null
+        : session.providerId
+          ? workspaceStore.getProvider(session.providerId)
+          : workspaceStore.getDefaultProvider();
 
-      if (!provider && backend === 'codex') {
+      if (!provider && backend === 'codex' && !session.providerId) {
         const now = new Date().toISOString();
         provider = {
           id: 'codex-native',
           name: 'Codex native account',
           baseUrl: '',
           authToken: '',
+          protocol: 'openai-responses',
           isDefault: false,
           createdAt: now,
           updatedAt: now,
@@ -1548,6 +1551,23 @@ export class ChatService {
           'PROVIDER_NOT_FOUND',
           500,
         );
+      }
+
+      if (backend === 'codex' && provider.id !== 'codex-native') {
+        if (provider.protocol !== 'openai-responses') {
+          throw new ChatError(
+            `Provider '${provider.name}' is not marked as OpenAI Responses compatible`,
+            'PROVIDER_PROTOCOL_INCOMPATIBLE',
+            409,
+          );
+        }
+        if (!provider.baseUrl.trim() || !provider.model?.trim() || !provider.authToken.trim()) {
+          throw new ChatError(
+            `Provider '${provider.name}' needs a base URL, model, and auth token for Codex`,
+            'PROVIDER_INVALID_FOR_CODEX',
+            409,
+          );
+        }
       }
 
       // U3 (KTD-24): spawn probe for sandboxed bot sessions. The probe's
@@ -1580,7 +1600,14 @@ export class ChatService {
         ? new CodexBackendDriver({
             directory: normalizeWindowsPath(workspace.folderPath),
             backendSessionId: session.backendSessionId,
-            model: await getCodexDefaultModel(),
+            model: provider.id === 'codex-native' ? await getCodexDefaultModel() : provider.model,
+            ...(provider.id !== 'codex-native' ? {
+              provider: {
+                name: provider.name,
+                baseUrl: provider.baseUrl,
+                bearerToken: provider.authToken,
+              },
+            } : {}),
             onBackendSessionId: (backendSessionId) =>
               workspaceStore.updateSessionBackendSessionId(sessionId, backendSessionId),
           })
