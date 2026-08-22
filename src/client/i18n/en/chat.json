@@ -277,8 +277,6 @@
   },
   "outputStyle": {
     "selectorTitle": "Output style",
-    "sectionTitle": "Claude Code configuration",
-    "claudeOnly": "Claude Code only",
     "description": "Controls how Claude Code formats responses across all sessions.",
     "saving": "Saving output style",
     "loadError": "Could not load the output style setting.",

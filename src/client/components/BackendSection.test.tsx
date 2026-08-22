@@ -60,16 +60,20 @@ describe('BackendSection', () => {
   it('exposes output style as a Claude Code-only agent setting', () => {
     renderSection()
 
-    expect(screen.getByRole('combobox', { name: 'Output style' })).toBeInTheDocument()
-    expect(screen.getByText('Claude Code only')).toBeInTheDocument()
+    const claudeOption = screen.getByRole('radio', { name: /Claude Code/ })
+      .closest('[data-backend-option="claude"]')
+
+    expect(claudeOption).toContainElement(screen.getByRole('combobox', { name: 'Output style' }))
   })
 
   it('saves output style from the Agent settings page', async () => {
+    const user = userEvent.setup()
     renderSection()
 
     const outputStyle = screen.getByRole('combobox', { name: 'Output style' })
     await waitFor(() => expect(outputStyle).toBeEnabled())
-    await userEvent.selectOptions(outputStyle, 'concise')
+    await user.click(outputStyle)
+    await user.click(screen.getByRole('option', { name: 'Concise' }))
 
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith('/api/settings/output-style', {

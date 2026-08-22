@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CheckCircle2, XCircle, Loader2, Cpu } from 'lucide-react'
 import { useBackendStore, type BackendId, type BackendInfo } from '../stores/backend-store'
@@ -16,6 +16,7 @@ interface BackendOptionProps {
   isSaving: boolean
   selectionLocked: boolean
   onSelect: (backend: BackendId) => void
+  children?: ReactNode
 }
 
 function BackendOption({
@@ -24,69 +25,90 @@ function BackendOption({
   isSaving,
   selectionLocked,
   onSelect,
+  children,
 }: BackendOptionProps) {
   const { t } = useTranslation('chat')
   const available = backend.availability.status === 'available'
 
   return (
-    <label
+    <div
+      data-backend-option={backend.id}
       className={cn(
-        'group flex min-h-[76px] w-full items-center gap-4 rounded-xl border px-4 py-3.5 text-left transition-[background-color,border-color,box-shadow]',
+        'w-full overflow-hidden rounded-xl border text-left transition-[background-color,border-color,box-shadow]',
         'focus-within:outline-none focus-within:ring-2 focus-within:ring-accent/40 focus-within:ring-offset-2 focus-within:ring-offset-bg',
         isDefault && 'border-accent/60 bg-accent/[0.07] shadow-sm',
-        !isDefault && available && 'cursor-pointer border-border bg-surface hover:border-accent/30 hover:bg-surface-hover',
-        !isDefault && !available && 'border-border/70 bg-surface/60 opacity-60',
-        (!available || selectionLocked) && 'cursor-not-allowed',
+        !isDefault && available && 'border-border bg-surface hover:border-accent/30',
+        !isDefault && !available && 'border-border/70 bg-surface/60',
       )}
     >
-      <input
-        type="radio"
-        name="default-agent-backend"
-        className="sr-only"
-        checked={isDefault}
-        onChange={() => onSelect(backend.id)}
-        disabled={!available || selectionLocked}
-      />
-
-      <span
+      <label
         className={cn(
-          'flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg border transition-colors',
-          isDefault
-            ? 'border-accent/30 bg-accent/10 text-accent'
-            : 'border-border bg-bg text-text-tertiary group-hover:text-text-secondary',
+          'group flex min-h-[76px] w-full items-center gap-4 px-4 py-3.5',
+          available && !selectionLocked && 'cursor-pointer hover:bg-surface-hover/70',
+          (!available || selectionLocked) && 'cursor-not-allowed',
+          !available && 'opacity-60',
         )}
-        aria-hidden="true"
       >
-        <Cpu className="h-4.5 w-4.5" />
-      </span>
+        <input
+          type="radio"
+          name="default-agent-backend"
+          className="sr-only"
+          checked={isDefault}
+          onChange={() => onSelect(backend.id)}
+          disabled={!available || selectionLocked}
+        />
 
-      <span className="min-w-0 flex-1">
-        <span className="block text-sm font-medium text-text-primary">
-          {t(BACKEND_LABEL_KEYS[backend.id] ?? backend.id)}
-        </span>
-        <span className="mt-1 flex items-start gap-1.5 text-[11px] leading-4 text-text-tertiary">
-          {available ? (
-            <>
-              <CheckCircle2 className="mt-0.5 h-3 w-3 flex-shrink-0 text-green-500" aria-hidden="true" />
-              <span>{t('backend.available')}</span>
-            </>
-          ) : (
-            <>
-              <XCircle className="mt-0.5 h-3 w-3 flex-shrink-0 text-destructive" aria-hidden="true" />
-              <span>{backend.availability.reason ?? t('backend.unavailable')}</span>
-            </>
+        <span
+          className={cn(
+            'flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg border transition-colors',
+            isDefault
+              ? 'border-accent/30 bg-accent/10 text-accent'
+              : 'border-border bg-bg text-text-tertiary group-hover:text-text-secondary',
           )}
+          aria-hidden="true"
+        >
+          <Cpu className="h-4.5 w-4.5" />
         </span>
-      </span>
 
-      {isSaving ? (
-        <Loader2 className="h-4 w-4 flex-shrink-0 animate-spin text-accent motion-reduce:animate-none" aria-hidden="true" />
-      ) : isDefault ? (
-        <span className="flex-shrink-0 rounded-full border border-accent/20 bg-accent/10 px-2.5 py-1 text-[10px] font-medium text-accent">
-          {t('backend.isDefault')}
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium text-text-primary">
+            {t(BACKEND_LABEL_KEYS[backend.id] ?? backend.id)}
+          </span>
+          <span className="mt-1 flex items-start gap-1.5 text-[11px] leading-4 text-text-tertiary">
+            {available ? (
+              <>
+                <CheckCircle2 className="mt-0.5 h-3 w-3 flex-shrink-0 text-green-500" aria-hidden="true" />
+                <span>{t('backend.available')}</span>
+              </>
+            ) : (
+              <>
+                <XCircle className="mt-0.5 h-3 w-3 flex-shrink-0 text-destructive" aria-hidden="true" />
+                <span>{backend.availability.reason ?? t('backend.unavailable')}</span>
+              </>
+            )}
+          </span>
         </span>
-      ) : null}
-    </label>
+
+        {isSaving ? (
+          <Loader2 className="h-4 w-4 flex-shrink-0 animate-spin text-accent motion-reduce:animate-none" aria-hidden="true" />
+        ) : isDefault ? (
+          <span className="flex-shrink-0 rounded-full border border-accent/20 bg-accent/10 px-2.5 py-1 text-[10px] font-medium text-accent">
+            {t('backend.isDefault')}
+          </span>
+        ) : null}
+      </label>
+
+      {children && (
+        <div
+          className={cn(
+            'border-t px-4 py-4 sm:pl-[4.75rem]',
+            isDefault ? 'border-accent/15 bg-accent/[0.025]' : 'border-border/70 bg-bg/30',
+          )}
+        >
+          {children}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -159,7 +181,9 @@ export default function BackendSection() {
               isSaving={saving === backend.id}
               selectionLocked={saving !== null}
               onSelect={(backendId) => void handleSelect(backendId)}
-            />
+            >
+              {backend.id === 'claude' ? <OutputStyleSetting /> : null}
+            </BackendOption>
           ))}
         </div>
       ) : (
@@ -167,18 +191,6 @@ export default function BackendSection() {
           {t('backend.noneAvailable')}
         </div>
       )}
-
-      <div className="mt-8 border-t border-border pt-6">
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <h4 className="text-sm font-semibold text-text-primary">
-            {t('outputStyle.sectionTitle')}
-          </h4>
-          <span className="rounded-full border border-accent/20 bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
-            {t('outputStyle.claudeOnly')}
-          </span>
-        </div>
-        <OutputStyleSetting />
-      </div>
     </section>
   )
 }

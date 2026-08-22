@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2 } from 'lucide-react'
 import { useAppSettings } from '../hooks/use-app-settings'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 
 const BUILTIN_OUTPUT_STYLES = ['default', 'explanatory', 'learning', 'concise'] as const
 
@@ -80,7 +81,7 @@ export default function OutputStyleSetting() {
   }
 
   return (
-    <div className="rounded-xl border border-border bg-surface px-4 py-4">
+    <>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 sm:pr-6">
           <label htmlFor="claude-output-style" className="text-sm font-medium text-text-primary">
@@ -92,20 +93,26 @@ export default function OutputStyleSetting() {
         </div>
 
         <div className="flex flex-shrink-0 items-center gap-2">
-          <select
-            id="claude-output-style"
+          <Select
             value={effective}
-            onChange={(event) => void handleChange(event.target.value)}
+            onValueChange={(value) => void handleChange(value)}
             disabled={!isReady || isSaving}
-            aria-describedby="claude-output-style-description"
-            className="min-h-11 min-w-40 rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {styles.map((style) => (
-              <option key={style} value={style}>
-                {t(STYLE_LABEL_KEYS[style] ?? style)}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger
+              id="claude-output-style"
+              aria-describedby="claude-output-style-description"
+              className="h-10 w-full min-w-44 sm:w-48"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              {styles.map((style) => (
+                <SelectItem key={style} value={style}>
+                  {t(STYLE_LABEL_KEYS[style] ?? style)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {isSaving && (
             <span role="status" aria-label={t('outputStyle.saving')}>
               <Loader2 className="h-4 w-4 animate-spin text-text-tertiary motion-reduce:animate-none" aria-hidden="true" />
@@ -119,6 +126,6 @@ export default function OutputStyleSetting() {
           {error}
         </p>
       )}
-    </div>
+    </>
   )
 }
