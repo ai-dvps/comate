@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { BackendDriver, BackendToolRequestHandler } from './backend-driver.js';
 import { codexAppServerManager, type CodexAppServerManager } from './codex-app-server-manager.js';
 import { CodexEventMapper } from './codex-event-mapper.js';
@@ -54,8 +54,11 @@ export class CodexBackendDriver implements BackendDriver {
     this.mapper = new CodexEventMapper(deps.model ?? 'codex');
   }
 
-  createStreamingQuery(input: AsyncIterable<SDKUserMessage>): { query: Query; messages: AsyncGenerator<SDKMessage> } {
-    void this.run(input);
+  createStreamingQuery(
+    input: AsyncIterable<SDKUserMessage>,
+    options: Options,
+  ): { query: Query; messages: AsyncGenerator<SDKMessage> } {
+    void this.run(input, options);
     const query = {
       interrupt: async () => {
         if (this.threadId && this.turnId) {
@@ -74,7 +77,7 @@ export class CodexBackendDriver implements BackendDriver {
     this.toolRequestHandler = handler;
   }
 
-  private async run(input: AsyncIterable<SDKUserMessage>): Promise<void> {
+  private async run(input: AsyncIterable<SDKUserMessage>, options: Options): Promise<void> {
     const client = await this.manager.ensureClient();
     const notification = (message: { method: string; params: Record<string, unknown> }) => this.onNotification(message);
     const request = (message: {
@@ -92,7 +95,7 @@ export class CodexBackendDriver implements BackendDriver {
     client.on('notification', notification);
     client.on('request', request);
     try {
-      await this.ensureThread();
+      await this.ensureThread(options);
       for await (const message of input) {
         if (this.closed) break;
         const clientTurnId = message.uuid ?? randomUUID();
@@ -230,13 +233,16 @@ export class CodexBackendDriver implements BackendDriver {
     return this.toolRequestHandler(request);
   }
 
-  private async ensureThread(): Promise<void> {
+  private async ensureThread(options: Options): Promise<void> {
     if (this.threadId) {
       await this.manager.request('thread/resume', { threadId: this.threadId });
       return;
     }
     const response = await this.manager.request<{ thread: { id: string } }>('thread/start', {
       cwd: this.deps.directory,
+      approvalPolicy: 'on-request',
+      sandbox: 'workspace-write',
+      config: codexThreadConfig(options),
       ...(this.deps.model ? { model: this.deps.model } : {}),
     });
     this.threadId = response.thread.id;
@@ -252,6 +258,27 @@ export class CodexBackendDriver implements BackendDriver {
       this.turnId = undefined;
     }
   }
+}
+
+/**
+ * Project stdio MCP servers are safe to pass as ephemeral thread overrides.
+ * Remote servers and stdio environment maps are deliberately excluded: both
+ * can contain bearer/API credentials and Codex owns its persisted history.
+ */
+export function codexThreadConfig(options: Options): Record<string, unknown> {
+  const mcpServers: Record<string, Record<string, unknown>> = {};
+  for (const [name, rawConfig] of Object.entries(options.mcpServers ?? {})) {
+    const config = rawConfig as Record<string, unknown>;
+    if (config.type !== undefined && config.type !== 'stdio') continue;
+    if (typeof config.command !== 'string' || config.command.length === 0) continue;
+    mcpServers[name] = {
+      command: config.command,
+      ...(Array.isArray(config.args) && config.args.every((arg) => typeof arg === 'string')
+        ? { args: config.args }
+        : {}),
+    };
+  }
+  return Object.keys(mcpServers).length > 0 ? { mcp_servers: mcpServers } : {};
 }
 
 export function codexUserInput(content: unknown): Array<Record<string, unknown>> {
