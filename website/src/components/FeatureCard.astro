@@ -1,5 +1,6 @@
 ---
 import { cn } from '../lib/cn.js';
+import ProductScreenshot from './ProductScreenshot.astro';
 
 export interface Props {
   title: string;
@@ -52,11 +53,13 @@ const to = gradientTo ?? '28 82% 48%';
 >
   {
     image ? (
-      <img
+      <ProductScreenshot
         src={image}
         alt={imageAlt ?? title}
+        width={960}
+        height={600}
         loading="lazy"
-        class="mb-1 h-40 w-full rounded-lg object-cover"
+        class="mb-1 aspect-[16/10] w-full rounded-lg bg-white object-cover object-top"
       />
     ) : (
       <div
