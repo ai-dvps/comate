@@ -228,13 +228,14 @@ function CodexAccountSetting() {
     }
   }
 
-  const accountLabel = account?.type === 'chatgpt'
-    ? account.email || t('backend.codexChatGptAccount')
-    : account?.type === 'apiKey'
-      ? t('backend.codexApiKeyAccount')
-      : account?.type === 'amazonBedrock'
-        ? t('backend.codexBedrockAccount')
-        : null
+  let accountLabel: string | null = null
+  if (account?.type === 'chatgpt') {
+    accountLabel = account.email || t('backend.codexChatGptAccount')
+  } else if (account?.type === 'apiKey') {
+    accountLabel = t('backend.codexApiKeyAccount')
+  } else if (account?.type === 'amazonBedrock') {
+    accountLabel = t('backend.codexBedrockAccount')
+  }
 
   return (
     <div className="space-y-3 px-4 py-4 sm:px-5">
@@ -261,24 +262,24 @@ function CodexAccountSetting() {
       {account ? (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-md bg-green-500/10 px-2.5 py-1.5 text-xs text-green-600 dark:text-green-400">
-            <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-            {t('backend.codexSignedIn')}
-          </span>
-          {models.length > 0 && (
-            <span className="text-xs text-text-tertiary">
-              {t('backend.codexModelsAvailable', { count: models.length })}
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-green-500/10 px-2.5 py-1.5 text-xs text-green-600 dark:text-green-400">
+              <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+              {t('backend.codexSignedIn')}
             </span>
-          )}
-          <button
-            type="button"
-            className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-text-secondary hover:bg-surface-hover hover:text-text-primary disabled:opacity-50"
-            disabled={loading}
-            onClick={() => void logout().catch(() => undefined)}
-          >
-            <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
-            {t('backend.codexLogout')}
-          </button>
+            {models.length > 0 && (
+              <span className="text-xs text-text-tertiary">
+                {t('backend.codexModelsAvailable', { count: models.length })}
+              </span>
+            )}
+            <button
+              type="button"
+              className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-text-secondary hover:bg-surface-hover hover:text-text-primary disabled:opacity-50"
+              disabled={loading}
+              onClick={() => void logout().catch(() => undefined)}
+            >
+              <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+              {t('backend.codexLogout')}
+            </button>
           </div>
           {models.length > 0 && (
             <label className="block max-w-md">
