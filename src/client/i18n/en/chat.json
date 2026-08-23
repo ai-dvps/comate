@@ -396,7 +396,7 @@
     "codexBedrockAccount": "Amazon Bedrock account",
     "codexSignedIn": "Signed in",
     "codexModelsAvailable": "{{count}} models available",
-    "codexDefaultModel": "Default model for new Codex sessions",
+    "codexDefaultModel": "Default model",
     "codexDefaultEffort": "Default effort",
     "codexDefaultSpeed": "Default speed",
     "codexModelDefault": "Model default",
