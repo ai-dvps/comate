@@ -1106,6 +1106,54 @@ describe('SqliteStore provider fast mode capability', { concurrency: false }, ()
     assert.strictEqual(updated?.protocol, 'openai-responses');
     assert.strictEqual(updated?.authToken, 'stored-secret');
   });
+
+  it('persists the versioned nested configuration without dual-writing legacy columns', () => {
+    const provider = store.createProvider({
+      name: 'Multi protocol',
+      authToken: 'shared-secret',
+      configuration: {
+        schemaVersion: 1,
+        endpoints: {
+          anthropic: { enabled: true, baseUrl: 'https://example.com/anthropic' },
+          openai: { enabled: true, baseUrl: 'https://example.com/openai', format: 'openai-chat-completions' },
+        },
+        models: { claudeCode: 'claude-model', codex: 'codex-model', openCode: 'open-model' },
+        openCode: { protocol: 'openai' },
+        claude: {},
+        codex: { effortByModel: { 'codex-model': ['low', 'high'] } },
+        preset: { id: 'custom', version: 1 },
+      },
+    });
+    const raw = (store as unknown as { db: { prepare: (sql: string) => { get: (id: string) => unknown } } }).db
+      .prepare('SELECT base_url, model, options_json FROM providers WHERE id = ?').get(provider.id) as {
+        base_url: string; model: string | null; options_json: string;
+      };
+    assert.strictEqual(raw.base_url, '');
+    assert.strictEqual(raw.model, null);
+    assert.deepStrictEqual(JSON.parse(raw.options_json), provider.configuration);
+    assert.strictEqual(provider.baseUrl, 'https://example.com/openai');
+  });
+
+  it('preserves the coding credential for omitted, undefined, and blank direct updates', () => {
+    const provider = store.createProvider({
+      name: 'Credential', baseUrl: 'https://example.com', authToken: 'stored-secret',
+    });
+    assert.strictEqual(store.updateProvider(provider.id, {})?.authToken, 'stored-secret');
+    assert.strictEqual(store.updateProvider(provider.id, { authToken: undefined })?.authToken, 'stored-secret');
+    assert.strictEqual(store.updateProvider(provider.id, { authToken: '   ' })?.authToken, 'stored-secret');
+  });
+
+  it('switches the single default atomically', () => {
+    const first = store.createProvider({
+      name: 'First', baseUrl: 'https://first.example', authToken: 'first', isDefault: true,
+    });
+    const second = store.createProvider({
+      name: 'Second', baseUrl: 'https://second.example', authToken: 'second', isDefault: true,
+    });
+    assert.strictEqual(store.getProvider(first.id)?.isDefault, false);
+    assert.strictEqual(store.getProvider(second.id)?.isDefault, true);
+    assert.strictEqual(store.listProviders().filter((provider) => provider.isDefault).length, 1);
+  });
 });
 
 describe('SqliteStore unified schema migration', { concurrency: false }, () => {
@@ -1123,8 +1171,9 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
   it('fresh database initializes to the latest schema version with new tables', () => {
     const freshStore = new SqliteStore(':memory:');
     // v6: browser_audit (U8); v7: global todos (U1); v8: todos.content;
-    // v9: Todo execution; v10: bot_escalation_ledger; v11: browser operations.
-    assert.strictEqual(freshStore.getMigrationVersion(), 11);
+    // v9: Todo execution; v10: bot_escalation_ledger; v11: browser operations;
+    // v12: versioned Provider configuration.
+    assert.strictEqual(freshStore.getMigrationVersion(), 12);
 
     // Old tables should not exist
     const tables = (freshStore as unknown as { db: { prepare: (sql: string) => { all: () => Array<{ name: string }> } } }).db
@@ -1155,11 +1204,11 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
     firstStore.createBot({ name: 'Pre-migration Bot' });
 
     const version = firstStore.getMigrationVersion();
-    assert.strictEqual(version, 11);
+    assert.strictEqual(version, 12);
 
-    // Re-opening should not throw and version should stay 10
+    // Re-opening should not throw or advance the version.
     const secondStore = new SqliteStore(migrationDbPath);
-    assert.strictEqual(secondStore.getMigrationVersion(), 11);
+    assert.strictEqual(secondStore.getMigrationVersion(), 12);
     assert.strictEqual(secondStore.listBots().length, 1);
   });
 });

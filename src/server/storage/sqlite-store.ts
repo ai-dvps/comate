@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, copyFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, copyFileSync, chmodSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
@@ -28,8 +28,16 @@ import { encryptChannelSettings, decryptChannelSettings } from '../utils/bot-cha
 import type { Todo, CreateTodoInput, UpdateTodoInput, TodoStatus, TodoOrigin, TodoComment, TodoConflict, TodoExecutionStatus } from '../models/todo.js';
 import type { TodoRun, CreateTodoRunInput, UpdateTodoRunInput, TodoRunStatus } from '../models/todo-run.js';
 import { sanitizeBotRolePolicy, createDefaultBotRolePolicy } from '../services/bot-access-policy.js';
-import type { Provider, CreateProviderInput, UpdateProviderInput } from '../models/provider.js';
+import type {
+  Provider,
+  ProviderConfigurationV1,
+  ProviderEndpoint,
+  ProviderOpenAiEndpoint,
+  CreateProviderInput,
+  UpdateProviderInput,
+} from '../models/provider.js';
 import { providerSupportsFastMode } from '../utils/provider-capability.js';
+import { isPlainObject } from '../utils/plain-object.js';
 import type { WeComProactiveMessage, CreateProactiveMessageInput, ProactiveMessageStatus, UpdateProactiveMessageInput } from '../models/wecom-proactive-message.js';
 import type { WeComMediaCacheEntry, CreateWeComMediaCacheInput } from '../models/wecom-media-cache.js';
 import type {
@@ -71,9 +79,11 @@ export class SqliteStore {
   private db: Database.Database;
   private analyticsCache?: AnalyticsCache;
   private readonly inMemory: boolean;
+  private readonly dbFile: string;
 
   constructor(dbPath?: string) {
     const dbFile = dbPath ?? DB_FILE;
+    this.dbFile = dbFile;
     this.inMemory = dbFile === ':memory:';
     if (!this.inMemory) {
       ensureDirSync(dirname(dbFile));
@@ -658,6 +668,7 @@ export class SqliteStore {
 
     ensureAnalyticsCacheSchema(this.db);
 
+    const providerConfigurationRows = this.preflightProviderConfigurationV1();
     this.migrateTodoDetailColumn();
     this.migrateMappingTable();
     this.migrateWecomUserSessions();
@@ -675,6 +686,7 @@ export class SqliteStore {
     this.migrateTodoExecutionSchema();
     this.migrateBotEscalationLedgerSchema();
     this.migrateBrowserOperationLedgerSchema();
+    this.migrateProviderConfigurationV1(providerConfigurationRows);
     this.backfillLastTurnStartedAt();
   }
 
@@ -993,6 +1005,157 @@ export class SqliteStore {
       ...previous,
       browser_operation_ledger_schema: true,
     });
+  }
+
+  /**
+   * Provider configuration v1 is deliberately independent from the legacy
+   * physical base/model columns. Those columns are retained as upgrade
+   * evidence only; all reads and writes after this migration use options_json.
+   */
+  private migrateProviderConfigurationV1(
+    classified: Array<{ row: RawProviderRow; result: ProviderOptionsClassification }>,
+  ): void {
+    const rows = classified.map(({ row }) => row);
+
+    const legacyRows = classified.filter(({ result }) => result.kind === 'legacy');
+    const backupPath = this.providerMigrationBackupPath();
+    const state = this.getMigrationState();
+    const pendingReopen = state.snapshot.provider_configuration_v1_pending_reopen === true;
+
+    if (legacyRows.length === 0 && state.version !== null && state.version >= 12 && !pendingReopen) {
+      this.installProviderWriteBarriers();
+      return;
+    }
+
+    if (legacyRows.length > 0 && !this.inMemory) {
+      this.createProviderMigrationBackup(backupPath);
+    }
+
+    const providerEvidence = rows.map((row) => ({
+      id: row.id,
+      auth_token: row.auth_token,
+      base_url: row.base_url,
+      model: row.model,
+      is_default: row.is_default,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    }));
+    const sessionReferences = this.providerSessionReferenceMultiset();
+
+    const migrate = this.db.transaction(() => {
+      const update = this.db.prepare('UPDATE providers SET options_json = ? WHERE id = ?');
+      for (const { row, result } of legacyRows) {
+        if (result.kind !== 'legacy') continue;
+        update.run(JSON.stringify(result.configuration), row.id);
+      }
+
+      const after = this.db.prepare(`
+        SELECT id, auth_token, base_url, model, is_default, created_at, updated_at
+        FROM providers ORDER BY id
+      `).all();
+      if (JSON.stringify(after) !== JSON.stringify(providerEvidence)) {
+        throw new Error('Provider configuration migration invariant failed');
+      }
+      if (JSON.stringify(this.providerSessionReferenceMultiset()) !== JSON.stringify(sessionReferences)) {
+        throw new Error('Provider session reference migration invariant failed');
+      }
+
+      this.installProviderWriteBarriers();
+      const previous = this.getMigrationState().snapshot;
+      this.setMigrationState(Math.max(this.getMigrationVersion() ?? 0, 12), new Date().toISOString(), {
+        ...previous,
+        provider_configuration_v1: true,
+        provider_configuration_v1_pending_reopen: pendingReopen || (legacyRows.length > 0 && !this.inMemory),
+      });
+    });
+    try {
+      migrate();
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
+
+    // A backup is retained through the first successful close/open cycle. A
+    // subsequent constructor reaches here with only validated current rows.
+    if (pendingReopen && legacyRows.length === 0) {
+      try {
+        unlinkSync(backupPath);
+      } catch (error) {
+        if (!isNodeErrorCode(error, 'ENOENT')) throw error;
+      }
+      const previous = this.getMigrationState().snapshot;
+      this.setMigrationState(Math.max(this.getMigrationVersion() ?? 0, 12), new Date().toISOString(), {
+        ...previous,
+        provider_configuration_v1_pending_reopen: false,
+      });
+    }
+  }
+
+  private preflightProviderConfigurationV1(): Array<{ row: RawProviderRow; result: ProviderOptionsClassification }> {
+    return this.validatedProviderConfigurationRows();
+  }
+
+  private validatedProviderConfigurationRows(): Array<{ row: RawProviderRow; result: ProviderOptionsClassification }> {
+    const rows = this.db.prepare('SELECT * FROM providers ORDER BY id').all() as RawProviderRow[];
+    const classified = rows.map((row) => ({ row, result: classifyProviderOptions(row) }));
+    const invalid = classified.find(({ result }) => result.kind !== 'legacy' && result.kind !== 'current');
+    if (invalid) {
+      const error = new Error(`Provider configuration migration blocked: ${invalid.result.kind} options for provider ${invalid.row.id}`);
+      this.db.close();
+      throw error;
+    }
+    if (rows.filter((row) => row.is_default === 1).length > 1) {
+      const error = new Error('Provider configuration migration blocked: multiple default providers');
+      this.db.close();
+      throw error;
+    }
+    return classified;
+  }
+
+  private providerMigrationBackupPath(): string {
+    return `${this.dbFile}.provider-v1.backup`;
+  }
+
+  private createProviderMigrationBackup(backupPath: string): void {
+    try {
+      chmodSync(backupPath, 0o600);
+      return;
+    } catch (error) {
+      if (!isNodeErrorCode(error, 'ENOENT')) throw error;
+    }
+    this.db.exec('PRAGMA wal_checkpoint(FULL)');
+    const escaped = backupPath.replace(/'/g, "''");
+    this.db.exec(`VACUUM INTO '${escaped}'`);
+    chmodSync(backupPath, 0o600);
+  }
+
+  private providerSessionReferenceMultiset(): Array<{ provider_id: string | null; count: number }> {
+    return this.db.prepare(`
+      SELECT provider_id, COUNT(*) AS count
+      FROM sessions
+      GROUP BY provider_id
+      ORDER BY provider_id
+    `).all() as Array<{ provider_id: string | null; count: number }>;
+  }
+
+  private installProviderWriteBarriers(): void {
+    this.db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_providers_single_default
+        ON providers (is_default) WHERE is_default = 1;
+      CREATE TRIGGER IF NOT EXISTS providers_require_v1_insert
+        BEFORE INSERT ON providers
+        WHEN json_valid(NEW.options_json) = 0
+          OR COALESCE(json_extract(NEW.options_json, '$.schemaVersion'), -1) != 1
+        BEGIN SELECT RAISE(ABORT, 'provider configuration version required'); END;
+      CREATE TRIGGER IF NOT EXISTS providers_require_v1_update
+        BEFORE UPDATE OF options_json ON providers
+        WHEN json_valid(NEW.options_json) = 0
+          OR COALESCE(json_extract(NEW.options_json, '$.schemaVersion'), -1) != 1
+        BEGIN SELECT RAISE(ABORT, 'provider configuration version required'); END;
+      CREATE TRIGGER IF NOT EXISTS providers_reject_legacy_columns
+        BEFORE UPDATE OF base_url, model ON providers
+        BEGIN SELECT RAISE(ABORT, 'legacy provider columns are read-only'); END;
+    `);
   }
 
   getAnalyticsCache(): AnalyticsCache {
@@ -2538,101 +2701,68 @@ export class SqliteStore {
 
   createProvider(input: CreateProviderInput): Provider {
     const now = new Date().toISOString();
+    const configuration = normalizeProviderConfiguration(
+      input.configuration ?? legacyInputToProviderConfiguration(input),
+    );
     const provider: Provider = {
       id: uuidv4(),
       name: input.name.trim(),
-      baseUrl: input.baseUrl.trim(),
+      configuration,
+      ...providerCompatibilityProjection(configuration),
       authToken: input.authToken,
-      protocol: input.protocol ?? 'anthropic',
-      model: input.model,
       isDefault: input.isDefault ?? false,
-      defaultOpusModel: input.defaultOpusModel,
-      defaultSonnetModel: input.defaultSonnetModel,
-      defaultHaikuModel: input.defaultHaikuModel,
-      subagentModel: input.subagentModel,
-      effortLevel: input.effortLevel,
-      customEnvVars: input.customEnvVars,
-      supportsFastMode: providerSupportsFastMode(input.model),
       createdAt: now,
       updatedAt: now,
     };
-    const optionsJson = JSON.stringify({
-      defaultOpusModel: provider.defaultOpusModel,
-      defaultSonnetModel: provider.defaultSonnetModel,
-      defaultHaikuModel: provider.defaultHaikuModel,
-      subagentModel: provider.subagentModel,
-      effortLevel: provider.effortLevel,
-      customEnvVars: provider.customEnvVars,
-      protocol: provider.protocol,
-    });
-    this.db.prepare(`
-      INSERT INTO providers (id, name, base_url, auth_token, model, is_default, options_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      provider.id,
-      provider.name,
-      provider.baseUrl,
-      provider.authToken,
-      provider.model ?? null,
-      provider.isDefault ? 1 : 0,
-      optionsJson,
-      provider.createdAt,
-      provider.updatedAt
-    );
-    if (provider.isDefault) {
-      this.db.prepare('UPDATE providers SET is_default = 0 WHERE id != ?').run(provider.id);
-    }
+    this.db.transaction(() => {
+      if (provider.isDefault) this.db.prepare('UPDATE providers SET is_default = 0').run();
+      this.db.prepare(`
+        INSERT INTO providers (id, name, base_url, auth_token, model, is_default, options_json, created_at, updated_at)
+        VALUES (?, ?, '', ?, NULL, ?, ?, ?, ?)
+      `).run(
+        provider.id,
+        provider.name,
+        provider.authToken,
+        provider.isDefault ? 1 : 0,
+        JSON.stringify(configuration),
+        provider.createdAt,
+        provider.updatedAt,
+      );
+    })();
     return provider;
   }
 
   updateProvider(id: string, input: UpdateProviderInput): Provider | null {
     const existing = this.getProvider(id);
     if (!existing) return null;
+    const configuration = normalizeProviderConfiguration(
+      mergeProviderConfiguration(existing.configuration!, input),
+    );
+    const suppliedToken = input.authToken?.trim();
     const provider: Provider = {
       ...existing,
       ...(input.name !== undefined && { name: input.name.trim() }),
-      ...(input.baseUrl !== undefined && { baseUrl: input.baseUrl.trim() }),
-      ...(input.authToken !== undefined && { authToken: input.authToken }),
-      ...(input.protocol !== undefined && { protocol: input.protocol }),
-      ...(input.model !== undefined && { model: input.model }),
+      configuration,
+      ...providerCompatibilityProjection(configuration),
+      ...(suppliedToken && { authToken: input.authToken }),
       ...(input.isDefault !== undefined && { isDefault: input.isDefault }),
-      ...(input.defaultOpusModel !== undefined && { defaultOpusModel: input.defaultOpusModel }),
-      ...(input.defaultSonnetModel !== undefined && { defaultSonnetModel: input.defaultSonnetModel }),
-      ...(input.defaultHaikuModel !== undefined && { defaultHaikuModel: input.defaultHaikuModel }),
-      ...(input.subagentModel !== undefined && { subagentModel: input.subagentModel }),
-      ...(input.effortLevel !== undefined && { effortLevel: input.effortLevel }),
-      ...(input.customEnvVars !== undefined && { customEnvVars: input.customEnvVars }),
-      supportsFastMode: providerSupportsFastMode(
-        (input.model !== undefined ? input.model : existing.model) ?? undefined,
-      ),
       updatedAt: new Date().toISOString(),
     };
-    const optionsJson = JSON.stringify({
-      defaultOpusModel: provider.defaultOpusModel,
-      defaultSonnetModel: provider.defaultSonnetModel,
-      defaultHaikuModel: provider.defaultHaikuModel,
-      subagentModel: provider.subagentModel,
-      effortLevel: provider.effortLevel,
-      customEnvVars: provider.customEnvVars,
-      protocol: provider.protocol,
-    });
-    this.db.prepare(`
-      UPDATE providers
-      SET name = ?, base_url = ?, auth_token = ?, model = ?, is_default = ?, options_json = ?, updated_at = ?
-      WHERE id = ?
-    `).run(
-      provider.name,
-      provider.baseUrl,
-      provider.authToken,
-      provider.model ?? null,
-      provider.isDefault ? 1 : 0,
-      optionsJson,
-      provider.updatedAt,
-      id
-    );
-    if (provider.isDefault) {
-      this.db.prepare('UPDATE providers SET is_default = 0 WHERE id != ?').run(id);
-    }
+    this.db.transaction(() => {
+      if (provider.isDefault) this.db.prepare('UPDATE providers SET is_default = 0 WHERE id != ?').run(id);
+      this.db.prepare(`
+        UPDATE providers
+        SET name = ?, auth_token = ?, is_default = ?, options_json = ?, updated_at = ?
+        WHERE id = ?
+      `).run(
+        provider.name,
+        provider.authToken,
+        provider.isDefault ? 1 : 0,
+        JSON.stringify(configuration),
+        provider.updatedAt,
+        id,
+      );
+    })();
     return provider;
   }
 
@@ -5441,25 +5571,274 @@ interface RawProviderRow {
   updated_at: string;
 }
 
+const PROVIDER_CONFIGURATION_VERSION = 1 as const;
+const RESERVED_CLAUDE_ENV_KEYS = new Set([
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_MODEL',
+  'ANTHROPIC_DEFAULT_OPUS_MODEL',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+  'CLAUDE_CODE_SUBAGENT_MODEL',
+]);
+const LEGACY_PROVIDER_OPTION_KEYS = new Set([
+  'protocol', 'defaultOpusModel', 'defaultSonnetModel', 'defaultHaikuModel',
+  'subagentModel', 'effortLevel', 'customEnvVars',
+]);
+const PROVIDER_CODEX_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
+
+type ProviderOptionsClassification =
+  | { kind: 'legacy'; configuration: ProviderConfigurationV1 }
+  | { kind: 'current'; configuration: ProviderConfigurationV1 }
+  | { kind: 'partial' | 'malformed' | 'future' };
+
+function classifyProviderOptions(row: RawProviderRow): ProviderOptionsClassification {
+  let value: unknown;
+  try {
+    value = JSON.parse(row.options_json);
+  } catch {
+    return { kind: 'malformed' };
+  }
+  if (!isPlainObject(value)) return { kind: 'malformed' };
+  if (value.schemaVersion === undefined) {
+    if ('endpoints' in value || 'models' in value || 'openCode' in value || 'claude' in value || 'codex' in value) {
+      return { kind: 'partial' };
+    }
+    if (Object.keys(value).some((key) => !LEGACY_PROVIDER_OPTION_KEYS.has(key))) return { kind: 'malformed' };
+    try {
+      return { kind: 'legacy', configuration: migrateLegacyProviderOptions(row, value) };
+    } catch {
+      return { kind: 'malformed' };
+    }
+  }
+  if (typeof value.schemaVersion !== 'number' || !Number.isInteger(value.schemaVersion)) {
+    return { kind: 'malformed' };
+  }
+  if (value.schemaVersion > PROVIDER_CONFIGURATION_VERSION) return { kind: 'future' };
+  if (value.schemaVersion < PROVIDER_CONFIGURATION_VERSION) return { kind: 'partial' };
+  try {
+    return { kind: 'current', configuration: normalizeProviderConfiguration(value as unknown as ProviderConfigurationV1) };
+  } catch {
+    return { kind: 'partial' };
+  }
+}
+
+function migrateLegacyProviderOptions(row: RawProviderRow, options: Record<string, unknown>): ProviderConfigurationV1 {
+  if (options.protocol !== undefined && options.protocol !== 'anthropic' && options.protocol !== 'openai-responses') {
+    throw new Error('Legacy Provider protocol is invalid');
+  }
+  const protocol = options.protocol === 'openai-responses' ? 'openai-responses' : 'anthropic';
+  const model = row.model ?? undefined;
+  return normalizeProviderConfiguration({
+    schemaVersion: PROVIDER_CONFIGURATION_VERSION,
+    endpoints: protocol === 'openai-responses'
+      ? { openai: { enabled: true, baseUrl: row.base_url, format: 'openai-responses' } }
+      : { anthropic: { enabled: true, baseUrl: row.base_url } },
+    models: { claudeCode: model, codex: model, openCode: model },
+    openCode: { protocol: protocol === 'openai-responses' ? 'openai' : 'anthropic' },
+    claude: {
+      defaultOpusModel: stringOption(options.defaultOpusModel),
+      defaultSonnetModel: stringOption(options.defaultSonnetModel),
+      defaultHaikuModel: stringOption(options.defaultHaikuModel),
+      subagentModel: stringOption(options.subagentModel),
+      effortLevel: stringOption(options.effortLevel),
+      customEnvVars: normalizeClaudeEnvVars(options.customEnvVars),
+    },
+    codex: {},
+  });
+}
+
+function legacyInputToProviderConfiguration(input: CreateProviderInput): ProviderConfigurationV1 {
+  const protocol = input.protocol ?? 'anthropic';
+  const baseUrl = input.baseUrl?.trim();
+  if (!baseUrl) throw new Error('Provider base URL is required');
+  return {
+    schemaVersion: PROVIDER_CONFIGURATION_VERSION,
+    endpoints: protocol === 'openai-responses'
+      ? { openai: { enabled: true, baseUrl, format: 'openai-responses' } }
+      : { anthropic: { enabled: true, baseUrl } },
+    models: { claudeCode: input.model, codex: input.model, openCode: input.model },
+    openCode: { protocol: protocol === 'openai-responses' ? 'openai' : 'anthropic' },
+    claude: {
+      defaultOpusModel: input.defaultOpusModel,
+      defaultSonnetModel: input.defaultSonnetModel,
+      defaultHaikuModel: input.defaultHaikuModel,
+      subagentModel: input.subagentModel,
+      effortLevel: input.effortLevel,
+      customEnvVars: input.customEnvVars,
+    },
+    codex: {},
+  };
+}
+
+function mergeProviderConfiguration(existing: ProviderConfigurationV1, input: UpdateProviderInput): ProviderConfigurationV1 {
+  if (input.configuration) return input.configuration;
+  const next = structuredClone(existing);
+  if (input.protocol !== undefined) {
+    next.openCode.protocol = input.protocol === 'openai-responses' ? 'openai' : 'anthropic';
+  }
+  if (input.baseUrl !== undefined) {
+    if ((input.protocol ?? (next.openCode.protocol === 'openai' ? 'openai-responses' : 'anthropic')) === 'openai-responses') {
+      next.endpoints.openai = {
+        enabled: true,
+        baseUrl: input.baseUrl.trim(),
+        format: next.endpoints.openai?.format ?? 'openai-responses',
+      };
+    } else {
+      next.endpoints.anthropic = { enabled: true, baseUrl: input.baseUrl.trim() };
+    }
+  }
+  if (input.model !== undefined) {
+    next.models.claudeCode = input.model;
+    next.models.codex = input.model;
+    next.models.openCode = input.model;
+  }
+  const claudeFields = ['defaultOpusModel', 'defaultSonnetModel', 'defaultHaikuModel', 'subagentModel', 'effortLevel'] as const;
+  for (const field of claudeFields) {
+    if (input[field] !== undefined) next.claude[field] = input[field];
+  }
+  if (input.customEnvVars !== undefined) next.claude.customEnvVars = input.customEnvVars;
+  return next;
+}
+
+function normalizeProviderConfiguration(configuration: ProviderConfigurationV1): ProviderConfigurationV1 {
+  if (!isPlainObject(configuration) || configuration.schemaVersion !== PROVIDER_CONFIGURATION_VERSION) {
+    throw new Error('Provider configuration version 1 required');
+  }
+  if (!isPlainObject(configuration.endpoints) || !isPlainObject(configuration.models)
+      || !isPlainObject(configuration.openCode) || !isPlainObject(configuration.claude)
+      || !isPlainObject(configuration.codex)) {
+    throw new Error('Provider configuration is incomplete');
+  }
+  const anthropic = normalizeEndpoint(configuration.endpoints.anthropic);
+  const openai = normalizeOpenAiEndpoint(configuration.endpoints.openai);
+  if (!anthropic && !openai) throw new Error('Provider configuration requires an endpoint');
+  if (configuration.openCode.protocol !== 'anthropic' && configuration.openCode.protocol !== 'openai') {
+    throw new Error('Provider OpenCode protocol is invalid');
+  }
+  if (configuration.openCode.protocol === 'anthropic' && !anthropic) throw new Error('Provider Anthropic endpoint is missing');
+  if (configuration.openCode.protocol === 'openai' && !openai) throw new Error('Provider OpenAI endpoint is missing');
+
+  const models = normalizeStringRecord(configuration.models, ['claudeCode', 'codex', 'openCode']);
+  const claude = normalizeStringRecord(configuration.claude, [
+    'defaultOpusModel', 'defaultSonnetModel', 'defaultHaikuModel', 'subagentModel', 'effortLevel',
+  ]);
+  const effortByModel = normalizeEffortByModel(configuration.codex.effortByModel);
+  const customEnvVars = normalizeClaudeEnvVars(configuration.claude.customEnvVars);
+  const preset = configuration.preset;
+  if (preset !== undefined && (!isPlainObject(preset) || typeof preset.id !== 'string'
+      || preset.id.length === 0 || !Number.isInteger(preset.version) || preset.version < 1)) {
+    throw new Error('Provider preset provenance is invalid');
+  }
+  return {
+    schemaVersion: PROVIDER_CONFIGURATION_VERSION,
+    endpoints: { ...(anthropic && { anthropic }), ...(openai && { openai }) },
+    models,
+    openCode: { protocol: configuration.openCode.protocol },
+    claude: {
+      ...claude,
+      ...(customEnvVars && { customEnvVars }),
+    },
+    codex: { ...(effortByModel && { effortByModel }) },
+    ...(preset && { preset: { id: preset.id, version: preset.version } }),
+  };
+}
+
+function normalizeEndpoint(value: unknown): ProviderEndpoint | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value) || typeof value.enabled !== 'boolean' || typeof value.baseUrl !== 'string'
+      || value.baseUrl.trim().length === 0) throw new Error('Provider endpoint is invalid');
+  return { enabled: value.enabled, baseUrl: value.baseUrl.trim() };
+}
+
+function normalizeOpenAiEndpoint(value: unknown): ProviderOpenAiEndpoint | undefined {
+  const endpoint = normalizeEndpoint(value);
+  if (!endpoint) return undefined;
+  if (!isPlainObject(value) || (value.format !== 'openai-responses' && value.format !== 'openai-chat-completions')) {
+    throw new Error('Provider OpenAI format is invalid');
+  }
+  return { ...endpoint, format: value.format };
+}
+
+function normalizeClaudeEnvVars(value: unknown): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) throw new Error('Provider Claude environment is invalid');
+  const result: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (RESERVED_CLAUDE_ENV_KEYS.has(key)) continue;
+    if (typeof entry !== 'string') throw new Error('Provider Claude environment is invalid');
+    result[key] = entry;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function normalizeStringRecord<T extends string>(value: Record<string, unknown>, keys: readonly T[]): Partial<Record<T, string>> {
+  const result: Partial<Record<T, string>> = {};
+  for (const key of keys) {
+    const entry = value[key];
+    if (entry !== undefined && typeof entry !== 'string') throw new Error('Provider model option is invalid');
+    if (typeof entry === 'string' && entry.length > 0) result[key] = entry;
+  }
+  return result;
+}
+
+function normalizeEffortByModel(value: unknown): ProviderConfigurationV1['codex']['effortByModel'] {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) throw new Error('Provider Codex capabilities are invalid');
+  const result: NonNullable<ProviderConfigurationV1['codex']['effortByModel']> = {};
+  for (const [model, efforts] of Object.entries(value)) {
+    if (!Array.isArray(efforts) || efforts.some((effort) => typeof effort !== 'string' || !PROVIDER_CODEX_EFFORTS.has(effort))) {
+      throw new Error('Provider Codex effort capability is invalid');
+    }
+    result[model] = [...new Set(efforts)] as NonNullable<ProviderConfigurationV1['codex']['effortByModel']>[string];
+  }
+  return result;
+}
+
+function providerCompatibilityProjection(configuration: ProviderConfigurationV1): Pick<Provider,
+  'baseUrl' | 'protocol' | 'model' | 'defaultOpusModel' | 'defaultSonnetModel' |
+  'defaultHaikuModel' | 'subagentModel' | 'effortLevel' | 'customEnvVars' | 'supportsFastMode'> {
+  const useOpenAi = configuration.openCode.protocol === 'openai';
+  const baseUrl = useOpenAi
+    ? configuration.endpoints.openai?.baseUrl ?? ''
+    : configuration.endpoints.anthropic?.baseUrl ?? '';
+  const model = configuration.models.claudeCode;
+  return {
+    baseUrl,
+    protocol: useOpenAi && configuration.endpoints.openai?.format === 'openai-responses'
+      ? 'openai-responses'
+      : 'anthropic',
+    model,
+    defaultOpusModel: configuration.claude.defaultOpusModel,
+    defaultSonnetModel: configuration.claude.defaultSonnetModel,
+    defaultHaikuModel: configuration.claude.defaultHaikuModel,
+    subagentModel: configuration.claude.subagentModel,
+    effortLevel: configuration.claude.effortLevel,
+    customEnvVars: configuration.claude.customEnvVars,
+    supportsFastMode: providerSupportsFastMode(model),
+  };
+}
+
+function stringOption(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function isNodeErrorCode(error: unknown, code: string): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error && error.code === code;
+}
+
 function parseProviderRow(row: RawProviderRow): Provider {
-  const options = safeJsonParse(row.options_json, {} as Record<string, unknown>);
+  const classified = classifyProviderOptions(row);
+  if (classified.kind !== 'current') throw new Error(`Provider ${row.id} has ${classified.kind} configuration`);
+  const configuration = classified.configuration;
   return {
     id: row.id,
     name: row.name,
-    baseUrl: row.base_url,
+    configuration,
+    ...providerCompatibilityProjection(configuration),
     authToken: row.auth_token,
-    protocol: options.protocol === 'openai-responses' ? 'openai-responses' : 'anthropic',
-    model: row.model ?? undefined,
     isDefault: row.is_default === 1,
-    defaultOpusModel: typeof options.defaultOpusModel === 'string' ? options.defaultOpusModel : undefined,
-    defaultSonnetModel: typeof options.defaultSonnetModel === 'string' ? options.defaultSonnetModel : undefined,
-    defaultHaikuModel: typeof options.defaultHaikuModel === 'string' ? options.defaultHaikuModel : undefined,
-    subagentModel: typeof options.subagentModel === 'string' ? options.subagentModel : undefined,
-    effortLevel: typeof options.effortLevel === 'string' ? options.effortLevel : undefined,
-    customEnvVars: typeof options.customEnvVars === 'object' && options.customEnvVars !== null
-      ? (options.customEnvVars as Record<string, string>)
-      : undefined,
-    supportsFastMode: providerSupportsFastMode(row.model ?? undefined),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

@@ -1,7 +1,7 @@
 import '../test-utils/test-env.js';
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
-import { mkdtempSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, statSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import Database from 'better-sqlite3';
@@ -314,7 +314,7 @@ describe('unified schema migration', { concurrency: false }, () => {
     const store = triggerMigration(seedDb, dbPath);
     const db = openRawDb(store);
 
-    assert.strictEqual(store.getMigrationVersion(), 11);
+    assert.strictEqual(store.getMigrationVersion(), 12);
 
     const tables = tableNames(db);
     assert.ok(tables.includes('bot_channels'));
@@ -429,7 +429,7 @@ describe('unified schema migration', { concurrency: false }, () => {
     const firstStore = triggerMigration(seedDb, dbPath);
 
     const secondStore = new SqliteStore(dbPath);
-    assert.strictEqual(secondStore.getMigrationVersion(), 11);
+    assert.strictEqual(secondStore.getMigrationVersion(), 12);
 
     const db = openRawDb(secondStore);
     assert.strictEqual(tableNames(db).includes('bot_members'), false);
@@ -507,7 +507,7 @@ describe('unified schema migration', { concurrency: false }, () => {
 
     // Must not throw (previously: UNIQUE constraint failed: user_sessions.user_id).
     const store = new SqliteStore(dbPath);
-    assert.strictEqual(store.getMigrationVersion(), 11);
+    assert.strictEqual(store.getMigrationVersion(), 12);
     const db = openRawDb(store);
 
     // No row was lost to the multi-active collisions: wecom-u1 has 2 sessions,
@@ -642,7 +642,7 @@ describe('todos global schema migration (v8)', { concurrency: false }, () => {
     seedDb.close();
 
     const store = new SqliteStore(dbPath);
-    assert.strictEqual(store.getMigrationVersion(), 11);
+    assert.strictEqual(store.getMigrationVersion(), 12);
 
     const db = openRawDb(store);
     const cols = todoColumns(db);
@@ -667,7 +667,7 @@ describe('todos global schema migration (v8)', { concurrency: false }, () => {
 
   it('a fresh db lands on the new shape without a rebuild (shape-keyed gate)', () => {
     const store = new SqliteStore(dbPath); // file does not exist yet -> fresh construction
-    assert.strictEqual(store.getMigrationVersion(), 11);
+    assert.strictEqual(store.getMigrationVersion(), 12);
     const db = openRawDb(store);
     const cols = todoColumns(db);
     assert.strictEqual(cols.find((c) => c.name === 'workspace_id')!.notnull, 0);
@@ -677,7 +677,7 @@ describe('todos global schema migration (v8)', { concurrency: false }, () => {
     assert.strictEqual(store.getAllTodos().length, 1);
   });
 
-  it('is idempotent: a second construction leaves new rows intact and the version at 11', () => {
+  it('is idempotent: a second construction leaves new rows intact and the version at 12', () => {
     const ts = now();
     const seedDb = seedOldTodosDb(dbPath, [
       { id: 't1', workspace_id: 'ws-a', text: 'legacy', status: 'pending', session_id: null, created_at: ts, updated_at: ts },
@@ -686,7 +686,7 @@ describe('todos global schema migration (v8)', { concurrency: false }, () => {
     const first = new SqliteStore(dbPath);
     first.createTodo(null, { text: 'new global todo' });
     const second = new SqliteStore(dbPath);
-    assert.strictEqual(second.getMigrationVersion(), 11);
+    assert.strictEqual(second.getMigrationVersion(), 12);
     const all = second.getAllTodos();
     assert.strictEqual(all.length, 2);
     assert.ok(all.some((t) => t.text === 'new global todo' && t.workspaceId === null));
@@ -1286,5 +1286,155 @@ describe('last_turn_started_at schema and backfill (U1)', { concurrency: false }
     assert.strictEqual(nullKeyCount(db2, 'sessions'), 0);
     assert.strictEqual(turnKeyOf(db2, 'sessions', 's-exact'), keyBefore, 'existing keys unchanged by the healing pass');
     db2.close();
+  });
+});
+
+function seedLegacyProviderV1Fixture(
+  dbPath: string,
+  protocol: 'anthropic' | 'openai-responses' = 'anthropic',
+): { providerId: string; timestamp: string } {
+  const initial = new SqliteStore(dbPath);
+  const provider = initial.createProvider({
+    name: 'Legacy Provider',
+    baseUrl: 'https://legacy.example/v1',
+    authToken: 'credential-bytes-preserved',
+    protocol,
+    model: 'legacy-model',
+    isDefault: true,
+  });
+  initial.close();
+
+  const timestamp = '2025-01-02T03:04:05.000Z';
+  const raw = new Database(dbPath);
+  raw.exec(`
+    DROP TRIGGER IF EXISTS providers_require_v1_insert;
+    DROP TRIGGER IF EXISTS providers_require_v1_update;
+    DROP TRIGGER IF EXISTS providers_reject_legacy_columns;
+    DROP INDEX IF EXISTS idx_providers_single_default;
+  `);
+  raw.prepare(`UPDATE providers SET base_url = ?, model = ?, options_json = ?, created_at = ?, updated_at = ? WHERE id = ?`).run(
+    'https://legacy.example/v1',
+    'legacy-model',
+    JSON.stringify({
+      protocol,
+      defaultSonnetModel: 'legacy-sonnet',
+      customEnvVars: { KEEP_ME: 'yes', ANTHROPIC_BASE_URL: 'https://override.invalid' },
+    }),
+    timestamp,
+    timestamp,
+    provider.id,
+  );
+  raw.prepare(`INSERT INTO sessions
+    (id, workspace_id, name, is_draft, is_wip, is_archived, approval_mode, fast_mode, created_at, updated_at, provider_id)
+    VALUES ('historical-provider-session', 'already-dangling-workspace', 'Historical', 1, 0, 0, 'manual', 0, ?, ?, ?)`)
+    .run(timestamp, timestamp, provider.id);
+  raw.prepare('INSERT INTO global_site_auth (site_key, entry_json, updated_at) VALUES (?, ?, ?)')
+    .run('usage.example', '{"usageToken":"independent-usage-secret"}', timestamp);
+  raw.prepare('UPDATE bot_migration_state SET version = 11').run();
+  raw.close();
+  return { providerId: provider.id, timestamp };
+}
+
+describe('Provider configuration migration v1', { concurrency: false }, () => {
+  let dbPath: string;
+
+  beforeEach(() => {
+    dbPath = join(mkdtempSync(join(tmpdir(), 'provider-v1-migration-')), 'data.db');
+  });
+
+  it('preserves legacy Anthropic identity, bytes, timestamps, references, and seeded Agent models', () => {
+    const fixture = seedLegacyProviderV1Fixture(dbPath);
+    const backupPath = `${dbPath}.provider-v1.backup`;
+    const migrated = new SqliteStore(dbPath);
+    const provider = migrated.getProvider(fixture.providerId)!;
+    assert.strictEqual(provider.authToken, 'credential-bytes-preserved');
+    assert.strictEqual(provider.createdAt, fixture.timestamp);
+    assert.strictEqual(provider.updatedAt, fixture.timestamp);
+    assert.deepStrictEqual(provider.configuration!.models, {
+      claudeCode: 'legacy-model', codex: 'legacy-model', openCode: 'legacy-model',
+    });
+    assert.deepStrictEqual(provider.configuration!.endpoints.anthropic, {
+      enabled: true, baseUrl: 'https://legacy.example/v1',
+    });
+    assert.deepStrictEqual(provider.configuration!.claude.customEnvVars, { KEEP_ME: 'yes' });
+    assert.strictEqual(migrated.getLocalSession('historical-provider-session')?.providerId, fixture.providerId);
+    assert.deepStrictEqual(
+      openRawDb(migrated).prepare('SELECT entry_json, updated_at FROM global_site_auth WHERE site_key = ?').get('usage.example'),
+      { entry_json: '{"usageToken":"independent-usage-secret"}', updated_at: fixture.timestamp },
+    );
+    assert.ok(existsSync(backupPath));
+    assert.strictEqual(statSync(backupPath).mode & 0o777, 0o600);
+    const firstBlob = (openRawDb(migrated).prepare('SELECT options_json FROM providers WHERE id = ?').get(fixture.providerId) as { options_json: string }).options_json;
+    migrated.close();
+
+    const reopened = new SqliteStore(dbPath);
+    const row = openRawDb(reopened).prepare('SELECT options_json, updated_at FROM providers WHERE id = ?').get(fixture.providerId) as { options_json: string; updated_at: string };
+    assert.strictEqual(row.options_json, firstBlob);
+    assert.strictEqual(row.updated_at, fixture.timestamp);
+    assert.strictEqual(existsSync(backupPath), false);
+    reopened.close();
+  });
+
+  it('maps legacy Responses to a direct OpenAI endpoint and OpenCode selection', () => {
+    const fixture = seedLegacyProviderV1Fixture(dbPath, 'openai-responses');
+    const store = new SqliteStore(dbPath);
+    const provider = store.getProvider(fixture.providerId)!;
+    assert.deepStrictEqual(provider.configuration!.endpoints.openai, {
+      enabled: true, baseUrl: 'https://legacy.example/v1', format: 'openai-responses',
+    });
+    assert.strictEqual(provider.configuration!.openCode.protocol, 'openai');
+    store.close();
+  });
+
+  it('classifies a future row before writing and rolls the full batch back', () => {
+    const fixture = seedLegacyProviderV1Fixture(dbPath);
+    const raw = new Database(dbPath);
+    raw.prepare(`INSERT INTO providers
+      (id, name, base_url, auth_token, model, is_default, options_json, created_at, updated_at)
+      VALUES ('future', 'Future', 'https://future.example', 'future-secret', 'future-model', 0, ?, ?, ?)`)
+      .run(JSON.stringify({ schemaVersion: 99 }), fixture.timestamp, fixture.timestamp);
+    const before = raw.prepare('SELECT * FROM providers ORDER BY id').all();
+    raw.close();
+    assert.throws(() => new SqliteStore(dbPath), /future options/);
+    const inspect = new Database(dbPath, { readonly: true });
+    assert.deepStrictEqual(inspect.prepare('SELECT * FROM providers ORDER BY id').all(), before);
+    assert.strictEqual((inspect.prepare('SELECT version FROM bot_migration_state WHERE id = 1').get() as { version: number }).version, 11);
+    inspect.close();
+  });
+
+  it('rejects malformed and partial options without advancing the migration marker', () => {
+    for (const optionsJson of ['{not-json', JSON.stringify({ endpoints: {}, models: {} })]) {
+      const candidatePath = join(mkdtempSync(join(tmpdir(), 'provider-v1-invalid-')), 'data.db');
+      const fixture = seedLegacyProviderV1Fixture(candidatePath);
+      const raw = new Database(candidatePath);
+      raw.prepare('UPDATE providers SET options_json = ? WHERE id = ?').run(optionsJson, fixture.providerId);
+      raw.close();
+      assert.throws(() => new SqliteStore(candidatePath), /malformed options|partial options/);
+      const inspect = new Database(candidatePath, { readonly: true });
+      assert.strictEqual((inspect.prepare('SELECT options_json FROM providers WHERE id = ?').get(fixture.providerId) as { options_json: string }).options_json, optionsJson);
+      assert.strictEqual((inspect.prepare('SELECT version FROM bot_migration_state WHERE id = 1').get() as { version: number }).version, 11);
+      inspect.close();
+    }
+  });
+
+  it('rejects ambiguous defaults and legacy-shaped writes without changing Provider bytes', () => {
+    const fixture = seedLegacyProviderV1Fixture(dbPath);
+    const raw = new Database(dbPath);
+    raw.prepare(`INSERT INTO providers
+      (id, name, base_url, auth_token, model, is_default, options_json, created_at, updated_at)
+      VALUES ('other', 'Other', 'https://other.example', 'other-secret', 'other-model', 1, '{}', ?, ?)`)
+      .run(fixture.timestamp, fixture.timestamp);
+    raw.close();
+    assert.throws(() => new SqliteStore(dbPath), /multiple default providers/);
+
+    const singlePath = join(mkdtempSync(join(tmpdir(), 'provider-v1-barrier-')), 'data.db');
+    const store = new SqliteStore(singlePath);
+    const provider = store.createProvider({ name: 'Current', baseUrl: 'https://current.example', authToken: 'secret' });
+    const currentDb = openRawDb(store);
+    const before = currentDb.prepare('SELECT * FROM providers WHERE id = ?').get(provider.id);
+    assert.throws(() => currentDb.prepare('UPDATE providers SET base_url = ? WHERE id = ?').run('https://invalid.example', provider.id), /read-only/);
+    assert.throws(() => currentDb.prepare('UPDATE providers SET options_json = ? WHERE id = ?').run('{}', provider.id), /version required/);
+    assert.deepStrictEqual(currentDb.prepare('SELECT * FROM providers WHERE id = ?').get(provider.id), before);
+    store.close();
   });
 });
