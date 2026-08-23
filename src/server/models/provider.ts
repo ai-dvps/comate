@@ -28,8 +28,15 @@ export interface ProviderClaudeOptions {
 
 export type ProviderCodexEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
+export type ProviderPromptCacheRouting = 'auto' | 'unsupported';
+export type ProviderThinkingSupport = 'required' | 'supported' | 'unsupported' | 'unknown';
+
 export interface ProviderCodexCapabilities {
+  promptCacheRouting?: ProviderPromptCacheRouting;
+  thinking?: ProviderThinkingSupport;
   effortByModel?: Record<string, ProviderCodexEffort[]>;
+  /** Agent-facing effort -> vendor wire value, scoped by model. */
+  effortWireMappingByModel?: Record<string, Partial<Record<ProviderCodexEffort, string>>>;
 }
 
 export interface ProviderPresetProvenance {

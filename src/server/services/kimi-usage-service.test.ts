@@ -3,7 +3,9 @@ import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { SqliteStore } from '../storage/sqlite-store.js';
-import { KimiUsageService, KIMI_GET_USAGES_URL, KIMI_SITE_KEY } from './kimi-usage-service.js';
+import { KimiUsageService, KIMI_GET_USAGES_URL, KIMI_SITE_KEY, type ProviderUsageHttpClient } from './kimi-usage-service.js';
+import type { BrowserDirectHttpRequest } from './browser-direct-http-client.js';
+import { applyProviderPreset } from './provider-presets.js';
 
 type FetchImpl = typeof fetch;
 
@@ -39,9 +41,22 @@ describe('KimiUsageService', () => {
   let realFetch: FetchImpl;
   let fetchedUrls: string[];
 
+  const fetchBackedClient: ProviderUsageHttpClient = {
+    async request(input: BrowserDirectHttpRequest) {
+      const injected = input.prepareHopHeaders?.({} as never, {} as never) ?? {};
+      const response = await global.fetch(input.url, {
+        method: input.method,
+        headers: { ...input.headers, ...injected },
+        body: typeof input.body === 'string' ? input.body : input.body?.toString(),
+      });
+      const parsed = await response.json();
+      return { url: input.url, method: input.method, status: response.status, headers: {}, body: Buffer.from(JSON.stringify(parsed)), redirects: [] };
+    },
+  };
+
   beforeEach(() => {
     sqlite = new SqliteStore(':memory:');
-    svc = new KimiUsageService(sqlite);
+    svc = new KimiUsageService(sqlite, fetchBackedClient);
     realFetch = global.fetch;
     fetchedUrls = [];
   });
@@ -70,7 +85,8 @@ describe('KimiUsageService', () => {
   }
 
   function makeProvider(baseUrl: string): string {
-    return sqlite.createProvider({ name: `Kimi-${baseUrl}`, baseUrl, authToken: 'sk-key' }).id;
+    const configuration = baseUrl === 'https://api.kimi.com/coding' ? applyProviderPreset('kimi') : undefined;
+    return sqlite.createProvider({ name: `Kimi-${baseUrl}`, baseUrl, authToken: 'sk-key', configuration }).id;
   }
 
   test('non-coding-plan provider (api.moonshot.cn) is unsupported', async () => {
@@ -149,7 +165,11 @@ describe('KimiUsageService', () => {
   });
 
   test('the fetch URL is the hardcoded constant even under an attacker baseUrl', async () => {
-    const id = makeProvider('https://kimi.com.evil.attacker/');
+    const id = makeProvider('https://api.kimi.com/coding');
+    const provider = sqlite.getProvider(id)!;
+    const configuration = structuredClone(provider.configuration!);
+    configuration.endpoints.openai!.baseUrl = 'https://kimi.com.evil.attacker/';
+    sqlite.updateProvider(id, { configuration });
     seedBearer(makeJwt(Math.floor(Date.now() / 1000) + 1e6));
     trackFetch(() => jsonResponse(200, REAL_USAGE));
     await svc.runUsageCheck(id);

@@ -7,61 +7,199 @@ import { kimiUsageService } from '../services/kimi-usage-service.js';
 import { bigModelUsageService } from '../services/bigmodel-usage-service.js';
 import { providerUsageLoginService, UsageLoginError } from '../services/provider-usage-login-service.js';
 import type { CreateProviderInput, UpdateProviderInput, Provider } from '../models/provider.js';
+import type { BackendId } from '../services/agent-backends.js';
+import { BrowserDirectHttpClient } from '../services/browser-direct-http-client.js';
+import { applyProviderPreset, listProviderPresets, providerVendorFromProvenance } from '../services/provider-presets.js';
+import { effectiveProviderResourceUrl, providerAvailability, resolveProviderForAgent } from '../services/provider-resolver.js';
 
 const router = Router();
 
 const HEALTH_CHECK_TIMEOUT_MS = 5000;
 
-type PublicProvider = Omit<Provider, 'authToken'> & { authTokenPresent: boolean };
+export interface PublicProvider {
+  id: string;
+  name: string;
+  configuration?: Provider['configuration'];
+  isDefault: boolean;
+  authTokenPresent: boolean;
+  createdAt: string;
+  updatedAt: string;
+  availability: ReturnType<typeof providerAvailability>;
+}
+
+function publicConfiguration(configuration: NonNullable<Provider['configuration']>): NonNullable<Provider['configuration']> {
+  const anthropic = configuration.endpoints.anthropic;
+  const openai = configuration.endpoints.openai;
+  return {
+    schemaVersion: 1,
+    endpoints: {
+      ...(anthropic ? { anthropic: { enabled: anthropic.enabled, baseUrl: anthropic.baseUrl } } : {}),
+      ...(openai ? { openai: { enabled: openai.enabled, baseUrl: openai.baseUrl, format: openai.format } } : {}),
+    },
+    models: {
+      ...(configuration.models.claudeCode ? { claudeCode: configuration.models.claudeCode } : {}),
+      ...(configuration.models.codex ? { codex: configuration.models.codex } : {}),
+      ...(configuration.models.openCode ? { openCode: configuration.models.openCode } : {}),
+    },
+    openCode: { protocol: configuration.openCode.protocol },
+    claude: {
+      ...(configuration.claude.defaultOpusModel ? { defaultOpusModel: configuration.claude.defaultOpusModel } : {}),
+      ...(configuration.claude.defaultSonnetModel ? { defaultSonnetModel: configuration.claude.defaultSonnetModel } : {}),
+      ...(configuration.claude.defaultHaikuModel ? { defaultHaikuModel: configuration.claude.defaultHaikuModel } : {}),
+      ...(configuration.claude.subagentModel ? { subagentModel: configuration.claude.subagentModel } : {}),
+      ...(configuration.claude.effortLevel ? { effortLevel: configuration.claude.effortLevel } : {}),
+      ...(configuration.claude.customEnvVars
+        ? { customEnvVars: Object.fromEntries(Object.entries(configuration.claude.customEnvVars).map(([key, value]) => [key, value])) }
+        : {}),
+    },
+    codex: {
+      ...(configuration.codex.promptCacheRouting ? { promptCacheRouting: configuration.codex.promptCacheRouting } : {}),
+      ...(configuration.codex.thinking ? { thinking: configuration.codex.thinking } : {}),
+      ...(configuration.codex.effortByModel ? { effortByModel: structuredClone(configuration.codex.effortByModel) } : {}),
+      ...(configuration.codex.effortWireMappingByModel
+        ? { effortWireMappingByModel: structuredClone(configuration.codex.effortWireMappingByModel) }
+        : {}),
+    },
+    ...(configuration.preset ? { preset: { id: configuration.preset.id, version: configuration.preset.version } } : {}),
+  };
+}
 
 export function publicProvider(provider: Provider): PublicProvider {
-  const { authToken, ...safe } = provider;
-  return { ...safe, protocol: provider.protocol ?? 'anthropic', authTokenPresent: authToken.length > 0 };
+  return {
+    id: provider.id,
+    name: provider.name,
+    ...(provider.configuration ? { configuration: publicConfiguration(provider.configuration) } : {}),
+    isDefault: provider.isDefault,
+    authTokenPresent: provider.authToken.length > 0,
+    createdAt: provider.createdAt,
+    updatedAt: provider.updatedAt,
+    availability: providerAvailability(provider),
+  };
 }
 
 function validProtocol(value: unknown): value is Provider['protocol'] {
   return value === 'anthropic' || value === 'openai-responses';
 }
 
-async function runHealthCheck(baseUrl: string, authToken: string): Promise<{ ok: boolean; error?: string }> {
-  const trimmedBase = baseUrl.replace(/\/$/, '');
-  const urlsToTry = [`${trimmedBase}/v1/models`, trimmedBase];
-
-  for (const url of urlsToTry) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
-
-      const response = await fetch(url, {
-        method: url.endsWith('/v1/models') ? 'GET' : 'HEAD',
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-          'Content-Type': 'application/json',
-        },
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeout);
-
-      if (response.status === 401 || response.status === 403) {
-        return { ok: false, error: 'Authentication failed — check your auth token.' };
-      }
-
-      if (response.ok || response.status < 500) {
-        // Any reachable response <500 is considered healthy enough
-        return { ok: true };
-      }
-    } catch (err) {
-      // Try next URL
-      continue;
-    }
-  }
-
-  return { ok: false, error: 'Provider endpoint is unreachable — check the base URL and network.' };
+export interface ProviderHealthClient {
+  request(input: Parameters<BrowserDirectHttpClient['request']>[0]): ReturnType<BrowserDirectHttpClient['request']>;
 }
 
-function hasSnapshottedProviderChange(input: UpdateProviderInput, existing: Provider): boolean {
+const providerHealthClient = new BrowserDirectHttpClient({
+  limits: { totalTimeoutMs: HEALTH_CHECK_TIMEOUT_MS, maxRedirects: 1 },
+});
+
+export async function runProviderHealthCheck(
+  provider: Provider,
+  agent: BackendId,
+  client: ProviderHealthClient = providerHealthClient,
+): Promise<{ ok: boolean; error?: string; reason?: string }> {
+  const resolved = resolveProviderForAgent(provider, agent);
+  if (!resolved.available) {
+    return { ok: false, error: 'Provider configuration is unavailable for this Agent.', reason: resolved.reason };
+  }
+  try {
+    const result = await client.request({
+      url: effectiveProviderResourceUrl(resolved, 'models'),
+      method: 'GET',
+      redirectPolicy: 'error',
+      headers: { accept: 'application/json' },
+      prepareHopHeaders: (): Record<string, string> => resolved.mode === 'direct-anthropic'
+        ? { 'x-api-key': resolved.credential, 'anthropic-version': '2023-06-01' }
+        : { authorization: `Bearer ${resolved.credential}` },
+    });
+    if (result.status === 401 || result.status === 403) {
+      return { ok: false, error: 'Authentication failed — check your auth token.' };
+    }
+    return result.status < 500
+      ? { ok: true }
+      : { ok: false, error: 'Provider endpoint is unreachable — check the base URL and network.' };
+  } catch {
+    return { ok: false, error: 'Provider endpoint is unreachable — check the base URL and network.' };
+  }
+}
+
+export async function discoverProviderModels(
+  provider: Provider,
+  agent: BackendId,
+  client: ProviderHealthClient = providerHealthClient,
+): Promise<{ models: string[]; reason?: string }> {
+  const resolved = resolveProviderForAgent(provider, agent);
+  if (!resolved.available) return { models: [], reason: resolved.reason };
+  try {
+    const result = await client.request({
+      url: effectiveProviderResourceUrl(resolved, 'models'),
+      method: 'GET',
+      redirectPolicy: 'error',
+      headers: { accept: 'application/json' },
+      prepareHopHeaders: (): Record<string, string> => resolved.mode === 'direct-anthropic'
+        ? { 'x-api-key': resolved.credential, 'anthropic-version': '2023-06-01' }
+        : { authorization: `Bearer ${resolved.credential}` },
+    });
+    if (result.status < 200 || result.status >= 300) return { models: [] };
+    const parsed = JSON.parse(result.body.toString('utf8')) as unknown;
+    const root = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+    const entries = Array.isArray(root.data) ? root.data : Array.isArray(root.models) ? root.models : [];
+    const models = entries.flatMap((entry) => {
+      if (typeof entry === 'string') return [entry];
+      if (!entry || typeof entry !== 'object') return [];
+      const id = (entry as Record<string, unknown>).id;
+      return typeof id === 'string' && id.length > 0 ? [id] : [];
+    });
+    return { models: [...new Set(models)] };
+  } catch {
+    return { models: [] };
+  }
+}
+
+function validAgent(value: unknown): value is BackendId {
+  return value === 'claude' || value === 'codex' || value === 'opencode';
+}
+
+function candidateConfiguration(input: CreateProviderInput): Provider['configuration'] {
+  if (input.configuration) return input.configuration;
+  if (!input.baseUrl) return undefined;
+  const openai = input.protocol === 'openai-responses';
+  return {
+    schemaVersion: 1,
+    endpoints: openai
+      ? { openai: { enabled: true, baseUrl: input.baseUrl, format: 'openai-responses' } }
+      : { anthropic: { enabled: true, baseUrl: input.baseUrl } },
+    models: { claudeCode: input.model, codex: input.model, openCode: input.model },
+    openCode: { protocol: openai ? 'openai' : 'anthropic' },
+    claude: {},
+    codex: {},
+  };
+}
+
+function candidateProviderForUpdate(existing: Provider, input: UpdateProviderInput): Provider {
+  if (input.configuration) return { ...existing, ...input, configuration: input.configuration, authToken: input.authToken ?? existing.authToken };
+  const configuration = existing.configuration ? structuredClone(existing.configuration) : undefined;
+  if (configuration) {
+    if (input.protocol !== undefined) configuration.openCode.protocol = input.protocol === 'openai-responses' ? 'openai' : 'anthropic';
+    if (input.baseUrl !== undefined) {
+      if ((input.protocol ?? (configuration.openCode.protocol === 'openai' ? 'openai-responses' : 'anthropic')) === 'openai-responses') {
+        configuration.endpoints.openai = {
+          enabled: true,
+          baseUrl: input.baseUrl,
+          format: configuration.endpoints.openai?.format ?? 'openai-responses',
+        };
+      } else {
+        configuration.endpoints.anthropic = { enabled: true, baseUrl: input.baseUrl };
+      }
+    }
+    if (input.model !== undefined) {
+      configuration.models.claudeCode = input.model;
+      configuration.models.codex = input.model;
+      configuration.models.openCode = input.model;
+    }
+  }
+  return { ...existing, ...input, configuration, authToken: input.authToken ?? existing.authToken };
+}
+
+export function hasSnapshottedProviderChange(input: UpdateProviderInput, existing: Provider): boolean {
   const fields: (keyof Provider & keyof UpdateProviderInput)[] = [
+    'configuration',
     'baseUrl',
     'authToken',
     'protocol',
@@ -85,6 +223,19 @@ router.get('/', (_req, res) => {
     console.error('Failed to list providers:', error);
     res.status(500).json({ error: 'Failed to list providers' });
   }
+});
+
+router.get('/presets', (_req, res) => {
+  res.json({ presets: listProviderPresets() });
+});
+
+router.post('/presets/:presetId/apply', (req, res) => {
+  const configuration = applyProviderPreset(req.params.presetId);
+  if (!configuration) {
+    res.status(404).json({ error: 'Provider preset not found' });
+    return;
+  }
+  res.json({ configuration });
 });
 
 // POST /api/providers/detect
@@ -120,8 +271,8 @@ router.post('/', async (req, res) => {
       res.status(400).json({ error: 'name is required' });
       return;
     }
-    if (!input.baseUrl || typeof input.baseUrl !== 'string' || input.baseUrl.trim().length === 0) {
-      res.status(400).json({ error: 'baseUrl is required' });
+    if (!input.configuration && (!input.baseUrl || typeof input.baseUrl !== 'string' || input.baseUrl.trim().length === 0)) {
+      res.status(400).json({ error: 'configuration or baseUrl is required' });
       return;
     }
     if (!input.authToken || typeof input.authToken !== 'string' || input.authToken.trim().length === 0) {
@@ -140,7 +291,16 @@ router.post('/', async (req, res) => {
     }
 
     if (!input.skipHealthCheck) {
-      const health = await runHealthCheck(input.baseUrl, input.authToken);
+      if (!validAgent(req.body?.agent)) {
+        res.status(400).json({ error: "agent is required for health checks and must be 'claude', 'codex', or 'opencode'" });
+        return;
+      }
+      const candidate: Provider = {
+        id: '__candidate__', name: input.name, configuration: candidateConfiguration(input),
+        baseUrl: input.baseUrl ?? '', authToken: input.authToken, protocol: input.protocol,
+        model: input.model, isDefault: false, createdAt: '', updatedAt: '',
+      };
+      const health = await runProviderHealthCheck(candidate, req.body.agent);
       if (!health.ok) {
         res.status(422).json({ error: health.error || 'Health check failed.' });
         return;
@@ -195,10 +355,13 @@ router.put('/:id', async (req, res) => {
     }
 
     // Run health check if baseUrl or authToken changed
-    const baseUrl = input.baseUrl ?? existing.baseUrl;
-    const authToken = input.authToken ?? existing.authToken;
-    if (!input.skipHealthCheck && (input.baseUrl !== undefined || input.authToken !== undefined)) {
-      const health = await runHealthCheck(baseUrl, authToken);
+    if (!input.skipHealthCheck && (input.configuration !== undefined || input.baseUrl !== undefined || input.authToken !== undefined)) {
+      if (!validAgent(req.body?.agent)) {
+        res.status(400).json({ error: "agent is required for health checks and must be 'claude', 'codex', or 'opencode'" });
+        return;
+      }
+      const candidate = candidateProviderForUpdate(existing, input);
+      const health = await runProviderHealthCheck(candidate, req.body.agent);
       if (!health.ok) {
         res.status(422).json({ error: health.error || 'Health check failed.' });
         return;
@@ -247,7 +410,12 @@ router.post('/:id/health', async (req, res) => {
       return;
     }
 
-    const health = await runHealthCheck(provider.baseUrl, provider.authToken);
+    const agent = req.body?.agent;
+    if (!validAgent(agent)) {
+      res.status(400).json({ error: "agent must be 'claude', 'codex', or 'opencode'" });
+      return;
+    }
+    const health = await runProviderHealthCheck(provider, agent);
     res.json({ ok: health.ok, error: health.error });
   } catch (error) {
     console.error('Failed to run health check:', error);
@@ -255,8 +423,27 @@ router.post('/:id/health', async (req, res) => {
   }
 });
 
+router.get('/:id/models', async (req, res) => {
+  try {
+    const provider = store.getProvider(req.params.id);
+    if (!provider) {
+      res.status(404).json({ error: 'Provider not found' });
+      return;
+    }
+    const agent = req.query.agent;
+    if (!validAgent(agent)) {
+      res.status(400).json({ error: "agent query is required and must be 'claude', 'codex', or 'opencode'" });
+      return;
+    }
+    res.json(await discoverProviderModels(provider, agent));
+  } catch (error) {
+    console.error('Failed to discover provider models:', error);
+    res.status(500).json({ error: 'Failed to discover provider models' });
+  }
+});
+
 // POST /api/providers/:id/usage — coding-plan usage (server-side only).
-// Dispatches to the right service by provider baseUrl.
+// Dispatches by immutable stored preset provenance, never by editable URLs.
 router.post('/:id/usage', async (req, res) => {
   try {
     const id = req.params.id;
@@ -265,10 +452,20 @@ router.post('/:id/usage', async (req, res) => {
       res.status(404).json({ error: 'Provider not found' });
       return;
     }
-    const url = provider.baseUrl.toLowerCase();
-    const result = url.includes('kimi.com')
+    const agent = req.body?.agent;
+    if (!validAgent(agent)) {
+      res.status(400).json({ error: "agent must be 'claude', 'codex', or 'opencode'" });
+      return;
+    }
+    const resolved = resolveProviderForAgent(provider, agent);
+    if (!resolved.available) {
+      res.json({ status: 'unsupported', reason: resolved.reason });
+      return;
+    }
+    const vendor = providerVendorFromProvenance(provider.configuration?.preset);
+    const result = vendor === 'kimi'
       ? await kimiUsageService.runUsageCheck(id)
-      : url.includes('bigmodel.cn')
+      : vendor === 'bigmodel'
         ? await bigModelUsageService.runUsageCheck(id)
         : { status: 'unsupported' as const };
     res.json(result);

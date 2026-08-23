@@ -7,6 +7,7 @@ import {
   computeFingerprint,
 } from './kimi-loop-detector.js';
 import type { Provider } from '../models/provider.js';
+import { applyProviderPreset } from './provider-presets.js';
 
 function createProvider(overrides: Partial<Provider> = {}): Provider {
   return {
@@ -27,22 +28,9 @@ describe('isKimiProvider', () => {
     assert.strictEqual(isKimiProvider(undefined), false);
   });
 
-  it('detects Kimi by model prefix', () => {
-    assert.strictEqual(isKimiProvider(createProvider({ model: 'kimi-k2' })), true);
-    assert.strictEqual(isKimiProvider(createProvider({ model: 'KIMI-K2' })), true);
-    assert.strictEqual(isKimiProvider(createProvider({ model: 'moonshot-v1' })), true);
-    assert.strictEqual(isKimiProvider(createProvider({ model: 'Moonshot-v1' })), true);
-  });
-
-  it('detects Kimi by base URL', () => {
-    assert.strictEqual(
-      isKimiProvider(createProvider({ baseUrl: 'https://api.moonshot.cn/v1' })),
-      true,
-    );
-    assert.strictEqual(
-      isKimiProvider(createProvider({ baseUrl: 'https://kimi.example.com' })),
-      true,
-    );
+  it('detects Kimi only from immutable stored preset provenance', () => {
+    assert.strictEqual(isKimiProvider(createProvider({ configuration: applyProviderPreset('kimi') })), true);
+    assert.strictEqual(isKimiProvider(createProvider({ model: 'kimi-k2', baseUrl: 'https://kimi.example.com' })), false);
   });
 
   it('returns false for non-Kimi providers', () => {

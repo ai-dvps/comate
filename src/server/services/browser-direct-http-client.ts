@@ -8,6 +8,7 @@ import {
   containsControlCharacter,
   defaultBrowserDnsResolver,
   resolveSafeDestination,
+  siteBoundaryForUrl,
   type AuthorizedBrowserRequest,
   type BrowserDnsResolver,
   type BrowserRequestPolicyErrorCode,
@@ -19,6 +20,7 @@ export type BrowserDirectHttpErrorCode =
   | 'redirect_loop'
   | 'redirect_limit_exceeded'
   | 'invalid_redirect'
+  | 'redirect_not_allowed'
   | 'response_limit_exceeded'
   | 'unsupported_content_encoding'
   | 'request_timeout'
@@ -75,7 +77,9 @@ export interface BrowserDirectHttpLimits {
 
 export interface BrowserDirectHttpRequest {
   url: string;
-  authorizedDomain: string;
+  /** Browser requests set this explicitly. Provider egress derives it from the validated URL. */
+  authorizedDomain?: string;
+  redirectPolicy?: 'follow' | 'error';
   method: string;
   headers?: Record<string, string> | ReadonlyArray<readonly [string, string]>;
   body?: string | Buffer;
@@ -356,7 +360,7 @@ export class BrowserDirectHttpClient {
       if (signal.aborted) throw abortError(timedOut());
       const authorized = authorizeBrowserRequest({
         url,
-        authorizedDomain: input.authorizedDomain,
+        authorizedDomain: input.authorizedDomain ?? siteBoundaryForUrl(url),
         method,
         headers: input.headers,
         ...(body !== undefined ? { body } : {}),
@@ -403,6 +407,9 @@ export class BrowserDirectHttpClient {
       const location = responseHeaderMap.location;
       if ([301, 302, 303, 307, 308].includes(status) && location) {
         transportResponse.close();
+        if (input.redirectPolicy === 'error') {
+          throw new BrowserDirectHttpError('redirect_not_allowed', 'Redirects are not allowed for this request');
+        }
         if (hop >= this.limits.maxRedirects) {
           throw new BrowserDirectHttpError('redirect_limit_exceeded', 'Redirect limit exceeded');
         }

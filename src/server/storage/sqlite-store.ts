@@ -5725,6 +5725,16 @@ function normalizeProviderConfiguration(configuration: ProviderConfigurationV1):
     'defaultOpusModel', 'defaultSonnetModel', 'defaultHaikuModel', 'subagentModel', 'effortLevel',
   ]);
   const effortByModel = normalizeEffortByModel(configuration.codex.effortByModel);
+  const effortWireMappingByModel = normalizeEffortWireMappingByModel(configuration.codex.effortWireMappingByModel);
+  const promptCacheRouting = configuration.codex.promptCacheRouting;
+  if (promptCacheRouting !== undefined && promptCacheRouting !== 'auto' && promptCacheRouting !== 'unsupported') {
+    throw new Error('Provider Codex prompt-cache capability is invalid');
+  }
+  const thinking = configuration.codex.thinking;
+  if (thinking !== undefined && thinking !== 'required' && thinking !== 'supported'
+      && thinking !== 'unsupported' && thinking !== 'unknown') {
+    throw new Error('Provider Codex thinking capability is invalid');
+  }
   const customEnvVars = normalizeClaudeEnvVars(configuration.claude.customEnvVars);
   const preset = configuration.preset;
   if (preset !== undefined && (!isPlainObject(preset) || typeof preset.id !== 'string'
@@ -5740,7 +5750,12 @@ function normalizeProviderConfiguration(configuration: ProviderConfigurationV1):
       ...claude,
       ...(customEnvVars && { customEnvVars }),
     },
-    codex: { ...(effortByModel && { effortByModel }) },
+    codex: {
+      ...(promptCacheRouting && { promptCacheRouting }),
+      ...(thinking && { thinking }),
+      ...(effortByModel && { effortByModel }),
+      ...(effortWireMappingByModel && { effortWireMappingByModel }),
+    },
     ...(preset && { preset: { id: preset.id, version: preset.version } }),
   };
 }
@@ -5748,7 +5763,7 @@ function normalizeProviderConfiguration(configuration: ProviderConfigurationV1):
 function normalizeEndpoint(value: unknown): ProviderEndpoint | undefined {
   if (value === undefined) return undefined;
   if (!isPlainObject(value) || typeof value.enabled !== 'boolean' || typeof value.baseUrl !== 'string'
-      || value.baseUrl.trim().length === 0) throw new Error('Provider endpoint is invalid');
+      || (value.enabled && value.baseUrl.trim().length === 0)) throw new Error('Provider endpoint is invalid');
   return { enabled: value.enabled, baseUrl: value.baseUrl.trim() };
 }
 
@@ -5792,6 +5807,26 @@ function normalizeEffortByModel(value: unknown): ProviderConfigurationV1['codex'
       throw new Error('Provider Codex effort capability is invalid');
     }
     result[model] = [...new Set(efforts)] as NonNullable<ProviderConfigurationV1['codex']['effortByModel']>[string];
+  }
+  return result;
+}
+
+function normalizeEffortWireMappingByModel(
+  value: unknown,
+): ProviderConfigurationV1['codex']['effortWireMappingByModel'] {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) throw new Error('Provider Codex effort wire mapping is invalid');
+  const result: NonNullable<ProviderConfigurationV1['codex']['effortWireMappingByModel']> = {};
+  for (const [model, mapping] of Object.entries(value)) {
+    if (!model || !isPlainObject(mapping)) throw new Error('Provider Codex effort wire mapping is invalid');
+    const normalized: Partial<Record<import('../models/provider.js').ProviderCodexEffort, string>> = {};
+    for (const [effort, wireValue] of Object.entries(mapping)) {
+      if (!PROVIDER_CODEX_EFFORTS.has(effort) || typeof wireValue !== 'string' || wireValue.trim().length === 0) {
+        throw new Error('Provider Codex effort wire mapping is invalid');
+      }
+      normalized[effort as import('../models/provider.js').ProviderCodexEffort] = wireValue.trim();
+    }
+    result[model] = normalized;
   }
   return result;
 }

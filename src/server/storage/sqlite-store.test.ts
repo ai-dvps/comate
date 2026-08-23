@@ -1120,7 +1120,12 @@ describe('SqliteStore provider fast mode capability', { concurrency: false }, ()
         models: { claudeCode: 'claude-model', codex: 'codex-model', openCode: 'open-model' },
         openCode: { protocol: 'openai' },
         claude: {},
-        codex: { effortByModel: { 'codex-model': ['low', 'high'] } },
+        codex: {
+          promptCacheRouting: 'auto',
+          thinking: 'required',
+          effortByModel: { 'codex-model': ['low', 'high'] },
+          effortWireMappingByModel: { 'codex-model': { low: 'low', high: 'max' } },
+        },
         preset: { id: 'custom', version: 1 },
       },
     });
@@ -1132,6 +1137,39 @@ describe('SqliteStore provider fast mode capability', { concurrency: false }, ()
     assert.strictEqual(raw.model, null);
     assert.deepStrictEqual(JSON.parse(raw.options_json), provider.configuration);
     assert.strictEqual(provider.baseUrl, 'https://example.com/openai');
+    assert.equal(provider.configuration?.codex.promptCacheRouting, 'auto');
+    assert.equal(provider.configuration?.codex.thinking, 'required');
+    assert.equal(provider.configuration?.codex.effortWireMappingByModel?.['codex-model']?.high, 'max');
+  });
+
+  it('rejects malformed Codex capability and wire-mapping metadata', () => {
+    const configuration = {
+      schemaVersion: 1,
+      endpoints: { openai: { enabled: true, baseUrl: 'https://example.com/v1', format: 'openai-chat-completions' } },
+      models: { codex: 'model' }, openCode: { protocol: 'openai' }, claude: {},
+      codex: { effortWireMappingByModel: { model: { high: '' } } },
+    } as const;
+    assert.throws(
+      () => store.createProvider({ name: 'Invalid capability', authToken: 'secret', configuration: configuration as never }),
+      /effort wire mapping is invalid/,
+    );
+  });
+
+  it('accepts disabled empty Custom preset endpoints as an editable unavailable draft', () => {
+    const provider = store.createProvider({
+      name: 'Custom draft', authToken: 'secret',
+      configuration: {
+        schemaVersion: 1,
+        endpoints: {
+          anthropic: { enabled: false, baseUrl: '' },
+          openai: { enabled: false, baseUrl: '', format: 'openai-responses' },
+        },
+        models: {}, openCode: { protocol: 'anthropic' }, claude: {}, codex: {},
+        preset: { id: 'custom', version: 1 },
+      },
+    });
+    assert.equal(provider.configuration?.endpoints.anthropic?.enabled, false);
+    assert.equal(provider.configuration?.endpoints.anthropic?.baseUrl, '');
   });
 
   it('preserves the coding credential for omitted, undefined, and blank direct updates', () => {
