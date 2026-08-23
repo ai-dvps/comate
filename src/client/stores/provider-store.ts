@@ -93,7 +93,6 @@ interface ProviderState {
   presetsLoading: boolean
   isSaving: boolean
   error: string | null
-  healthCheckKey: string | null
   fetchProviders: () => Promise<void>
   fetchPresets: () => Promise<void>
   detectProviders: () => Promise<void>
@@ -147,7 +146,7 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
 }
 
 export const useProviderStore = create<ProviderState>((set) => ({
-  providers: [], presets: [], isLoading: false, presetsLoading: false, isSaving: false, error: null, healthCheckKey: null,
+  providers: [], presets: [], isLoading: false, presetsLoading: false, isSaving: false, error: null,
 
   fetchProviders: async () => {
     set({ isLoading: true, error: null })
@@ -263,15 +262,11 @@ export const useProviderStore = create<ProviderState>((set) => ({
   },
 
   runHealthCheck: async (id, agent) => {
-    const key = `${id}:${agent}`
-    set({ healthCheckKey: key })
     try {
       const res = await fetch(`${API_BASE}/${id}/health`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agent }) })
       const data = await readJson(res)
-      set({ healthCheckKey: null })
       return { ok: data.ok === true, ...(typeof data.error === 'string' ? { error: data.error } : {}) }
     } catch (error) {
-      set({ healthCheckKey: null })
       return { ok: false, error: error instanceof Error ? error.message : i18next.t('common:unknownError') }
     }
   },

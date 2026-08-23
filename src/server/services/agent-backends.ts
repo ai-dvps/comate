@@ -280,10 +280,12 @@ export function defaultHealthCheck(binaryPath: string): Promise<true | string> {
 
 const runtimeResolvers = new Map<BackendId, BackendRuntimeResolver>();
 const availabilityCache = new Map<BackendId, BackendAvailability>();
+const availabilityRequests = new Map<BackendId, Promise<BackendAvailability>>();
 
 export function registerBackendRuntime(backend: BackendId, resolver: BackendRuntimeResolver): void {
   runtimeResolvers.set(backend, resolver);
   availabilityCache.delete(backend);
+  availabilityRequests.delete(backend);
 }
 
 async function computeAvailability(backend: BackendId): Promise<BackendAvailability> {
@@ -305,10 +307,17 @@ async function computeAvailability(backend: BackendId): Promise<BackendAvailabil
 export async function getBackendAvailability(backend: BackendId): Promise<BackendAvailability> {
   const cached = availabilityCache.get(backend);
   if (cached) return cached;
-  const availability = await computeAvailability(backend);
-  diagLog(`[agent-backends] availability ${backend}: ${availability.status}${availability.reason ? ` (${availability.reason})` : ''}`);
-  availabilityCache.set(backend, availability);
-  return availability;
+  const pending = availabilityRequests.get(backend);
+  if (pending) return pending;
+  const request = computeAvailability(backend).then((availability) => {
+    diagLog(`[agent-backends] availability ${backend}: ${availability.status}${availability.reason ? ` (${availability.reason})` : ''}`);
+    if (availabilityRequests.get(backend) === request) availabilityCache.set(backend, availability);
+    return availability;
+  }).finally(() => {
+    if (availabilityRequests.get(backend) === request) availabilityRequests.delete(backend);
+  });
+  availabilityRequests.set(backend, request);
+  return request;
 }
 
 // Built-in backends: their resolvers ship with the registry (claude via the
@@ -332,11 +341,9 @@ export function codexProductionGate(
   return true;
 }
 
-async function codexAppServerHealthCheck(binaryPath: string): Promise<true | string> {
+async function codexAppServerHealthCheck(): Promise<true | string> {
   const gate = codexProductionGate();
   if (gate !== true) return gate;
-  const executable = await defaultHealthCheck(binaryPath);
-  if (executable !== true) return executable;
   const manager = new CodexAppServerManager();
   try {
     await manager.ensureClient();
@@ -354,6 +361,7 @@ registerDefaultBackendRuntimes();
 export function resetBackendRegistryForTests(): void {
   runtimeResolvers.clear();
   availabilityCache.clear();
+  availabilityRequests.clear();
   backendServices.clear();
 }
 

@@ -1,11 +1,9 @@
-import { byteLength } from './shared.js';
+import { byteLength, isRecord, type JsonRecord } from './shared.js';
 import { converterError, converterLimits, type ConverterLimits } from './errors.js';
 
 // Behavioral reference: CC Switch tree 5ca9459 codex_chat_history.rs. Unlike
 // that general proxy, the pinned Codex fixture is transcript-complete, so this
 // route validates continuity without retaining cross-request state.
-
-type JsonRecord = Record<string, unknown>;
 
 /**
  * Codex 0.149 sends `store: false` requests with the transcript items needed
@@ -55,10 +53,6 @@ export function prepareRequestHistory(
     }
   }
   return items.filter(isRecord);
-}
-
-function isRecord(value: unknown): value is JsonRecord {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function stringValue(value: unknown): string | undefined {

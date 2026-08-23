@@ -124,6 +124,24 @@ describe('getBackendAvailability', () => {
     await getBackendAvailability('opencode');
     assert.equal(checks, 1);
   });
+
+  it('coalesces concurrent availability checks per backend', async () => {
+    let checks = 0;
+    registerBackendRuntime('opencode', {
+      resolveBinaryPath: () => '/fake/opencode',
+      healthCheck: async () => {
+        checks += 1;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return true;
+      },
+    });
+    const [first, second] = await Promise.all([
+      getBackendAvailability('opencode'),
+      getBackendAvailability('opencode'),
+    ]);
+    assert.deepEqual(first, second);
+    assert.equal(checks, 1);
+  });
 });
 
 describe('default backend', () => {

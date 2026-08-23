@@ -353,7 +353,6 @@ interface RuntimeResolutionSnapshot {
   source: RuntimeProviderResolution['source'];
   providerId?: string;
   revision: string;
-  generation: number;
 }
 
 let RUNTIME_IDLE_GRACE_PERIOD_MS = 10 * 60 * 1000; // 10 minutes
@@ -1947,7 +1946,6 @@ export class ChatService {
         source: providerResolution.source,
         providerId: providerResolution.providerId,
         revision: providerResolution.revision,
-        generation: runtimeGeneration,
       });
       this.runtimeContexts.set(sessionId, runtimeContext);
       this.reconcileIdleClose(sessionId);

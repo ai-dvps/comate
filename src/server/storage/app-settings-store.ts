@@ -47,6 +47,11 @@ export async function getAppSetting<T>(key: string): Promise<T | undefined> {
   return data[key] as T | undefined;
 }
 
+/** Read related preferences from one consistent file snapshot. */
+export async function getAppSettings(): Promise<Readonly<Record<string, unknown>>> {
+  return readSettings();
+}
+
 export async function setAppSetting(key: string, value: unknown): Promise<void> {
   await setAppSettings({ [key]: value });
 }

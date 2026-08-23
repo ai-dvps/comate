@@ -1,4 +1,4 @@
-import { getAppSetting, setAppSettings } from '../storage/app-settings-store.js';
+import { getAppSettings, setAppSettings } from '../storage/app-settings-store.js';
 
 const CODEX_DEFAULT_MODEL_KEY = 'codex.defaultModel';
 const CODEX_DEFAULT_EFFORT_KEY = 'codex.defaultEffort';
@@ -11,11 +11,10 @@ export interface CodexDefaults {
 }
 
 export async function getCodexDefaults(): Promise<CodexDefaults> {
-  const [model, effort, speed] = await Promise.all([
-    getAppSetting<unknown>(CODEX_DEFAULT_MODEL_KEY),
-    getAppSetting<unknown>(CODEX_DEFAULT_EFFORT_KEY),
-    getAppSetting<unknown>(CODEX_DEFAULT_SPEED_KEY),
-  ]);
+  const settings = await getAppSettings();
+  const model = settings[CODEX_DEFAULT_MODEL_KEY];
+  const effort = settings[CODEX_DEFAULT_EFFORT_KEY];
+  const speed = settings[CODEX_DEFAULT_SPEED_KEY];
   return {
     ...(typeof model === 'string' && model.length > 0 ? { model } : {}),
     ...(typeof effort === 'string' && effort.length > 0 ? { effort } : {}),
