@@ -1,4 +1,4 @@
-import { converterError, converterLimits, type ConverterLimits } from './errors.js';
+import { ConverterError, converterError, converterLimits, type ConverterLimits } from './errors.js';
 
 // Behavioral reference: CC Switch tree 5ca9459 streaming_codex_chat.rs and
 // codex_responses_sse.rs; adapted to the pinned Codex fixture contract.
@@ -71,6 +71,31 @@ interface StreamOptions {
   model?: string;
   toolNames?: ReadonlyMap<string, ToolNameSpec>;
   limits?: Partial<ConverterLimits>;
+}
+
+export function responsesFailedEvent(input: {
+  responseId: string;
+  model?: string;
+  error: ConverterError;
+}): string {
+  return event('response.failed', {
+    type: 'response.failed',
+    response: {
+      id: input.responseId,
+      object: 'response',
+      created_at: 0,
+      status: 'failed',
+      error: {
+        type: input.error.code,
+        code: input.error.code,
+        message: input.error.message,
+      },
+      incomplete_details: null,
+      model: input.model ?? '',
+      output: [],
+      usage: null,
+    },
+  });
 }
 
 interface PendingTool {
