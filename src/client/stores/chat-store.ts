@@ -400,6 +400,23 @@ export interface ChatSession {
   codexModel?: string
   codexEffort?: string
   codexSpeed?: string
+  /** Server-derived compatibility state for a third-party Codex selection. */
+  codexProviderSelection?: {
+    state: 'supported' | 'unsupported'
+    code?: string
+    model: string
+    supportedEfforts: string[]
+    speedSupported: false
+  }
+  /** Redacted lifecycle state for the session's local Provider route. */
+  providerRoute?: {
+    mode: 'codex-chat-route'
+    state: 'ready' | 'failed'
+    providerId: string
+    generation?: string
+    code?: string
+    updatedAt: string
+  }
   createdAt: string
   updatedAt: string
   summary?: string

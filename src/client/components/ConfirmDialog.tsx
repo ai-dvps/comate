@@ -1,4 +1,4 @@
-import { useEffect, useId } from 'react'
+import { useEffect, useId, useRef } from 'react'
 
 interface ConfirmDialogProps {
   isOpen: boolean
@@ -20,21 +20,37 @@ export default function ConfirmDialog({
   onCancel,
 }: ConfirmDialogProps) {
   const titleId = useId()
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const cancelRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (!isOpen) return
+    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    cancelRef.current?.focus()
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         onCancel()
-      } else if (e.key === 'Enter') {
-        e.preventDefault()
-        onConfirm()
+      } else if (e.key === 'Tab') {
+        const controls = dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])')
+        if (!controls?.length) return
+        const first = controls[0]
+        const last = controls[controls.length - 1]
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault()
+          first.focus()
+        }
       }
     }
 
     document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      returnFocus?.focus()
+    }
   }, [isOpen, onConfirm, onCancel])
 
   if (!isOpen) return null
@@ -48,7 +64,7 @@ export default function ConfirmDialog({
       className="fixed top-11 inset-x-0 bottom-0 z-50 flex items-start justify-center pt-16"
     >
       <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" onClick={onCancel} />
-      <div className="relative bg-surface border border-border rounded-xl shadow-2xl w-full max-w-md flex flex-col">
+      <div ref={dialogRef} className="relative bg-surface border border-border rounded-xl shadow-2xl w-full max-w-md flex flex-col">
         {/* Header */}
         <div className="px-5 py-4 border-b border-border/50 flex-shrink-0">
           <h2 id={titleId} className="text-sm font-medium text-text-primary">{title}</h2>
@@ -62,6 +78,7 @@ export default function ConfirmDialog({
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border/50 flex-shrink-0">
           <button
+            ref={cancelRef}
             onClick={onCancel}
             className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
           >

@@ -1,0 +1,84 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { I18nextProvider } from 'react-i18next'
+import i18n from '../i18n'
+import { useProviderStore, type ProviderConfiguration, type ProviderPreset } from '../stores/provider-store'
+import ProviderSection from './ProviderSection'
+
+const customConfiguration: ProviderConfiguration = {
+  schemaVersion: 1,
+  endpoints: {
+    anthropic: { enabled: false, baseUrl: '' },
+    openai: { enabled: false, baseUrl: '', format: 'openai-responses' },
+  },
+  models: {}, openCode: { protocol: 'anthropic' }, claude: {},
+  codex: { promptCacheRouting: 'unsupported', thinking: 'unknown' },
+  preset: { id: 'custom', version: 1 },
+}
+const kimiConfiguration: ProviderConfiguration = {
+  schemaVersion: 1,
+  endpoints: {
+    anthropic: { enabled: true, baseUrl: 'https://api.kimi.com/coding' },
+    openai: { enabled: true, baseUrl: 'https://api.kimi.com/coding/v1', format: 'openai-chat-completions' },
+  },
+  models: { claudeCode: 'kimi-k2.5', codex: 'kimi-k2.5', openCode: 'kimi-k2.5' },
+  openCode: { protocol: 'openai' }, claude: {},
+  codex: { promptCacheRouting: 'auto', thinking: 'required', effortByModel: { 'kimi-k2.5': ['low', 'high', 'xhigh'] } },
+  preset: { id: 'kimi', version: 1 },
+}
+const presets: ProviderPreset[] = [
+  { id: 'kimi', version: 1, name: 'Kimi For Coding', vendorId: 'kimi', configuration: kimiConfiguration, capabilities: { promptCacheRouting: 'auto', thinking: 'required', codexEffortWireMapping: {}, thirdPartySpeed: false } },
+  { id: 'custom', version: 1, name: 'Custom', vendorId: 'custom', configuration: customConfiguration, capabilities: { promptCacheRouting: 'unsupported', thinking: 'unknown', codexEffortWireMapping: {}, thirdPartySpeed: false } },
+]
+
+function renderSection() {
+  return render(<I18nextProvider i18n={i18n}><ProviderSection /></I18nextProvider>)
+}
+
+describe('ProviderSection', () => {
+  beforeEach(() => {
+    useProviderStore.setState({
+      providers: [], presets, isLoading: false, presetsLoading: false, isSaving: false,
+      error: null, healthCheckKey: null,
+      fetchProviders: vi.fn().mockResolvedValue(undefined),
+      fetchPresets: vi.fn().mockResolvedValue(undefined),
+      clearError: vi.fn(),
+    })
+  })
+
+  it('copies Kimi documented defaults into an editable multi-protocol draft', async () => {
+    const user = userEvent.setup()
+    renderSection()
+    await user.click(screen.getByRole('button', { name: 'Create First Provider' }))
+    await user.click(screen.getByRole('button', { name: 'Kimi For Coding' }))
+
+    expect(screen.getByLabelText('OpenAI endpoint Base URL')).toHaveValue('https://api.kimi.com/coding/v1')
+    expect(screen.getByLabelText('OpenAI upstream format')).toHaveValue('openai-chat-completions')
+    expect(screen.getByLabelText('Codex model')).toHaveValue('kimi-k2.5')
+    expect(screen.getByLabelText('Protocol used by OpenCode')).toHaveValue('openai')
+  })
+
+  it('confirms before a preset switch discards dirty edits', async () => {
+    const user = userEvent.setup()
+    renderSection()
+    await user.click(screen.getByRole('button', { name: 'Create First Provider' }))
+    await user.type(screen.getByLabelText(/Name/), 'My Provider')
+    await user.click(screen.getByRole('button', { name: 'Kimi For Coding' }))
+
+    expect(screen.getByRole('dialog', { name: 'Replace the current draft?' })).toBeInTheDocument()
+    expect(screen.getByLabelText(/Name/)).toHaveValue('My Provider')
+    await user.click(screen.getByRole('button', { name: 'Apply preset' }))
+    expect(screen.getByLabelText(/Name/)).toHaveValue('Kimi For Coding')
+  })
+
+  it('reports disabled and structurally invalid endpoint states without network requests', async () => {
+    renderSection()
+    fireEvent.click(screen.getByRole('button', { name: 'Create First Provider' }))
+    const anthropicUrl = screen.getByLabelText('Anthropic endpoint Base URL')
+    fireEvent.change(anthropicUrl, { target: { value: 'http://insecure.example' } })
+
+    expect(screen.getByText('Structurally invalid HTTPS URL')).toBeInTheDocument()
+    expect(screen.getByText('Skipped — endpoint disabled')).toBeInTheDocument()
+  })
+})

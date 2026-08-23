@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
-import { useProviderStore } from '../stores/provider-store'
+import { providerReasonKey, useProviderStore, type Provider } from '../stores/provider-store'
 import { useBackendStore, type BackendId, type CodexModel } from '../stores/backend-store'
 import {
   useProviderUsageStore,
@@ -13,6 +13,7 @@ import {
 import { ChevronDown, Check, Loader2 } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import { cn } from './ui/utils'
+import ConfirmDialog from './ConfirmDialog'
 
 interface ProviderSelectorCommonProps {
   workspaceId: string
@@ -110,6 +111,46 @@ function CodexSettingsControls({
   )
 }
 
+function ThirdPartyCodexControls({
+  provider,
+  selection,
+  onChange,
+}: {
+  provider: Provider
+  selection: CodexSettingsSelection
+  onChange: (settings: CodexSettingsSelection) => void
+}) {
+  const { t } = useTranslation('chat')
+  const compatibility = provider.availability.codex
+  const configuredModel = compatibility.model ?? provider.configuration?.models.codex ?? ''
+  const efforts = compatibility.supportedEfforts
+  const unsupportedEffort = Boolean(selection.codexEffort && !efforts.includes(selection.codexEffort as never))
+  return (
+    <fieldset className="grid gap-2 border-t border-border/70 px-2.5 py-2.5">
+      <legend className="sr-only">{t('provider.thirdPartyCodexSettings')}</legend>
+      <div className="grid grid-cols-[4.5rem_1fr] items-center gap-2 text-[11px] text-text-tertiary">
+        <span>{t('provider.codexModel')}</span><span className="truncate text-text-secondary">{configuredModel}</span>
+      </div>
+      <label className="grid grid-cols-[4.5rem_1fr] items-center gap-2 text-[11px] text-text-tertiary">
+        <span>{t('provider.codexEffort')}</span>
+        <select
+          value={selection.codexEffort ?? ''}
+          aria-invalid={unsupportedEffort}
+          aria-describedby={unsupportedEffort ? 'provider-effort-unsupported' : undefined}
+          onChange={(event) => onChange({ ...selection, codexModel: configuredModel || null, codexEffort: event.target.value || null, codexSpeed: null })}
+          className="h-8 w-full rounded-md border border-border bg-bg px-2 text-[11px] text-text-primary outline-none focus:ring-2 focus:ring-accent/20"
+        >
+          <option value="">{t('provider.codexUseDefault')}</option>
+          {unsupportedEffort && <option value={selection.codexEffort ?? ''}>{t('provider.unsupportedEffortValue', { effort: selection.codexEffort })}</option>}
+          {efforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
+        </select>
+      </label>
+      {unsupportedEffort && <p id="provider-effort-unsupported" role="alert" className="text-[10px] text-destructive">{t('provider.unsupportedEffortHint')}</p>}
+      <p className="text-[10px] text-text-tertiary">{t('provider.thirdPartySpeedUnavailable')}</p>
+    </fieldset>
+  )
+}
+
 function ProviderAvatar({ name, className = '' }: { name: string; className?: string }) {
   const initial = name.charAt(0).toUpperCase()
   return (
@@ -185,6 +226,7 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
   const sessionId = isNewChat ? null : props.sessionId
   const { t } = useTranslation('chat')
   const [open, setOpen] = useState(false)
+  const [pendingRepairProviderId, setPendingRepairProviderId] = useState<string | null>(null)
 
   const session = useChatStore((s) =>
     sessionId ? s.sessions[workspaceId]?.find((ses) => ses.id === sessionId) : undefined,
@@ -204,7 +246,7 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
   const codexDefaultSpeed = useBackendStore((s) => s.codexDefaultSpeed)
   const fetchCodexAccount = useBackendStore((s) => s.fetchCodexAccount)
   const fetchCodexModels = useBackendStore((s) => s.fetchCodexModels)
-  const activeBackend = (isNewChat ? props.backendId : session?.backend) ?? defaultBackend ?? 'claude'
+  const activeBackend = ((isNewChat ? props.backendId : session?.backend) ?? defaultBackend ?? 'claude') as BackendId
 
   useEffect(() => {
     if (providers.length === 0) {
@@ -230,7 +272,7 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
   useEffect(() => {
     if (!open) return
     for (const provider of providers) {
-      const isCodexCompatible = activeBackend !== 'codex' || provider.protocol === 'openai-responses'
+      const isCodexCompatible = provider.availability?.[activeBackend]?.available ?? false
       if (isCodexCompatible && hasUsageSupport(provider.baseUrl)) {
         fetchUsage(provider.id)
       }
@@ -239,9 +281,18 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
 
   const currentProviderId = isNewChat ? props.providerId : session?.providerId
   const currentProvider = providers.find((p) => p.id === currentProviderId)
+  const missingProvider = Boolean(currentProviderId && !currentProvider)
   const isRestarting = useChatStore((s) => sessionId ? s.isRestartingRuntime[sessionId] ?? false : false)
 
   const handleSelect = (providerId: string | null) => {
+    if (missingProvider && providerId) {
+      setPendingRepairProviderId(providerId)
+      return
+    }
+    commitSelection(providerId)
+  }
+
+  const commitSelection = (providerId: string | null) => {
     if (isNewChat) {
       props.onProviderChange(providerId)
     } else {
@@ -276,9 +327,10 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
   const nativeCodexActive = Boolean(activeBackend === 'codex' && codexAccount && !currentProviderId)
   const displayName = nativeCodexActive
     ? t('provider.codexAccount')
-    : currentProvider?.name ?? (activeBackend === 'codex' ? t('provider.selectProvider') : defaultProvider?.name) ?? t('provider.default')
+    : currentProvider?.name ?? (missingProvider ? t('provider.unavailableProvider', { id: currentProviderId }) : (activeBackend === 'codex' ? t('provider.selectProvider') : defaultProvider?.name) ?? t('provider.default'))
 
   return (
+    <>
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
@@ -305,6 +357,12 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
         <div className="px-2 py-1 text-[10px] font-medium text-text-tertiary uppercase tracking-wider">
           {t('provider.selectProvider')}
         </div>
+        {(isRestarting || session?.providerRoute) && (
+          <div role="status" aria-live="polite" className={cn('mx-2 mb-1 rounded-md px-2 py-1.5 text-[10px]', session?.providerRoute?.state === 'failed' ? 'bg-destructive/10 text-destructive' : 'bg-surface-hover text-text-tertiary')}>
+            {isRestarting ? t('provider.routePending') : session?.providerRoute?.state === 'ready' ? t('provider.routeReady') : t('provider.routeFailed', { code: session?.providerRoute?.code ?? t('provider.routeFailureUnknown') })}
+          </div>
+        )}
+        {missingProvider && <div role="alert" className="mx-2 mb-1 rounded-md bg-destructive/10 px-2 py-1.5 text-[10px] text-destructive">{t('provider.missingProviderRepair')}</div>}
         {activeBackend === 'codex' && codexAccount && (
           <div
             role="button"
@@ -330,7 +388,8 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
         )}
         {providers.map((provider) => {
           const isActive = provider.id === currentProviderId
-          const isCodexCompatible = activeBackend !== 'codex' || provider.protocol === 'openai-responses'
+          const compatibility = provider.availability?.[activeBackend]
+          const isCodexCompatible = compatibility?.available ?? false
           const showUsage = isCodexCompatible && hasUsageSupport(provider.baseUrl)
           return (
             <div
@@ -356,11 +415,7 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
               <div className="min-w-0 flex-1">
                 <div className="font-medium truncate">{provider.name}</div>
                 <div className="text-[10px] text-text-tertiary truncate">{provider.baseUrl}</div>
-                {!isCodexCompatible && (
-                  <div className="text-[10px] text-amber-500">
-                    {t('provider.codexRequiresResponses')}
-                  </div>
-                )}
+                {!isCodexCompatible && <div className="whitespace-normal break-words text-[10px] text-amber-500">{t(providerReasonKey(compatibility?.reason))}</div>}
                 {showUsage && (
                   <div className="mt-0.5">
                     <ProviderUsageLine providerId={provider.id} onLogin={() => setOpen(false)} />
@@ -388,7 +443,23 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
             onChange={handleCodexSettingsChange}
           />
         )}
+        {activeBackend === 'codex' && currentProvider?.availability.codex.available && (
+          <ThirdPartyCodexControls provider={currentProvider} selection={codexSelection} onChange={handleCodexSettingsChange} />
+        )}
       </PopoverContent>
     </Popover>
+    <ConfirmDialog
+      isOpen={Boolean(pendingRepairProviderId)}
+      title={t('provider.repairTitle')}
+      message={t('provider.repairMessage')}
+      confirmLabel={t('provider.repairConfirm')}
+      cancelLabel={t('actions.cancel')}
+      onConfirm={() => {
+        if (pendingRepairProviderId) commitSelection(pendingRepairProviderId)
+        setPendingRepairProviderId(null)
+      }}
+      onCancel={() => setPendingRepairProviderId(null)}
+    />
+    </>
   )
 }

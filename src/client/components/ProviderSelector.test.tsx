@@ -41,10 +41,26 @@ vi.mock('../stores/backend-store', () => ({
 }))
 
 vi.mock('../stores/provider-store', () => ({
+  providerReasonKey: (reason?: string) => `provider.reasons.${reason ?? 'unavailable'}`,
   useProviderStore: (selector: (state: unknown) => unknown) => selector({
     providers: [
-      { id: 'provider-1', name: 'Provider One', baseUrl: 'https://one.example', protocol: 'anthropic', isDefault: true },
-      { id: 'provider-2', name: 'Provider Two', baseUrl: 'https://two.example', protocol: 'openai-responses', isDefault: false },
+      {
+        id: 'provider-1', name: 'Provider One', baseUrl: 'https://one.example', protocol: 'anthropic', isDefault: true,
+        availability: {
+          claude: { available: true, supportedEfforts: [], speedSupported: false },
+          codex: { available: false, reason: 'protocol-unsupported', supportedEfforts: [], speedSupported: false },
+          opencode: { available: true, supportedEfforts: [], speedSupported: false },
+        },
+      },
+      {
+        id: 'provider-2', name: 'Provider Two', baseUrl: 'https://two.example', protocol: 'openai-responses', isDefault: false,
+        configuration: { models: { codex: 'kimi-k2.5' } },
+        availability: {
+          claude: { available: true, supportedEfforts: [], speedSupported: false },
+          codex: { available: true, model: 'kimi-k2.5', supportedEfforts: ['low', 'high'], speedSupported: false },
+          opencode: { available: false, reason: 'protocol-unsupported', supportedEfforts: [], speedSupported: false },
+        },
+      },
     ],
     fetchProviders: vi.fn(),
   }),
@@ -107,7 +123,7 @@ describe('ProviderSelector', () => {
     const incompatibleProvider = screen.getByRole('button', { name: /Provider One/i })
     expect(incompatibleProvider).toHaveAttribute('aria-disabled', 'true')
     expect(incompatibleProvider).toHaveAttribute('tabindex', '-1')
-    expect(screen.getByText('Requires OpenAI Responses')).toBeInTheDocument()
+    expect(screen.getByText('This protocol is not supported by the Agent')).toBeInTheDocument()
     expect(screen.getByText('Provider Two')).toBeInTheDocument()
     fireEvent.click(incompatibleProvider)
     expect(onProviderChange).not.toHaveBeenCalled()
@@ -123,6 +139,23 @@ describe('ProviderSelector', () => {
     })
     fireEvent.click(screen.getByText('Provider Two'))
     expect(onProviderChange).toHaveBeenCalledWith('provider-2')
+  })
+
+  it('filters third-party effort from server capabilities and hides speed', () => {
+    backendState.defaultBackend = 'codex'
+    const onCodexSettingsChange = vi.fn()
+    render(
+      <I18nextProvider i18n={i18n}>
+        <ProviderSelector mode="new-chat" workspaceId="ws-1" backendId="codex" providerId="provider-2" onProviderChange={vi.fn()} codexEffort="medium" codexSpeed="fast" onCodexSettingsChange={onCodexSettingsChange} />
+      </I18nextProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /Provider Two/i }))
+    expect(screen.getByRole('option', { name: 'medium (unsupported)' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('Speed')).not.toBeInTheDocument()
+    expect(screen.getByText(/Speed is managed only by a native Codex Account/)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Effort'), { target: { value: 'high' } })
+    expect(onCodexSettingsChange).toHaveBeenCalledWith({ codexModel: 'kimi-k2.5', codexEffort: 'high', codexSpeed: null })
   })
 
   it('selects a provider without requiring an existing session in New Chat mode', () => {

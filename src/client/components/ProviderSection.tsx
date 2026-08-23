@@ -1,755 +1,306 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import {
-  Plus,
-  Trash2,
-  Save,
-  X,
-  Eye,
-  EyeOff,
-  Star,
-  Loader2,
-  AlertTriangle,
-  CheckCircle2,
-  ChevronDown,
-  ChevronUp,
-  Server,
-  RefreshCw,
-} from 'lucide-react'
-import { useProviderStore, type Provider } from '../stores/provider-store'
-import {
-  useProviderUsageStore,
-  hasUsageSupport,
-  usagePercentage,
-  usageBarColor,
-} from '../stores/provider-usage-store'
+import { CheckCircle2, ChevronDown, Eye, EyeOff, Loader2, Plus, RefreshCw, Save, Server, Star, Trash2, XCircle } from 'lucide-react'
+import { useProviderStore, type Provider, type ProviderConfiguration, type ProviderFormData, type ProviderPreset } from '../stores/provider-store'
+import type { BackendId } from '../stores/backend-store'
+import { hasUsageSupport, useProviderUsageStore } from '../stores/provider-usage-store'
 import ConfirmDialog from './ConfirmDialog'
 import { cn } from './ui/utils'
 
-interface ProviderFormData {
-  name: string
-  baseUrl: string
-  authToken: string
-  protocol: 'anthropic' | 'openai-responses'
-  model: string
-  defaultOpusModel: string
-  defaultSonnetModel: string
-  defaultHaikuModel: string
-  subagentModel: string
-  effortLevel: string
-  customEnvVars: { key: string; value: string }[]
+type EndpointState = 'idle' | 'checking' | 'reachable' | 'unreachable' | 'disabled' | 'invalid'
+type EndpointKind = 'anthropic' | 'openai'
+
+const EMPTY_CONFIGURATION: ProviderConfiguration = {
+  schemaVersion: 1,
+  endpoints: {
+    anthropic: { enabled: true, baseUrl: 'https://api.anthropic.com' },
+    openai: { enabled: false, baseUrl: '', format: 'openai-responses' },
+  },
+  models: {}, openCode: { protocol: 'anthropic' }, claude: {},
+  codex: { promptCacheRouting: 'unsupported', thinking: 'unknown' },
 }
 
 function emptyForm(): ProviderFormData {
-  return {
-    name: '',
-    baseUrl: 'https://api.anthropic.com',
-    authToken: '',
-    protocol: 'anthropic',
-    model: '',
-    defaultOpusModel: '',
-    defaultSonnetModel: '',
-    defaultHaikuModel: '',
-    subagentModel: '',
-    effortLevel: '',
-    customEnvVars: [],
-  }
+  return { name: '', authToken: '', configuration: structuredClone(EMPTY_CONFIGURATION) }
 }
 
 function providerToForm(provider: Provider): ProviderFormData {
   return {
     name: provider.name,
-    baseUrl: provider.baseUrl,
     authToken: '',
-    protocol: provider.protocol,
-    model: provider.model || '',
-    defaultOpusModel: provider.defaultOpusModel || '',
-    defaultSonnetModel: provider.defaultSonnetModel || '',
-    defaultHaikuModel: provider.defaultHaikuModel || '',
-    subagentModel: provider.subagentModel || '',
-    effortLevel: provider.effortLevel || '',
-    customEnvVars: provider.customEnvVars
-      ? Object.entries(provider.customEnvVars).map(([key, value]) => ({ key, value }))
-      : [],
+    configuration: structuredClone(provider.configuration ?? EMPTY_CONFIGURATION),
   }
+}
+
+function endpointState(enabled: boolean, baseUrl: string): EndpointState {
+  if (!enabled) return 'disabled'
+  try {
+    const url = new URL(baseUrl)
+    return url.protocol === 'https:' && Boolean(url.hostname) && !url.username && !url.password && !url.hash ? 'idle' : 'invalid'
+  } catch { return 'invalid' }
+}
+
+function providerSummary(provider: Provider): string {
+  const endpoints = provider.configuration?.endpoints
+  return endpoints?.openai?.enabled ? endpoints.openai.baseUrl : endpoints?.anthropic?.baseUrl ?? provider.baseUrl
+}
+
+function healthAgent(kind: EndpointKind, form: ProviderFormData): BackendId {
+  if (kind === 'anthropic') return 'claude'
+  return form.configuration.openCode.protocol === 'openai' && !form.configuration.models.codex ? 'opencode' : 'codex'
+}
+
+function firstHealthAgent(form: ProviderFormData): BackendId {
+  const config = form.configuration
+  if (config.endpoints.anthropic?.enabled && config.models.claudeCode) return 'claude'
+  if (config.endpoints.openai?.enabled && config.models.codex) return 'codex'
+  return 'opencode'
+}
+
+function ProviderUsagePanel({ providerId }: { providerId: string }) {
+  const { t } = useTranslation('settings')
+  const entry = useProviderUsageStore((state) => state.usageByProvider[providerId])
+  const fetchUsage = useProviderUsageStore((state) => state.fetchUsage)
+  useEffect(() => { void fetchUsage(providerId) }, [fetchUsage, providerId])
+  if (!entry || entry.status === 'unsupported') return null
+  if (entry.status === 'fetching') return <div role="status" className="mt-1 text-[10px] text-text-tertiary">{t('providers.usage.loading')}</div>
+  if (entry.status === 'ready' && entry.summary) {
+    return <div className="mt-1 text-[10px] text-text-tertiary">{entry.summary.used ?? '—'} / {entry.summary.total ?? '—'} {t('providers.usage.used')}</div>
+  }
+  if (entry.status === 'error') return <button type="button" onClick={() => void fetchUsage(providerId, { force: true })} className="mt-1 text-[10px] text-accent hover:underline">{t('providers.usage.retry')}</button>
+  return null
+}
+
+function endpointStatusLabel(t: ReturnType<typeof useTranslation>['t'], state: EndpointState): string {
+  return t(`providers.endpointStatus.${state}`)
+}
+
+function EndpointCard({
+  kind, form, state, error, editable, onChange, onTest,
+}: {
+  kind: EndpointKind
+  form: ProviderFormData
+  state: EndpointState
+  error?: string
+  editable: boolean
+  onChange: (configuration: ProviderConfiguration) => void
+  onTest?: () => void
+}) {
+  const { t } = useTranslation('settings')
+  const configuration = form.configuration
+  const endpoint = kind === 'anthropic'
+    ? configuration.endpoints.anthropic ?? { enabled: false, baseUrl: '' }
+    : configuration.endpoints.openai ?? { enabled: false, baseUrl: '', format: 'openai-responses' as const }
+  const id = `provider-${kind}-endpoint`
+  const statusId = `${id}-status`
+  const update = (patch: { enabled?: boolean; baseUrl?: string; format?: 'openai-responses' | 'openai-chat-completions' }) => {
+    const next = structuredClone(configuration)
+    if (kind === 'anthropic') next.endpoints.anthropic = { enabled: patch.enabled ?? endpoint.enabled, baseUrl: patch.baseUrl ?? endpoint.baseUrl }
+    else {
+      const openai = configuration.endpoints.openai ?? { enabled: false, baseUrl: '', format: 'openai-responses' as const }
+      next.endpoints.openai = { enabled: patch.enabled ?? openai.enabled, baseUrl: patch.baseUrl ?? openai.baseUrl, format: patch.format ?? openai.format }
+    }
+    onChange(next)
+  }
+  return (
+    <fieldset className="min-w-0 rounded-xl border border-border bg-bg/40 p-4" aria-describedby={statusId}>
+      <legend className="px-1 text-xs font-semibold text-text-primary">{t(`providers.${kind}Endpoint`)}</legend>
+      <label className="mb-3 flex items-center gap-2 text-xs text-text-secondary">
+        <input type="checkbox" checked={endpoint.enabled} disabled={!editable} onChange={(event) => update({ enabled: event.target.checked })} />
+        {t('providers.endpointEnabled')}
+      </label>
+      <label className="block text-[11px] font-medium text-text-tertiary" htmlFor={`${id}-url`}>{t('providers.baseUrl')}</label>
+      <input
+        id={`${id}-url`} aria-label={`${t(`providers.${kind}Endpoint`)} ${t('providers.baseUrl')}`} value={endpoint.baseUrl} disabled={!editable || !endpoint.enabled}
+        onChange={(event) => update({ baseUrl: event.target.value })}
+        aria-invalid={state === 'invalid'} aria-describedby={statusId}
+        placeholder={kind === 'anthropic' ? 'https://api.example.com/anthropic' : 'https://api.example.com/v1'}
+        className="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
+      />
+      {kind === 'openai' && (
+        <label className="mt-3 block text-[11px] font-medium text-text-tertiary" htmlFor={`${id}-format`}>
+          {t('providers.upstreamFormat')}
+          <select
+            id={`${id}-format`} disabled={!editable || !endpoint.enabled}
+            value={configuration.endpoints.openai?.format ?? 'openai-responses'}
+            onChange={(event) => update({ format: event.target.value as 'openai-responses' | 'openai-chat-completions' })}
+            className="mt-1 block w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
+          >
+            <option value="openai-responses">{t('providers.formatResponses')}</option>
+            <option value="openai-chat-completions">{t('providers.formatChatCompletions')}</option>
+          </select>
+        </label>
+      )}
+      <div id={statusId} role="status" aria-live="polite" className={cn(
+        'mt-3 flex min-w-0 items-start gap-1.5 text-[11px]',
+        state === 'reachable' ? 'text-green-600 dark:text-green-400' : state === 'unreachable' || state === 'invalid' ? 'text-destructive' : 'text-text-tertiary',
+      )}>
+        {state === 'checking' ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" /> : state === 'reachable' ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0" /> : state === 'unreachable' || state === 'invalid' ? <XCircle className="h-3.5 w-3.5 shrink-0" /> : null}
+        <span className="break-words">{error || endpointStatusLabel(t, state)}</span>
+      </div>
+      {onTest && endpoint.enabled && state !== 'invalid' && (
+        <button type="button" onClick={onTest} disabled={state === 'checking'} className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-text-secondary hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50">
+          <RefreshCw className={cn('h-3.5 w-3.5', state === 'checking' && 'animate-spin')} />
+          {state === 'unreachable' ? t('providers.retryEndpoint') : t('providers.testEndpoint')}
+        </button>
+      )}
+    </fieldset>
+  )
 }
 
 export default function ProviderSection() {
   const { t } = useTranslation('settings')
-  const { providers, isLoading, isSaving, error, healthCheckId, fetchProviders, createProvider, updateProvider, deleteProvider, setDefaultProvider, runHealthCheck, clearError } = useProviderStore()
-
+  const store = useProviderStore()
+  const fetchProviders = store.fetchProviders
+  const fetchPresets = store.fetchPresets
+  const clearError = store.clearError
+  const providerCount = store.providers.length
+  const presetCount = store.presets.length
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [form, setForm] = useState<ProviderFormData>(emptyForm())
-  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [form, setForm] = useState<ProviderFormData>(emptyForm)
+  const [baseline, setBaseline] = useState('')
   const [showToken, setShowToken] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
-  const [showSaveAnywayConfirm, setShowSaveAnywayConfirm] = useState(false)
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
-  const existingProvider = editingId && editingId !== 'new'
-    ? providers.find((provider) => provider.id === editingId)
-    : undefined
+  const [pendingPreset, setPendingPreset] = useState<ProviderPreset | null>(null)
+  const [saveFailure, setSaveFailure] = useState<string | null>(null)
+  const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [health, setHealth] = useState<Record<string, { state: EndpointState; error?: string }>>({})
+  const errorSummaryRef = useRef<HTMLDivElement>(null)
+  const existing = editingId && editingId !== 'new' ? store.providers.find((provider) => provider.id === editingId) : undefined
+  const dirty = editingId !== null && JSON.stringify(form) !== baseline
 
   useEffect(() => {
-    if (providers.length === 0) {
-      fetchProviders()
+    if (providerCount === 0 || presetCount === 0) {
+      void Promise.all([
+        providerCount === 0 ? fetchProviders() : Promise.resolve(),
+        presetCount === 0 ? fetchPresets() : Promise.resolve(),
+      ])
     }
-  }, [fetchProviders, providers.length])
+  }, [fetchPresets, fetchProviders, presetCount, providerCount])
 
-  const startCreate = useCallback(() => {
-    setEditingId('new')
-    setForm(emptyForm())
-    setShowAdvanced(false)
-    setShowToken(false)
-    setFormError(null)
-    clearError()
+  useEffect(() => { if (formError) errorSummaryRef.current?.focus() }, [formError])
+
+  const endpointStates = useMemo(() => ({
+    anthropic: health.anthropic ?? { state: endpointState(Boolean(form.configuration.endpoints.anthropic?.enabled), form.configuration.endpoints.anthropic?.baseUrl ?? '') },
+    openai: health.openai ?? { state: endpointState(Boolean(form.configuration.endpoints.openai?.enabled), form.configuration.endpoints.openai?.baseUrl ?? '') },
+  }), [form.configuration.endpoints, health])
+
+  const resetEditor = useCallback(() => {
+    setEditingId(null); setForm(emptyForm()); setBaseline(''); setFormError(null); setHealth({}); setShowAdvanced(false); clearError()
   }, [clearError])
 
-  const startEdit = useCallback((provider: Provider) => {
-    setEditingId(provider.id)
-    setForm(providerToForm(provider))
-    setShowAdvanced(false)
-    setShowToken(false)
-    setFormError(null)
-    clearError()
-  }, [clearError])
+  const beginCreate = () => {
+    const next = emptyForm()
+    setEditingId('new'); setForm(next); setBaseline(JSON.stringify(next)); setHealth({}); setFormError(null); store.clearError()
+  }
+  const beginEdit = (provider: Provider) => {
+    const next = providerToForm(provider)
+    setEditingId(provider.id); setForm(next); setBaseline(JSON.stringify(next)); setHealth({}); setFormError(null); store.clearError()
+  }
+  const applyPreset = (preset: ProviderPreset) => {
+    const next = { ...form, name: preset.name, configuration: structuredClone(preset.configuration) }
+    setForm(next); setHealth({}); setPendingPreset(null)
+  }
+  const selectPreset = (preset: ProviderPreset) => {
+    if (dirty) setPendingPreset(preset)
+    else applyPreset(preset)
+  }
 
-  const cancelEdit = useCallback(() => {
-    setEditingId(null)
-    setForm(emptyForm())
-    setFormError(null)
-    clearError()
-  }, [clearError])
+  const validate = (): string | null => {
+    if (!form.name.trim()) return t('providers.nameRequired')
+    if (!form.authToken.trim() && !existing?.authTokenPresent) return t('providers.authTokenRequired')
+    const enabled = Object.values(form.configuration.endpoints).filter((endpoint) => endpoint?.enabled)
+    if (enabled.length === 0) return t('providers.endpointRequired')
+    if (endpointStates.anthropic.state === 'invalid' || endpointStates.openai.state === 'invalid') return t('providers.validHttpsRequired')
+    return null
+  }
 
-  const handleSave = async () => {
-    setFormError(null)
-    if (!form.name.trim()) {
-      setFormError(t('providers.nameRequired'))
+  const save = async (skipHealthCheck = false) => {
+    const validation = validate()
+    setFormError(validation); setSaveFailure(null)
+    if (validation) return
+    const agent = firstHealthAgent(form)
+    const result = editingId === 'new'
+      ? await store.createProvider(form, { skipHealthCheck, agent })
+      : editingId ? await store.updateProvider(editingId, form, { skipHealthCheck, agent }) : { provider: null }
+    if (!result.provider && result.status === 422) {
+      const reason = result.error ?? t('providers.endpointUnreachable')
+      if (reason.toLowerCase().includes('unreachable')) setSaveFailure(reason)
+      else setFormError(reason)
       return
     }
-    if (!form.baseUrl.trim()) {
-      setFormError(t('providers.baseUrlRequired'))
-      return
-    }
-    if (!form.authToken.trim() && !existingProvider?.authTokenPresent) {
-      setFormError(t('providers.authTokenRequired'))
-      return
-    }
-
-    let result: Provider | null = null
-    if (editingId === 'new') {
-      const { provider, status } = await createProvider(form)
-      if (!provider && status === 422) {
-        setShowSaveAnywayConfirm(true)
-        return
-      }
-      result = provider
-    } else if (editingId) {
-      const { provider, status } = await updateProvider(editingId, form)
-      if (!provider && status === 422) {
-        setShowSaveAnywayConfirm(true)
-        return
-      }
-      result = provider
-    }
-
-    if (result) {
-      setEditingId(null)
-      setForm(emptyForm())
-    }
+    if (result.provider) resetEditor()
   }
 
-  const handleSaveAnyway = async () => {
-    setShowSaveAnywayConfirm(false)
-    let result: Provider | null = null
-    if (editingId === 'new') {
-      const { provider } = await createProvider(form, { skipHealthCheck: true })
-      result = provider
-    } else if (editingId) {
-      const { provider } = await updateProvider(editingId, form, { skipHealthCheck: true })
-      result = provider
-    }
-    if (result) {
-      setEditingId(null)
-      setForm(emptyForm())
-    }
+  const testEndpoint = async (kind: EndpointKind) => {
+    if (!existing) return
+    setHealth((current) => ({ ...current, [kind]: { state: 'checking' } }))
+    const result = await store.runHealthCheck(existing.id, healthAgent(kind, form))
+    setHealth((current) => ({ ...current, [kind]: result.ok ? { state: 'reachable' } : { state: 'unreachable', error: result.error } }))
   }
 
-  const handleDelete = async (id: string) => {
-    const ok = await deleteProvider(id)
-    if (ok) {
-      setShowDeleteConfirm(null)
-      if (editingId === id) {
-        setEditingId(null)
-        setForm(emptyForm())
-      }
-    }
+  const updateConfiguration = (configuration: ProviderConfiguration) => {
+    setForm((current) => ({ ...current, configuration })); setHealth({})
   }
 
-  const updateForm = (patch: Partial<ProviderFormData>) => {
-    setForm((prev) => ({ ...prev, ...patch }))
-  }
+  if (editingId) {
+    return (
+      <section className="max-w-4xl p-4 sm:p-6" aria-labelledby="provider-editor-title">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h3 id="provider-editor-title" className="text-sm font-medium text-text-primary">{editingId === 'new' ? t('providers.add') : t('providers.edit')}</h3>
+          <button type="button" onClick={resetEditor} aria-label={t('actions.cancel')} className="rounded-md p-1.5 text-text-tertiary hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"><XCircle className="h-4 w-4" /></button>
+        </div>
+        {(formError || store.error) && <div ref={errorSummaryRef} tabIndex={-1} role="alert" className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">{formError || store.error}</div>}
 
-  const updateCustomEnvVar = (index: number, patch: Partial<{ key: string; value: string }>) => {
-    setForm((prev) => {
-      const next = [...prev.customEnvVars]
-      next[index] = { ...next[index], ...patch }
-      return { ...prev, customEnvVars: next }
-    })
-  }
+        <fieldset className="mb-4 rounded-xl border border-border p-4">
+          <legend className="px-1 text-xs font-semibold text-text-primary">{t('providers.preset')}</legend>
+          <div className="flex flex-wrap gap-2">
+            {store.presets.map((preset) => <button key={preset.id} type="button" onClick={() => selectPreset(preset)} className={cn('rounded-lg border px-3 py-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40', form.configuration.preset?.id === preset.id ? 'border-accent bg-accent/10 text-accent' : 'border-border text-text-secondary hover:bg-surface-hover')}>{preset.name}</button>)}
+            {store.presetsLoading && <Loader2 aria-label={t('providers.loadingPresets')} className="h-4 w-4 animate-spin text-text-tertiary" />}
+          </div>
+        </fieldset>
 
-  const addCustomEnvVar = () => {
-    setForm((prev) => ({
-      ...prev,
-      customEnvVars: [...prev.customEnvVars, { key: '', value: '' }],
-    }))
-  }
+        <fieldset className="mb-4 grid gap-4 rounded-xl border border-border p-4 sm:grid-cols-2">
+          <legend className="px-1 text-xs font-semibold text-text-primary">{t('providers.sharedSettings')}</legend>
+          <label className="text-[11px] font-medium text-text-tertiary">{t('providers.name')} *
+            <input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} aria-invalid={Boolean(formError && !form.name.trim())} className="mt-1 block w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent/40" />
+          </label>
+          <label className="text-[11px] font-medium text-text-tertiary">{t('providers.authToken')} *
+            <span className="mt-1 flex gap-2"><input type={showToken ? 'text' : 'password'} value={form.authToken} onChange={(event) => setForm((current) => ({ ...current, authToken: event.target.value }))} placeholder={existing?.authTokenPresent ? t('providers.authTokenKeepPlaceholder') : 'sk-…'} className="min-w-0 flex-1 rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent/40" /><button type="button" onClick={() => setShowToken((value) => !value)} aria-label={showToken ? t('providers.hideToken') : t('providers.showToken')} className="rounded-lg border border-border p-2 text-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">{showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></span>
+          </label>
+        </fieldset>
 
-  const removeCustomEnvVar = (index: number) => {
-    setForm((prev) => ({
-      ...prev,
-      customEnvVars: prev.customEnvVars.filter((_, i) => i !== index),
-    }))
+        <div className="mb-4 grid min-w-0 gap-4 lg:grid-cols-2">
+          <EndpointCard kind="anthropic" form={form} state={endpointStates.anthropic.state} error={endpointStates.anthropic.error} editable onChange={updateConfiguration} onTest={existing ? () => testEndpoint('anthropic') : undefined} />
+          <EndpointCard kind="openai" form={form} state={endpointStates.openai.state} error={endpointStates.openai.error} editable onChange={updateConfiguration} onTest={existing ? () => testEndpoint('openai') : undefined} />
+        </div>
+
+        <fieldset className="mb-4 grid gap-4 rounded-xl border border-border p-4 sm:grid-cols-3">
+          <legend className="px-1 text-xs font-semibold text-text-primary">{t('providers.agentModels')}</legend>
+          {(['claudeCode', 'codex', 'openCode'] as const).map((agent) => <label key={agent} className="text-[11px] font-medium text-text-tertiary">{t(`providers.models.${agent}`)}<input value={form.configuration.models[agent] ?? ''} onChange={(event) => updateConfiguration({ ...form.configuration, models: { ...form.configuration.models, [agent]: event.target.value } })} className="mt-1 block w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent/40" /></label>)}
+          <label className="text-[11px] font-medium text-text-tertiary sm:col-span-3">{t('providers.openCodeProtocol')}
+            <select value={form.configuration.openCode.protocol} onChange={(event) => updateConfiguration({ ...form.configuration, openCode: { protocol: event.target.value as 'anthropic' | 'openai' } })} className="mt-1 block w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent/40"><option value="anthropic">Anthropic</option><option value="openai">OpenAI</option></select>
+          </label>
+        </fieldset>
+
+        <button type="button" aria-expanded={showAdvanced} onClick={() => setShowAdvanced((value) => !value)} className="mb-4 inline-flex items-center gap-1 text-xs text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"><ChevronDown className={cn('h-3.5 w-3.5 transition-transform', showAdvanced && 'rotate-180')} />{t('providers.advanced')}</button>
+        {showAdvanced && <fieldset className="mb-4 grid gap-4 rounded-xl border border-border p-4 sm:grid-cols-2"><legend className="px-1 text-xs font-semibold text-text-primary">{t('providers.claudeCapabilities')}</legend>{(['defaultOpusModel', 'defaultSonnetModel', 'defaultHaikuModel', 'subagentModel', 'effortLevel'] as const).map((key) => <label key={key} className="text-[11px] font-medium text-text-tertiary">{t(`providers.${key}`)}<input value={form.configuration.claude[key] ?? ''} onChange={(event) => updateConfiguration({ ...form.configuration, claude: { ...form.configuration.claude, [key]: event.target.value } })} className="mt-1 block w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent/40" /></label>)}</fieldset>}
+
+        <div className="flex flex-wrap justify-end gap-2"><button type="button" onClick={resetEditor} className="rounded-lg bg-surface-hover px-4 py-2 text-xs text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">{t('actions.cancel')}</button><button type="button" onClick={() => void save()} disabled={store.isSaving} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-xs font-medium text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50">{store.isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}{store.isSaving ? t('providers.checkingHealth') : t('actions.save')}</button></div>
+
+        <ConfirmDialog isOpen={Boolean(pendingPreset)} title={t('providers.discardPresetTitle')} message={t('providers.discardPresetMessage')} confirmLabel={t('providers.applyPreset')} cancelLabel={t('actions.cancel')} onConfirm={() => pendingPreset && applyPreset(pendingPreset)} onCancel={() => setPendingPreset(null)} />
+        <ConfirmDialog isOpen={Boolean(saveFailure)} title={t('providers.saveAnywayTitle')} message={t('providers.saveAnywayNamedMessage', { reason: saveFailure })} confirmLabel={t('providers.saveAnywayConfirm')} cancelLabel={t('actions.cancel')} onConfirm={() => { setSaveFailure(null); void save(true) }} onCancel={() => setSaveFailure(null)} />
+      </section>
+    )
   }
 
   return (
-    <div className="p-6 max-w-2xl">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-medium text-text-primary">{t('providers.title')}</h3>
-        {!editingId && (
-          <button
-            onClick={startCreate}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-lg transition-colors"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            {t('providers.add')}
-          </button>
-        )}
-      </div>
-
-      {(error || formError) && (
-        <div className="mb-4 p-3 bg-destructive/10 border border-destructive/20 rounded-lg flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
-          <p className="text-xs text-destructive">{formError || error}</p>
-        </div>
-      )}
-
-      {isLoading && providers.length === 0 && (
-        <div className="flex items-center justify-center py-8">
-          <Loader2 className="w-5 h-5 animate-spin text-text-tertiary" />
-        </div>
-      )}
-
-      {!isLoading && providers.length === 0 && !editingId && (
-        <div className="text-center py-8 border border-dashed border-border rounded-lg">
-          <Server className="w-8 h-8 text-text-tertiary mx-auto mb-2" />
-          <p className="text-sm text-text-secondary">{t('providers.emptyTitle')}</p>
-          <p className="text-xs text-text-tertiary mt-1">{t('providers.emptyHint')}</p>
-          <button
-            onClick={startCreate}
-            className="mt-3 px-4 py-1.5 text-xs font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-lg transition-colors"
-          >
-            {t('providers.createFirst')}
-          </button>
-        </div>
-      )}
-
-      {/* Provider list */}
-      {providers.length > 0 && !editingId && (
-        <div className="space-y-2">
-          {providers.map((provider) => (
-            <ProviderListItem
-              key={provider.id}
-              provider={provider}
-              isHealthChecking={healthCheckId === provider.id}
-              onEdit={() => startEdit(provider)}
-              onDelete={() => setShowDeleteConfirm(provider.id)}
-              onSetDefault={() => setDefaultProvider(provider.id)}
-              onHealthCheck={() => runHealthCheck(provider.id)}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Edit / Create form */}
-      {editingId && (
-        <div className="border border-border rounded-lg p-4 space-y-4">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-medium text-text-secondary">
-              {editingId === 'new' ? t('providers.add') : t('providers.edit')}
-            </h4>
-            <button
-              onClick={cancelEdit}
-              className="p-1 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-[11px] font-medium text-text-tertiary mb-1">{t('providers.name')} *</label>
-              <input
-                value={form.name}
-                onChange={(e) => updateForm({ name: e.target.value })}
-                placeholder={t('providers.namePlaceholder')}
-                className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-              />
-            </div>
-            <div>
-              <label className="block text-[11px] font-medium text-text-tertiary mb-1">{t('providers.baseUrl')} *</label>
-              <input
-                value={form.baseUrl}
-                onChange={(e) => updateForm({ baseUrl: e.target.value })}
-                placeholder="https://api.anthropic.com"
-                className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-medium text-text-tertiary mb-1">{t('providers.protocol')} *</label>
-            <select
-              value={form.protocol}
-              onChange={(event) => updateForm({ protocol: event.target.value as ProviderFormData['protocol'] })}
-              className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary"
-            >
-              <option value="anthropic">{t('providers.protocolAnthropic')}</option>
-              <option value="openai-responses">{t('providers.protocolOpenAiResponses')}</option>
-            </select>
-            <p className="mt-1 text-[11px] text-text-tertiary">{t('providers.protocolHint')}</p>
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-medium text-text-tertiary mb-1">{t('providers.authToken')} *</label>
-            <div className="flex gap-2">
-              <input
-                type={showToken ? 'text' : 'password'}
-                value={form.authToken}
-                onChange={(e) => updateForm({ authToken: e.target.value })}
-                placeholder={existingProvider?.authTokenPresent ? t('providers.authTokenKeepPlaceholder') : 'sk-...'}
-                className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-              />
-              <button
-                onClick={() => setShowToken(!showToken)}
-                className="p-2 rounded-lg border border-border hover:bg-surface-hover text-text-tertiary transition-colors"
-              >
-                {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-medium text-text-tertiary mb-1">{t('providers.model')}</label>
-            <input
-              value={form.model}
-              onChange={(e) => updateForm({ model: e.target.value })}
-              placeholder={t('providers.modelPlaceholder')}
-              className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-            />
-          </div>
-
-          <button
-            onClick={() => setShowAdvanced(!showAdvanced)}
-            className="flex items-center gap-1 text-[11px] text-text-secondary hover:text-text-primary transition-colors"
-          >
-            {showAdvanced ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-            {t('providers.advanced')}
-          </button>
-
-          {showAdvanced && (
-            <div className="space-y-4 pt-2 border-t border-border/50">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[11px] font-medium text-text-tertiary mb-1">{t('providers.defaultOpusModel')}</label>
-                  <input
-                    value={form.defaultOpusModel}
-                    onChange={(e) => updateForm({ defaultOpusModel: e.target.value })}
-                    placeholder={t('providers.modelPlaceholder')}
-                    className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-medium text-text-tertiary mb-1">{t('providers.defaultSonnetModel')}</label>
-                  <input
-                    value={form.defaultSonnetModel}
-                    onChange={(e) => updateForm({ defaultSonnetModel: e.target.value })}
-                    placeholder={t('providers.modelPlaceholder')}
-                    className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-medium text-text-tertiary mb-1">{t('providers.defaultHaikuModel')}</label>
-                  <input
-                    value={form.defaultHaikuModel}
-                    onChange={(e) => updateForm({ defaultHaikuModel: e.target.value })}
-                    placeholder={t('providers.modelPlaceholder')}
-                    className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-medium text-text-tertiary mb-1">{t('providers.subagentModel')}</label>
-                  <input
-                    value={form.subagentModel}
-                    onChange={(e) => updateForm({ subagentModel: e.target.value })}
-                    placeholder={t('providers.modelPlaceholder')}
-                    className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-[11px] font-medium text-text-tertiary mb-1">{t('providers.effortLevel')}</label>
-                <input
-                  value={form.effortLevel}
-                  onChange={(e) => updateForm({ effortLevel: e.target.value })}
-                  placeholder="e.g. high"
-                  className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-medium text-text-tertiary mb-1">{t('providers.customEnvVars')}</label>
-                <div className="space-y-2">
-                  {form.customEnvVars.map((item, index) => (
-                    <div key={index} className="flex gap-2">
-                      <input
-                        value={item.key}
-                        onChange={(e) => updateCustomEnvVar(index, { key: e.target.value })}
-                        placeholder={t('providers.envVarKey')}
-                        className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-                      />
-                      <input
-                        value={item.value}
-                        onChange={(e) => updateCustomEnvVar(index, { value: e.target.value })}
-                        placeholder={t('providers.envVarValue')}
-                        className="flex-1 px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
-                      />
-                      <button
-                        onClick={() => removeCustomEnvVar(index)}
-                        className="p-2 rounded-lg border border-border hover:bg-destructive/10 text-text-tertiary hover:text-destructive transition-colors"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))}
-                  <button
-                    onClick={addCustomEnvVar}
-                    className="flex items-center gap-1 text-[11px] text-text-secondary hover:text-text-primary transition-colors"
-                  >
-                    <Plus className="w-3 h-3" />
-                    {t('providers.addEnvVar')}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="flex items-center justify-end gap-2 pt-2">
-            <button
-              onClick={cancelEdit}
-              className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
-            >
-              {t('actions.cancel')}
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={isSaving}
-              className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
-            >
-              {isSaving ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  {t('providers.checkingHealth')}
-                </>
-              ) : (
-                <>
-                  <Save className="w-3.5 h-3.5" />
-                  {t('actions.save')}
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      )}
-
-      <ConfirmDialog
-        isOpen={showSaveAnywayConfirm}
-        title={t('providers.saveAnywayTitle')}
-        message={t('providers.saveAnywayMessage')}
-        confirmLabel={t('providers.saveAnywayConfirm')}
-        cancelLabel={t('actions.cancel')}
-        onConfirm={handleSaveAnyway}
-        onCancel={() => setShowSaveAnywayConfirm(false)}
-      />
-
-      {/* Delete confirmation */}
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center">
-          <div className="absolute inset-0 bg-overlay/60 backdrop-blur-sm" />
-          <div className="relative bg-surface border border-border rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
-              <div>
-                <h3 className="text-sm font-medium text-text-primary">{t('providers.deleteConfirmTitle')}</h3>
-                <p className="text-xs text-text-secondary mt-1">{t('providers.deleteConfirmMessage')}</p>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-5">
-              <button
-                onClick={() => setShowDeleteConfirm(null)}
-                className="px-4 py-2 text-xs font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-lg transition-colors"
-              >
-                {t('actions.cancel')}
-              </button>
-              <button
-                onClick={() => handleDelete(showDeleteConfirm)}
-                className="px-4 py-2 text-xs font-medium text-destructive-foreground bg-destructive hover:bg-destructive-hover rounded-lg transition-colors"
-              >
-                {t('providers.delete')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** Rich usage panel for a Kimi coding-plan provider (R10/U6): used/total,
- * remaining, reset date, last-updated, manual refresh, and a login affordance.
- * Renders nothing for non-coding-plan providers (the store returns 'unsupported'). */
-function ProviderUsagePanel({ providerId }: { providerId: string }) {
-  const { t } = useTranslation('settings')
-  const entry = useProviderUsageStore((s) => s.usageByProvider[providerId])
-  const fetchUsage = useProviderUsageStore((s) => s.fetchUsage)
-  const startLogin = useProviderUsageStore((s) => s.startUsageLogin)
-  const loginOpen = useProviderUsageStore((s) => s.login !== null)
-  const status = entry?.status ?? 'idle'
-  const summary = entry?.summary ?? null
-
-  useEffect(() => {
-    fetchUsage(providerId)
-  }, [providerId, fetchUsage])
-
-  if (status === 'unsupported') return null
-
-  const fmt = (n: number | null | undefined): string =>
-    n === null || n === undefined ? '—' : String(n)
-  const fmtDate = (iso: string | null | undefined): string =>
-    iso ? new Date(iso).toLocaleString() : '—'
-
-  const pct = usagePercentage(summary)
-
-  return (
-    <div className="mt-1.5 space-y-1">
-      {/* Row 1: progress bar + numbers + refresh */}
-      {status === 'fetching' && (
-        <div className="flex items-center gap-1.5 text-[10px] text-text-tertiary">
-          <RefreshCw className="h-3 w-3 animate-spin" aria-hidden="true" />
-          <span>{t('providers.usage.loading', 'Loading usage…')}</span>
-        </div>
-      )}
-      {status === 'ready' && summary && (
-        <>
-          <div className="flex items-center gap-2">
-            <div className="h-1.5 min-w-[60px] flex-1 rounded-full bg-border overflow-hidden">
-              <div
-                className={cn('h-full rounded-full transition-all duration-300', usageBarColor(pct))}
-                style={{ width: `${pct ?? 0}%` }}
-              />
-            </div>
-            <span className="text-[10px] font-medium text-text-secondary whitespace-nowrap">
-              {fmt(summary.used)} / {fmt(summary.total)} {t('providers.usage.used', 'used')}
-            </span>
-            <button
-              type="button"
-              onClick={() => fetchUsage(providerId, { force: true })}
-              className="rounded p-0.5 text-text-tertiary hover:text-text-secondary"
-              title={t('providers.usage.refresh', 'Refresh usage')}
-              aria-label={t('providers.usage.refresh', 'Refresh usage')}
-            >
-              <RefreshCw className="h-3 w-3" aria-hidden="true" />
-            </button>
-          </div>
-          {/* Row 2: detail text */}
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-text-tertiary">
-            <span className={cn(
-              'font-medium',
-              pct !== null && pct > 80 ? 'text-destructive' : pct !== null && pct > 60 ? 'text-warning' : 'text-success',
-            )}>
-              {summary.remaining !== null && summary.remaining !== undefined
-                ? `${summary.remaining} ${t('providers.usage.left', 'left')}`
-                : '—'}
-            </span>
-            {summary.resetDate && (
-              <>
-                <span>·</span>
-                <span>{t('providers.usage.resets', 'resets')} {fmtDate(summary.resetDate)}</span>
-              </>
-            )}
-            {summary.rolling &&
-              (summary.rolling.remaining !== null || summary.rolling.resetDate) && (
-                <>
-                  <span>·</span>
-                  <span>
-                    {t('providers.usage.rolling', '5h window')}:{' '}
-                    {summary.rolling.remaining !== null
-                      ? `${summary.rolling.remaining} ${t('providers.usage.left', 'left')}`
-                      : '—'}
-                    {summary.rolling.resetDate
-                      ? ` · ${fmtDate(summary.rolling.resetDate)}`
-                      : ''}
-                  </span>
-                </>
-              )}
-            {entry?.lastUpdated && (
-              <>
-                <span>·</span>
-                <span>{new Date(entry.lastUpdated).toLocaleTimeString()}</span>
-              </>
-            )}
-          </div>
-        </>
-      )}
-      {(status === 'idle' || status === 'relogin') && (
-        <button
-          type="button"
-          disabled={loginOpen}
-          onClick={() => startLogin(providerId)}
-          className="text-[10px] text-accent hover:underline disabled:opacity-50"
-        >
-          {status === 'idle'
-            ? t('providers.usage.connect', 'Connect account')
-            : t('providers.usage.reconnect', 'Reconnect to refresh')}
-        </button>
-      )}
-      {status === 'no-plan' && (
-        <span className="text-[10px] text-text-tertiary">
-          {t('providers.usage.noPlan', 'No coding plan found for this account')}
-        </span>
-      )}
-      {status === 'error' && (
-        <span className="inline-flex items-center gap-1 text-[10px] text-text-tertiary">
-          <span>{t('providers.usage.unavailable', 'Usage unavailable')}</span>
-          <button
-            type="button"
-            onClick={() => fetchUsage(providerId, { force: true })}
-            className="text-accent hover:underline"
-          >
-            {t('providers.usage.retry', 'Retry')}
-          </button>
-        </span>
-      )}
-    </div>
-  )
-}
-
-function ProviderListItem({
-  provider,
-  isHealthChecking,
-  onEdit,
-  onDelete,
-  onSetDefault,
-  onHealthCheck,
-}: {
-  provider: Provider
-  isHealthChecking: boolean
-  onEdit: () => void
-  onDelete: () => void
-  onSetDefault: () => void
-  onHealthCheck: () => Promise<{ ok: boolean; error?: string }>
-}) {
-  const { t } = useTranslation('settings')
-  const [healthStatus, setHealthStatus] = useState<{ ok: boolean; error?: string } | null>(null)
-
-  const handleHealthCheck = async () => {
-    setHealthStatus(null)
-    const result = await onHealthCheck()
-    setHealthStatus(result)
-  }
-
-  return (
-    <div className="flex items-center justify-between px-4 py-3 bg-bg border border-border rounded-lg group">
-      <div className="flex items-center gap-3 min-w-0">
-        <div className="flex-shrink-0">
-          {provider.isDefault ? (
-            <Star className="w-4 h-4 text-warning fill-warning" />
-          ) : (
-            <Star className="w-4 h-4 text-text-tertiary" />
-          )}
-        </div>
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-text-primary truncate">{provider.name}</span>
-            {provider.isDefault && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-warning/10 text-warning">
-                {t('providers.defaultBadge')}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2 text-[11px] text-text-tertiary">
-            <span className="truncate">{provider.baseUrl}</span>
-            {provider.model && <span>· {provider.model}</span>}
-            {provider.protocol === 'openai-responses' && (
-              <span>· {t('providers.protocolResponsesBadge')}</span>
-            )}
-          </div>
-          {healthStatus && (
-            <div className="flex items-center gap-1 mt-1">
-              {healthStatus.ok ? (
-                <>
-                  <CheckCircle2 className="w-3 h-3 text-success" />
-                  <span className="text-[10px] text-success">{t('providers.healthy')}</span>
-                </>
-              ) : (
-                <>
-                  <AlertTriangle className="w-3 h-3 text-destructive" />
-                  <span className="text-[10px] text-destructive">{healthStatus.error || t('providers.unhealthy')}</span>
-                </>
-              )}
-            </div>
-          )}
-          {hasUsageSupport(provider.baseUrl) && (
-            <ProviderUsagePanel providerId={provider.id} />
-          )}
-        </div>
-      </div>
-      <div className="flex items-center gap-1 flex-shrink-0">
-        {!provider.isDefault && (
-          <button
-            onClick={onSetDefault}
-            className="p-1.5 rounded-md text-text-tertiary hover:text-warning hover:bg-warning/10 transition-colors"
-            title={t('providers.setDefault')}
-          >
-            <Star className="w-3.5 h-3.5" />
-          </button>
-        )}
-        <button
-          onClick={handleHealthCheck}
-          disabled={isHealthChecking}
-          className="p-1.5 rounded-md text-text-tertiary hover:text-success hover:bg-success/10 transition-colors disabled:opacity-40"
-          title={t('providers.healthCheck')}
-        >
-          {isHealthChecking ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <CheckCircle2 className="w-3.5 h-3.5" />
-          )}
-        </button>
-        <button
-          onClick={onEdit}
-          className="p-1.5 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors"
-          title={t('providers.edit')}
-        >
-          <Server className="w-3.5 h-3.5" />
-        </button>
-        <button
-          onClick={onDelete}
-          className="p-1.5 rounded-md text-text-tertiary hover:text-destructive hover:bg-destructive/10 transition-colors"
-          title={t('providers.delete')}
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
-      </div>
-    </div>
+    <section className="max-w-4xl p-4 sm:p-6" aria-labelledby="providers-title">
+      <div className="mb-4 flex items-center justify-between gap-3"><h3 id="providers-title" className="text-sm font-medium text-text-primary">{t('providers.title')}</h3><button type="button" onClick={beginCreate} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"><Plus className="h-3.5 w-3.5" />{t('providers.add')}</button></div>
+      {store.error && <div role="alert" className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">{store.error}</div>}
+      {store.isLoading && store.providers.length === 0 ? <div role="status" className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-text-tertiary" /></div> : store.providers.length === 0 ? <div className="rounded-lg border border-dashed border-border py-8 text-center"><Server className="mx-auto mb-2 h-8 w-8 text-text-tertiary" /><p className="text-sm text-text-secondary">{t('providers.emptyTitle')}</p><button type="button" onClick={beginCreate} className="mt-3 rounded-lg bg-accent px-4 py-1.5 text-xs font-medium text-accent-foreground">{t('providers.createFirst')}</button></div> : <div className="space-y-2">{store.providers.map((provider) => <div key={provider.id} className="flex min-w-0 flex-wrap items-center gap-3 rounded-lg border border-border bg-bg px-4 py-3"><Star className={cn('h-4 w-4 shrink-0', provider.isDefault ? 'fill-warning text-warning' : 'text-text-tertiary')} /><div className="min-w-[12rem] flex-1"><div className="truncate text-sm font-medium text-text-primary">{provider.name}</div><div className="truncate text-[11px] text-text-tertiary">{providerSummary(provider)}</div>{hasUsageSupport(providerSummary(provider)) && <ProviderUsagePanel providerId={provider.id} />}</div><button type="button" onClick={() => beginEdit(provider)} className="rounded-md px-2.5 py-1.5 text-xs text-text-secondary hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">{t('providers.edit')}</button>{!provider.isDefault && <button type="button" onClick={() => void store.setDefaultProvider(provider.id)} className="rounded-md px-2.5 py-1.5 text-xs text-text-secondary hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">{t('providers.setDefault')}</button>}<button type="button" onClick={() => setDeleteId(provider.id)} aria-label={t('providers.deleteProvider', { name: provider.name })} className="rounded-md p-1.5 text-text-tertiary hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"><Trash2 className="h-4 w-4" /></button></div>)}</div>}
+      <ConfirmDialog isOpen={Boolean(deleteId)} title={t('providers.deleteConfirmTitle')} message={t('providers.deleteConfirmMessage')} confirmLabel={t('providers.delete')} cancelLabel={t('actions.cancel')} onConfirm={() => { if (!deleteId) return; void store.deleteProvider(deleteId).then(({ ok }) => { if (ok) setDeleteId(null) }) }} onCancel={() => setDeleteId(null)} />
+    </section>
   )
 }
