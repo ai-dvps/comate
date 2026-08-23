@@ -1,0 +1,46 @@
+{
+  "model": "kimi-k2.5",
+  "prompt_cache_key": "raw-session-id",
+  "instructions": "Be concise.",
+  "input": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "input_text", "text": "Describe this image" },
+        { "type": "input_image", "image_url": "https://example.invalid/image.png", "detail": "low" }
+      ]
+    }
+  ],
+  "max_output_tokens": 128,
+  "reasoning": { "effort": "xhigh" },
+  "temperature": 0.7,
+  "top_p": 0.9,
+  "parallel_tool_calls": true,
+  "tools": [
+    {
+      "type": "function",
+      "name": "weather",
+      "description": "Read weather",
+      "parameters": { "type": "object", "properties": { "city": { "type": "string" } }, "required": ["city"] }
+    },
+    {
+      "type": "namespace",
+      "name": "calendar",
+      "tools": [
+        {
+          "type": "function",
+          "name": "create",
+          "description": "Create event",
+          "parameters": { "type": "object", "properties": { "title": { "type": "string" } } }
+        }
+      ]
+    },
+    {
+      "type": "custom",
+      "name": "apply_patch",
+      "description": "Apply a patch exactly"
+    }
+  ],
+  "tool_choice": "auto",
+  "stream": true
+}

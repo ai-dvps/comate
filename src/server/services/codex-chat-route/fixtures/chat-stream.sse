@@ -1,0 +1,9 @@
+data: {"id":"chatcmpl_stream","model":"kimi-k2.5","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"分析"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_stream","model":"kimi-k2.5","choices":[{"index":0,"delta":{"content":"你好"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_stream","model":"kimi-k2.5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"weather","arguments":"{\"city\":"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_stream","model":"kimi-k2.5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"上海\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_tokens_details":{"cached_tokens":3}}}
+
+data: [DONE]

@@ -1,0 +1,29 @@
+{
+  "id": "chatcmpl_fixture",
+  "model": "kimi-k2.5",
+  "created": 1770000000,
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "tool_calls",
+      "message": {
+        "role": "assistant",
+        "content": "<think>Check the forecast</think>It may rain.",
+        "tool_calls": [
+          {
+            "id": "call_weather",
+            "type": "function",
+            "function": { "name": "weather", "arguments": "{\"city\":\"Shanghai\"}" }
+          }
+        ]
+      }
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 20,
+    "completion_tokens": 8,
+    "total_tokens": 28,
+    "prompt_tokens_details": { "cached_tokens": 12 },
+    "completion_tokens_details": { "reasoning_tokens": 4 }
+  }
+}
