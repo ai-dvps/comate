@@ -81,4 +81,24 @@ describe('ProviderSection', () => {
     expect(screen.getByText('Structurally invalid HTTPS URL')).toBeInTheDocument()
     expect(screen.getByText('Skipped — endpoint disabled')).toBeInTheDocument()
   })
+
+  it('loads the truthful affected-session count before opening delete confirmation', async () => {
+    const user = userEvent.setup()
+    const provider = {
+      id: 'provider-kimi', name: 'Kimi', configuration: kimiConfiguration,
+      authTokenPresent: true, isDefault: false, availability: {},
+      baseUrl: 'https://api.kimi.com/coding/v1', protocol: 'openai-responses',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    } as never
+    const getDeleteImpact = vi.fn().mockResolvedValue({ ok: true, affectedSessionCount: 3 })
+    useProviderStore.setState({ providers: [provider], getDeleteImpact })
+
+    renderSection()
+    await user.click(screen.getByRole('button', { name: 'Delete Kimi' }))
+
+    expect(getDeleteImpact).toHaveBeenCalledWith('provider-kimi')
+    expect(screen.getByRole('dialog', { name: 'Delete Provider?' })).toHaveTextContent(
+      'This Provider is referenced by 3 sessions',
+    )
+  })
 })

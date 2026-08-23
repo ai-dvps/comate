@@ -62,8 +62,10 @@ import { teardownServices } from './service-teardown.js';
 import { sessionCapabilityService } from './services/session-capability-service.js';
 import { botEscalationLedger } from './services/bot-escalation-ledger.js';
 import { createLoopbackAuthMiddleware } from './services/security/loopback-auth.js';
-import { codexResponsesRouteFromEnv } from './services/codex-responses-route.js';
-import { createProviderRouteHttpRouter } from './services/provider-route-http.js';
+import {
+  createProviderRouteHttpRouter,
+  providerRouteAcceptanceTransportFromEnv,
+} from './services/provider-route-http.js';
 import { botAuditLogger, LOOPBACK_AUDIT_BOT_ID } from './services/bot-audit-logger.js';
 import {
   createCorsOriginCallback,
@@ -153,12 +155,10 @@ void browserUploadStagingService.cleanupOrphans().catch((error) => {
 // message (Tauri shell) and a 0600 file in the data dir (dev Vite proxy).
 // Never injected into any session environment.
 const desktopToken = sessionCapabilityService.mintDesktopToken();
-// U8 route spike: this environment-owned lease proves the packaged Codex
-// runtime can reach an authenticated Responses capability on the production
-// listener. U5 replaces its bootstrap source with the session route registry.
-const codexRouteBootstrap = process.env.COMATE_CODEX_ROUTE_SPIKE;
-delete process.env.COMATE_CODEX_ROUTE_SPIKE;
-const codexResponsesRoute = codexResponsesRouteFromEnv(codexRouteBootstrap);
+const providerRouteAcceptanceTransport = providerRouteAcceptanceTransportFromEnv(
+  process.env.COMATE_PROVIDER_ROUTE_ACCEPTANCE_UPSTREAM,
+);
+delete process.env.COMATE_PROVIDER_ROUTE_ACCEPTANCE_UPSTREAM;
 
 // Remote-surface hardening (plan U9): Host whitelist (anti-DNS-rebinding) →
 // CORS app-origin matrix → state-changing source check. Header-only checks,
@@ -170,12 +170,13 @@ const getSelfPort = (): number | undefined => boundPort;
 
 // Route authorization verifies the TCP peer before reading Authorization or
 // request body data. Keep it ahead of every generic parser and origin guard.
-if (codexResponsesRoute) app.use('/codex-route', codexResponsesRoute.router);
 // U5 production route registry: authenticated per-generation Responses
 // capabilities terminate here and are converted to the immutable Provider
 // snapshot held by the registry. It must remain ahead of CORS and every body
 // parser so unauthorized connections cannot make the app consume their body.
-app.use('/provider-route', createProviderRouteHttpRouter());
+app.use('/provider-route', createProviderRouteHttpRouter({
+  ...(providerRouteAcceptanceTransport ? { transport: providerRouteAcceptanceTransport } : {}),
+}));
 app.use(hostHeaderGuard());
 // U6: HTTP-hosted browser MCP for both agent backends (Bearer token auth,
 // loopback; no browser Origin — mount ahead of the CORS/origin guards).
@@ -468,7 +469,6 @@ const server = app.listen(Number(PORT), '127.0.0.1', () => {
 // Graceful shutdown
 async function shutdown(signal: string): Promise<void> {
   console.log(`Received ${signal}, shutting down...`);
-  codexResponsesRoute?.close();
   if (logCleanupTimer) {
     clearInterval(logCleanupTimer);
     logCleanupTimer = null;

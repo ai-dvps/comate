@@ -419,7 +419,6 @@ export function codexThreadConfig(
     ...(provider ? {
       ...(provider.disableHostedTools ? {
         web_search: 'disabled',
-        tools: { web_search: null },
       } : {}),
       model_providers: {
         'comate-enterprise': {

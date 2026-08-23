@@ -56,6 +56,80 @@ export interface ProviderRouteHttpOptions {
   maxRequestBytes?: number;
 }
 
+/**
+ * Hermetic packaged-acceptance seam. It is intentionally unavailable unless
+ * the process owner supplies a loopback-only URL, and it changes only the
+ * final socket target: registry authorization, request/response conversion,
+ * accounting, cancellation, and redaction remain the production path.
+ */
+export function providerRouteAcceptanceTransportFromEnv(
+  value: string | undefined,
+): ProviderRouteUpstreamTransport | undefined {
+  if (!value) return undefined;
+  let target: URL;
+  try {
+    target = new URL(value);
+  } catch {
+    throw new Error('Invalid packaged Provider route acceptance URL');
+  }
+  if (target.protocol !== 'http:' || !isLoopbackPeer(target.hostname.replace(/^\[|\]$/g, ''))
+      || target.username || target.password || target.hash) {
+    throw new Error('Packaged Provider route acceptance URL must be loopback HTTP');
+  }
+  return {
+    async request(input) {
+      const controller = new AbortController();
+      const abort = (): void => controller.abort();
+      input.signal.addEventListener('abort', abort, { once: true });
+      const close = (): void => {
+        input.signal.removeEventListener('abort', abort);
+        controller.abort();
+      };
+      try {
+        const response = await fetch(new URL('chat/completions', ensureTrailingSlash(target)), {
+          method: input.method,
+          headers: input.headers,
+          body: input.body,
+          signal: controller.signal,
+        });
+        return {
+          status: response.status,
+          headers: Object.fromEntries(response.headers.entries()),
+          body: fetchBody(response, () => input.signal.removeEventListener('abort', abort)),
+          close,
+        };
+      } catch (error) {
+        input.signal.removeEventListener('abort', abort);
+        throw error;
+      }
+    },
+  };
+}
+
+function ensureTrailingSlash(url: URL): URL {
+  const result = new URL(url);
+  if (!result.pathname.endsWith('/')) result.pathname += '/';
+  return result;
+}
+
+async function* fetchBody(response: globalThis.Response, cleanup: () => void): AsyncIterable<Buffer> {
+  if (!response.body) {
+    cleanup();
+    return;
+  }
+  const reader = response.body.getReader();
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) return;
+      yield Buffer.from(next.value);
+    }
+  } finally {
+    cleanup();
+    reader.releaseLock();
+  }
+}
+
 export function isLoopbackPeer(address: string | undefined): boolean {
   return Boolean(address && LOOPBACK_PEERS.has(address));
 }

@@ -2411,6 +2411,13 @@ export class SqliteStore {
     return rows.map(parseSessionRow);
   }
 
+  countSessionsByProviderId(providerId: string): number {
+    const row = this.db.prepare(
+      'SELECT COUNT(*) AS count FROM sessions WHERE provider_id = ?',
+    ).get(providerId) as { count: number };
+    return row.count;
+  }
+
   listSessionsForBot(botId: string): ChatSession[] {
     const rows = this.db.prepare('SELECT * FROM sessions WHERE bot_id = ? ORDER BY updated_at DESC').all(botId) as RawSessionRow[];
     return rows.map(parseSessionRow);

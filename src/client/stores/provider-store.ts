@@ -99,6 +99,7 @@ interface ProviderState {
   detectProviders: () => Promise<void>
   createProvider: (data: ProviderFormData, options?: { skipHealthCheck?: boolean; agent?: BackendId }) => Promise<ProviderMutationResult>
   updateProvider: (id: string, data: ProviderFormData, options?: { skipHealthCheck?: boolean; agent?: BackendId }) => Promise<ProviderMutationResult>
+  getDeleteImpact: (id: string) => Promise<{ ok: boolean; affectedSessionCount?: number }>
   deleteProvider: (id: string) => Promise<{ ok: boolean; affectedSessionCount?: number }>
   setDefaultProvider: (id: string) => Promise<void>
   runHealthCheck: (id: string, agent: BackendId) => Promise<{ ok: boolean; error?: string }>
@@ -221,6 +222,18 @@ export const useProviderStore = create<ProviderState>((set) => ({
       const message = error instanceof Error ? error.message : i18next.t('common:unknownError')
       set({ error: message, isSaving: false })
       return { provider: null, error: message }
+    }
+  },
+
+  getDeleteImpact: async (id) => {
+    try {
+      const res = await fetch(`${API_BASE}/${id}/delete-impact`)
+      const data = await readJson(res)
+      if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : i18next.t('settings:providers.deleteImpactFailed'))
+      return { ok: true, affectedSessionCount: typeof data.affectedSessionCount === 'number' ? data.affectedSessionCount : 0 }
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : i18next.t('common:unknownError') })
+      return { ok: false }
     }
   },
 

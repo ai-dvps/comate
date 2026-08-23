@@ -274,7 +274,6 @@ describe('CodexBackendDriver interactions', () => {
     assert.doesNotMatch(JSON.stringify(config), /provider-secret/);
     assert.deepStrictEqual(config, {
       web_search: 'disabled',
-      tools: { web_search: null },
       model_providers: {
         'comate-enterprise': {
           name: 'Comate route',

@@ -168,6 +168,17 @@ async function build() {
     );
   }
 
+  // Release gate: the packaged listener must contain the production
+  // registry/converter route, not the retired U8 Responses pass-through.
+  for (const sentinel of ['/provider-route', 'openai-chat-completions', 'Provider route is unavailable']) {
+    if (!fixedContent.includes(sentinel)) {
+      throw new Error(`build-sidecar: production Provider route sentinel missing from bundle: ${sentinel}`);
+    }
+  }
+  if (fixedContent.includes('COMATE_CODEX_ROUTE_SPIKE')) {
+    throw new Error('build-sidecar: retired Codex pass-through spike remains in the packaged bundle');
+  }
+
   // 4. Package with pkg for host platform
   const hostTriple = resolveHostTriple(process.platform, process.arch);
   buildSidecarTriple(hostTriple, bundlePath);
