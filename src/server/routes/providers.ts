@@ -394,11 +394,24 @@ router.put('/:id', async (req, res) => {
   }
 });
 
+// GET /api/providers/:id/delete-impact
+// Read-only preflight: the UI must show the truthful historical-session
+// impact before asking for destructive confirmation.
+router.get('/:id/delete-impact', (req, res) => {
+  const id = req.params.id;
+  if (!store.getProvider(id)) {
+    res.status(404).json({ error: 'Provider not found' });
+    return;
+  }
+  res.json({ affectedSessionCount: store.countSessionsByProviderId(id) });
+});
+
 // DELETE /api/providers/:id
 router.delete('/:id', (req, res) => {
   try {
     const id = req.params.id;
     const existing = store.getProvider(id);
+    const affectedSessionCount = store.countSessionsByProviderId(id);
     const success = store.deleteProvider(id);
     if (!success) {
       res.status(404).json({ error: 'Provider not found' });
@@ -406,7 +419,7 @@ router.delete('/:id', (req, res) => {
     }
     commandsService.invalidateProviderConfiguration();
     chatService.scheduleRebuildsForProvider(id, existing?.isDefault === true);
-    res.json({ ok: true });
+    res.json({ ok: true, affectedSessionCount });
   } catch (error) {
     console.error('Failed to delete provider:', error);
     res.status(500).json({ error: 'Failed to delete provider' });

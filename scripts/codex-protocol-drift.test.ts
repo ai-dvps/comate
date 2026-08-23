@@ -33,8 +33,15 @@ describe('Codex protocol generation', () => {
     const checkedIn = path.resolve('src/server/generated/codex-protocol');
     const actual = snapshot(generated);
     const expected = snapshot(checkedIn);
-    assert.deepEqual([...actual.keys()], [...expected.keys()]);
-    for (const [name, content] of actual) assert.deepEqual(content, expected.get(name), name);
+    try {
+      assert.deepEqual([...actual.keys()], [...expected.keys()]);
+      for (const [name, content] of actual) assert.deepEqual(content, expected.get(name), name);
+    } catch (error) {
+      throw new Error(
+        'Codex protocol drift detected. Regenerate the checked-in protocol, review the routed Chat converter contract, and rerun the packaged route gate before release.',
+        { cause: error },
+      );
+    }
   });
 
   it('keeps the routed Chat characterization inside the pinned Codex item contract', () => {
@@ -55,7 +62,7 @@ describe('Codex protocol generation', () => {
     assert.equal(
       packageJson.dependencies['@openai/codex'],
       '0.149.0',
-      'update the routed Chat characterization before changing the pinned Codex runtime',
+      'Codex protocol fixture drift: update the routed Chat characterization and converter contract before release',
     );
 
     const responseItem = readFileSync(

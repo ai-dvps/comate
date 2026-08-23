@@ -26,6 +26,7 @@
     "generate:codex-protocol": "tsx scripts/generate-codex-protocol.ts",
     "test:codex-protocol": "tsx --test scripts/codex-protocol-drift.test.ts",
     "verify:codex-app-server": "tsx scripts/verify-codex-app-server.ts",
+    "verify:codex-release-gates": "npm run test:codex-protocol && npm run verify:codex-app-server && npm run test:sidecar-new-chat",
     "start": "node dist/server/index.js",
     "test": "npm run test:server && npm run test:client && npm run test:electron && npm run test:scripts && npm run test:packages",
     "test:client": "vitest run --project jsdom",

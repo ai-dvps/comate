@@ -11,6 +11,7 @@ import {
   authorizeProviderRouteRequest,
   isLoopbackPeer,
   PinnedHttpsProviderRouteTransport,
+  providerRouteAcceptanceTransportFromEnv,
   type ProviderRouteUpstreamRequest,
   type ProviderRouteUpstreamResponse,
   type ProviderRouteUpstreamTransport,
@@ -70,6 +71,14 @@ function streamResponse(chunks: string[], status = 200, headers: Record<string, 
 }
 
 describe('Provider route HTTP', () => {
+  it('keeps the packaged acceptance transport loopback-only and opt-in', () => {
+    assert.equal(providerRouteAcceptanceTransportFromEnv(undefined), undefined);
+    assert.ok(providerRouteAcceptanceTransportFromEnv('http://127.0.0.1:4321/v1'));
+    assert.throws(
+      () => providerRouteAcceptanceTransportFromEnv('https://provider.example/v1'),
+      /loopback HTTP/,
+    );
+  });
   it('recognizes socket peers rather than a forged Host header', () => {
     assert.equal(isLoopbackPeer('127.0.0.1'), true);
     assert.equal(isLoopbackPeer('::1'), true);

@@ -1192,6 +1192,20 @@ describe('SqliteStore provider fast mode capability', { concurrency: false }, ()
     assert.strictEqual(store.getProvider(second.id)?.isDefault, true);
     assert.strictEqual(store.listProviders().filter((provider) => provider.isDefault).length, 1);
   });
+
+  it('counts historical session references before Provider deletion without reassigning them', async () => {
+    const workspace = await store.create({ name: 'Provider impact', folderPath: '/tmp/provider-impact' });
+    const provider = store.createProvider({
+      name: 'Referenced', baseUrl: 'https://example.com', authToken: 'secret',
+    });
+    store.createLocalSession(workspace.id, 'one', 'manual', provider.id);
+    store.createLocalSession(workspace.id, 'two', 'manual', provider.id);
+    store.createLocalSession(workspace.id, 'other');
+
+    assert.strictEqual(store.countSessionsByProviderId(provider.id), 2);
+    assert.strictEqual(store.deleteProvider(provider.id), true);
+    assert.strictEqual(store.countSessionsByProviderId(provider.id), 2);
+  });
 });
 
 describe('SqliteStore unified schema migration', { concurrency: false }, () => {

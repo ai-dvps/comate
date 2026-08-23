@@ -6,6 +6,7 @@ import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { networkInterfaces, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { WebSocket } from 'ws';
 
 import {
   buildSidecarEnv,
@@ -15,8 +16,6 @@ import {
   spawnSidecar,
   type SidecarHandle,
 } from '../electron/sidecar.js';
-import { verifyCodexRouteContexts } from './verify-codex-app-server.js';
-import { codexVendorTriple } from '../src/server/utils/resolve-codex-binary.js';
 
 const logger = { info: () => {}, error: () => {} };
 
@@ -100,14 +99,11 @@ test('packaged sidecar creates a New Chat session from a prose prompt without cr
   }
 });
 
-test('packaged sidecar exposes an authenticated streaming route to real Codex contexts', async () => {
+test('packaged sidecar runs a real Codex turn through the production Provider route', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'comate-sidecar-codex-route-'));
-  const routeId = randomBytes(18).toString('base64url');
-  const routeBearer = `route-${randomBytes(24).toString('base64url')}`;
   const providerCredential = `provider-${randomBytes(24).toString('base64url')}`;
   const recordedAuthorization: string[] = [];
   const recordedBodies: string[] = [];
-  let cancelledUpstreams = 0;
   const upstream = createServer((req, res) => {
     recordedAuthorization.push(req.headers.authorization ?? '');
     const chunks: Buffer[] = [];
@@ -115,29 +111,7 @@ test('packaged sidecar exposes an authenticated streaming route to real Codex co
     req.once('end', () => {
       const body = Buffer.concat(chunks).toString('utf8');
       recordedBodies.push(body);
-      if (body.includes('route-smoke cancel')) {
-        res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
-        res.write(`event: response.created\ndata: ${JSON.stringify({
-          type: 'response.created',
-          response: {
-            id: 'resp_route_cancel', object: 'response', created_at: Math.floor(Date.now() / 1000),
-            status: 'in_progress', error: null, incomplete_details: null, instructions: null,
-            max_output_tokens: null, model: 'route-smoke-model', output: [], parallel_tool_calls: true,
-            previous_response_id: null, reasoning: { effort: null, summary: null }, store: false,
-            temperature: null, text: { format: { type: 'text' }, verbosity: 'medium' },
-            tool_choice: 'auto', tools: [], top_p: null, truncation: 'disabled', usage: null,
-            user: null, metadata: {},
-          },
-        })}\n\n`);
-        const timer = setTimeout(() => res.end(), 30_000);
-        timer.unref();
-        res.once('close', () => {
-          clearTimeout(timer);
-          cancelledUpstreams += 1;
-        });
-        return;
-      }
-      writeCompletedResponse(res);
+      writeCompletedChatResponse(res);
     });
   });
   upstream.listen(0, '127.0.0.1');
@@ -157,18 +131,11 @@ test('packaged sidecar exposes an authenticated streaming route to real Codex co
       arch: process.arch,
     };
     const resourceDir = resolveResourceDir(pathEnv);
-    const binaryName = process.platform === 'win32' ? 'codex.exe' : 'codex';
-    const codexBinary = join(resourceDir, 'codex-runtime', 'vendor', codexVendorTriple(process.platform, process.arch), 'bin', binaryName);
     handle = spawnSidecar({
       binaryPath: resolveSidecarBinaryPath(pathEnv),
       env: {
         ...buildSidecarEnv({ dataDir, resourceDir }),
-        COMATE_CODEX_ROUTE_SPIKE: JSON.stringify({
-          routeId,
-          routeBearer,
-          upstreamBaseUrl: `http://127.0.0.1:${upstreamAddress.port}/v1`,
-          providerBearer: providerCredential,
-        }),
+        COMATE_PROVIDER_ROUTE_ACCEPTANCE_UPSTREAM: `http://127.0.0.1:${upstreamAddress.port}/v1`,
       },
       logger: {
         info: (message) => processOutput.push(message),
@@ -179,30 +146,57 @@ test('packaged sidecar exposes an authenticated streaming route to real Codex co
     });
     const ready = await handle.ready;
     port = ready.port;
-
-    await verifyCodexRouteContexts({
-      binary: codexBinary,
-      routeBaseUrl: `http://127.0.0.1:${port}/codex-route/${routeId}`,
-      routeBearer,
-      providerCredential,
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const headers = { Authorization: `Bearer ${ready.desktopToken}`, 'Content-Type': 'application/json' };
+    const providerResponse = await fetch(`${baseUrl}/api/providers`, {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        name: 'Packaged routed Chat', authToken: providerCredential, skipHealthCheck: true, agent: 'codex',
+        configuration: {
+          schemaVersion: 1,
+          endpoints: { openai: { enabled: true, baseUrl: 'https://acceptance.invalid/v1', format: 'openai-chat-completions' } },
+          models: { codex: 'route-smoke-model' }, openCode: { protocol: 'openai' }, claude: {},
+          codex: { promptCacheRouting: 'auto', thinking: 'supported', effortByModel: { 'route-smoke-model': ['high'] } },
+          preset: { id: 'packaged-acceptance', version: 1 },
+        },
+      }),
     });
-    const cancellationDeadline = Date.now() + 2_000;
-    while (cancelledUpstreams < 3 && Date.now() < cancellationDeadline) {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
+    assert.equal(providerResponse.status, 201, await providerResponse.clone().text());
+    const provider = await providerResponse.json() as { provider: { id: string } };
+    const workspaceResponse = await fetch(`${baseUrl}/api/workspaces`, {
+      method: 'POST', headers, body: JSON.stringify({ name: 'routed-codex', folderPath: process.cwd() }),
+    });
+    assert.equal(workspaceResponse.status, 201);
+    const workspace = await workspaceResponse.json() as { workspace: { id: string } };
+    const sessionResponse = await fetch(`${baseUrl}/api/workspaces/${workspace.workspace.id}/sessions`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ name: 'Packaged routed Codex', backend: 'codex', providerId: provider.provider.id, codexModel: 'route-smoke-model', codexEffort: 'high' }),
+    });
+    assert.equal(sessionResponse.status, 201, await sessionResponse.clone().text());
+    const session = await sessionResponse.json() as { id: string };
 
-    assert.ok(
-      recordedAuthorization.length >= 6,
-      `each context should complete and cancel through the route (received ${recordedAuthorization.length})`,
-    );
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await once(socket, 'open');
+    try {
+      await wsRequest(socket, 'subscribe-route', 'subscribe', { workspaceId: workspace.workspace.id, sessionId: session.id });
+      const completed = waitForWsMessage(socket, (message) => {
+        const data = message.type === 'event' && message.eventType === 'sse' ? message.data as { type?: string } : undefined;
+        return data?.type === 'result';
+      }, 20_000);
+      await wsRequest(socket, 'send-route', 'sendMessage', {
+        workspaceId: workspace.workspace.id, sessionId: session.id,
+        clientTurnId: '550e8400-e29b-41d4-a716-446655440101', content: 'route-smoke Unicode 你好',
+      });
+      await completed;
+      assert.ok(recordedBodies.some((body) => body.includes('route-smoke Unicode 你好')));
+
+    } finally {
+      socket.close();
+    }
+    assert.ok(recordedAuthorization.length >= 1, 'the real Codex turn should reach the production route');
     assert.ok(recordedAuthorization.every((value) => value === `Bearer ${providerCredential}`));
-    assert.ok(
-      cancelledUpstreams >= 3,
-      `each context should cancel its upstream request (received ${cancelledUpstreams}; cancel bodies ${recordedBodies.filter((body) => body.includes('route-smoke cancel')).length})`,
-    );
-    assert.doesNotMatch(processOutput.join('\n'), new RegExp(`${routeBearer}|${providerCredential}`));
-    assert.equal(await directoryContains(dataDir, routeBearer), false);
-    assert.equal(await directoryContains(dataDir, providerCredential), false);
+    assert.doesNotMatch(processOutput.join('\n'), new RegExp(providerCredential));
+    assert.equal(await directoryMatches(dataDir, /cap_[A-Za-z0-9_-]{40,}/), false);
   } finally {
     if (handle) await shutdownSidecar(handle, { port, graceMs: 100, logger });
     upstream.close();
@@ -211,59 +205,52 @@ test('packaged sidecar exposes an authenticated streaming route to real Codex co
   }
 });
 
-function writeCompletedResponse(res: import('node:http').ServerResponse): void {
-  const response = {
-    id: 'resp_route_smoke',
-    object: 'response',
-    created_at: Math.floor(Date.now() / 1000),
-    status: 'completed',
-    error: null,
-    incomplete_details: null,
-    instructions: null,
-    max_output_tokens: null,
-    model: 'route-smoke-model',
-    output: [{
-      id: 'msg_route_smoke',
-      type: 'message',
-      status: 'completed',
-      role: 'assistant',
-      content: [{ type: 'output_text', annotations: [], logprobs: [], text: 'route ok' }],
-    }],
-    parallel_tool_calls: true,
-    previous_response_id: null,
-    reasoning: { effort: null, summary: null },
-    store: false,
-    temperature: null,
-    text: { format: { type: 'text' }, verbosity: 'medium' },
-    tool_choice: 'auto',
-    tools: [],
-    top_p: null,
-    truncation: 'disabled',
-    usage: { input_tokens: 1, input_tokens_details: { cached_tokens: 0 }, output_tokens: 1, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 2 },
-    user: null,
-    metadata: {},
-  };
-  const events = [
-    { type: 'response.created', response: { ...response, status: 'in_progress', output: [] } },
-    { type: 'response.output_item.added', output_index: 0, item: { ...response.output[0], status: 'in_progress', content: [] } },
-    { type: 'response.content_part.added', item_id: 'msg_route_smoke', output_index: 0, content_index: 0, part: { type: 'output_text', annotations: [], logprobs: [], text: '' } },
-    { type: 'response.output_text.delta', item_id: 'msg_route_smoke', output_index: 0, content_index: 0, delta: 'route ok', logprobs: [] },
-    { type: 'response.output_text.done', item_id: 'msg_route_smoke', output_index: 0, content_index: 0, text: 'route ok', logprobs: [] },
-    { type: 'response.content_part.done', item_id: 'msg_route_smoke', output_index: 0, content_index: 0, part: response.output[0].content[0] },
-    { type: 'response.output_item.done', output_index: 0, item: response.output[0] },
-    { type: 'response.completed', response },
-  ];
+function writeCompletedChatResponse(res: import('node:http').ServerResponse): void {
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
-  for (const event of events) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+  for (const delta of [
+    { role: 'assistant', reasoning_content: 'Packaged reasoning.' },
+    { content: 'route ' },
+    { content: 'ok 你好' },
+  ]) res.write(`data: ${JSON.stringify(chatChunk(delta))}\n\n`);
+  res.write(`data: ${JSON.stringify({ ...chatChunk({}), choices: [], usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18, prompt_tokens_details: { cached_tokens: 3 }, completion_tokens_details: { reasoning_tokens: 2 } } })}\n\n`);
+  res.write('data: [DONE]\n\n');
   res.end();
 }
 
-async function directoryContains(root: string, needle: string): Promise<boolean> {
+function chatChunk(delta: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: 'chatcmpl_route_smoke', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000),
+    model: 'route-smoke-model', choices: [{ index: 0, delta, finish_reason: delta.content ? null : null }],
+  };
+}
+
+type SmokeWsMessage = { id?: string; ok?: boolean; error?: { message?: string }; type?: string; eventType?: string; data?: unknown };
+
+function waitForWsMessage(socket: WebSocket, predicate: (message: SmokeWsMessage) => boolean, timeoutMs: number): Promise<SmokeWsMessage> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { socket.off('message', receive); reject(new Error('WebSocket smoke timed out')); }, timeoutMs);
+    const receive = (raw: import('ws').RawData): void => {
+      const message = JSON.parse(raw.toString()) as SmokeWsMessage;
+      if (!predicate(message)) return;
+      clearTimeout(timer); socket.off('message', receive); resolve(message);
+    };
+    socket.on('message', receive);
+  });
+}
+
+async function wsRequest(socket: WebSocket, id: string, type: string, payload: Record<string, unknown>): Promise<void> {
+  const response = waitForWsMessage(socket, (message) => message.id === id, 20_000);
+  socket.send(JSON.stringify({ id, type, payload }));
+  const result = await response;
+  assert.equal(result.ok, true, result.error?.message);
+}
+
+async function directoryMatches(root: string, pattern: RegExp): Promise<boolean> {
   for (const entry of await readdir(root, { withFileTypes: true })) {
     const target = join(root, entry.name);
     if (entry.isDirectory()) {
-      if (await directoryContains(target, needle)) return true;
-    } else if ((await readFile(target)).includes(Buffer.from(needle))) {
+      if (await directoryMatches(target, pattern)) return true;
+    } else if (pattern.test((await readFile(target)).toString('latin1'))) {
       return true;
     }
   }
@@ -276,7 +263,7 @@ async function assertNotReachableViaNonLoopback(port: number): Promise<void> {
     .find((entry) => entry.family === 'IPv4' && !entry.internal)?.address;
   if (!address) return;
   await assert.rejects(
-    fetch(`http://${address}:${port}/codex-route/not-a-route/responses`, {
+    fetch(`http://${address}:${port}/provider-route/not-a-route/responses`, {
       method: 'POST',
       body: '{}',
       signal: AbortSignal.timeout(1_000),

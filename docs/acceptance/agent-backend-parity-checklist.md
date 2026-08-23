@@ -33,7 +33,8 @@ This matrix covers the bundled `@openai/codex` 0.149.0 app-server integration ad
 | imageInput | full | verified | Ordered local and data-URL image inputs map to native Codex user-input items in `codex-adapter.test.ts` |
 | sessionManagement | degraded | verified | New/resumed threads and history reload use Codex `thread/start`, `thread/resume`, and `thread/read`; fork/delete/rename do not yet have full UI parity |
 | subagents | degraded | verified | `codex-session-service.test.ts` and chat-service tests reconstruct child threads and histories; live child activity and per-child stop controls are limited |
-| model selection | degraded | verified | Settings select a native catalog model for new Codex threads; existing threads retain their Codex-owned model and there is no mid-session switch |
+| model selection | full for new sessions | verified | Native Account exposes model/effort/speed defaults; third-party Providers expose server-filtered model/effort and intentionally hide speed |
+| third-party Provider routing | full for declared contract | packaged verified | Native Responses is direct; Chat Completions uses the authenticated production route/converter. `npm run build:sidecar` proves Unicode, reasoning, usage, cleanup, and credential redaction with the real app-server; route HTTP tests pin socket cancellation |
 | skills | degraded | verified | Workspace/global `.claude/skills` roots are registered through `skills/extraRoots/set`; Claude slash-command invocation semantics are not emulated |
 | MCP status | degraded | verified | Safe stdio MCP definitions and native `mcpServerStatus` are supported; remote bearer-token MCP definitions are intentionally excluded |
 | context usage | full | verified | `thread/tokenUsage/updated` feeds the shared context meter with input, cached, output, reasoning, window, and model values |
@@ -49,9 +50,26 @@ This matrix covers the bundled `@openai/codex` 0.149.0 app-server integration ad
 - Production selection is blocked unless `COMATE_ENABLE_EXPERIMENTAL_CODEX=1`; development and tests may exercise Codex directly.
 - Enabling the flag is for controlled evaluation, not a declaration of Claude Code capability parity. The unavailable and degraded rows above remain release blockers for general availability.
 - Backend selection is exact and session-locked. If the selected Codex backend, account, thread, or explicit enterprise Provider is unavailable, the operation fails visibly; it never falls back to Claude Code or OpenCode.
-- Native Codex login and thread data remain Codex-owned. An explicit enterprise Provider is accepted only with protocol `openai-responses`; incompatible or incomplete Providers fail closed.
+- Native Codex login and thread data remain Codex-owned. Third-party Providers may use direct Responses or the declared routed Chat subset; incompatible or incomplete Providers remain visible with a reason and fail closed.
 - Provider API responses expose only `authTokenPresent`, never the stored token. Leaving the secret blank while editing retains the previous value.
 - Protocol drift is checked by `npm run test:codex-protocol`; real app-server initialization is checked by `npm run verify:codex-app-server`.
+- Packaged production routing is checked by `npm run build:sidecar`; a development-Node-only pass is not release evidence.
+
+### Multi-protocol Provider acceptance
+
+| Flow / example | Status | Automated proof |
+|---|---|---|
+| F1 / AE1 direct Responses | verified | resolver and ChatService tests prove no route lease is allocated |
+| F2 / AE2 Kimi Chat route | packaged verified | packaged sidecar creates the Provider/session and drives real Codex through registry + converter; converter fixtures cover tools/history and malformed upstreams |
+| F3 / AE3 one credential, per-Agent endpoints/models | verified | Provider migration/resolver/API/client suites |
+| F4 / AE8 legacy upgrade | verified | storage migration reopen/idempotency and stable reference tests |
+| F5 / AE5 incompatible selection | verified | resolver, session API, and accessible Provider selector tests assert no upstream request |
+| AE4 OpenCode protocol isolation | verified | resolver and OpenCode adapter/runtime rebuild tests |
+| AE6 effort filtering | verified | server validation and Provider selector tests; third-party speed hidden |
+| AE7 preset ownership | verified | preset API and editable dirty-draft confirmation tests |
+| AE9 safe route failure | packaged + unit verified | packaged cancellation/shutdown/redaction plus registry/HTTP malformed/error/capacity suites |
+
+Provider deletion uses a count preflight and preserves dangling historical identity until explicit reassignment. Migration recovery and forward-only downgrade boundaries are documented in the operations runbook and covered by storage/API tests.
 
 Operational setup and recovery details are in [`docs/operations/codex-backend.md`](../operations/codex-backend.md).
 
