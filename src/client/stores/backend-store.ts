@@ -71,7 +71,6 @@ interface BackendState {
   isLoading: boolean
   error: string | null
   codexAccount: CodexAccount | null
-  codexRequiresOpenaiAuth: boolean
   codexModels: CodexModel[]
   codexDefaultModel: string | null
   codexDefaultEffort: string | null
@@ -106,7 +105,6 @@ export const useBackendStore = create<BackendState>((set, get) => ({
   isLoading: false,
   error: null,
   codexAccount: null,
-  codexRequiresOpenaiAuth: true,
   codexModels: [],
   codexDefaultModel: null,
   codexDefaultEffort: null,
@@ -159,7 +157,6 @@ export const useBackendStore = create<BackendState>((set, get) => ({
       codexUsageRequestId += 1
       set({
         codexAccount: data.account ?? null,
-        codexRequiresOpenaiAuth: Boolean(data.requiresOpenaiAuth),
         codexAccountLoading: false,
         codexUsageLoading: false,
         ...(data.account ? {} : { codexUsage: null, codexUsageError: null }),

@@ -111,17 +111,13 @@ const PRESETS: readonly ProviderPresetDefinition[] = Object.freeze([
   },
 ]);
 
-function clone<T>(value: T): T {
-  return structuredClone(value);
-}
-
 export function listProviderPresets(): ProviderPresetDefinition[] {
-  return PRESETS.map(clone);
+  return PRESETS.map((preset) => structuredClone(preset));
 }
 
 export function getProviderPreset(id: string): ProviderPresetDefinition | undefined {
   const preset = PRESETS.find((entry) => entry.id === id);
-  return preset ? clone(preset) : undefined;
+  return preset ? structuredClone(preset) : undefined;
 }
 
 /** Returns ordinary, editable values. Only the diagnostic provenance remains linked. */

@@ -201,12 +201,22 @@ function CodexAccountSetting() {
 
   useEffect(() => {
     if (!pendingLogin) return
-    const timer = window.setInterval(() => {
-      void fetchAccount().then(() => {
-        if (useBackendStore.getState().codexAccount) setPendingLogin(null)
-      })
-    }, 2_000)
-    return () => window.clearInterval(timer)
+    let cancelled = false
+    let timer: number | undefined
+    const poll = async () => {
+      await fetchAccount()
+      if (cancelled) return
+      if (useBackendStore.getState().codexAccount) {
+        setPendingLogin(null)
+        return
+      }
+      timer = window.setTimeout(() => void poll(), 2_000)
+    }
+    timer = window.setTimeout(() => void poll(), 2_000)
+    return () => {
+      cancelled = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
   }, [fetchAccount, pendingLogin])
 
   const loginWithChatGpt = async () => {

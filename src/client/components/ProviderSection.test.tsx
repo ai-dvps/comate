@@ -40,7 +40,7 @@ describe('ProviderSection', () => {
   beforeEach(() => {
     useProviderStore.setState({
       providers: [], presets, isLoading: false, presetsLoading: false, isSaving: false,
-      error: null, healthCheckKey: null,
+      error: null,
       fetchProviders: vi.fn().mockResolvedValue(undefined),
       fetchPresets: vi.fn().mockResolvedValue(undefined),
       clearError: vi.fn(),

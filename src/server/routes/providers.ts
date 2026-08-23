@@ -90,6 +90,21 @@ const providerHealthClient = new BrowserDirectHttpClient({
   limits: { totalTimeoutMs: HEALTH_CHECK_TIMEOUT_MS, maxRedirects: 1 },
 });
 
+function requestProviderModels(
+  resolved: Extract<ReturnType<typeof resolveProviderForAgent>, { available: true }>,
+  client: ProviderHealthClient,
+) {
+  return client.request({
+    url: effectiveProviderResourceUrl(resolved, 'models'),
+    method: 'GET',
+    redirectPolicy: 'error',
+    headers: { accept: 'application/json' },
+    prepareHopHeaders: (): Record<string, string> => resolved.mode === 'direct-anthropic'
+      ? { 'x-api-key': resolved.credential, 'anthropic-version': '2023-06-01' }
+      : { authorization: `Bearer ${resolved.credential}` },
+  });
+}
+
 export async function runProviderHealthCheck(
   provider: Provider,
   agent: BackendId,
@@ -100,15 +115,7 @@ export async function runProviderHealthCheck(
     return { ok: false, error: 'Provider configuration is unavailable for this Agent.', reason: resolved.reason };
   }
   try {
-    const result = await client.request({
-      url: effectiveProviderResourceUrl(resolved, 'models'),
-      method: 'GET',
-      redirectPolicy: 'error',
-      headers: { accept: 'application/json' },
-      prepareHopHeaders: (): Record<string, string> => resolved.mode === 'direct-anthropic'
-        ? { 'x-api-key': resolved.credential, 'anthropic-version': '2023-06-01' }
-        : { authorization: `Bearer ${resolved.credential}` },
-    });
+    const result = await requestProviderModels(resolved, client);
     if (result.status === 401 || result.status === 403) {
       return { ok: false, error: 'Authentication failed — check your auth token.' };
     }
@@ -128,15 +135,7 @@ export async function discoverProviderModels(
   const resolved = resolveProviderForAgent(provider, agent);
   if (!resolved.available) return { models: [], reason: resolved.reason };
   try {
-    const result = await client.request({
-      url: effectiveProviderResourceUrl(resolved, 'models'),
-      method: 'GET',
-      redirectPolicy: 'error',
-      headers: { accept: 'application/json' },
-      prepareHopHeaders: (): Record<string, string> => resolved.mode === 'direct-anthropic'
-        ? { 'x-api-key': resolved.credential, 'anthropic-version': '2023-06-01' }
-        : { authorization: `Bearer ${resolved.credential}` },
-    });
+    const result = await requestProviderModels(resolved, client);
     if (result.status < 200 || result.status >= 300) return { models: [] };
     const parsed = JSON.parse(result.body.toString('utf8')) as unknown;
     const root = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
