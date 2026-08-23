@@ -4,6 +4,8 @@ import { store as sqliteStoreSingleton } from '../storage/sqlite-store.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
 import { diagLog } from '../utils/diag-logger.js';
 import { BrowserSiteAuthReadError, readGlobalSiteAuthEntry } from './browser-site-auth.js';
+import { providerVendorFromProvenance } from './provider-presets.js';
+import { BrowserDirectHttpClient, type BrowserDirectHttpRequest } from './browser-direct-http-client.js';
 
 /**
  * Compile-time constants (R13/KTD8). The Kimi login URL and the GetUsages
@@ -18,11 +20,15 @@ export const KIMI_GET_USAGES_URL =
 export const KIMI_SITE_KEY = 'kimi.com';
 
 const USAGE_TIMEOUT_MS = 8000;
+const usageHttpClient = new BrowserDirectHttpClient({ limits: { totalTimeoutMs: USAGE_TIMEOUT_MS, maxRedirects: 1 } });
+
+export interface ProviderUsageHttpClient {
+  request(input: BrowserDirectHttpRequest): ReturnType<BrowserDirectHttpClient['request']>;
+}
 
 /** A tighter gate than the loose `isKimiProvider` (KTD7): the Kimi coding plan. */
 export function isKimiCodingPlanProvider(provider?: Provider): boolean {
-  if (!provider) return false;
-  return provider.baseUrl.toLowerCase().includes('kimi.com');
+  return providerVendorFromProvenance(provider?.configuration?.preset) === 'kimi';
 }
 
 /**
@@ -133,7 +139,10 @@ function parseUsageSummary(body: unknown): UsageSummary | null {
 }
 
 export class KimiUsageService {
-  constructor(private readonly sqlite: SqliteStore) {}
+  constructor(
+    private readonly sqlite: SqliteStore,
+    private readonly http: ProviderUsageHttpClient = usageHttpClient,
+  ) {}
 
   /**
    * Resolve Kimi coding-plan usage for a provider. Always queries the billing
@@ -165,27 +174,23 @@ export class KimiUsageService {
     }
 
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), USAGE_TIMEOUT_MS);
-      const response = await fetch(KIMI_GET_USAGES_URL, {
+      const response = await this.http.request({
+        url: KIMI_GET_USAGES_URL,
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+        redirectPolicy: 'error',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
         body: JSON.stringify({ scope: ['FEATURE_CODING'] }),
-        signal: controller.signal,
+        prepareHopHeaders: (): Record<string, string> => ({ authorization: `Bearer ${token}` }),
       });
-      clearTimeout(timeout);
 
       if (response.status === 401 || response.status === 403) {
         return { status: 'relogin' };
       }
-      if (!response.ok) {
+      if (response.status < 200 || response.status >= 300) {
         return { status: 'error' };
       }
 
-      const body = await response.json().catch(() => null);
+      const body = JSON.parse(response.body.toString('utf8')) as unknown;
       const summary = parseUsageSummary(body);
       if (!summary) {
         return { status: 'no-plan' };

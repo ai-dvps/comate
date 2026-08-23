@@ -9,6 +9,7 @@ import {
   type UsageBrowserSurface,
 } from './provider-usage-login-service.js';
 import { KIMI_LOGIN_URL } from './kimi-usage-service.js';
+import { applyProviderPreset } from './provider-presets.js';
 
 const ORIGIN = 'location.hostname';
 
@@ -61,7 +62,9 @@ describe('ProviderUsageLoginService', () => {
   });
 
   function makeKimiProvider(): string {
-    return sqlite.createProvider({ name: 'Kimi', baseUrl: 'https://api.kimi.com/coding', authToken: 'sk' }).id;
+    return sqlite.createProvider({
+      name: 'Kimi', baseUrl: 'https://api.kimi.com/coding', authToken: 'sk', configuration: applyProviderPreset('kimi'),
+    }).id;
   }
 
   test('startLogin rejects a non-coding-plan provider', async () => {

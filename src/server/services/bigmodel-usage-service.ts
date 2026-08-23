@@ -5,6 +5,9 @@ import type { SqliteStore } from '../storage/sqlite-store.js';
 import { asRecord, asNum } from './kimi-usage-service.js';
 import { diagLog } from '../utils/diag-logger.js';
 import { BrowserSiteAuthReadError, readGlobalSiteAuthEntry } from './browser-site-auth.js';
+import { providerVendorFromProvenance } from './provider-presets.js';
+import { BrowserDirectHttpClient } from './browser-direct-http-client.js';
+import type { ProviderUsageHttpClient } from './kimi-usage-service.js';
 
 export const BIGMODEL_LOGIN_URL = 'https://bigmodel.cn';
 export const BIGMODEL_USAGE_URL = 'https://bigmodel.cn/api/monitor/usage/quota/limit';
@@ -13,10 +16,10 @@ export const BIGMODEL_SITE_KEY = 'bigmodel.cn';
 export const BIGMODEL_TOKEN_COOKIE = 'bigmodel_token_production';
 
 const USAGE_TIMEOUT_MS = 8000;
+const usageHttpClient = new BrowserDirectHttpClient({ limits: { totalTimeoutMs: USAGE_TIMEOUT_MS, maxRedirects: 1 } });
 
 export function isBigModelProvider(provider?: Provider): boolean {
-  if (!provider) return false;
-  return provider.baseUrl.toLowerCase().includes('bigmodel.cn');
+  return providerVendorFromProvenance(provider?.configuration?.preset) === 'bigmodel';
 }
 
 export interface UsageResult {
@@ -82,7 +85,10 @@ function readBigModelBearer(sqlite: SqliteStore): string | null {
 
 export class BigModelUsageService {
   /** Always queries the quota endpoint live — no server-side cache. */
-  constructor(private readonly sqlite: SqliteStore = sqliteStoreSingleton) {}
+  constructor(
+    private readonly sqlite: SqliteStore = sqliteStoreSingleton,
+    private readonly http: ProviderUsageHttpClient = usageHttpClient,
+  ) {}
 
   async runUsageCheck(providerId: string): Promise<UsageResult> {
     const provider = this.sqlite.getProvider(providerId);
@@ -98,26 +104,22 @@ export class BigModelUsageService {
     // No exp claim in the BigModel JWT — rely on 401 for relogin.
 
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), USAGE_TIMEOUT_MS);
-      const response = await fetch(BIGMODEL_USAGE_URL, {
+      const response = await this.http.request({
+        url: BIGMODEL_USAGE_URL,
         method: 'GET',
-        headers: {
-          Authorization: token,
-          Accept: 'application/json',
-        },
-        signal: controller.signal,
+        redirectPolicy: 'error',
+        headers: { accept: 'application/json' },
+        prepareHopHeaders: (): Record<string, string> => ({ authorization: token }),
       });
-      clearTimeout(timeout);
 
       if (response.status === 401 || response.status === 403) {
         return { status: 'relogin' };
       }
-      if (!response.ok) {
+      if (response.status < 200 || response.status >= 300) {
         return { status: 'error' };
       }
 
-      const body = await response.json().catch(() => null);
+      const body = JSON.parse(response.body.toString('utf8')) as unknown;
       const summary = parseBigModelUsage(body);
       if (!summary) {
         return { status: 'no-plan' };

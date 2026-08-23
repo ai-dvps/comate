@@ -107,6 +107,31 @@ describe('BrowserDirectHttpClient redirects and pinning', () => {
     assert.equal(hookCalls, 1, 'unsafe redirected hop never receives auth-hook headers');
     assert.equal(transport.requests[0].headers.authorization, 'Bearer generation-1');
   });
+
+  it('rejects Provider redirects without resolving or attaching credentials to a second hop', async () => {
+    let resolves = 0;
+    let hookCalls = 0;
+    const transport = new FakeTransport();
+    transport.responses.push(response(302, { location: '/steal' }, []));
+    await assert.rejects(
+      new BrowserDirectHttpClient({
+        resolver: async () => {
+          resolves += 1;
+          return [{ address: '93.184.216.34', family: 4 as const }];
+        },
+        transport,
+      }).request({
+        url: 'https://api.example.com/v1/models',
+        method: 'GET',
+        redirectPolicy: 'error',
+        prepareHopHeaders: () => ({ authorization: `Bearer secret-${++hookCalls}` }),
+      }),
+      (error: unknown) => error instanceof BrowserDirectHttpError && error.code === 'redirect_not_allowed',
+    );
+    assert.equal(resolves, 1);
+    assert.equal(hookCalls, 1);
+    assert.equal(transport.requests.length, 1);
+  });
 });
 
 describe('BrowserDirectHttpClient resource limits', () => {

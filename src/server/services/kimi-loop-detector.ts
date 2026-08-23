@@ -1,4 +1,5 @@
 import type { Provider } from '../models/provider.js';
+import { providerVendorFromProvenance } from './provider-presets.js';
 
 /** Default number of consecutive identical tool calls that triggers a denial. */
 export const DEFAULT_KIMI_LOOP_THRESHOLD = 3;
@@ -9,15 +10,7 @@ export const DEFAULT_KIMI_LOOP_THRESHOLD = 3;
  * setting is required.
  */
 export function isKimiProvider(provider?: Provider): boolean {
-  if (!provider) return false;
-  const model = provider.model?.toLowerCase() ?? '';
-  const baseUrl = provider.baseUrl.toLowerCase();
-  return (
-    model.startsWith('kimi-') ||
-    model.startsWith('moonshot-') ||
-    baseUrl.includes('moonshot.cn') ||
-    baseUrl.includes('kimi')
-  );
+  return providerVendorFromProvenance(provider?.configuration?.preset) === 'kimi';
 }
 
 export interface KimiLoopDetectorOptions {

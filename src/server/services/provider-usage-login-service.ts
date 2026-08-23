@@ -6,6 +6,7 @@ import type { SqliteStore } from '../storage/sqlite-store.js';
 import { readGlobalSiteAuthEntry } from './browser-site-auth.js';
 import type { Provider } from '../models/provider.js';
 import { diagLog } from '../utils/diag-logger.js';
+import { providerVendorFromProvenance } from './provider-presets.js';
 
 const USAGE_LOGIN_WORKSPACE_ID = '__provider_usage_login__';
 
@@ -27,11 +28,11 @@ interface CaptureProfile {
 }
 
 function captureProfileForProvider(provider: Provider): CaptureProfile | null {
-  const url = provider.baseUrl.toLowerCase();
-  if (url.includes('kimi.com')) {
+  const vendor = providerVendorFromProvenance(provider.configuration?.preset);
+  if (vendor === 'kimi') {
     return { loginUrl: KIMI_LOGIN_URL, siteKey: KIMI_SITE_KEY, extract: { kind: 'expr', expr: KIMI_EXTRACT_EXPR } };
   }
-  if (url.includes('bigmodel.cn')) {
+  if (vendor === 'bigmodel') {
     return { loginUrl: BIGMODEL_LOGIN_URL, siteKey: BIGMODEL_SITE_KEY, extract: { kind: 'cookie', cookieName: BIGMODEL_TOKEN_COOKIE } };
   }
   return null;
