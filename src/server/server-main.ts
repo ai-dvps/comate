@@ -63,6 +63,7 @@ import { sessionCapabilityService } from './services/session-capability-service.
 import { botEscalationLedger } from './services/bot-escalation-ledger.js';
 import { createLoopbackAuthMiddleware } from './services/security/loopback-auth.js';
 import { codexResponsesRouteFromEnv } from './services/codex-responses-route.js';
+import { createProviderRouteHttpRouter } from './services/provider-route-http.js';
 import { botAuditLogger, LOOPBACK_AUDIT_BOT_ID } from './services/bot-audit-logger.js';
 import {
   createCorsOriginCallback,
@@ -170,6 +171,11 @@ const getSelfPort = (): number | undefined => boundPort;
 // Route authorization verifies the TCP peer before reading Authorization or
 // request body data. Keep it ahead of every generic parser and origin guard.
 if (codexResponsesRoute) app.use('/codex-route', codexResponsesRoute.router);
+// U5 production route registry: authenticated per-generation Responses
+// capabilities terminate here and are converted to the immutable Provider
+// snapshot held by the registry. It must remain ahead of CORS and every body
+// parser so unauthorized connections cannot make the app consume their body.
+app.use('/provider-route', createProviderRouteHttpRouter());
 app.use(hostHeaderGuard());
 // U6: HTTP-hosted browser MCP for both agent backends (Bearer token auth,
 // loopback; no browser Origin — mount ahead of the CORS/origin guards).
