@@ -62,6 +62,7 @@ import { teardownServices } from './service-teardown.js';
 import { sessionCapabilityService } from './services/session-capability-service.js';
 import { botEscalationLedger } from './services/bot-escalation-ledger.js';
 import { createLoopbackAuthMiddleware } from './services/security/loopback-auth.js';
+import { codexResponsesRouteFromEnv } from './services/codex-responses-route.js';
 import { botAuditLogger, LOOPBACK_AUDIT_BOT_ID } from './services/bot-audit-logger.js';
 import {
   createCorsOriginCallback,
@@ -151,6 +152,12 @@ void browserUploadStagingService.cleanupOrphans().catch((error) => {
 // message (Tauri shell) and a 0600 file in the data dir (dev Vite proxy).
 // Never injected into any session environment.
 const desktopToken = sessionCapabilityService.mintDesktopToken();
+// U8 route spike: this environment-owned lease proves the packaged Codex
+// runtime can reach an authenticated Responses capability on the production
+// listener. U5 replaces its bootstrap source with the session route registry.
+const codexRouteBootstrap = process.env.COMATE_CODEX_ROUTE_SPIKE;
+delete process.env.COMATE_CODEX_ROUTE_SPIKE;
+const codexResponsesRoute = codexResponsesRouteFromEnv(codexRouteBootstrap);
 
 // Remote-surface hardening (plan U9): Host whitelist (anti-DNS-rebinding) →
 // CORS app-origin matrix → state-changing source check. Header-only checks,
@@ -160,6 +167,9 @@ const desktopToken = sessionCapabilityService.mintDesktopToken();
 let boundPort: number | undefined;
 const getSelfPort = (): number | undefined => boundPort;
 
+// Route authorization verifies the TCP peer before reading Authorization or
+// request body data. Keep it ahead of every generic parser and origin guard.
+if (codexResponsesRoute) app.use('/codex-route', codexResponsesRoute.router);
 app.use(hostHeaderGuard());
 // U6: HTTP-hosted browser MCP for both agent backends (Bearer token auth,
 // loopback; no browser Origin — mount ahead of the CORS/origin guards).
@@ -314,7 +324,7 @@ initializeResolvedShellEnv().catch((err) => {
   console.error('Failed to initialize resolved shell env:', err);
 });
 
-const server = app.listen(PORT, () => {
+const server = app.listen(Number(PORT), '127.0.0.1', () => {
   const address = server.address();
   const actualPort = typeof address === 'object' && address ? address.port : PORT;
   boundPort = Number(actualPort);
@@ -452,6 +462,7 @@ const server = app.listen(PORT, () => {
 // Graceful shutdown
 async function shutdown(signal: string): Promise<void> {
   console.log(`Received ${signal}, shutting down...`);
+  codexResponsesRoute?.close();
   if (logCleanupTimer) {
     clearInterval(logCleanupTimer);
     logCleanupTimer = null;

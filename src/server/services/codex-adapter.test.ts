@@ -263,6 +263,27 @@ describe('CodexBackendDriver interactions', () => {
     });
   });
 
+  it('can pass only an opaque route capability to Codex', () => {
+    const config = codexThreadConfig({} as Options, {
+      name: 'Comate route',
+      baseUrl: 'http://127.0.0.1:43210/codex-route/opaque-id',
+      bearerToken: 'opaque-route-bearer',
+    });
+    assert.match(JSON.stringify(config), /opaque-route-bearer/);
+    assert.doesNotMatch(JSON.stringify(config), /provider-secret/);
+    assert.deepStrictEqual(config, {
+      model_providers: {
+        'comate-enterprise': {
+          name: 'Comate route',
+          base_url: 'http://127.0.0.1:43210/codex-route/opaque-id',
+          wire_api: 'responses',
+          requires_openai_auth: false,
+          experimental_bearer_token: 'opaque-route-bearer',
+        },
+      },
+    });
+  });
+
   it('redacts an enterprise bearer from app-server failures', async () => {
     const client = new FakeClient();
     const manager = {
