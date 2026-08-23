@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Codex shows every configured third-party Provider** — When Codex is selected, OpenAI Responses-compatible Providers remain selectable, while incompatible Providers stay visible but disabled with an explanation.
 - **Agent settings are clearer and more compact** — Claude Code options now live in a polished collapsible group with responsive spacing, while Output style is an app-global preference that applies consistently across sessions.
 - **Desktop and website colors now follow the Comate brand** — Primary actions, activity, attention states, work surfaces, and supporting website visuals use a shared logo-derived color system with improved light and dark mode balance.
 

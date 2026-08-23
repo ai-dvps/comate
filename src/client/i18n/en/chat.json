@@ -237,6 +237,7 @@
     "noProviders": "No providers configured. Add one in Settings → Providers.",
     "codexAccount": "Codex Account",
     "codexManagedByCodex": "Login and sessions managed by Codex",
+    "codexRequiresResponses": "Requires OpenAI Responses",
     "codexModel": "Model",
     "codexEffort": "Effort",
     "codexSpeed": "Speed",

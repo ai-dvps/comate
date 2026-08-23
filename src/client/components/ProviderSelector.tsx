@@ -230,17 +230,15 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
   useEffect(() => {
     if (!open) return
     for (const provider of providers) {
-      if (hasUsageSupport(provider.baseUrl)) {
+      const isCodexCompatible = activeBackend !== 'codex' || provider.protocol === 'openai-responses'
+      if (isCodexCompatible && hasUsageSupport(provider.baseUrl)) {
         fetchUsage(provider.id)
       }
     }
-  }, [open, providers, fetchUsage])
+  }, [activeBackend, open, providers, fetchUsage])
 
   const currentProviderId = isNewChat ? props.providerId : session?.providerId
-  const availableProviders = activeBackend === 'codex'
-    ? providers.filter((provider) => provider.protocol === 'openai-responses')
-    : providers
-  const currentProvider = availableProviders.find((p) => p.id === currentProviderId)
+  const currentProvider = providers.find((p) => p.id === currentProviderId)
   const isRestarting = useChatStore((s) => sessionId ? s.isRestartingRuntime[sessionId] ?? false : false)
 
   const handleSelect = (providerId: string | null) => {
@@ -330,26 +328,39 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
             <Check className={`w-3.5 h-3.5 flex-shrink-0 ${nativeCodexActive ? '' : 'opacity-0'}`} />
           </div>
         )}
-        {availableProviders.map((provider) => {
+        {providers.map((provider) => {
           const isActive = provider.id === currentProviderId
-          const showUsage = hasUsageSupport(provider.baseUrl)
+          const isCodexCompatible = activeBackend !== 'codex' || provider.protocol === 'openai-responses'
+          const showUsage = isCodexCompatible && hasUsageSupport(provider.baseUrl)
           return (
             <div
               key={provider.id}
               role="button"
-              tabIndex={0}
-              onClick={() => handleSelect(provider.id)}
-              onKeyDown={(e) => handleRowKey(e, provider.id)}
+              tabIndex={isCodexCompatible ? 0 : -1}
+              aria-disabled={!isCodexCompatible}
+              onClick={() => {
+                if (isCodexCompatible) handleSelect(provider.id)
+              }}
+              onKeyDown={(e) => {
+                if (isCodexCompatible) handleRowKey(e, provider.id)
+              }}
               className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-xs rounded-md transition-colors cursor-pointer ${
                 isActive
                   ? 'bg-surface-active text-text-primary'
-                  : 'text-text-secondary hover:bg-surface-hover'
+                  : isCodexCompatible
+                    ? 'text-text-secondary hover:bg-surface-hover'
+                    : 'cursor-not-allowed text-text-tertiary opacity-60'
               }`}
             >
               <ProviderAvatar name={provider.name} className="w-5 h-5 text-[10px] flex-shrink-0" />
               <div className="min-w-0 flex-1">
                 <div className="font-medium truncate">{provider.name}</div>
                 <div className="text-[10px] text-text-tertiary truncate">{provider.baseUrl}</div>
+                {!isCodexCompatible && (
+                  <div className="text-[10px] text-amber-500">
+                    {t('provider.codexRequiresResponses')}
+                  </div>
+                )}
                 {showUsage && (
                   <div className="mt-0.5">
                     <ProviderUsageLine providerId={provider.id} onLogin={() => setOpen(false)} />
@@ -360,7 +371,7 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
             </div>
           )
         })}
-        {availableProviders.length === 0 && !(activeBackend === 'codex' && codexAccount) && (
+        {providers.length === 0 && !(activeBackend === 'codex' && codexAccount) && (
           <div className="px-2.5 py-2 text-xs text-text-tertiary text-center">
             {t('provider.noProviders')}
           </div>

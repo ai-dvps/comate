@@ -84,6 +84,7 @@ describe('ProviderSelector', () => {
       supportedReasoningEfforts: [{ reasoningEffort: 'high', description: '' }],
       serviceTiers: [{ id: 'fast', name: 'Fast', description: '' }],
     }]
+    const onProviderChange = vi.fn()
     const onCodexSettingsChange = vi.fn()
     render(
       <I18nextProvider i18n={i18n}>
@@ -92,7 +93,7 @@ describe('ProviderSelector', () => {
           workspaceId="ws-1"
           backendId="codex"
           providerId={null}
-          onProviderChange={vi.fn()}
+          onProviderChange={onProviderChange}
           codexModel={null}
           codexEffort={null}
           codexSpeed={null}
@@ -103,13 +104,25 @@ describe('ProviderSelector', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Codex Account/i }))
     expect(screen.getAllByText('Codex Account')).toHaveLength(2)
-    expect(screen.queryByText('Provider One')).not.toBeInTheDocument()
+    const incompatibleProvider = screen.getByRole('button', { name: /Provider One/i })
+    expect(incompatibleProvider).toHaveAttribute('aria-disabled', 'true')
+    expect(incompatibleProvider).toHaveAttribute('tabindex', '-1')
+    expect(screen.getByText('Requires OpenAI Responses')).toBeInTheDocument()
+    expect(screen.getByText('Provider Two')).toBeInTheDocument()
+    fireEvent.click(incompatibleProvider)
+    expect(onProviderChange).not.toHaveBeenCalled()
+    fireEvent.keyDown(incompatibleProvider, { key: 'Enter' })
+    expect(onProviderChange).not.toHaveBeenCalled()
+    fireEvent.keyDown(incompatibleProvider, { key: ' ' })
+    expect(onProviderChange).not.toHaveBeenCalled()
     fireEvent.change(screen.getByLabelText('Effort'), { target: { value: 'high' } })
     fireEvent.change(screen.getByLabelText('Speed'), { target: { value: 'fast' } })
 
     expect(onCodexSettingsChange).toHaveBeenCalledWith({
       codexModel: null, codexEffort: 'high', codexSpeed: null,
     })
+    fireEvent.click(screen.getByText('Provider Two'))
+    expect(onProviderChange).toHaveBeenCalledWith('provider-2')
   })
 
   it('selects a provider without requiring an existing session in New Chat mode', () => {

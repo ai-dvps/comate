@@ -236,6 +236,7 @@
     "noProviders": "尚未配置服务商。请前往设置 → 服务商添加。",
     "codexAccount": "Codex 账户",
     "codexManagedByCodex": "登录和会话数据由 Codex 管理",
+    "codexRequiresResponses": "需要兼容 OpenAI Responses",
     "codexModel": "模型",
     "codexEffort": "推理强度",
     "codexSpeed": "速度",
