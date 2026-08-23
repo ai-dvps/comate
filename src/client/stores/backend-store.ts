@@ -40,6 +40,26 @@ export interface CodexModel {
   defaultServiceTier: string | null
 }
 
+export interface CodexAccountUsage {
+  rateLimit: {
+    limitId: string | null
+    limitName: string | null
+    primary: { usedPercent: number; windowDurationMins: number | null; resetsAt: number | null } | null
+    secondary: { usedPercent: number; windowDurationMins: number | null; resetsAt: number | null } | null
+    credits: { hasCredits: boolean; unlimited: boolean; balance: string | null } | null
+    planType: string | null
+    spendControlReached: boolean | null
+    rateLimitReachedType: string | null
+  } | null
+  tokenUsage: {
+    lifetimeTokens: string | null
+    peakDailyTokens: string | null
+    currentStreakDays: string | null
+    longestStreakDays: string | null
+    dailyUsageBuckets: Array<{ startDate: string; tokens: string }>
+  } | null
+}
+
 export type CodexLoginResult =
   | { type: 'apiKey' }
   | { type: 'chatgpt'; loginId: string; authUrl: string }
@@ -56,6 +76,9 @@ interface BackendState {
   codexDefaultModel: string | null
   codexDefaultEffort: string | null
   codexDefaultSpeed: string | null
+  codexUsage: CodexAccountUsage | null
+  codexUsageLoading: boolean
+  codexUsageError: string | null
   codexAccountLoading: boolean
   codexAccountError: string | null
   fetchBackends: () => Promise<void>
@@ -65,11 +88,13 @@ interface BackendState {
   cancelCodexLogin: (loginId: string) => Promise<void>
   logoutCodex: () => Promise<void>
   fetchCodexModels: () => Promise<void>
+  fetchCodexUsage: () => Promise<void>
   setCodexDefaults: (defaults: { model: string | null; effort: string | null; speed: string | null }) => Promise<void>
 }
 
 const API_BASE = '/api/backends'
 let codexDefaultsMutationId = 0
+let codexUsageRequestId = 0
 const pendingCodexDefaultsRequests = new Set<Promise<void>>()
 
 export const useBackendStore = create<BackendState>((set, get) => ({
@@ -86,6 +111,9 @@ export const useBackendStore = create<BackendState>((set, get) => ({
   codexDefaultModel: null,
   codexDefaultEffort: null,
   codexDefaultSpeed: null,
+  codexUsage: null,
+  codexUsageLoading: false,
+  codexUsageError: null,
   codexAccountLoading: false,
   codexAccountError: null,
 
@@ -128,10 +156,13 @@ export const useBackendStore = create<BackendState>((set, get) => ({
       const res = await fetch(`${API_BASE}/codex/account`)
       if (!res.ok) throw new Error(await responseError(res))
       const data = await res.json()
+      codexUsageRequestId += 1
       set({
         codexAccount: data.account ?? null,
         codexRequiresOpenaiAuth: Boolean(data.requiresOpenaiAuth),
         codexAccountLoading: false,
+        codexUsageLoading: false,
+        ...(data.account ? {} : { codexUsage: null, codexUsageError: null }),
       })
     } catch (err) {
       set({
@@ -170,6 +201,7 @@ export const useBackendStore = create<BackendState>((set, get) => ({
   },
 
   logoutCodex: async () => {
+    codexUsageRequestId += 1
     set({ codexAccountLoading: true, codexAccountError: null })
     try {
       while (pendingCodexDefaultsRequests.size > 0) {
@@ -183,6 +215,9 @@ export const useBackendStore = create<BackendState>((set, get) => ({
         codexDefaultModel: null,
         codexDefaultEffort: null,
         codexDefaultSpeed: null,
+        codexUsage: null,
+        codexUsageLoading: false,
+        codexUsageError: null,
         codexAccountLoading: false,
         codexAccountError: null,
       })
@@ -211,6 +246,27 @@ export const useBackendStore = create<BackendState>((set, get) => ({
       })
     } catch (err) {
       set({ codexAccountError: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error') })
+    }
+  },
+
+  fetchCodexUsage: async () => {
+    const requestId = ++codexUsageRequestId
+    set({ codexUsageLoading: true, codexUsageError: null })
+    try {
+      const res = await fetch(`${API_BASE}/codex/usage`)
+      if (!res.ok) throw new Error(await responseError(res))
+      const codexUsage = await res.json() as CodexAccountUsage
+      if (requestId !== codexUsageRequestId) return
+      set({
+        codexUsage,
+        codexUsageLoading: false,
+      })
+    } catch (err) {
+      if (requestId !== codexUsageRequestId) return
+      set({
+        codexUsageError: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'),
+        codexUsageLoading: false,
+      })
     }
   },
 
