@@ -1,4 +1,31 @@
+import type { ProviderCodexEffort } from './provider.js';
+
 export type ApprovalMode = 'auto' | 'readonly' | 'manual';
+
+export type CodexProviderSelectionFailureCode =
+  | 'CODEX_MODEL_UNSUPPORTED'
+  | 'CODEX_EFFORT_UNSUPPORTED'
+  | 'THIRD_PARTY_CODEX_SPEED_UNSUPPORTED';
+
+export interface CodexProviderSelectionStatus {
+  state: 'supported' | 'unsupported';
+  code?: CodexProviderSelectionFailureCode;
+  model: string;
+  supportedEfforts: ProviderCodexEffort[];
+  speedSupported: false;
+}
+
+export interface CodexProviderRouteStatus {
+  mode: 'codex-chat-route';
+  state: 'ready' | 'failed';
+  providerId: string;
+  generation?: string;
+  code?: string;
+  activeRequests?: number;
+  historyBytes?: number;
+  bufferedResponseBytes?: number;
+  updatedAt: string;
+}
 
 export interface ChatSession {
   id: string;
@@ -22,6 +49,10 @@ export interface ChatSession {
   codexModel?: string;
   codexEffort?: string;
   codexSpeed?: string;
+  /** Server-derived, credential-free compatibility diagnostics. Never persisted. */
+  codexProviderSelection?: CodexProviderSelectionStatus;
+  /** Owning session's redacted local compatibility-route lifecycle. Never persisted. */
+  providerRoute?: CodexProviderRouteStatus;
   /** Bot that created this session, if any. */
   botId?: string;
   createdAt: string;

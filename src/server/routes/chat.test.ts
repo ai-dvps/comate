@@ -55,13 +55,16 @@ describe('chat route new chat creation', { concurrency: false }, () => {
   it('persists the New Chat agent, provider, fast, and permission selections', async () => {
     const handler = await importCreateSessionHandler();
     const res = createMockRes();
+    const provider = workspaceStore.createProvider({
+      name: 'Selected provider', baseUrl: 'https://example.com', authToken: 'secret', model: 'model-1',
+    });
 
     await handler({
       params: { id: 'ws-1' },
       body: {
         prompt: 'Start with selected controls',
         backend: 'opencode',
-        providerId: 'provider-2',
+        providerId: provider.id,
         fastMode: true,
         approvalMode: 'auto',
       },
@@ -76,13 +79,13 @@ describe('chat route new chat creation', { concurrency: false }, () => {
       approvalMode?: string;
     };
     assert.strictEqual(session.backend, 'opencode');
-    assert.strictEqual(session.providerId, 'provider-2');
+    assert.strictEqual(session.providerId, provider.id);
     assert.strictEqual(session.fastMode, true);
     assert.strictEqual(session.approvalMode, 'auto');
 
     const persisted = workspaceStore.getLocalSession(session.id);
     assert.strictEqual(persisted?.backend, 'opencode');
-    assert.strictEqual(persisted?.providerId, 'provider-2');
+    assert.strictEqual(persisted?.providerId, provider.id);
     assert.strictEqual(persisted?.fastMode, true);
     assert.strictEqual(persisted?.approvalMode, 'auto');
   });
@@ -108,6 +111,34 @@ describe('chat route new chat creation', { concurrency: false }, () => {
     assert.strictEqual(persisted?.codexModel, 'gpt-5.6-codex');
     assert.strictEqual(persisted?.codexEffort, 'high');
     assert.strictEqual(persisted?.codexSpeed, 'fast');
+  });
+
+  it('returns the stable Provider capability code for an invalid third-party Codex selection', async () => {
+    const handler = await importCreateSessionHandler();
+    const provider = workspaceStore.createProvider({
+      name: 'Kimi', authToken: 'secret',
+      configuration: {
+        schemaVersion: 1,
+        endpoints: { openai: { enabled: true, baseUrl: 'https://api.kimi.com/coding/v1', format: 'openai-chat-completions' } },
+        models: { codex: 'kimi-k2.5' }, openCode: { protocol: 'openai' }, claude: {},
+        codex: { effortByModel: { 'kimi-k2.5': ['high'] } },
+      },
+    });
+    const res = createMockRes();
+
+    await handler({
+      params: { id: 'ws-1' },
+      body: {
+        prompt: 'invalid effort', backend: 'codex', providerId: provider.id,
+        codexModel: 'kimi-k2.5', codexEffort: 'low',
+      },
+    }, res);
+
+    assert.strictEqual(res.statusCode, 409);
+    assert.deepStrictEqual(res.jsonBody, {
+      error: 'The selected effort is not available for this Provider model',
+      code: 'CODEX_EFFORT_UNSUPPORTED',
+    });
   });
 });
 

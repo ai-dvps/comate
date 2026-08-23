@@ -44,6 +44,7 @@ import {
 } from './session-capability-service.js';
 import { browserService } from './browser-service.js';
 import { browserApiBrokerService } from './browser-api-broker-service.js';
+import { ProviderRouteRegistry } from './provider-route-registry.js';
 
 function createMockWorkspace(id: string): Workspace {
   return {
@@ -5521,6 +5522,11 @@ describe('chat-service session backend resolution (KTD-5/KTD-9)', { concurrency:
     assert.strictEqual(driverDeps.model, 'gpt-5.6-codex');
     assert.strictEqual(driverDeps.effort, 'high');
     assert.strictEqual(driverDeps.serviceTier, 'fast');
+    assert.strictEqual(
+      (service as unknown as { runtimeProviderRoutes: Map<string, unknown> }).runtimeProviderRoutes.size,
+      0,
+      'native Account sessions must not allocate a compatibility route',
+    );
   });
 
   it('rejects an explicit Anthropic provider for a Codex session without native fallback', async () => {
@@ -5563,11 +5569,228 @@ describe('chat-service session backend resolution (KTD-5/KTD-9)', { concurrency:
     });
     const session = workspaceStore.createLocalSession(workspace.id, 'S', undefined, provider.id, 'gui');
     workspaceStore.updateSessionBackend(session.id, 'codex');
+    (service as unknown as { providerRouteFailures: Map<string, unknown> }).providerRouteFailures.set(session.id, {
+      providerId: provider.id, code: 'stale-route-failure', updatedAt: new Date().toISOString(),
+    });
 
     await service.getOrCreateRuntime(session.id, workspace.id);
 
     assert.ok(captured, 'runtime opened');
     assert.strictEqual((captured[10] as { backendId?: string }).backendId, 'codex');
+    assert.strictEqual(
+      (service as unknown as { runtimeProviderRoutes: Map<string, unknown> }).runtimeProviderRoutes.size,
+      0,
+      'direct Responses sessions must not allocate a compatibility route',
+    );
+    assert.strictEqual((await service.getSession(session.id, workspace.id))?.providerRoute, undefined);
+  });
+
+  it('readiness-gates a Chat Provider route and revokes its matching generation on close', async () => {
+    registerBackendRuntime('codex', {
+      resolveBinaryPath: () => '/fake/codex',
+      healthCheck: async () => true,
+    });
+    const registry = new ProviderRouteRegistry();
+    await service.closeAllRuntimes();
+    service = new ChatService(undefined, async () => null, registry);
+    const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'comate-codex-route-'));
+    const workspace = await workspaceStore.create({ name: 'W', folderPath });
+    const provider = workspaceStore.createProvider({
+      name: 'Kimi route',
+      authToken: 'provider-secret-sentinel',
+      configuration: {
+        schemaVersion: 1,
+        endpoints: {
+          openai: {
+            enabled: true,
+            baseUrl: 'https://api.kimi.com/coding/v1',
+            format: 'openai-chat-completions',
+          },
+        },
+        models: { codex: 'kimi-k2.5' },
+        openCode: { protocol: 'openai' },
+        claude: {},
+        codex: {
+          promptCacheRouting: 'auto',
+          effortByModel: { 'kimi-k2.5': ['low', 'high'] },
+          effortWireMappingByModel: { 'kimi-k2.5': { high: 'high' } },
+        },
+      },
+    });
+    const session = workspaceStore.createLocalSession(workspace.id, 'S', undefined, provider.id, 'gui');
+    workspaceStore.updateSessionBackend(session.id, 'codex');
+    workspaceStore.updateLocalSession(session.id, { codexModel: 'kimi-k2.5', codexEffort: 'high' });
+
+    await service.getOrCreateRuntime(session.id, workspace.id);
+
+    assert.strictEqual(registry.processStatus().leases, 1);
+    const driverDeps = (captured?.[10] as unknown as { deps: { provider: { baseUrl: string; bearerToken: string } } }).deps;
+    assert.match(driverDeps.provider.baseUrl, /^http:\/\/127\.0\.0\.1:\d+\/provider-route\/route_/);
+    assert.notStrictEqual(driverDeps.provider.bearerToken, 'provider-secret-sentinel');
+    assert.doesNotMatch(JSON.stringify(await service.getSession(session.id, workspace.id)), /provider-secret-sentinel|cap_/);
+    const storedRoute = (registry as unknown as {
+      leases: Map<string, { upstream: { suppressSamplingParameters?: boolean } }>;
+    }).leases.values().next().value;
+    assert.strictEqual(storedRoute?.upstream.suppressSamplingParameters, false);
+
+    await service.closeRuntime(session.id);
+    assert.strictEqual(registry.processStatus().leases, 0);
+  });
+
+  it('rolls back a provisional Chat Provider route when runtime creation fails', async () => {
+    registerBackendRuntime('codex', {
+      resolveBinaryPath: () => '/fake/codex',
+      healthCheck: async () => true,
+    });
+    const registry = new ProviderRouteRegistry();
+    await service.closeAllRuntimes();
+    service = new ChatService(undefined, async () => null, registry);
+    const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'comate-codex-route-failure-'));
+    const workspace = await workspaceStore.create({ name: 'W', folderPath });
+    const provider = workspaceStore.createProvider({
+      name: 'Chat route', authToken: 'provider-secret',
+      configuration: {
+        schemaVersion: 1,
+        endpoints: { openai: { enabled: true, baseUrl: 'https://example.com/v1', format: 'openai-chat-completions' } },
+        models: { codex: 'model-1' }, openCode: { protocol: 'openai' }, claude: {}, codex: {},
+      },
+    });
+    const session = workspaceStore.createLocalSession(workspace.id, 'S', undefined, provider.id, 'gui');
+    workspaceStore.updateSessionBackend(session.id, 'codex');
+    SessionRuntime.open = () => { throw new Error('runtime open failed'); };
+
+    await assert.rejects(() => service.getOrCreateRuntime(session.id, workspace.id), /runtime open failed/);
+    assert.strictEqual(registry.processStatus().leases, 0);
+  });
+
+  it('rotates the route on resume, preserves the transcript id, and ignores a stale fatal callback', async () => {
+    registerBackendRuntime('codex', {
+      resolveBinaryPath: () => '/fake/codex', healthCheck: async () => true,
+    });
+    const registry = new ProviderRouteRegistry();
+    await service.closeAllRuntimes();
+    service = new ChatService(undefined, async () => null, registry);
+    const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'comate-codex-route-resume-'));
+    const workspace = await workspaceStore.create({ name: 'W', folderPath });
+    const provider = workspaceStore.createProvider({
+      name: 'Chat route', authToken: 'provider-secret',
+      configuration: {
+        schemaVersion: 1,
+        endpoints: { openai: { enabled: true, baseUrl: 'https://example.com/v1', format: 'openai-chat-completions' } },
+        models: { codex: 'model-1' }, openCode: { protocol: 'openai' }, claude: {}, codex: {},
+      },
+    });
+    const session = workspaceStore.createLocalSession(workspace.id, 'S', undefined, provider.id, 'gui');
+    workspaceStore.updateSessionBackend(session.id, 'codex');
+    workspaceStore.updateSessionBackendSessionId(session.id, 'thread-preserved');
+
+    await service.getOrCreateRuntime(session.id, workspace.id);
+    const firstDeps = (captured?.[10] as unknown as { deps: { backendSessionId?: string; provider: { bearerToken: string }; onFatal(): void } }).deps;
+    await service.closeRuntime(session.id);
+    await service.getOrCreateRuntime(session.id, workspace.id);
+    const secondDeps = (captured?.[10] as unknown as { deps: { backendSessionId?: string; provider: { bearerToken: string } } }).deps;
+
+    assert.strictEqual(firstDeps.backendSessionId, 'thread-preserved');
+    assert.strictEqual(secondDeps.backendSessionId, 'thread-preserved');
+    assert.notStrictEqual(firstDeps.provider.bearerToken, secondDeps.provider.bearerToken);
+    firstDeps.onFatal();
+    assert.strictEqual(registry.processStatus().leases, 1, 'old generation must not revoke its replacement');
+    assert.strictEqual((await service.getSession(session.id, workspace.id))?.providerRoute?.state, 'ready');
+    await service.closeRuntime(session.id);
+    assert.strictEqual((await service.getSession(session.id, workspace.id))?.providerRoute, undefined);
+  });
+
+  it('fails closed at route admission before constructing Codex and returns a safe reason code', async () => {
+    registerBackendRuntime('codex', {
+      resolveBinaryPath: () => '/fake/codex', healthCheck: async () => true,
+    });
+    const registry = new ProviderRouteRegistry({ limits: { maxLeases: 1 } });
+    registry.register({
+      sessionId: 'occupied', generation: 'g1',
+      upstream: { providerId: 'occupied-provider', baseUrl: 'https://example.com/v1', credential: 'secret', model: 'm' },
+    });
+    await service.closeAllRuntimes();
+    service = new ChatService(undefined, async () => null, registry);
+    const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'comate-codex-route-capacity-'));
+    const workspace = await workspaceStore.create({ name: 'W', folderPath });
+    const provider = workspaceStore.createProvider({
+      name: 'Chat route', authToken: 'credential-sentinel',
+      configuration: {
+        schemaVersion: 1,
+        endpoints: { openai: { enabled: true, baseUrl: 'https://example.com/v1', format: 'openai-chat-completions' } },
+        models: { codex: 'model-1' }, openCode: { protocol: 'openai' }, claude: {}, codex: {},
+      },
+    });
+    const session = workspaceStore.createLocalSession(workspace.id, 'S', undefined, provider.id, 'gui');
+    workspaceStore.updateSessionBackend(session.id, 'codex');
+
+    await assert.rejects(
+      () => service.getOrCreateRuntime(session.id, workspace.id),
+      (error: unknown) => (error as { code?: string }).code === 'PROVIDER_ROUTE_LEASE_CAPACITY',
+    );
+    assert.strictEqual(captured, undefined, 'Codex must not be constructed before route readiness');
+    const projection = await service.getSession(session.id, workspace.id);
+    assert.strictEqual(projection?.providerRoute?.code, 'lease_capacity');
+    assert.doesNotMatch(JSON.stringify(projection), /credential-sentinel|cap_|https:\/\//);
+  });
+
+  it('rejects unsupported third-party Codex effort and every speed selection with stable codes', async () => {
+    const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'comate-codex-validation-'));
+    const workspace = await workspaceStore.create({ name: 'W', folderPath });
+    const provider = workspaceStore.createProvider({
+      name: 'Kimi', authToken: 'secret',
+      configuration: {
+        schemaVersion: 1,
+        endpoints: { openai: { enabled: true, baseUrl: 'https://api.kimi.com/coding/v1', format: 'openai-chat-completions' } },
+        models: { codex: 'kimi-k2.5' }, openCode: { protocol: 'openai' }, claude: {},
+        codex: { effortByModel: { 'kimi-k2.5': ['low', 'high'] } },
+      },
+    });
+    await assert.rejects(
+      () => service.createSession({ workspaceId: workspace.id, name: 'bad effort', backend: 'codex', providerId: provider.id, codexModel: 'kimi-k2.5', codexEffort: 'medium' }),
+      (error: unknown) => (error as { code?: string }).code === 'CODEX_EFFORT_UNSUPPORTED',
+    );
+    await assert.rejects(
+      () => service.createSession({ workspaceId: workspace.id, name: 'bad speed', backend: 'codex', providerId: provider.id, codexModel: 'kimi-k2.5', codexEffort: 'high', codexSpeed: 'fast' }),
+      (error: unknown) => (error as { code?: string }).code === 'THIRD_PARTY_CODEX_SPEED_UNSUPPORTED',
+    );
+  });
+
+  it('preserves an invalidated stored effort as unsupported and blocks dispatch until replacement', async () => {
+    registerBackendRuntime('codex', {
+      resolveBinaryPath: () => '/fake/codex', healthCheck: async () => true,
+    });
+    const folderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'comate-codex-effort-invalidation-'));
+    const workspace = await workspaceStore.create({ name: 'W', folderPath });
+    const makeProvider = (name: string, model: string, efforts: Array<'low' | 'high'>) => workspaceStore.createProvider({
+      name, authToken: `${name}-secret`,
+      configuration: {
+        schemaVersion: 1,
+        endpoints: { openai: { enabled: true, baseUrl: 'https://example.com/v1', format: 'openai-chat-completions' } },
+        models: { codex: model }, openCode: { protocol: 'openai' }, claude: {},
+        codex: { effortByModel: { [model]: efforts } },
+      },
+    });
+    const first = makeProvider('First', 'model-1', ['high']);
+    const second = makeProvider('Second', 'model-2', ['low']);
+    const session = await service.createSession({
+      workspaceId: workspace.id, name: 'S', backend: 'codex', providerId: first.id,
+      codexModel: 'model-1', codexEffort: 'high',
+    });
+
+    const updated = await service.updateSession(session.id, {
+      providerId: second.id, codexModel: 'model-2',
+    }, workspace.id);
+
+    assert.strictEqual(updated?.codexEffort, 'high');
+    assert.deepStrictEqual(updated?.codexProviderSelection, {
+      state: 'unsupported', code: 'CODEX_EFFORT_UNSUPPORTED', model: 'model-2',
+      supportedEfforts: ['low'], speedSupported: false,
+    });
+    await assert.rejects(
+      () => service.getOrCreateRuntime(session.id, workspace.id),
+      (error: unknown) => (error as { code?: string }).code === 'CODEX_EFFORT_UNSUPPORTED',
+    );
   });
 
   it('rejects with a clear error when the session backend has no registered runtime', async () => {
@@ -5741,6 +5964,9 @@ describe('chat-service backend review fixes (P1/P2)', { concurrency: false }, ()
 
   it('waits for runtime close before a non-draft Codex settings update resolves', async () => {
     const { workspace, session } = await createFixture('gui', 'codex');
+    // This test exercises the native Account settings lifecycle; third-party
+    // selections are validated against their Provider capability declaration.
+    workspaceStore.updateLocalSession(session.id, { providerId: null });
     workspaceStore.clearDraftFlag(session.id);
 
     let releaseClose!: () => void;

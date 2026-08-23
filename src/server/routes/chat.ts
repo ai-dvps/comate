@@ -86,6 +86,10 @@ router.post('/sessions', async (req, res) => {
     res.status(201).json(session);
   } catch (error) {
     console.error('Failed to create session:', error);
+    if (error instanceof ChatError) {
+      res.status(error.statusCode).json({ error: error.message, code: error.code });
+      return;
+    }
     res.status(500).json({ error: 'Failed to create session' });
   }
 });
