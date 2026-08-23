@@ -268,10 +268,13 @@ describe('CodexBackendDriver interactions', () => {
       name: 'Comate route',
       baseUrl: 'http://127.0.0.1:43210/codex-route/opaque-id',
       bearerToken: 'opaque-route-bearer',
+      disableHostedTools: true,
     });
     assert.match(JSON.stringify(config), /opaque-route-bearer/);
     assert.doesNotMatch(JSON.stringify(config), /provider-secret/);
     assert.deepStrictEqual(config, {
+      web_search: 'disabled',
+      tools: { web_search: null },
       model_providers: {
         'comate-enterprise': {
           name: 'Comate route',

@@ -4,7 +4,12 @@ import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
 import type { HookCallback, Query, SDKMessage, SDKSessionInfo, SessionMessage, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
-import type { ChatSession, CreateSessionInput, UpdateSessionInput } from '../models/session.js';
+import type {
+  ChatSession,
+  CodexProviderSelectionFailureCode,
+  CreateSessionInput,
+  UpdateSessionInput,
+} from '../models/session.js';
 import type { Workspace } from '../models/workspace.js';
 import { store as workspaceStore, type BotEscalationEntry } from '../storage/sqlite-store.js';
 import type {
@@ -84,11 +89,17 @@ import {
   type McpToolAnnotationMap,
 } from './mcp-tool-classification.js';
 import { ensureSandboxProbe, isSandboxDegraded } from './sandbox-probe.js';
-import type { Provider } from '../models/provider.js';
+import type { Provider, ProviderCodexEffort } from '../models/provider.js';
 import {
   resolveProviderForAgent,
   type EffectiveProviderConfiguration,
 } from './provider-resolver.js';
+import {
+  ProviderRouteRegistry,
+  ProviderRouteRegistryError,
+  providerRouteRegistry,
+  type ProviderRouteLease,
+} from './provider-route-registry.js';
 import {
   BROWSER_MCP_SERVER_KEY,
   BROWSER_STREAM_CLOSE_TIMEOUT_MS,
@@ -395,6 +406,9 @@ export class ChatService {
   private idleTimeouts = new Map<string, NodeJS.Timeout>();
   private runtimeContexts = new Map<string, RuntimeContext>();
   private runtimeProviderSnapshots = new Map<string, RuntimeResolutionSnapshot>();
+  private runtimeProviderRoutes = new Map<string, ProviderRouteLease>();
+  private providerRouteReadyAt = new Map<string, string>();
+  private providerRouteFailures = new Map<string, { providerId: string; generation?: string; code: string; updatedAt: string }>();
   private runtimeProviderGeneration = 0;
   private rebuildEpochs = new Map<string, number>();
   private rebuildChains = new Map<string, Promise<void>>();
@@ -440,7 +454,11 @@ export class ChatService {
   private readonly getGlobalOutputStyle: () => Promise<string | null>;
   readonly serverNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
-  constructor(sdkClient?: SdkClient, outputStyleLoader: () => Promise<string | null> = getOutputStyle) {
+  constructor(
+    sdkClient?: SdkClient,
+    outputStyleLoader: () => Promise<string | null> = getOutputStyle,
+    private readonly routeRegistry: ProviderRouteRegistry = providerRouteRegistry,
+  ) {
     this.sdkClient = sdkClient ?? new SdkClient();
     this.getGlobalOutputStyle = outputStyleLoader;
     browserApiBrokerService.configureApprovalRequester(async ({
@@ -682,14 +700,15 @@ export class ChatService {
       }
     }
 
-    return allSessions;
+    return allSessions.map((session) => this.withProviderDiagnostics(session));
   }
 
   async createSession(input: CreateSessionInput): Promise<ChatSession> {
     if (input.providerId !== undefined && input.providerId !== null && !workspaceStore.getProvider(input.providerId)) {
       throw new ChatError(`Provider '${input.providerId}' not found`, 'PROVIDER_NOT_FOUND', 400);
     }
-    return workspaceStore.createLocalSession(
+    await this.validateCodexSelectionForCreate(input);
+    return this.withProviderDiagnostics(workspaceStore.createLocalSession(
       input.workspaceId,
       input.name,
       input.approvalMode,
@@ -702,7 +721,7 @@ export class ChatService {
       input.codexModel,
       input.codexEffort,
       input.codexSpeed,
-    );
+    ));
   }
 
   async getSession(id: string, workspaceId: string): Promise<ChatSession | null> {
@@ -734,7 +753,7 @@ export class ChatService {
           session.botId = localSession?.botId;
           session.source = localSession?.source;
           workspaceStore.syncSdkSession(session);
-          return session;
+          return this.withProviderDiagnostics(session);
         }
       } catch {
         // Ignore SDK errors, fall back to local DB
@@ -742,13 +761,18 @@ export class ChatService {
     }
 
     // Fall back to local DB
-    return localSession;
+    return localSession ? this.withProviderDiagnostics(localSession) : null;
   }
 
   async updateSession(id: string, input: UpdateSessionInput, workspaceId: string): Promise<ChatSession | null> {
     if (input.providerId !== undefined && input.providerId !== null && !workspaceStore.getProvider(input.providerId)) {
       throw new ChatError(`Provider '${input.providerId}' not found`, 'PROVIDER_NOT_FOUND', 400);
     }
+    // Validate the complete candidate before any partial metadata mutation.
+    const localSession = workspaceStore.getLocalSession(id);
+    if (!localSession) return null;
+    await this.validateCodexSelectionForUpdate(localSession, input);
+
     // Persist isWip to DB (applies to both drafts and SDK sessions)
     if (input.isWip !== undefined) {
       workspaceStore.setSessionMetadata(id, input.isWip);
@@ -760,11 +784,12 @@ export class ChatService {
     }
 
     // Check local DB for current provider before update
-    const localSession = workspaceStore.getLocalSession(id);
     const previousProviderId = localSession?.providerId;
     const codexSettingsChanged = input.codexModel !== undefined
       || input.codexEffort !== undefined
       || input.codexSpeed !== undefined;
+    const providerSettingsChanged = (input.providerId !== undefined && input.providerId !== previousProviderId)
+      || codexSettingsChanged;
     // Backend changes are free while the session is a draft (R4: the lock
     // lands at the first message). Once the conversation has started, a
     // different backend is a conflict, not a silent no-op. A change with a
@@ -803,9 +828,12 @@ export class ChatService {
       if (input.codexEffort !== undefined) draftInput.codexEffort = input.codexEffort;
       if (input.codexSpeed !== undefined) draftInput.codexSpeed = input.codexSpeed;
       const updated = workspaceStore.updateLocalSession(id, draftInput);
+      if (providerSettingsChanged) {
+        this.providerRouteFailures.delete(id);
+      }
 
       // Schedule rebuild if provider changed so next message creates a fresh runtime
-      if ((input.providerId !== undefined && input.providerId !== previousProviderId) || codexSettingsChanged) {
+      if (providerSettingsChanged) {
         const runtime = this.getRuntimeIfExists(id);
         if (runtime) {
           sidecarLog(`[ChatService] scheduling rebuild for runtime ${id} due to provider change`);
@@ -813,7 +841,7 @@ export class ChatService {
         }
       }
 
-      return updated;
+      return updated ? this.withProviderDiagnostics(updated) : null;
     }
 
     // Otherwise rename the SDK session
@@ -859,10 +887,13 @@ export class ChatService {
     }
     if (Object.keys(localUpdates).length > 0) {
       workspaceStore.updateLocalSession(id, localUpdates);
+      if (providerSettingsChanged) {
+        this.providerRouteFailures.delete(id);
+      }
     }
 
     // Close runtime if provider changed so next message creates a fresh one
-    if ((input.providerId !== undefined && input.providerId !== previousProviderId) || codexSettingsChanged) {
+    if (providerSettingsChanged) {
       const runtime = this.getRuntimeIfExists(id);
       if (runtime) {
         sidecarLog(`[ChatService] closing runtime ${id} due to provider change`);
@@ -875,7 +906,7 @@ export class ChatService {
     // locally-mirrored session instead.
     if (isOpencodeBackend || isCodexBackend) {
       const local = workspaceStore.getLocalSession(id);
-      if (local) return local;
+      if (local) return this.withProviderDiagnostics(local);
     }
 
     // Return updated session info
@@ -892,9 +923,10 @@ export class ChatService {
       session.codexModel = localSession?.codexModel;
       session.codexEffort = localSession?.codexEffort;
       session.codexSpeed = localSession?.codexSpeed;
-      return session;
+      return this.withProviderDiagnostics(session);
     }
-    return workspaceStore.getLocalSession(id);
+    const fallback = workspaceStore.getLocalSession(id);
+    return fallback ? this.withProviderDiagnostics(fallback) : null;
   }
 
   /**
@@ -951,6 +983,8 @@ export class ChatService {
     // Deletion is terminal even when the runtime still exists. closeRuntime
     // deterministically drains runtime-owned browser API state first.
     await this.closeRuntime(id);
+    this.providerRouteFailures.delete(id);
+    this.providerRouteReadyAt.delete(id);
     browserTaskStateService.purgeSession(workspaceId, id);
     if (localSession && localSession.isDraft) {
       sessionCapabilityService.revokeForSession(id);
@@ -1482,6 +1516,97 @@ export class ChatService {
     return (await getDefaultBackend()) ?? 'claude';
   }
 
+  private async validateCodexSelectionForCreate(input: CreateSessionInput): Promise<void> {
+    const backend = input.backend ?? (await getDefaultBackend()) ?? 'claude';
+    if (backend !== 'codex' || !input.providerId) return;
+    const provider = workspaceStore.getProvider(input.providerId);
+    if (!provider) return; // The caller's Provider existence guard owns this error.
+    const effective = resolveProviderForAgent(provider, 'codex');
+    if (!effective.available) {
+      throw new ChatError('The selected Provider is unavailable for Codex', 'PROVIDER_CONFIGURATION_UNAVAILABLE', 409);
+    }
+    this.assertThirdPartyCodexSelection({
+      model: input.codexModel,
+      effort: input.codexEffort,
+      speed: input.codexSpeed,
+    }, effective, false);
+  }
+
+  private async validateCodexSelectionForUpdate(session: ChatSession, input: UpdateSessionInput): Promise<void> {
+    const backend = input.backend ?? session.backend ?? (await getDefaultBackend()) ?? 'claude';
+    const providerId = input.providerId === null ? undefined : input.providerId ?? session.providerId;
+    if (backend !== 'codex' || !providerId) return;
+    const provider = workspaceStore.getProvider(providerId);
+    if (!provider) return;
+    const effective = resolveProviderForAgent(provider, 'codex');
+    if (!effective.available) {
+      throw new ChatError('The selected Provider is unavailable for Codex', 'PROVIDER_CONFIGURATION_UNAVAILABLE', 409);
+    }
+    this.assertThirdPartyCodexSelection({
+      model: input.codexModel === null ? undefined : input.codexModel ?? session.codexModel,
+      effort: input.codexEffort === null ? undefined : input.codexEffort ?? session.codexEffort,
+      speed: input.codexSpeed === null ? undefined : input.codexSpeed ?? session.codexSpeed,
+    }, effective, input.codexEffort === undefined);
+  }
+
+  private assertThirdPartyCodexSelection(
+    selection: { model?: string; effort?: string; speed?: string },
+    effective: Extract<EffectiveProviderConfiguration, { available: true }>,
+    allowUnsupportedStoredEffort: boolean,
+  ): void {
+    if (selection.model && selection.model !== effective.model) {
+      throw new ChatError('The selected model is not available from this Provider', 'CODEX_MODEL_UNSUPPORTED', 409);
+    }
+    if (selection.effort && !effective.supportedEfforts.includes(selection.effort as ProviderCodexEffort)
+        && !allowUnsupportedStoredEffort) {
+      throw new ChatError('The selected effort is not available for this Provider model', 'CODEX_EFFORT_UNSUPPORTED', 409);
+    }
+    if (selection.speed) {
+      throw new ChatError('Third-party Codex Providers do not support speed selection', 'THIRD_PARTY_CODEX_SPEED_UNSUPPORTED', 409);
+    }
+  }
+
+  private withProviderDiagnostics(session: ChatSession): ChatSession {
+    const projected = { ...session };
+    let selectsChatRoute = false;
+    if (session.backend === 'codex' && session.providerId) {
+      const provider = workspaceStore.getProvider(session.providerId);
+      const effective = provider ? resolveProviderForAgent(provider, 'codex') : undefined;
+      if (effective?.available) {
+        selectsChatRoute = effective.mode === 'codex-chat-route';
+        let code: CodexProviderSelectionFailureCode | undefined;
+        if (session.codexModel && session.codexModel !== effective.model) code = 'CODEX_MODEL_UNSUPPORTED';
+        else if (session.codexEffort && !effective.supportedEfforts.includes(session.codexEffort as ProviderCodexEffort)) code = 'CODEX_EFFORT_UNSUPPORTED';
+        else if (session.codexSpeed) code = 'THIRD_PARTY_CODEX_SPEED_UNSUPPORTED';
+        projected.codexProviderSelection = {
+          state: code ? 'unsupported' : 'supported',
+          ...(code ? { code } : {}),
+          model: effective.model,
+          supportedEfforts: [...effective.supportedEfforts],
+          speedSupported: false,
+        };
+      }
+    }
+    const lease = this.runtimeProviderRoutes.get(session.id);
+    if (lease) {
+      const status = this.routeRegistry.status(lease);
+      if (status.state === 'ready') {
+        projected.providerRoute = {
+          mode: 'codex-chat-route', state: 'ready', providerId: status.providerId!,
+          generation: status.generation,
+          activeRequests: status.activeRequests,
+          historyBytes: status.historyBytes,
+          bufferedResponseBytes: status.bufferedResponseBytes,
+          updatedAt: this.providerRouteReadyAt.get(session.id) ?? new Date().toISOString(),
+        };
+      }
+    } else if (selectsChatRoute) {
+      const failed = this.providerRouteFailures.get(session.id);
+      if (failed) projected.providerRoute = { mode: 'codex-chat-route', state: 'failed', ...failed };
+    }
+    return projected;
+  }
+
   private resolveRuntimeProvider(session: ChatSession, backend: BackendId): RuntimeProviderResolution {
     if (backend === 'codex' && !session.providerId) {
       return { source: 'native', revision: 'native' };
@@ -1508,12 +1633,12 @@ export class ChatService {
         409,
       );
     }
-    if (backend === 'codex' && effective.mode !== 'direct-openai-responses') {
-      throw new ChatError(
-        `Provider '${provider.name}' requires the Codex Chat compatibility route, which is not available yet`,
-        'PROVIDER_CONFIGURATION_UNAVAILABLE',
-        409,
-      );
+    if (backend === 'codex') {
+      this.assertThirdPartyCodexSelection({
+        model: session.codexModel,
+        effort: session.codexEffort,
+        speed: session.codexSpeed,
+      }, effective, false);
     }
     const revision = createHash('sha256')
       .update(JSON.stringify(provider.configuration))
@@ -1525,7 +1650,10 @@ export class ChatService {
 
   private snapshotMatches(sessionId: string, resolution: RuntimeProviderResolution): boolean {
     const snapshot = this.runtimeProviderSnapshots.get(sessionId);
-    return Boolean(snapshot
+    const routeReady = resolution.effective?.mode !== 'codex-chat-route'
+      || Boolean(this.runtimeProviderRoutes.get(sessionId)
+        && this.routeRegistry.status(this.runtimeProviderRoutes.get(sessionId)!).state === 'ready');
+    return Boolean(routeReady && snapshot
       && snapshot.source === resolution.source
       && snapshot.providerId === resolution.providerId
       && snapshot.revision === resolution.revision);
@@ -1699,17 +1827,75 @@ export class ChatService {
         diagLog(`[ChatService] runtime ${sessionId} testClaudeBinary elapsed=${Date.now() - testStart}ms`);
       }
 
+      const codexSettings = backend === 'codex'
+        ? await this.codexRuntimeSettings(
+            session,
+            providerResolution.source === 'native',
+            providerResolution.effective?.model,
+          )
+        : undefined;
+      const runtimeGeneration = ++this.runtimeProviderGeneration;
+      let routeLease: ProviderRouteLease | undefined;
+      const routedResolution = providerResolution.source !== 'native'
+        && providerResolution.effective.mode === 'codex-chat-route'
+        ? providerResolution
+        : undefined;
+      if (backend === 'codex' && !routedResolution) {
+        this.providerRouteFailures.delete(sessionId);
+      }
+      if (backend === 'codex' && routedResolution) {
+        const generation = `runtime-${runtimeGeneration}-${randomUUID()}`;
+        try {
+          routeLease = this.routeRegistry.register({
+            sessionId,
+            generation,
+            upstream: {
+              providerId: routedResolution.providerId,
+              baseUrl: routedResolution.effective.baseUrl,
+              credential: routedResolution.effective.credential,
+              model: routedResolution.effective.model,
+              promptCacheRouting: routedResolution.provider.configuration?.codex.promptCacheRouting,
+              effortWireMapping: routedResolution.provider.configuration?.codex
+                .effortWireMappingByModel?.[routedResolution.effective.model],
+              suppressSamplingParameters: routedResolution.effective.vendorId === 'kimi',
+            },
+          });
+          if (this.routeRegistry.status(routeLease).state !== 'ready') {
+            this.routeRegistry.close(routeLease);
+            throw new ProviderRouteRegistryError('route_unavailable');
+          }
+          this.runtimeProviderRoutes.set(sessionId, routeLease);
+          this.providerRouteReadyAt.set(sessionId, new Date().toISOString());
+          this.providerRouteFailures.delete(sessionId);
+        } catch (error) {
+          const code = error instanceof ProviderRouteRegistryError ? error.code : 'route_unavailable';
+          this.providerRouteFailures.set(sessionId, {
+            providerId: routedResolution.providerId,
+            generation,
+            code,
+            updatedAt: new Date().toISOString(),
+          });
+          throw new ChatError('The Codex Provider route could not be started', `PROVIDER_ROUTE_${code.toUpperCase()}`, 503);
+        }
+      }
+
       const driver = backend === 'codex'
         ? new CodexBackendDriver({
             directory: normalizeWindowsPath(workspace.folderPath),
             backendSessionId: session.backendSessionId,
-            ...await this.codexRuntimeSettings(session, providerResolution.source === 'native', providerResolution.effective?.model),
+            ...codexSettings,
             ...(providerResolution.source !== 'native' ? {
               provider: {
                 name: providerResolution.provider.name,
-                baseUrl: providerResolution.effective.baseUrl,
-                bearerToken: providerResolution.effective.credential,
+                baseUrl: routeLease
+                  ? `${getSidecarBaseUrl()}/provider-route/${routeLease.routeId}`
+                  : providerResolution.effective.baseUrl,
+                bearerToken: routeLease?.bearer ?? providerResolution.effective.credential,
+                ...(routeLease ? { disableHostedTools: true } : {}),
               },
+            } : {}),
+            ...(routeLease ? {
+              onFatal: () => this.releaseProviderRoute(routeLease, 'CODEX_RUNTIME_FAILED'),
             } : {}),
             onBackendSessionId: (backendSessionId) =>
               workspaceStore.updateSessionBackendSessionId(sessionId, backendSessionId),
@@ -1761,7 +1947,7 @@ export class ChatService {
         source: providerResolution.source,
         providerId: providerResolution.providerId,
         revision: providerResolution.revision,
-        generation: ++this.runtimeProviderGeneration,
+        generation: runtimeGeneration,
       });
       this.runtimeContexts.set(sessionId, runtimeContext);
       this.reconcileIdleClose(sessionId);
@@ -1783,6 +1969,7 @@ export class ChatService {
       // early-returns and would never clear the bot-gate bookkeeping
       // (sessionSpawnRoles is set inside buildSdkOptions) — drop it here.
       if (!this.runtimes.has(sessionId)) {
+        this.releaseProviderRoute(this.runtimeProviderRoutes.get(sessionId), 'RUNTIME_CREATION_FAILED');
         this.sessionSpawnRoles.delete(sessionId);
         this.demotionRebuilds.delete(sessionId);
         this.sessionOverrideDenies.delete(sessionId);
@@ -1793,6 +1980,8 @@ export class ChatService {
 
   async closeRuntime(sessionId: string): Promise<void> {
     const runtime = this.runtimes.get(sessionId);
+    const routeLease = this.runtimeProviderRoutes.get(sessionId);
+    this.releaseProviderRoute(routeLease);
     this.runtimeProviderSnapshots.delete(sessionId);
     // Runtime replacement is terminal for capture drains, opaque auth handles,
     // and exact-operation approvals. The browser process/page may stay alive.
@@ -1836,6 +2025,25 @@ export class ChatService {
     }
     await runtime.close();
     this.onRuntimeClose?.(sessionId);
+  }
+
+  private releaseProviderRoute(lease: ProviderRouteLease | undefined, failureCode?: string): void {
+    if (!lease) return;
+    const isCurrent = this.runtimeProviderRoutes.get(lease.sessionId)?.routeId === lease.routeId;
+    const beforeClose = this.routeRegistry.status(lease);
+    this.routeRegistry.close(lease);
+    if (isCurrent) {
+      this.runtimeProviderRoutes.delete(lease.sessionId);
+      this.providerRouteReadyAt.delete(lease.sessionId);
+    }
+    if (failureCode && isCurrent) {
+      this.providerRouteFailures.set(lease.sessionId, {
+        providerId: beforeClose.providerId ?? 'unavailable',
+        generation: lease.generation,
+        code: failureCode,
+        updatedAt: new Date().toISOString(),
+      });
+    }
   }
 
   private disposeBrowserRuntimeEphemera(sessionId: string): void {
@@ -2482,7 +2690,10 @@ export class ChatService {
     nativeAccount: boolean,
     providerModel?: string,
   ): Promise<{ model?: string; effort?: string; serviceTier?: string }> {
-    if (!nativeAccount) return providerModel ? { model: providerModel } : {};
+    if (!nativeAccount) return {
+      ...(providerModel ? { model: providerModel } : {}),
+      ...(session.codexEffort ? { effort: session.codexEffort } : {}),
+    };
     const defaults = session.backendSessionId ? {} : await getCodexDefaults();
     const model = session.codexModel ?? defaults.model;
     const effort = session.codexEffort ?? defaults.effort;

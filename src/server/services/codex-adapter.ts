@@ -14,6 +14,7 @@ interface CodexAdapterDeps {
   serviceTier?: string;
   provider?: CodexProviderOverride;
   onBackendSessionId(id: string): void;
+  onFatal?(error: unknown): void;
   manager?: CodexAppServerManager;
 }
 
@@ -21,6 +22,8 @@ export interface CodexProviderOverride {
   name: string;
   baseUrl: string;
   bearerToken: string;
+  /** Chat compatibility routes cannot represent Codex-hosted tools. */
+  disableHostedTools?: boolean;
 }
 
 class AsyncMessageQueue {
@@ -191,6 +194,11 @@ export class CodexBackendDriver implements BackendDriver {
       }
     } catch (error) {
       this.rejectPendingAdmissions(error);
+      try {
+        this.deps.onFatal?.(error);
+      } catch {
+        // Lifecycle cleanup must not replace the sanitized Codex error result.
+      }
       this.queue.push(resultMessage(
         this.threadId ?? '',
         redactCodexError(error, this.deps.provider?.bearerToken),
@@ -409,6 +417,10 @@ export function codexThreadConfig(
   return {
     ...(Object.keys(mcpServers).length > 0 ? { mcp_servers: mcpServers } : {}),
     ...(provider ? {
+      ...(provider.disableHostedTools ? {
+        web_search: 'disabled',
+        tools: { web_search: null },
+      } : {}),
       model_providers: {
         'comate-enterprise': {
           name: provider.name,
