@@ -393,7 +393,7 @@
     "codexBedrockAccount": "Amazon Bedrock 账户",
     "codexSignedIn": "已登录",
     "codexModelsAvailable": "可用模型 {{count}} 个",
-    "codexDefaultModel": "新 Codex 会话的默认模型",
+    "codexDefaultModel": "默认模型",
     "codexDefaultEffort": "默认推理强度",
     "codexDefaultSpeed": "默认速度",
     "codexModelDefault": "模型默认值",
