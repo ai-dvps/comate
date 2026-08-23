@@ -1,7 +1,7 @@
 import '../test-utils/test-env.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { discoverProviderModels, hasSnapshottedProviderChange, publicProvider, runProviderHealthCheck } from './providers.js';
+import { discoverProviderModels, hasDefaultProviderChange, hasSnapshottedProviderChange, publicProvider, runProviderHealthCheck } from './providers.js';
 import type { Provider } from '../models/provider.js';
 import type { BrowserDirectHttpRequest } from '../services/browser-direct-http-client.js';
 
@@ -42,6 +42,13 @@ describe('provider API projection', () => {
     const configuration = structuredClone(provider.configuration!);
     configuration.models.codex = 'edited-model';
     assert.equal(hasSnapshottedProviderChange({ configuration }, provider), true);
+  });
+
+  it('recognizes a pure default switch independently of configuration edits', () => {
+    const provider = canonicalProvider();
+    assert.equal(hasSnapshottedProviderChange({ isDefault: false }, provider), false);
+    assert.equal(hasDefaultProviderChange({ isDefault: false }, provider), true);
+    assert.equal(hasDefaultProviderChange({ isDefault: true }, provider), false);
   });
 
   it('does not issue health or discovery requests for incompatible selections', async () => {

@@ -1,16 +1,13 @@
-import type { Provider } from '../models/provider.js';
-import { providerVendorFromProvenance } from './provider-presets.js';
+import type { EffectiveProviderConfiguration } from './provider-resolver.js';
 
 /** Default number of consecutive identical tool calls that triggers a denial. */
 export const DEFAULT_KIMI_LOOP_THRESHOLD = 3;
 
 /**
- * Detects whether a provider is a Kimi/Moonshot model based on the model name
- * or base URL. This is intentionally simple so no new provider flag or UI
- * setting is required.
+ * Detects Kimi only from the resolver's immutable preset provenance.
  */
-export function isKimiProvider(provider?: Provider): boolean {
-  return providerVendorFromProvenance(provider?.configuration?.preset) === 'kimi';
+export function isKimiProvider(provider?: EffectiveProviderConfiguration): boolean {
+  return provider?.vendorId === 'kimi';
 }
 
 export interface KimiLoopDetectorOptions {

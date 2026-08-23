@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { randomUUID, type UUID } from 'crypto';
+import { createHash, randomUUID, type UUID } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
@@ -85,6 +85,10 @@ import {
 } from './mcp-tool-classification.js';
 import { ensureSandboxProbe, isSandboxDegraded } from './sandbox-probe.js';
 import type { Provider } from '../models/provider.js';
+import {
+  resolveProviderForAgent,
+  type EffectiveProviderConfiguration,
+} from './provider-resolver.js';
 import {
   BROWSER_MCP_SERVER_KEY,
   BROWSER_STREAM_CLOSE_TIMEOUT_MS,
@@ -324,6 +328,23 @@ type RuntimeContext = {
   botUserId?: string;
 };
 
+type RuntimeProviderResolution =
+  | { source: 'native'; providerId?: undefined; revision: 'native'; effective?: undefined; provider?: undefined }
+  | {
+      source: 'explicit' | 'inherited';
+      providerId: string;
+      revision: string;
+      effective: Extract<EffectiveProviderConfiguration, { available: true }>;
+      provider: Provider;
+    };
+
+interface RuntimeResolutionSnapshot {
+  source: RuntimeProviderResolution['source'];
+  providerId?: string;
+  revision: string;
+  generation: number;
+}
+
 let RUNTIME_IDLE_GRACE_PERIOD_MS = 10 * 60 * 1000; // 10 minutes
 
 export function __setIdleGracePeriodForTesting(ms: number): void {
@@ -373,6 +394,10 @@ export class ChatService {
   private creatingRuntimes = new Map<string, Promise<SessionRuntime>>();
   private idleTimeouts = new Map<string, NodeJS.Timeout>();
   private runtimeContexts = new Map<string, RuntimeContext>();
+  private runtimeProviderSnapshots = new Map<string, RuntimeResolutionSnapshot>();
+  private runtimeProviderGeneration = 0;
+  private rebuildEpochs = new Map<string, number>();
+  private rebuildChains = new Map<string, Promise<void>>();
   private pendingRebuilds = new Map<string, RuntimeContext>();
   private rebuildPollers = new Map<string, NodeJS.Timeout>();
   /**
@@ -661,6 +686,9 @@ export class ChatService {
   }
 
   async createSession(input: CreateSessionInput): Promise<ChatSession> {
+    if (input.providerId !== undefined && input.providerId !== null && !workspaceStore.getProvider(input.providerId)) {
+      throw new ChatError(`Provider '${input.providerId}' not found`, 'PROVIDER_NOT_FOUND', 400);
+    }
     return workspaceStore.createLocalSession(
       input.workspaceId,
       input.name,
@@ -718,6 +746,9 @@ export class ChatService {
   }
 
   async updateSession(id: string, input: UpdateSessionInput, workspaceId: string): Promise<ChatSession | null> {
+    if (input.providerId !== undefined && input.providerId !== null && !workspaceStore.getProvider(input.providerId)) {
+      throw new ChatError(`Provider '${input.providerId}' not found`, 'PROVIDER_NOT_FOUND', 400);
+    }
     // Persist isWip to DB (applies to both drafts and SDK sessions)
     if (input.isWip !== undefined) {
       workspaceStore.setSessionMetadata(id, input.isWip);
@@ -1005,12 +1036,11 @@ export class ChatService {
     const existing = opencodeServerManager.getInstance(comateSessionId);
     if (existing) return existing;
     const localSession = workspaceStore.getLocalSession(comateSessionId);
-    const provider = localSession?.providerId
-      ? workspaceStore.getProvider(localSession.providerId)
-      : workspaceStore.getDefaultProvider();
-    if (!provider) return undefined;
+    if (!localSession) return undefined;
+    const resolution = this.resolveRuntimeProvider(localSession, 'opencode');
+    if (resolution.source === 'native') return undefined;
     return opencodeServerManager.ensureServer(comateSessionId, workspace.folderPath, {
-      config: { ...buildServeConfig(provider, provider.model ?? ''), mcp: {} },
+      config: { ...buildServeConfig(resolution.effective, resolution.provider.name), mcp: {} },
       env: process.env,
     });
   }
@@ -1452,6 +1482,71 @@ export class ChatService {
     return (await getDefaultBackend()) ?? 'claude';
   }
 
+  private resolveRuntimeProvider(session: ChatSession, backend: BackendId): RuntimeProviderResolution {
+    if (backend === 'codex' && !session.providerId) {
+      return { source: 'native', revision: 'native' };
+    }
+    const source = session.providerId ? 'explicit' : 'inherited';
+    const provider = session.providerId
+      ? workspaceStore.getProvider(session.providerId)
+      : workspaceStore.getDefaultProvider();
+    if (!provider) {
+      if (session.providerId) {
+        throw new ChatError(
+          `Provider '${session.providerId}' referenced by this session is unavailable`,
+          'PROVIDER_REFERENCE_UNAVAILABLE',
+          409,
+        );
+      }
+      throw new ChatError('No LLM provider configured. Add a provider in Settings.', 'PROVIDER_NOT_FOUND', 500);
+    }
+    const effective = resolveProviderForAgent(provider, backend);
+    if (!effective.available) {
+      throw new ChatError(
+        `Provider '${provider.name}' is unavailable for ${backend}: ${effective.reason}`,
+        'PROVIDER_CONFIGURATION_UNAVAILABLE',
+        409,
+      );
+    }
+    if (backend === 'codex' && effective.mode !== 'direct-openai-responses') {
+      throw new ChatError(
+        `Provider '${provider.name}' requires the Codex Chat compatibility route, which is not available yet`,
+        'PROVIDER_CONFIGURATION_UNAVAILABLE',
+        409,
+      );
+    }
+    const revision = createHash('sha256')
+      .update(JSON.stringify(provider.configuration))
+      .update('\0')
+      .update(provider.authToken)
+      .digest('hex');
+    return { source, providerId: provider.id, revision, effective, provider };
+  }
+
+  private snapshotMatches(sessionId: string, resolution: RuntimeProviderResolution): boolean {
+    const snapshot = this.runtimeProviderSnapshots.get(sessionId);
+    return Boolean(snapshot
+      && snapshot.source === resolution.source
+      && snapshot.providerId === resolution.providerId
+      && snapshot.revision === resolution.revision);
+  }
+
+  private async awaitFreshRuntime(sessionId: string, workspaceId: string, context: RuntimeContext): Promise<SessionRuntime> {
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+      const session = await this.getSession(sessionId, workspaceId);
+      if (!session) throw new ChatError('Session not found', 'SESSION_NOT_FOUND', 404);
+      const resolution = this.resolveRuntimeProvider(session, await this.resolveSessionBackend(session));
+      const runtime = this.getRuntimeIfExists(sessionId);
+      if (runtime && this.snapshotMatches(sessionId, resolution)) return runtime;
+      if (runtime && !runtime.isProcessingTurn() && !this.rebuildChains.has(sessionId)) {
+        this.scheduleRuntimeRebuild(sessionId, context, { immediate: true });
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(REBUILD_POLL_INTERVAL_MS, 100)));
+    }
+    throw new ChatError('Timed out waiting for the updated Provider runtime', 'PROVIDER_RUNTIME_REBUILD_TIMEOUT', 504);
+  }
+
   async getOrCreateRuntime(
     sessionId: string,
     workspaceId: string,
@@ -1460,7 +1555,23 @@ export class ChatService {
     botUserId?: string,
   ): Promise<SessionRuntime> {
     const runtimeContext: RuntimeContext = { workspaceId, isBotSession, botUserId };
-    const existing = this.runtimes.get(sessionId);
+    let existing = this.runtimes.get(sessionId);
+    if (existing && !existing.isClosed()) {
+      const session = await this.getSession(sessionId, workspaceId);
+      if (!session) throw new ChatError('Session not found', 'SESSION_NOT_FOUND', 404);
+      const backend = await this.resolveSessionBackend(session);
+      const freshResolution = this.resolveRuntimeProvider(session, backend);
+      if (!this.snapshotMatches(sessionId, freshResolution)) {
+        const context = this.runtimeContexts.get(sessionId) ?? runtimeContext;
+        if (existing.isProcessingTurn()) {
+          this.scheduleRuntimeRebuild(sessionId, context);
+          existing = await this.awaitFreshRuntime(sessionId, workspaceId, context);
+        } else {
+          await this.scheduleRuntimeRebuild(sessionId, context, { immediate: true });
+          existing = this.runtimes.get(sessionId);
+        }
+      }
+    }
     if (existing && !existing.isClosed()) {
       this.cancelIdleClose(sessionId);
       if (botEventHandler) {
@@ -1560,48 +1671,7 @@ export class ChatService {
       }
 
       const optionsStart = Date.now();
-      let provider = backend === 'codex' && !session.providerId
-        ? null
-        : session.providerId
-          ? workspaceStore.getProvider(session.providerId)
-          : workspaceStore.getDefaultProvider();
-
-      if (!provider && backend === 'codex' && !session.providerId) {
-        const now = new Date().toISOString();
-        provider = {
-          id: 'codex-native',
-          name: 'Codex native account',
-          baseUrl: '',
-          authToken: '',
-          protocol: 'openai-responses',
-          isDefault: false,
-          createdAt: now,
-          updatedAt: now,
-        };
-      } else if (!provider) {
-        throw new ChatError(
-          'No LLM provider configured. Add a provider in Settings.',
-          'PROVIDER_NOT_FOUND',
-          500,
-        );
-      }
-
-      if (backend === 'codex' && provider.id !== 'codex-native') {
-        if (provider.protocol !== 'openai-responses') {
-          throw new ChatError(
-            `Provider '${provider.name}' is not marked as OpenAI Responses compatible`,
-            'PROVIDER_PROTOCOL_INCOMPATIBLE',
-            409,
-          );
-        }
-        if (!provider.baseUrl.trim() || !provider.model?.trim() || !provider.authToken.trim()) {
-          throw new ChatError(
-            `Provider '${provider.name}' needs a base URL, model, and auth token for Codex`,
-            'PROVIDER_INVALID_FOR_CODEX',
-            409,
-          );
-        }
-      }
+      const providerResolution = this.resolveRuntimeProvider(session, backend);
 
       // U3 (KTD-24): spawn probe for sandboxed bot sessions. The probe's
       // negative assertions decide the failIfUnavailable pin and the gate's
@@ -1611,7 +1681,7 @@ export class ChatService {
         await ensureSandboxProbe();
       }
 
-      const options = await this.buildSdkOptions(workspace, session, isBotSession, botUserId, provider);
+      const options = await this.buildSdkOptions(workspace, session, isBotSession, botUserId, providerResolution);
       if (session.source === 'scheduled' && backend === 'claude') {
         // U4 (KTD-3, path B): scheduled runs get the completion evaluator —
         // a programmatic Stop hook that continues the session until the goal
@@ -1633,12 +1703,12 @@ export class ChatService {
         ? new CodexBackendDriver({
             directory: normalizeWindowsPath(workspace.folderPath),
             backendSessionId: session.backendSessionId,
-            ...await this.codexRuntimeSettings(session, provider.id === 'codex-native', provider.model),
-            ...(provider.id !== 'codex-native' ? {
+            ...await this.codexRuntimeSettings(session, providerResolution.source === 'native', providerResolution.effective?.model),
+            ...(providerResolution.source !== 'native' ? {
               provider: {
-                name: provider.name,
-                baseUrl: provider.baseUrl,
-                bearerToken: provider.authToken,
+                name: providerResolution.provider.name,
+                baseUrl: providerResolution.effective.baseUrl,
+                bearerToken: providerResolution.effective.credential,
               },
             } : {}),
             onBackendSessionId: (backendSessionId) =>
@@ -1649,7 +1719,8 @@ export class ChatService {
               directory: normalizeWindowsPath(workspace.folderPath),
               comateSessionId: sessionId,
               backendSessionId: session.backendSessionId,
-              provider,
+              provider: providerResolution.effective!,
+              providerName: providerResolution.provider!.name,
               env: (options.env ?? process.env) as NodeJS.ProcessEnv,
               onBackendSessionId: (backendSessionId) =>
                 workspaceStore.updateSessionBackendSessionId(sessionId, backendSessionId),
@@ -1681,11 +1752,17 @@ export class ChatService {
         () => this.reconcileIdleClose(sessionId),
         () => this.reconcileIdleClose(sessionId),
         () => this.reconcileIdleClose(sessionId),
-        provider,
+        providerResolution.effective,
         driver,
       );
       diagLog(`[ChatService] runtime ${sessionId} SessionRuntime.open elapsed=${Date.now() - openStart}ms`);
       this.runtimes.set(sessionId, runtime);
+      this.runtimeProviderSnapshots.set(sessionId, {
+        source: providerResolution.source,
+        providerId: providerResolution.providerId,
+        revision: providerResolution.revision,
+        generation: ++this.runtimeProviderGeneration,
+      });
       this.runtimeContexts.set(sessionId, runtimeContext);
       this.reconcileIdleClose(sessionId);
 
@@ -1716,6 +1793,7 @@ export class ChatService {
 
   async closeRuntime(sessionId: string): Promise<void> {
     const runtime = this.runtimes.get(sessionId);
+    this.runtimeProviderSnapshots.delete(sessionId);
     // Runtime replacement is terminal for capture drains, opaque auth handles,
     // and exact-operation approvals. The browser process/page may stay alive.
     this.disposeBrowserRuntimeEphemera(sessionId);
@@ -1773,17 +1851,27 @@ export class ChatService {
   }
 
   scheduleRuntimeRebuild(sessionId: string, context?: RuntimeContext, options?: { immediate?: boolean }): Promise<void> | undefined {
-    const runtime = this.getRuntimeIfExists(sessionId);
-    if (!runtime) return undefined;
+    const epoch = (this.rebuildEpochs.get(sessionId) ?? 0) + 1;
+    this.rebuildEpochs.set(sessionId, epoch);
     const ctx = context ?? this.runtimeContexts.get(sessionId);
     if (!ctx) return undefined;
+    const runtime = this.getRuntimeIfExists(sessionId);
+    if (!runtime && !this.rebuildChains.has(sessionId)) return undefined;
 
     this.pendingRebuilds.set(sessionId, ctx);
-    if (!options?.immediate && runtime.isProcessingTurn()) {
+    if (!options?.immediate && runtime?.isProcessingTurn()) {
       this.startRebuildPoller(sessionId);
       return undefined;
     }
-    return this.performRebuild(sessionId, ctx);
+    const previous = this.rebuildChains.get(sessionId) ?? Promise.resolve();
+    const rebuild = previous
+      .catch(() => undefined)
+      .then(() => this.performRebuild(sessionId, ctx, epoch))
+      .finally(() => {
+        if (this.rebuildChains.get(sessionId) === rebuild) this.rebuildChains.delete(sessionId);
+      });
+    this.rebuildChains.set(sessionId, rebuild);
+    return rebuild;
   }
 
   /**
@@ -1861,12 +1949,13 @@ export class ChatService {
     }
   }
 
-  scheduleRebuildsForProvider(providerId: string): void {
+  scheduleRebuildsForProvider(providerId: string, affectsInherited = false): void {
     let count = 0;
     for (const [sessionId, context] of this.runtimeContexts.entries()) {
       try {
         const session = workspaceStore.getLocalSession(sessionId);
-        if (session && session.providerId === providerId) {
+        const inheritedRuntime = this.runtimeProviderSnapshots.get(sessionId)?.source === 'inherited';
+        if (session && (session.providerId === providerId || (affectsInherited && !session.providerId && inheritedRuntime))) {
           this.scheduleRuntimeRebuild(sessionId, context);
           count++;
         }
@@ -1923,7 +2012,7 @@ export class ChatService {
       if (!runtime || runtime.isClosed() || !runtime.isProcessingTurn()) {
         const ctx = this.pendingRebuilds.get(sessionId);
         if (ctx && runtime && !runtime.isClosed()) {
-          this.performRebuild(sessionId, ctx);
+          this.scheduleRuntimeRebuild(sessionId, ctx, { immediate: true });
         } else {
           this.clearPendingRebuild(sessionId);
         }
@@ -1932,7 +2021,8 @@ export class ChatService {
     this.rebuildPollers.set(sessionId, interval);
   }
 
-  private async performRebuild(sessionId: string, context: RuntimeContext): Promise<void> {
+  private async performRebuild(sessionId: string, context: RuntimeContext, epoch: number): Promise<void> {
+    if (this.rebuildEpochs.get(sessionId) !== epoch) return;
     this.clearPendingRebuild(sessionId);
     try {
       sidecarLog(`[ChatService] rebuilding runtime ${sessionId}`);
@@ -1942,6 +2032,7 @@ export class ChatService {
         `[ChatService] failed to close runtime ${sessionId} during rebuild: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+    if (this.rebuildEpochs.get(sessionId) !== epoch) return;
     try {
       await this.getOrCreateRuntime(sessionId, context.workspaceId, context.isBotSession, undefined, context.botUserId);
     } catch (err) {
@@ -2235,7 +2326,12 @@ export class ChatService {
       throw new ChatError('Session not found', 'SESSION_NOT_FOUND', 404);
     }
 
-    const options = await this.buildSdkOptions(workspace, session);
+    const backend = await this.resolveSessionBackend(session);
+    if (backend !== 'claude') {
+      throw new ChatError(`Legacy message streaming only supports Claude sessions, not '${backend}'`, 'BACKEND_LOCKED', 409);
+    }
+    const providerResolution = this.resolveRuntimeProvider(session, 'claude');
+    const options = await this.buildSdkOptions(workspace, session, undefined, undefined, providerResolution);
     await this.testClaudeBinary(options.pathToClaudeCodeExecutable, workspace.folderPath, options.env || process.env);
     const { query, messages: rawMessages } = this.sdkClient.createQuery(message, options);
 
@@ -2403,7 +2499,7 @@ export class ChatService {
     session: ChatSession,
     isBotSession?: boolean,
     botUserId?: string,
-    provider?: Provider,
+    providerResolution?: RuntimeProviderResolution,
   ): Promise<import('@anthropic-ai/claude-agent-sdk').Options> {
     const claudeSettings = loadClaudeSettings();
     let { env } = buildClaudeEnv(claudeSettings);
@@ -2461,45 +2557,36 @@ export class ChatService {
       env[SESSION_TOKEN_ENV] = brokerCapability.token;
     }
 
-    // Resolve active provider: session -> default, when not already provided.
-    const resolvedProvider = provider ?? (session.providerId
-      ? workspaceStore.getProvider(session.providerId)
-      : workspaceStore.getDefaultProvider());
-
-    if (!resolvedProvider) {
-      throw new ChatError(
-        'No LLM provider configured. Add a provider in Settings.',
-        'PROVIDER_NOT_FOUND',
-        500,
-      );
-    }
+    const canonicalProvider = providerResolution?.provider;
+    const resolvedProvider = providerResolution?.effective;
+    const claudeConfig = canonicalProvider?.configuration?.claude ?? {};
 
     // Build flag-settings env so provider credentials survive upstream
     // settings reloads (applyConfigEnvironmentVariables overwrites process.env).
     const settingsEnv: Record<string, string> = {};
-    settingsEnv.ANTHROPIC_BASE_URL = resolvedProvider.baseUrl;
-    settingsEnv.ANTHROPIC_API_KEY = resolvedProvider.authToken;
-    settingsEnv.ANTHROPIC_AUTH_TOKEN = resolvedProvider.authToken;
-    if (resolvedProvider.model) {
+    if (resolvedProvider) {
+      settingsEnv.ANTHROPIC_BASE_URL = resolvedProvider.baseUrl;
+      settingsEnv.ANTHROPIC_API_KEY = resolvedProvider.credential;
+      settingsEnv.ANTHROPIC_AUTH_TOKEN = resolvedProvider.credential;
       settingsEnv.ANTHROPIC_MODEL = resolvedProvider.model;
     }
-    if (resolvedProvider.defaultOpusModel) {
-      settingsEnv.ANTHROPIC_DEFAULT_OPUS_MODEL = resolvedProvider.defaultOpusModel;
+    if (claudeConfig.defaultOpusModel) {
+      settingsEnv.ANTHROPIC_DEFAULT_OPUS_MODEL = claudeConfig.defaultOpusModel;
     }
-    if (resolvedProvider.defaultSonnetModel) {
-      settingsEnv.ANTHROPIC_DEFAULT_SONNET_MODEL = resolvedProvider.defaultSonnetModel;
+    if (claudeConfig.defaultSonnetModel) {
+      settingsEnv.ANTHROPIC_DEFAULT_SONNET_MODEL = claudeConfig.defaultSonnetModel;
     }
-    if (resolvedProvider.defaultHaikuModel) {
-      settingsEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL = resolvedProvider.defaultHaikuModel;
+    if (claudeConfig.defaultHaikuModel) {
+      settingsEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL = claudeConfig.defaultHaikuModel;
     }
-    if (resolvedProvider.subagentModel) {
-      settingsEnv.CLAUDE_CODE_SUBAGENT_MODEL = resolvedProvider.subagentModel;
+    if (claudeConfig.subagentModel) {
+      settingsEnv.CLAUDE_CODE_SUBAGENT_MODEL = claudeConfig.subagentModel;
     }
-    if (resolvedProvider.effortLevel) {
-      settingsEnv.CLAUDE_CODE_EFFORT_LEVEL = resolvedProvider.effortLevel;
+    if (claudeConfig.effortLevel) {
+      settingsEnv.CLAUDE_CODE_EFFORT_LEVEL = claudeConfig.effortLevel;
     }
-    if (resolvedProvider.customEnvVars) {
-      for (const [key, value] of Object.entries(resolvedProvider.customEnvVars)) {
+    if (claudeConfig.customEnvVars) {
+      for (const [key, value] of Object.entries(claudeConfig.customEnvVars)) {
         settingsEnv[key] = value;
       }
     }
@@ -2596,11 +2683,11 @@ export class ChatService {
     const normalizedCwd = normalizeWindowsPath(workspace.folderPath);
     sidecarLog(`[ChatService.buildSdkOptions] pathToClaudeCodeExecutable=${claudePath}`);
     sidecarLog(`[ChatService.buildSdkOptions] cwd=${normalizedCwd} (raw=${workspace.folderPath})`);
-    sidecarLog(`[ChatService.buildSdkOptions] provider=${resolvedProvider.name} model=${resolvedProvider.model || 'default'}`);
+    sidecarLog(`[ChatService.buildSdkOptions] provider=${canonicalProvider?.name ?? 'native'} model=${resolvedProvider?.model || 'default'}`);
     sidecarLog(`[ChatService.buildSdkOptions] sessionId=${session.id} isDraft=${!!session.isDraft}`);
     sidecarLog(`[ChatService.buildSdkOptions] platform=${process.platform} arch=${process.arch}`);
 
-    const providerSupportsFastMode = resolvedProvider.supportsFastMode !== false;
+    const providerSupportsFastMode = canonicalProvider?.supportsFastMode !== false;
     const fastMode = session.fastMode === true && providerSupportsFastMode;
     sidecarLog(`[ChatService.buildSdkOptions] fastMode=${fastMode}`);
 
@@ -2620,7 +2707,7 @@ export class ChatService {
         ...(outputStyle !== undefined && { outputStyle }),
       },
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
-      model: resolvedProvider.model || (isBotSession ? BOT_SESSION_PINNED_MODEL : undefined),
+      model: resolvedProvider?.model || (isBotSession ? BOT_SESSION_PINNED_MODEL : undefined),
       includePartialMessages: false,
       pathToClaudeCodeExecutable: claudePath,
       stderr: (data) => {
@@ -2970,7 +3057,7 @@ export class ChatService {
               {
                 sensitiveFileDenylist: workspace.settings.sensitiveFileDenylist ?? [],
                 settingsEnv,
-                providerEnv: resolvedProvider.customEnvVars,
+                providerEnv: claudeConfig.customEnvVars,
                 childEnv: env,
                 wecomEnabled: channel === 'wecom' && (channelSettings.wecom?.enabled ?? false),
               },

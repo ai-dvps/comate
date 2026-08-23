@@ -73,6 +73,10 @@ function selectionFor(provider: Provider, agent: BackendId): ResolutionSelection
     endpoint,
     model: config.models.openCode,
     mode: endpoint?.format === 'openai-chat-completions' ? 'direct-openai-chat' : 'direct-openai-responses',
+    // OpenCode 1.18.4's custom OpenAI-compatible provider is proven against
+    // Chat Completions.  Its Responses transport has not been characterized,
+    // so fail closed instead of advertising a mode the adapter cannot select.
+    unsupported: endpoint?.format === 'openai-responses',
   };
 }
 

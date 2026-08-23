@@ -75,7 +75,15 @@ function createMockProvider(): Provider {
   return {
     id: 'p1',
     name: 'Test Provider',
-    baseUrl: 'http://test',
+    configuration: {
+      schemaVersion: 1,
+      endpoints: { anthropic: { enabled: true, baseUrl: 'https://test' } },
+      models: { claudeCode: 'test-model', openCode: 'test-model' },
+      openCode: { protocol: 'anthropic' },
+      claude: {},
+      codex: {},
+    },
+    baseUrl: 'https://test',
     authToken: 'test',
     model: 'test-model',
     isDefault: true,
@@ -2682,7 +2690,7 @@ describe('chat-service bot-level dynamic policy (legacy permission model)', { co
     });
     const provider = workspaceStore.createProvider({
       name: 'Test Provider',
-      baseUrl: 'http://test',
+      baseUrl: 'https://test',
       authToken: 'test',
       model: 'test-model',
       isDefault: true,
@@ -2871,7 +2879,7 @@ describe('chat-service bot-level dynamic policy (legacy permission model)', { co
       });
       const provider = workspaceStore.createProvider({
         name: 'Test Provider',
-        baseUrl: 'http://test',
+        baseUrl: 'https://test',
         authToken: 'test',
         model: 'test-model',
         isDefault: true,
@@ -3055,7 +3063,7 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     });
     const provider = workspaceStore.createProvider({
       name: 'Test Provider',
-      baseUrl: 'http://test',
+      baseUrl: 'https://test',
       authToken: 'test',
       model: 'test-model',
       isDefault: true,
@@ -4591,7 +4599,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
     });
     const provider = workspaceStore.createProvider({
       name: `Test Provider ${crypto.randomUUID()}`,
-      baseUrl: 'http://test',
+      baseUrl: 'https://test',
       authToken: 'test',
       model: 'test-model',
       isDefault: false,
@@ -4817,7 +4825,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
     });
     const provider = workspaceStore.createProvider({
       name: `Fast Mode Provider ${crypto.randomUUID()}`,
-      baseUrl: 'http://test',
+      baseUrl: 'https://test',
       authToken: 'test',
       model: config.providerModel,
       isDefault: false,
@@ -4972,7 +4980,7 @@ describe('chat-service bot session model pinning (U1)', { concurrency: false }, 
     });
     const provider = workspaceStore.createProvider({
       name: `Model Pin Provider ${crypto.randomUUID()}`,
-      baseUrl: 'http://test',
+      baseUrl: 'https://test',
       authToken: 'test',
       model: config.providerModel,
       isDefault: false,
@@ -5011,11 +5019,11 @@ describe('chat-service bot session model pinning (U1)', { concurrency: false }, 
     return { options: capturedOptions };
   }
 
-  it('pins the pre-upgrade default model for bot sessions when the provider model is empty', async () => {
-    const { options } = await setupModelSession({ source: 'wecom', providerModel: '' });
-    // CLI 2.1.219 changed the default Opus model; bot sessions must stay on the
-    // pre-upgrade default instead of drifting with the CLI.
-    assert.strictEqual(options.model, 'claude-opus-4-8');
+  it('fails closed for bot sessions when the selected Provider model is empty', async () => {
+    await assert.rejects(
+      () => setupModelSession({ source: 'wecom', providerModel: '' }),
+      /model-missing/,
+    );
   });
 
   it('keeps the configured provider model for bot sessions', async () => {
@@ -5023,9 +5031,11 @@ describe('chat-service bot session model pinning (U1)', { concurrency: false }, 
     assert.strictEqual(options.model, 'test-model');
   });
 
-  it('GUI sessions still inherit the CLI default when the provider model is empty', async () => {
-    const { options } = await setupModelSession({ source: 'gui', providerModel: '' });
-    assert.strictEqual(options.model, undefined);
+  it('does not let GUI sessions fall through to the ambient CLI model', async () => {
+    await assert.rejects(
+      () => setupModelSession({ source: 'gui', providerModel: '' }),
+      /model-missing/,
+    );
   });
 });
 
@@ -5297,6 +5307,55 @@ describe('chat-service deferred runtime rebuild', { concurrency: false }, () => 
     assert.strictEqual(openCalls, 1, 'session using different provider should not be rebuilt');
   });
 
+  it('uses the runtime resolution source when rebuilding inherited defaults', () => {
+    const sessions: Record<string, ChatSession> = {
+      explicit: { ...createMockSession('explicit'), providerId: 'p1' },
+      inheritedDraft: { ...createMockSession('inheritedDraft'), backend: undefined, providerId: undefined },
+      nativeCodex: { ...createMockSession('nativeCodex'), backend: 'codex', providerId: undefined },
+    };
+    workspaceStore.getLocalSession = (id: string) => sessions[id];
+    const internals = service as unknown as {
+      runtimeContexts: Map<string, { workspaceId: string }>;
+      runtimeProviderSnapshots: Map<string, { source: 'explicit' | 'inherited' | 'native'; revision: string; generation: number }>;
+      scheduleRuntimeRebuild: (id: string) => void;
+    };
+    for (const id of Object.keys(sessions)) internals.runtimeContexts.set(id, { workspaceId: 'ws-1' });
+    internals.runtimeProviderSnapshots.set('explicit', { source: 'explicit', revision: 'a', generation: 1 });
+    internals.runtimeProviderSnapshots.set('inheritedDraft', { source: 'inherited', revision: 'b', generation: 2 });
+    internals.runtimeProviderSnapshots.set('nativeCodex', { source: 'native', revision: 'native', generation: 3 });
+    const scheduled: string[] = [];
+    internals.scheduleRuntimeRebuild = (id: string) => { scheduled.push(id); };
+
+    service.scheduleRebuildsForProvider('p1', true);
+
+    assert.deepStrictEqual(scheduled.sort(), ['explicit', 'inheritedDraft']);
+  });
+
+  it('self-heals a missed Provider notification before reusing an idle runtime', async () => {
+    const session = createMockSession('s1');
+    let provider = createMockProvider();
+    setupStoreMocks(session);
+    workspaceStore.getDefaultProvider = () => provider;
+    let openCalls = 0;
+    SessionRuntime.open = () => {
+      openCalls++;
+      return createMockRuntime();
+    };
+
+    const first = await service.getOrCreateRuntime('s1', 'ws-1');
+    provider = {
+      ...provider,
+      configuration: {
+        ...structuredClone(provider.configuration!),
+        models: { ...provider.configuration!.models, claudeCode: 'changed-model' },
+      },
+    };
+    const second = await service.getOrCreateRuntime('s1', 'ws-1');
+
+    assert.notStrictEqual(second, first);
+    assert.strictEqual(openCalls, 2, 'fresh resolution must repair a missed rebuild notification');
+  });
+
   it('clears pending rebuild state when runtime is closed manually', async () => {
     setupStoreMocks();
     const processing = true;
@@ -5364,7 +5423,7 @@ describe('chat-service session backend resolution (KTD-5/KTD-9)', { concurrency:
     const workspace = await workspaceStore.create({ name: 'W', folderPath });
     const provider = workspaceStore.createProvider({
       name: `Provider ${crypto.randomUUID()}`,
-      baseUrl: 'http://test',
+      baseUrl: 'https://test',
       authToken: 't',
       model: 'm',
       isDefault: false,
@@ -5455,16 +5514,7 @@ describe('chat-service session backend resolution (KTD-5/KTD-9)', { concurrency:
     await service.getOrCreateRuntime(session.id, workspace.id);
 
     assert.ok(captured, 'runtime opened');
-    assert.deepStrictEqual(captured[9], {
-      id: 'codex-native',
-      name: 'Codex native account',
-      baseUrl: '',
-      authToken: '',
-      protocol: 'openai-responses',
-      isDefault: false,
-      createdAt: (captured[9] as Provider).createdAt,
-      updatedAt: (captured[9] as Provider).updatedAt,
-    });
+    assert.strictEqual(captured[9], undefined, 'native Codex has no third-party Provider override');
     assert.strictEqual((captured[10] as { backendId?: string }).backendId, 'codex');
     const driverDeps = (captured[10] as unknown as { deps: Record<string, unknown> }).deps;
     assert.strictEqual(driverDeps.directory, folderPath);
@@ -5492,7 +5542,7 @@ describe('chat-service session backend resolution (KTD-5/KTD-9)', { concurrency:
 
     await assert.rejects(
       () => service.getOrCreateRuntime(session.id, workspace.id),
-      /not marked as OpenAI Responses compatible/,
+      /endpoint-missing|unavailable for codex/,
     );
     assert.strictEqual(captured, undefined);
   });
@@ -5547,7 +5597,7 @@ describe('chat-service session backend update guard (R4)', { concurrency: false 
     const workspace = await workspaceStore.create({ name: 'W', folderPath });
     const provider = workspaceStore.createProvider({
       name: `Provider ${crypto.randomUUID()}`,
-      baseUrl: 'http://test',
+      baseUrl: 'https://test',
       authToken: 't',
       model: 'm',
       isDefault: false,
@@ -5632,7 +5682,7 @@ describe('chat-service backend review fixes (P1/P2)', { concurrency: false }, ()
     const workspace = await workspaceStore.create({ name: 'W', folderPath });
     const provider = workspaceStore.createProvider({
       name: `Provider ${crypto.randomUUID()}`,
-      baseUrl: 'http://test',
+      baseUrl: 'https://test',
       authToken: 't',
       model: 'm',
       isDefault: false,
@@ -5808,5 +5858,75 @@ describe('chat-service backend review fixes (P1/P2)', { concurrency: false }, ()
       () => service.updateSession(session.id, { name: 'Whatever' }, workspace.id),
       /backend session id/i,
     );
+  });
+});
+
+describe('chat-service Provider rebuild generation', { concurrency: false }, () => {
+  it('coalesces rapid A to B to C default changes so only C can create the replacement runtime', async () => {
+    const service = new ChatService();
+    const internals = service as unknown as {
+      runtimes: Map<string, SessionRuntime>;
+      runtimeContexts: Map<string, { workspaceId: string }>;
+      closeRuntime: (id: string) => Promise<void>;
+      getOrCreateRuntime: (id: string, workspaceId: string) => Promise<SessionRuntime>;
+    };
+    const runtime = { isClosed: () => false, isProcessingTurn: () => false } as SessionRuntime;
+    internals.runtimes.set('s1', runtime);
+    internals.runtimeContexts.set('s1', { workspaceId: 'w1' });
+
+    let releaseFirstClose!: () => void;
+    const firstClose = new Promise<void>((resolve) => { releaseFirstClose = resolve; });
+    let closeCalls = 0;
+    internals.closeRuntime = async () => {
+      closeCalls += 1;
+      if (closeCalls === 1) await firstClose;
+      internals.runtimes.delete('s1');
+    };
+    let selected = 'A';
+    const created: string[] = [];
+    internals.getOrCreateRuntime = async () => {
+      created.push(selected);
+      internals.runtimes.set('s1', runtime);
+      return runtime;
+    };
+
+    const a = service.scheduleRuntimeRebuild('s1', { workspaceId: 'w1' }, { immediate: true });
+    await Promise.resolve();
+    selected = 'B';
+    const b = service.scheduleRuntimeRebuild('s1', { workspaceId: 'w1' }, { immediate: true });
+    selected = 'C';
+    const c = service.scheduleRuntimeRebuild('s1', { workspaceId: 'w1' }, { immediate: true });
+    releaseFirstClose();
+    await Promise.all([a, b, c]);
+
+    assert.deepEqual(created, ['C']);
+    assert.equal(closeCalls, 1, 'stale A and B generations never close the C replacement');
+  });
+
+  it('legacy sendMessage fails closed before SDK dispatch when its Claude Provider is unavailable', async () => {
+    let queries = 0;
+    const service = new ChatService({
+      createQuery: () => { queries += 1; throw new Error('unexpected SDK dispatch'); },
+    } as never);
+    const internals = service as unknown as {
+      findWorkspaceForSession: () => Promise<Workspace>;
+      getSession: () => Promise<ChatSession>;
+    };
+    internals.findWorkspaceForSession = async () => createMockWorkspace('w1');
+    internals.getSession = async () => ({ ...createMockSession('s1'), backend: 'claude' });
+    const originalDefault = workspaceStore.getDefaultProvider.bind(workspaceStore);
+    workspaceStore.getDefaultProvider = () => ({
+      id: 'p1', name: 'broken', baseUrl: '', authToken: 'secret', isDefault: true,
+      createdAt: '', updatedAt: '', configuration: {
+        schemaVersion: 1, endpoints: {}, models: { claudeCode: 'm' },
+        openCode: { protocol: 'anthropic' }, claude: {}, codex: {},
+      },
+    });
+    try {
+      await assert.rejects(() => service.sendMessage('s1', 'hello'), /endpoint-missing/);
+      assert.equal(queries, 0);
+    } finally {
+      workspaceStore.getDefaultProvider = originalDefault;
+    }
   });
 });

@@ -11,6 +11,7 @@ import type { BackendId } from '../services/agent-backends.js';
 import { BrowserDirectHttpClient } from '../services/browser-direct-http-client.js';
 import { applyProviderPreset, listProviderPresets, providerVendorFromProvenance } from '../services/provider-presets.js';
 import { effectiveProviderResourceUrl, providerAvailability, resolveProviderForAgent } from '../services/provider-resolver.js';
+import { commandsService } from '../services/commands-service.js';
 
 const router = Router();
 
@@ -214,6 +215,10 @@ export function hasSnapshottedProviderChange(input: UpdateProviderInput, existin
   return fields.some((field) => input[field] !== undefined && input[field] !== existing[field]);
 }
 
+export function hasDefaultProviderChange(input: UpdateProviderInput, existing: Provider): boolean {
+  return input.isDefault !== undefined && input.isDefault !== existing.isDefault;
+}
+
 // GET /api/providers
 router.get('/', (_req, res) => {
   try {
@@ -255,6 +260,8 @@ router.post('/detect', (_req, res) => {
     }
 
     const provider = store.createProvider(detected);
+    commandsService.invalidateProviderConfiguration();
+    if (provider.isDefault) chatService.scheduleRebuildsForProvider(provider.id, true);
     res.status(201).json({ provider: publicProvider(provider) });
   } catch (error) {
     console.error('Failed to detect provider:', error);
@@ -308,6 +315,8 @@ router.post('/', async (req, res) => {
     }
 
     const provider = store.createProvider(input);
+    commandsService.invalidateProviderConfiguration();
+    if (provider.isDefault) chatService.scheduleRebuildsForProvider(provider.id, true);
     res.status(201).json({ provider: publicProvider(provider) });
   } catch (error) {
     console.error('Failed to create provider:', error);
@@ -368,9 +377,11 @@ router.put('/:id', async (req, res) => {
       }
     }
 
+    const defaultChanged = hasDefaultProviderChange(input, existing);
     const provider = store.updateProvider(id, input);
-    if (existing && hasSnapshottedProviderChange(input, existing)) {
-      chatService.scheduleRebuildsForProvider(id);
+    commandsService.invalidateProviderConfiguration();
+    if (hasSnapshottedProviderChange(input, existing) || defaultChanged) {
+      chatService.scheduleRebuildsForProvider(id, defaultChanged || existing.isDefault || input.isDefault === true);
     }
     res.json({ provider: provider ? publicProvider(provider) : null });
   } catch (error) {
@@ -387,12 +398,14 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', (req, res) => {
   try {
     const id = req.params.id;
+    const existing = store.getProvider(id);
     const success = store.deleteProvider(id);
     if (!success) {
       res.status(404).json({ error: 'Provider not found' });
       return;
     }
-    chatService.scheduleRebuildsForProvider(id);
+    commandsService.invalidateProviderConfiguration();
+    chatService.scheduleRebuildsForProvider(id, existing?.isDefault === true);
     res.json({ ok: true });
   } catch (error) {
     console.error('Failed to delete provider:', error);

@@ -19,6 +19,7 @@ import { buildClaudeEnv, getPathEnvKey } from '../utils/sdk-env.js';
 import { loadClaudeSettings } from '../utils/claude-settings.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { pluginSettingsService } from './plugin-settings-service.js';
+import { resolveProviderForAgent } from './provider-resolver.js';
 
 interface FsCommandEntry {
   filePath: string;
@@ -46,6 +47,7 @@ export class CommandsService {
   private cache = new Map<string, WorkspaceCommandsState>();
   private inflight = new Map<string, Promise<CachedCommandList>>();
   private watchers = new Map<string, FSWatcher>();
+  private providerGeneration = 0;
 
   constructor(sdkClient: SdkClient = new SdkClient()) {
     this.sdkClient = sdkClient;
@@ -60,9 +62,10 @@ export class CommandsService {
     const pending = this.inflight.get(key);
     if (pending) return pending;
 
+    const generation = this.providerGeneration;
     const promise = (async () => {
       const state = await this.populate(workspace);
-      this.cache.set(key, state);
+      if (generation === this.providerGeneration) this.cache.set(key, state);
       return this.deriveList(state);
     })();
 
@@ -70,8 +73,14 @@ export class CommandsService {
     try {
       return await promise;
     } finally {
-      this.inflight.delete(key);
+      if (this.inflight.get(key) === promise) this.inflight.delete(key);
     }
+  }
+
+  invalidateProviderConfiguration(): void {
+    this.providerGeneration += 1;
+    this.cache.clear();
+    this.inflight.clear();
   }
 
   async dispose(): Promise<void> {
@@ -86,12 +95,11 @@ export class CommandsService {
   }
 
   private async populate(workspace: Workspace): Promise<WorkspaceCommandsState> {
-    const options = this.buildSdkOptions(workspace);
-
     let sdkCommands: SlashCommandDto[] = [];
     let partialReason: string | undefined;
     let outputStyles: string[] | undefined;
     try {
+      const options = this.buildSdkOptions(workspace);
       const init = await this.sdkClient.fetchInitialization(options);
       sdkCommands = init.commands;
       outputStyles = init.availableOutputStyles;
@@ -287,31 +295,24 @@ export class CommandsService {
 
     // Use default provider for command discovery (no session context)
     const provider = workspaceStore.getDefaultProvider();
-    if (provider) {
-      env.ANTHROPIC_BASE_URL = provider.baseUrl;
-      env.ANTHROPIC_API_KEY = provider.authToken;
-      if (provider.model) {
-        env.ANTHROPIC_MODEL = provider.model;
-      }
-      if (provider.defaultOpusModel) {
-        env.ANTHROPIC_DEFAULT_OPUS_MODEL = provider.defaultOpusModel;
-      }
-      if (provider.defaultSonnetModel) {
-        env.ANTHROPIC_DEFAULT_SONNET_MODEL = provider.defaultSonnetModel;
-      }
-      if (provider.defaultHaikuModel) {
-        env.ANTHROPIC_DEFAULT_HAIKU_MODEL = provider.defaultHaikuModel;
-      }
-      if (provider.subagentModel) {
-        env.CLAUDE_CODE_SUBAGENT_MODEL = provider.subagentModel;
-      }
-      if (provider.effortLevel) {
-        env.CLAUDE_CODE_EFFORT_LEVEL = provider.effortLevel;
-      }
-      if (provider.customEnvVars) {
-        for (const [key, value] of Object.entries(provider.customEnvVars)) {
-          env[key] = value;
-        }
+    const resolved = provider ? resolveProviderForAgent(provider, 'claude') : undefined;
+    if (!provider) throw new Error('No default Provider is configured for Claude command discovery');
+    if (!resolved?.available) {
+      throw new Error(`Default Provider is unavailable for Claude command discovery: ${resolved?.reason ?? 'configuration-missing'}`);
+    }
+    env.ANTHROPIC_BASE_URL = resolved.baseUrl;
+    env.ANTHROPIC_API_KEY = resolved.credential;
+    env.ANTHROPIC_AUTH_TOKEN = resolved.credential;
+    env.ANTHROPIC_MODEL = resolved.model;
+    const claude = provider.configuration?.claude ?? {};
+    if (claude.defaultOpusModel) env.ANTHROPIC_DEFAULT_OPUS_MODEL = claude.defaultOpusModel;
+    if (claude.defaultSonnetModel) env.ANTHROPIC_DEFAULT_SONNET_MODEL = claude.defaultSonnetModel;
+    if (claude.defaultHaikuModel) env.ANTHROPIC_DEFAULT_HAIKU_MODEL = claude.defaultHaikuModel;
+    if (claude.subagentModel) env.CLAUDE_CODE_SUBAGENT_MODEL = claude.subagentModel;
+    if (claude.effortLevel) env.CLAUDE_CODE_EFFORT_LEVEL = claude.effortLevel;
+    if (claude.customEnvVars) {
+      for (const [key, value] of Object.entries(claude.customEnvVars)) {
+        env[key] = value;
       }
     }
 
@@ -350,7 +351,7 @@ export class CommandsService {
       cwd: workspace.folderPath,
       env,
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
-      model: provider?.model || undefined,
+      model: resolved.model,
       pathToClaudeCodeExecutable: claudePath,
       stderr: (data) => {
         const trimmed = data.trim();
