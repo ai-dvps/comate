@@ -23,8 +23,8 @@ import type {
   SDKMessage,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
-import type { Provider } from '../models/provider.js';
 import type { BackendDriver } from './backend-driver.js';
+import type { EffectiveProviderConfiguration } from './provider-resolver.js';
 import { BROWSER_MCP_SERVER_KEY } from './browser-mcp.js';
 import { getSidecarBaseUrl } from '../utils/self-port.js';
 import { buildBrowserMcpClientConnection } from './browser-mcp-client-config.js';
@@ -57,7 +57,8 @@ export interface OpencodeAdapterDeps {
   comateSessionId: string;
   /** Remote opencode session id for resume; created and persisted on first run. */
   backendSessionId?: string;
-  provider: Provider;
+  provider: Extract<EffectiveProviderConfiguration, { available: true }>;
+  providerName: string;
   /** Ambient session env (already computed for the SDK path; sanitized again). */
   env: NodeJS.ProcessEnv;
   /** Called with the remote session id after creation so it can be persisted. */
@@ -84,18 +85,26 @@ function isOpencodeDefaultTitle(title: string): boolean {
   return /^(?:New session|Child session) - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(title);
 }
 
-export function buildServeConfig(provider: Provider, modelID: string): Record<string, unknown> {
+export function buildServeConfig(
+  provider: Extract<EffectiveProviderConfiguration, { available: true }>,
+  providerName: string,
+): Record<string, unknown> {
+  if (provider.agent !== 'opencode') throw new Error('OpenCode requires an OpenCode provider resolution');
+  if (provider.mode !== 'direct-anthropic' && provider.mode !== 'direct-openai-chat') {
+    throw new Error(`OpenCode provider mode '${provider.mode}' is unavailable`);
+  }
+  const anthropic = provider.mode === 'direct-anthropic';
   return {
     permission: { edit: 'ask', bash: 'ask', webfetch: 'ask', question: 'allow' },
     provider: {
-      [`comate-${provider.id}`]: {
-        npm: '@ai-sdk/anthropic',
-        name: provider.name,
+      [`comate-${provider.providerId}`]: {
+        npm: anthropic ? '@ai-sdk/anthropic' : '@ai-sdk/openai-compatible',
+        name: providerName,
         options: {
-          baseURL: toAnthropicBaseUrl(provider.baseUrl),
-          apiKey: provider.authToken,
+          baseURL: anthropic ? toAnthropicBaseUrl(provider.baseUrl) : provider.baseUrl.replace(/\/+$/, ''),
+          apiKey: provider.credential,
         },
-        models: expandModelAliases(modelID),
+        models: expandModelAliases(provider.model),
       },
     },
   };
@@ -220,10 +229,10 @@ export class OpencodeBackendDriver implements BackendDriver {
 
   constructor(private readonly deps: OpencodeAdapterDeps) {
     this.backendSessionId = deps.backendSessionId;
-    this.providerID = `comate-${deps.provider.id}`;
+    this.providerID = `comate-${deps.provider.providerId}`;
     // Strip claude-code alias suffixes (e.g. `glm-5.2[1m]`) before they reach
     // the opencode backend, which does not accept them as model ids.
-    this.modelID = stripModelSuffix(deps.provider.model ?? '');
+    this.modelID = stripModelSuffix(deps.provider.model);
   }
 
   prepareAdmission(clientTurnId: string): Promise<void> {
@@ -324,7 +333,7 @@ export class OpencodeBackendDriver implements BackendDriver {
       this.deps.directory,
       {
         config: {
-          ...buildServeConfig(this.deps.provider, this.modelID),
+          ...buildServeConfig({ ...this.deps.provider, model: this.modelID }, this.deps.providerName),
           mcp: browserEnabled
             ? buildSessionMcpConfig(this.deps.comateSessionId, taskToken!)
             : {},

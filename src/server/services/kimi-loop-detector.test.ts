@@ -6,36 +6,24 @@ import {
   KimiLoopDetector,
   computeFingerprint,
 } from './kimi-loop-detector.js';
-import type { Provider } from '../models/provider.js';
-import { applyProviderPreset } from './provider-presets.js';
-
-function createProvider(overrides: Partial<Provider> = {}): Provider {
-  return {
-    id: 'p1',
-    name: 'Test Provider',
-    baseUrl: 'http://test',
-    authToken: 'test',
-    model: 'test-model',
-    isDefault: true,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    ...overrides,
-  };
-}
-
 describe('isKimiProvider', () => {
   it('returns false when provider is undefined', () => {
     assert.strictEqual(isKimiProvider(undefined), false);
   });
 
   it('detects Kimi only from immutable stored preset provenance', () => {
-    assert.strictEqual(isKimiProvider(createProvider({ configuration: applyProviderPreset('kimi') })), true);
-    assert.strictEqual(isKimiProvider(createProvider({ model: 'kimi-k2', baseUrl: 'https://kimi.example.com' })), false);
+    assert.strictEqual(isKimiProvider({
+      available: true, providerId: 'p1', agent: 'claude', mode: 'direct-anthropic', model: 'kimi',
+      credential: 'secret', baseUrl: 'https://example.com', vendorId: 'kimi', supportedEfforts: [], speedSupported: false,
+    }), true);
   });
 
   it('returns false for non-Kimi providers', () => {
     assert.strictEqual(
-      isKimiProvider(createProvider({ model: 'claude-3-5-sonnet', baseUrl: 'https://api.anthropic.com' })),
+      isKimiProvider({
+        available: true, providerId: 'p1', agent: 'claude', mode: 'direct-anthropic', model: 'claude',
+        credential: 'secret', baseUrl: 'https://example.com', supportedEfforts: [], speedSupported: false,
+      }),
       false,
     );
   });

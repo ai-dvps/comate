@@ -6,22 +6,36 @@ import assert from 'node:assert/strict';
 // possible; these unit tests pin the translation rules the integration path
 // relies on (provider mapping, permission reply translation, prompt text).
 
-import type { Provider } from '../models/provider.js';
+import type { EffectiveProviderConfiguration } from './provider-resolver.js';
 import type { Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
 async function* emptyInput(): AsyncGenerator<SDKUserMessage> {}
 
-function makeProvider(overrides: Partial<Provider> = {}): Provider {
+function makeProvider(
+  overrides: Partial<Extract<EffectiveProviderConfiguration, { available: true }>> = {},
+): Extract<EffectiveProviderConfiguration, { available: true }> {
   return {
-    id: 'p1',
-    name: 'Test Provider',
-    baseUrl: 'http://test',
-    authToken: 'tok',
+    available: true,
+    providerId: 'p1',
+    agent: 'opencode',
+    mode: 'direct-anthropic',
+    baseUrl: 'https://test',
+    credential: 'tok',
     model: 'test-model',
-    isDefault: false,
-    createdAt: '',
-    updatedAt: '',
+    supportedEfforts: [],
+    speedSupported: false,
     ...overrides,
+  };
+}
+
+function makeResolved(
+  mode: 'direct-anthropic' | 'direct-openai-chat' = 'direct-anthropic',
+  baseUrl = 'https://api.example.com',
+  model = 'test-model',
+): Extract<EffectiveProviderConfiguration, { available: true }> {
+  return {
+    available: true, providerId: 'p1', agent: 'opencode', mode, model,
+    credential: 'tok', baseUrl, supportedEfforts: [], speedSupported: false,
   };
 }
 
@@ -38,21 +52,21 @@ describe('toAnthropicBaseUrl (via buildServeConfig)', () => {
 
   it('appends /v1 to a bare anthropic-compatible base URL', async () => {
     const { __testables } = await import('./opencode-adapter.js');
-    const config = __testables.buildServeConfig(makeProvider({ baseUrl: 'https://api.kimi.com/coding/' }), 'm');
+    const config = __testables.buildServeConfig(makeResolved('direct-anthropic', 'https://api.kimi.com/coding/', 'm'), 'Test Provider');
     const provider = (config.provider as Record<string, { options: { baseURL: string } }>)['comate-p1'];
     assert.equal(provider.options.baseURL, 'https://api.kimi.com/coding/v1');
   });
 
   it('keeps a base URL that already ends with /v1', async () => {
     const { __testables } = await import('./opencode-adapter.js');
-    const config = __testables.buildServeConfig(makeProvider({ baseUrl: 'https://x.test/anthropic/v1' }), 'm');
+    const config = __testables.buildServeConfig(makeResolved('direct-anthropic', 'https://x.test/anthropic/v1', 'm'), 'Test Provider');
     const provider = (config.provider as Record<string, { options: { baseURL: string } }>)['comate-p1'];
     assert.equal(provider.options.baseURL, 'https://x.test/anthropic/v1');
   });
 
   it('maps the comate provider into an anthropic-compatible opencode provider', async () => {
     const { __testables } = await import('./opencode-adapter.js');
-    const config = __testables.buildServeConfig(makeProvider(), 'test-model');
+    const config = __testables.buildServeConfig(makeResolved(), 'Test Provider');
     const provider = (config.provider as Record<string, { npm: string; options: { apiKey: string }; models: Record<string, unknown> }>)['comate-p1'];
     assert.equal(provider.npm, '@ai-sdk/anthropic');
     assert.equal(provider.options.apiKey, 'tok');
@@ -61,8 +75,21 @@ describe('toAnthropicBaseUrl (via buildServeConfig)', () => {
 
   it('asks for edit/bash/webfetch permissions and allows the question tool', async () => {
     const { __testables } = await import('./opencode-adapter.js');
-    const config = __testables.buildServeConfig(makeProvider(), 'm');
+    const config = __testables.buildServeConfig(makeResolved('direct-anthropic', 'https://api.example.com', 'm'), 'Test Provider');
     assert.deepEqual(config.permission, { edit: 'ask', bash: 'ask', webfetch: 'ask', question: 'allow' });
+  });
+
+  it('maps proven OpenAI Chat mode to the compatible package and selected model', async () => {
+    const { __testables } = await import('./opencode-adapter.js');
+    const config = __testables.buildServeConfig(
+      makeResolved('direct-openai-chat', 'https://api.kimi.com/coding/v1', 'kimi-for-coding'),
+      'Kimi',
+    );
+    const provider = (config.provider as Record<string, { npm: string; options: { baseURL: string; apiKey: string }; models: Record<string, unknown> }>)['comate-p1'];
+    assert.equal(provider.npm, '@ai-sdk/openai-compatible');
+    assert.equal(provider.options.baseURL, 'https://api.kimi.com/coding/v1');
+    assert.equal(provider.options.apiKey, 'tok');
+    assert.ok(provider.models['kimi-for-coding']);
   });
 });
 
@@ -74,6 +101,7 @@ describe('toPermissionReply', () => {
       directory: '/tmp',
       comateSessionId: 's',
       provider: makeProvider(),
+      providerName: 'Test Provider',
       env: {},
     });
     const reply = (driver as unknown as { toPermissionReply: (r: unknown) => string }).toPermissionReply.bind(driver);
@@ -207,6 +235,7 @@ describe('OpencodeBackendDriver multimodal prompt dispatch', () => {
       directory: '/workspace',
       comateSessionId: 's',
       provider: makeProvider(),
+      providerName: 'Test Provider',
       env: {},
     });
     const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
@@ -262,6 +291,7 @@ describe('OpencodeBackendDriver multimodal prompt dispatch', () => {
       directory: '/workspace',
       comateSessionId: 's',
       provider: makeProvider(),
+      providerName: 'Test Provider',
       env: {},
     });
     const requests: Array<Record<string, unknown>> = [];
@@ -303,6 +333,7 @@ describe('OpencodeBackendDriver multimodal prompt dispatch', () => {
       directory: '/workspace',
       comateSessionId: 's',
       provider: makeProvider(),
+      providerName: 'Test Provider',
       env: {},
     });
     const originalFetch = globalThis.fetch;
@@ -338,6 +369,7 @@ describe('OpencodeBackendDriver multimodal prompt dispatch', () => {
       directory: '/workspace',
       comateSessionId: 's',
       provider: makeProvider(),
+      providerName: 'Test Provider',
       env: {},
     });
     const internals = driver as unknown as {
@@ -378,6 +410,7 @@ describe('OpencodeBackendDriver multimodal prompt dispatch', () => {
       directory: '/workspace',
       comateSessionId: 's',
       provider: makeProvider(),
+      providerName: 'Test Provider',
       env: {},
     });
     const parts = [{
@@ -418,6 +451,7 @@ describe('OpencodeBackendDriver model preprocessing', () => {
       directory: '/tmp',
       comateSessionId: 's',
       provider: makeProvider({ model: 'glm-5.2[1m]' }),
+      providerName: 'Test Provider',
       env: {},
     });
     assert.equal((driver as unknown as { modelID: string }).modelID, 'glm-5.2');
@@ -429,6 +463,7 @@ describe('OpencodeBackendDriver model preprocessing', () => {
       directory: '/tmp',
       comateSessionId: 's',
       provider: makeProvider({ model: 'glm-5.2' }),
+      providerName: 'Test Provider',
       env: {},
     });
     const { query } = driver.createStreamingQuery(emptyInput(), {} as Options);
@@ -447,6 +482,7 @@ describe('OpencodeBackendDriver session titles', () => {
       comateSessionId: 's',
       backendSessionId: 'oc-1',
       provider: makeProvider(),
+      providerName: 'Test Provider',
       env: {},
       onSessionTitle: (title) => received.push(title),
     });
@@ -473,6 +509,7 @@ describe('OpencodeBackendDriver session titles', () => {
       comateSessionId: 's',
       backendSessionId: 'oc-1',
       provider: makeProvider(),
+      providerName: 'Test Provider',
       env: {},
       onSessionTitle: (title) => {
         received.push(title);

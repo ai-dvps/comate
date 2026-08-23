@@ -36,12 +36,14 @@ describe('provider resolver', () => {
     assert.equal(opencode.available && opencode.mode, 'direct-anthropic');
   });
 
-  it('resolves OpenCode OpenAI Chat and Responses directly', () => {
+  it('resolves OpenCode OpenAI Chat and fails closed for uncharacterized Responses', () => {
     const chat = structuredClone(config);
     chat.openCode.protocol = 'openai';
     assert.equal(resolveProviderForAgent(provider(chat), 'opencode').mode, 'direct-openai-chat');
     chat.endpoints.openai!.format = 'openai-responses';
-    assert.equal(resolveProviderForAgent(provider(chat), 'opencode').mode, 'direct-openai-responses');
+    const opencodeResponses = resolveProviderForAgent(provider(chat), 'opencode');
+    assert.equal(opencodeResponses.mode, 'unavailable');
+    assert.equal(!opencodeResponses.available && opencodeResponses.reason, 'protocol-unsupported');
     assert.equal(resolveProviderForAgent(provider(chat), 'codex').mode, 'direct-openai-responses');
   });
 

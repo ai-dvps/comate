@@ -19,7 +19,7 @@ import type {
   ImageMediaType,
 } from '../types/message.js';
 import type { ApprovalMode } from '../models/session.js';
-import type { Provider } from '../models/provider.js';
+import type { EffectiveProviderConfiguration } from './provider-resolver.js';
 import type { BotEscalationAudience } from '../storage/sqlite-store.js';
 import type { McpToolAnnotations } from './mcp-tool-classification.js';
 import { PushableIterator } from './pushable-iterator.js';
@@ -212,7 +212,7 @@ export class SessionRuntime {
     onSubscribed?: () => void,
     onUnsubscribed?: () => void,
     onActivity?: (activity: SessionActivitySnapshot) => void,
-    provider?: Provider,
+    provider?: EffectiveProviderConfiguration,
     driver?: BackendDriver,
   ): SessionRuntime {
     diagLog(`[Runtime ${sessionId}] SessionRuntime.open called`);
@@ -279,7 +279,6 @@ export class SessionRuntime {
     return this.options.model;
   }
 
-  private provider?: Provider;
   private kimiLoopDetector?: KimiLoopDetector;
 
   private constructor(
@@ -292,7 +291,7 @@ export class SessionRuntime {
     onSubscribed?: () => void,
     onUnsubscribed?: () => void,
     onActivity?: (activity: SessionActivitySnapshot) => void,
-    provider?: Provider,
+    provider?: EffectiveProviderConfiguration,
     driver?: BackendDriver,
   ) {
     diagLog(`[Runtime ${sessionId}] constructed`);
@@ -306,7 +305,6 @@ export class SessionRuntime {
     this.onSubscribed = onSubscribed;
     this.onUnsubscribed = onUnsubscribed;
     this.onActivity = onActivity;
-    this.provider = provider;
     if (provider && isKimiProvider(provider)) {
       this.kimiLoopDetector = new KimiLoopDetector();
     }
