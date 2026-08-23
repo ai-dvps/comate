@@ -40,6 +40,11 @@ describe('BackendSection', () => {
       defaultBackend: 'claude',
       isLoading: false,
       error: null,
+      codexAccount: null,
+      codexModels: [],
+      codexUsage: null,
+      codexUsageLoading: false,
+      codexUsageError: null,
       fetchBackends: vi.fn().mockResolvedValue(undefined),
       setDefaultBackend,
     })
@@ -235,6 +240,54 @@ describe('BackendSection', () => {
     expect(setCodexDefaults).toHaveBeenNthCalledWith(2, {
       model: 'gpt-5.6-codex', effort: null, speed: 'fast',
     })
+  })
+
+  it('shows Codex account rate limits, credits, and token usage', async () => {
+    useBackendStore.setState((state) => ({
+      backends: [
+        ...state.backends,
+        { id: 'codex', availability: { status: 'available' as const }, capabilities: {} },
+      ],
+      codexAccount: { type: 'chatgpt', email: 'user@example.com', planType: 'plus' },
+      codexModels: [],
+      codexUsage: {
+        rateLimit: {
+          limitId: 'codex',
+          limitName: 'Codex',
+          primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 1_800_000_000 },
+          secondary: { usedPercent: 18, windowDurationMins: 10_080, resetsAt: 1_800_500_000 },
+          credits: { hasCredits: true, unlimited: false, balance: '12.50' },
+          planType: 'plus',
+          spendControlReached: false,
+          rateLimitReachedType: null,
+        },
+        tokenUsage: {
+          lifetimeTokens: '9007199254740993',
+          peakDailyTokens: '4200',
+          currentStreakDays: '3',
+          longestStreakDays: '8',
+          dailyUsageBuckets: Array.from({ length: 30 }, (_, index) => ({
+            startDate: `2026-08-${String(index + 1).padStart(2, '0')}`,
+            tokens: '1000',
+          })),
+        },
+      },
+      codexUsageLoading: false,
+      codexUsageError: null,
+      fetchCodexAccount: vi.fn().mockResolvedValue(undefined),
+      fetchCodexModels: vi.fn().mockResolvedValue(undefined),
+      fetchCodexUsage: vi.fn().mockResolvedValue(undefined),
+    }))
+
+    renderSection()
+
+    expect(await screen.findByText('5-hour limit')).toBeInTheDocument()
+    expect(screen.getByText('42% used')).toBeInTheDocument()
+    expect(screen.getByText('Weekly limit')).toBeInTheDocument()
+    expect(screen.getByText('12.50 credits')).toBeInTheDocument()
+    expect(screen.getByText('7,000')).toBeInTheDocument()
+    expect(screen.getByText('30,000')).toBeInTheDocument()
+    expect(screen.getByText('9,007,199,254,740,993')).toBeInTheDocument()
   })
 
   it('renders loading, load-error, and empty states', async () => {

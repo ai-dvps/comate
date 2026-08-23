@@ -43,6 +43,7 @@ function fakeDeps(overrides: Partial<BackendRouteDeps['codexAccount']> = {}): Ba
       cancelLogin: async () => undefined,
       logout: async () => undefined,
       listModels: async () => ({ data: [], nextCursor: null }),
+      usage: async () => ({ rateLimit: null, tokenUsage: null }),
       ...overrides,
     },
     codexSettings: {
@@ -149,6 +150,35 @@ describe('backend routes Codex account API', () => {
       account: { type: 'chatgpt', email: 'user@example.com', planType: 'plus' },
       requiresOpenaiAuth: true,
     });
+  });
+
+  it('returns the Codex-owned usage snapshot', async () => {
+    const usage = {
+      rateLimit: {
+        limitId: 'codex',
+        limitName: 'Codex',
+        primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 1_800_000_000 },
+        secondary: null,
+        credits: { hasCredits: true, unlimited: false, balance: '12.50' },
+        planType: 'plus',
+        spendControlReached: false,
+        rateLimitReachedType: null,
+      },
+      tokenUsage: {
+        lifetimeTokens: '9007199254740993',
+        peakDailyTokens: '4200',
+        currentStreakDays: '3',
+        longestStreakDays: '8',
+        dailyUsageBuckets: [{ startDate: '2026-08-22', tokens: '1234' }],
+      },
+    };
+    const handler = getHandler(fakeDeps({ usage: async () => usage }), 'get', '/codex/usage');
+    const res = createMockRes();
+
+    await handler({}, res);
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.deepStrictEqual(res.jsonBody, usage);
   });
 
   it('starts browser login with the in-app completion options', async () => {

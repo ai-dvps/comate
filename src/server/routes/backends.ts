@@ -13,7 +13,10 @@ import {
   setDefaultBackend,
   type BackendId,
 } from '../services/agent-backends.js';
-import { codexAccountService } from '../services/codex-account-service.js';
+import {
+  codexAccountService,
+  type CodexAccountUsageSnapshot,
+} from '../services/codex-account-service.js';
 import type { GetAccountResponse } from '../generated/codex-protocol/v2/GetAccountResponse.js';
 import type { LoginAccountParams } from '../generated/codex-protocol/v2/LoginAccountParams.js';
 import type { LoginAccountResponse } from '../generated/codex-protocol/v2/LoginAccountResponse.js';
@@ -31,6 +34,7 @@ export interface BackendRouteDeps {
     cancelLogin(loginId: string): Promise<void>;
     logout(): Promise<void>;
     listModels(): Promise<ModelListResponse>;
+    usage(): Promise<CodexAccountUsageSnapshot>;
   };
   codexSettings: {
     getDefaults(): Promise<CodexDefaults>;
@@ -105,6 +109,14 @@ router.get('/codex/account', async (_req, res) => {
     res.json(await deps.codexAccount.read());
   } catch (error) {
     codexAccountFailure('read account', error, res);
+  }
+});
+
+router.get('/codex/usage', async (_req, res) => {
+  try {
+    res.json(await deps.codexAccount.usage());
+  } catch (error) {
+    codexAccountFailure('read account usage', error, res);
   }
 });
 

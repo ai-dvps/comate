@@ -47,6 +47,9 @@ describe('Codex account store', () => {
       codexDefaultModel: null,
       codexDefaultEffort: null,
       codexDefaultSpeed: null,
+      codexUsage: null,
+      codexUsageLoading: false,
+      codexUsageError: null,
       codexAccountLoading: false,
       codexAccountError: null,
     })
@@ -68,6 +71,76 @@ describe('Codex account store', () => {
       email: 'user@example.com',
       planType: 'plus',
     })
+  })
+
+  it('loads Codex account limits and token activity', async () => {
+    const usage = {
+      rateLimit: {
+        limitId: 'codex',
+        limitName: 'Codex',
+        primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 1_800_000_000 },
+        secondary: null,
+        credits: { hasCredits: true, unlimited: false, balance: '12.50' },
+        planType: 'plus',
+        spendControlReached: false,
+        rateLimitReachedType: null,
+      },
+      tokenUsage: {
+        lifetimeTokens: '9007199254740993',
+        peakDailyTokens: '4200',
+        currentStreakDays: '3',
+        longestStreakDays: '8',
+        dailyUsageBuckets: [{ startDate: '2026-08-22', tokens: '1234' }],
+      },
+    }
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => usage })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await useBackendStore.getState().fetchCodexUsage()
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/backends/codex/usage')
+    expect(useBackendStore.getState().codexUsage).toEqual(usage)
+    expect(useBackendStore.getState().codexUsageError).toBeNull()
+  })
+
+  it('keeps usage failures separate from account state', async () => {
+    useBackendStore.setState({
+      codexAccount: { type: 'chatgpt', email: 'user@example.com', planType: 'plus' },
+      codexAccountError: null,
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: 'Usage temporarily unavailable' }),
+    }))
+
+    await useBackendStore.getState().fetchCodexUsage()
+
+    expect(useBackendStore.getState().codexAccount).not.toBeNull()
+    expect(useBackendStore.getState().codexAccountError).toBeNull()
+    expect(useBackendStore.getState().codexUsageError).toBe('Usage temporarily unavailable')
+  })
+
+  it('ignores usage that finishes after the account is cleared', async () => {
+    let resolveUsage!: (response: Response) => void
+    const usageResponse = new Promise<Response>((resolve) => { resolveUsage = resolve })
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => usageResponse)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ account: null, requiresOpenaiAuth: true }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const pendingUsage = useBackendStore.getState().fetchCodexUsage()
+    await useBackendStore.getState().fetchCodexAccount()
+    resolveUsage({
+      ok: true,
+      json: async () => ({ rateLimit: null, tokenUsage: { lifetimeTokens: '999' } }),
+    } as Response)
+    await pendingUsage
+
+    expect(useBackendStore.getState().codexUsage).toBeNull()
+    expect(useBackendStore.getState().codexUsageLoading).toBe(false)
   })
 
   it('sends an API key only in the login request body', async () => {

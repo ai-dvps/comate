@@ -10,8 +10,15 @@ import {
   KeyRound,
   LogOut,
   RefreshCw,
+  Gauge,
+  Coins,
 } from 'lucide-react'
-import { useBackendStore, type BackendId, type BackendInfo } from '../stores/backend-store'
+import {
+  useBackendStore,
+  type BackendId,
+  type BackendInfo,
+  type CodexAccountUsage,
+} from '../stores/backend-store'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible'
 import { cn } from './ui/utils'
 import OutputStyleSetting from './OutputStyleSetting'
@@ -171,11 +178,15 @@ function CodexAccountSetting() {
   const defaultSpeed = useBackendStore((state) => state.codexDefaultSpeed)
   const loading = useBackendStore((state) => state.codexAccountLoading)
   const error = useBackendStore((state) => state.codexAccountError)
+  const usage = useBackendStore((state) => state.codexUsage)
+  const usageLoading = useBackendStore((state) => state.codexUsageLoading)
+  const usageError = useBackendStore((state) => state.codexUsageError)
   const fetchAccount = useBackendStore((state) => state.fetchCodexAccount)
   const startLogin = useBackendStore((state) => state.startCodexLogin)
   const cancelLogin = useBackendStore((state) => state.cancelCodexLogin)
   const logout = useBackendStore((state) => state.logoutCodex)
   const fetchModels = useBackendStore((state) => state.fetchCodexModels)
+  const fetchUsage = useBackendStore((state) => state.fetchCodexUsage)
   const setDefaults = useBackendStore((state) => state.setCodexDefaults)
   const [apiKey, setApiKey] = useState('')
   const [pendingLogin, setPendingLogin] = useState<{ loginId: string; authUrl: string } | null>(null)
@@ -185,8 +196,8 @@ function CodexAccountSetting() {
   }, [fetchAccount])
 
   useEffect(() => {
-    if (account) void fetchModels()
-  }, [account, fetchModels])
+    if (account) void Promise.all([fetchModels(), fetchUsage()])
+  }, [account, fetchModels, fetchUsage])
 
   useEffect(() => {
     if (!pendingLogin) return
@@ -294,6 +305,7 @@ function CodexAccountSetting() {
               {t('backend.codexLogout')}
             </button>
           </div>
+          <CodexUsageSummary usage={usage} loading={usageLoading} error={usageError} />
           {models.length > 0 && (
             <div className="grid max-w-2xl gap-3 sm:grid-cols-3">
               <label className="block">
@@ -413,6 +425,128 @@ function CodexAccountSetting() {
       )}
     </div>
   )
+}
+
+function CodexUsageSummary({
+  usage,
+  loading,
+  error,
+}: {
+  usage: CodexAccountUsage | null
+  loading: boolean
+  error: string | null
+}) {
+  const { t, i18n } = useTranslation('chat')
+  if (loading && !usage) {
+    return (
+      <div role="status" className="flex items-center gap-2 text-xs text-text-tertiary">
+        <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+        {t('backend.codexUsageLoading')}
+      </div>
+    )
+  }
+  if (!usage) {
+    return <div className="text-xs text-text-tertiary">{error || t('backend.codexUsageUnavailable')}</div>
+  }
+
+  const tokenUsage = usage.tokenUsage
+  const sevenDays = sumRecentTokens(tokenUsage?.dailyUsageBuckets ?? [], 7)
+  const thirtyDays = sumRecentTokens(tokenUsage?.dailyUsageBuckets ?? [], 30)
+  const rateWindows = [usage.rateLimit?.primary, usage.rateLimit?.secondary].filter(
+    (window): window is NonNullable<typeof window> => Boolean(window),
+  )
+
+  return (
+    <section aria-label={t('backend.codexUsage')} className="space-y-2.5 rounded-lg border border-border/70 bg-bg/40 p-3">
+      <div className="flex items-center gap-2 text-xs font-medium text-text-secondary">
+        <Gauge className="h-3.5 w-3.5 text-text-tertiary" aria-hidden="true" />
+        {t('backend.codexUsage')}
+        {loading ? <Loader2 className="h-3 w-3 animate-spin text-text-tertiary motion-reduce:animate-none" aria-hidden="true" /> : null}
+      </div>
+
+      {rateWindows.length > 0 ? (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {rateWindows.map((window) => (
+            <div key={`${window.windowDurationMins}-${window.resetsAt}`} className="rounded-md border border-border/60 bg-surface px-3 py-2.5">
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="font-medium text-text-secondary">{rateWindowLabel(t, window.windowDurationMins)}</span>
+                <span className="tabular-nums text-text-tertiary">{t('backend.codexUsageUsed', { percent: Math.round(window.usedPercent) })}</span>
+              </div>
+              <div
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(window.usedPercent)}
+                className="mt-2 h-1.5 overflow-hidden rounded-full bg-border/70"
+              >
+                <div className="h-full rounded-full bg-accent" style={{ width: `${Math.min(100, Math.max(0, window.usedPercent))}%` }} />
+              </div>
+              {window.resetsAt ? (
+                <div className="mt-1.5 text-[11px] text-text-tertiary">
+                  {t('backend.codexUsageResets', { time: formatResetTime(window.resetsAt, i18n.language) })}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <UsageMetric label={t('backend.codexUsageSevenDays')} value={formatTokenCount(sevenDays, i18n.language)} />
+        <UsageMetric label={t('backend.codexUsageThirtyDays')} value={formatTokenCount(thirtyDays, i18n.language)} />
+        <UsageMetric label={t('backend.codexUsageLifetime')} value={formatTokenCount(tokenUsage?.lifetimeTokens, i18n.language)} />
+        <UsageMetric
+          label={t('backend.codexUsageCredits')}
+          value={formatCredits(usage.rateLimit?.credits, t)}
+          icon={<Coins className="h-3 w-3" aria-hidden="true" />}
+        />
+      </div>
+      {error ? <div className="text-[11px] text-destructive">{error}</div> : null}
+    </section>
+  )
+}
+
+function UsageMetric({ label, value, icon }: { label: string; value: string; icon?: ReactNode }) {
+  return (
+    <div className="min-w-0 rounded-md border border-border/60 bg-surface px-2.5 py-2">
+      <div className="flex items-center gap-1 text-[10px] text-text-tertiary">{icon}{label}</div>
+      <div className="mt-1 truncate text-xs font-medium tabular-nums text-text-primary" title={value}>{value}</div>
+    </div>
+  )
+}
+
+function sumRecentTokens(buckets: Array<{ tokens: string }>, days: number): string | null {
+  if (buckets.length === 0) return null
+  return buckets.slice(-days).reduce((sum, bucket) => sum + BigInt(bucket.tokens), 0n).toString()
+}
+
+function formatTokenCount(value: string | null | undefined, locale: string): string {
+  if (!value) return '—'
+  try {
+    return new Intl.NumberFormat(locale).format(BigInt(value))
+  } catch {
+    return value
+  }
+}
+
+function rateWindowLabel(t: (key: string, options?: Record<string, unknown>) => string, minutes: number | null): string {
+  if (minutes === 300) return t('backend.codexUsageFiveHour')
+  if (minutes === 10_080) return t('backend.codexUsageWeekly')
+  return t('backend.codexUsageWindow', { hours: minutes ? Math.round(minutes / 60) : '—' })
+}
+
+function formatResetTime(timestampSeconds: number, locale: string): string {
+  return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' })
+    .format(new Date(timestampSeconds * 1_000))
+}
+
+function formatCredits(
+  credits: NonNullable<CodexAccountUsage['rateLimit']>['credits'] | undefined,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  if (!credits?.hasCredits) return '—'
+  if (credits.unlimited) return t('backend.codexUsageUnlimited')
+  return t('backend.codexUsageCreditBalance', { balance: credits.balance ?? '0' })
 }
 
 /**
