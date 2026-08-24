@@ -120,6 +120,73 @@ describe('BotService', { concurrency: false }, () => {
       );
     });
 
+    it('normalizes a custom Feishu server URL before persistence', () => {
+      const bot = service.createBot(createBotInput());
+
+      service.updateChannelSettings(bot.id, 'feishu', {
+        enabled: true,
+        appId: 'feishu-app',
+        appSecret: 'feishu-secret',
+        serverUrl: '  https://Feishu.Internal.Example:8443/  ',
+      });
+
+      assert.strictEqual(
+        service.getChannelSettings(bot.id).feishu?.serverUrl,
+        'https://feishu.internal.example:8443',
+      );
+    });
+
+    it('treats a blank Feishu server URL as unset', () => {
+      const bot = service.createBot(createBotInput());
+
+      service.updateChannelSettings(bot.id, 'feishu', {
+        enabled: true,
+        appId: 'feishu-app',
+        appSecret: 'feishu-secret',
+        serverUrl: '   ',
+      });
+
+      assert.strictEqual(service.getChannelSettings(bot.id).feishu?.serverUrl, undefined);
+    });
+
+    it('accepts private HTTPS hosts and rejects unsafe Feishu server URLs', () => {
+      const bot = service.createBot(createBotInput());
+      const validUrls = [
+        'https://feishu.internal',
+        'https://10.0.0.8:8443',
+        'https://[fd00::8]:8443',
+      ];
+
+      for (const serverUrl of validUrls) {
+        assert.doesNotThrow(() => service.updateChannelSettings(bot.id, 'feishu', {
+          enabled: true,
+          appId: 'feishu-app',
+          appSecret: 'feishu-secret',
+          serverUrl,
+        }));
+      }
+
+      const invalidUrls = [
+        'http://feishu.internal',
+        'not-a-url',
+        'https://user:password@feishu.internal',
+        'https://feishu.internal?tenant=1',
+        'https://feishu.internal#fragment',
+        'https://feishu.internal/open-apis',
+      ];
+      for (const serverUrl of invalidUrls) {
+        assert.throws(
+          () => service.updateChannelSettings(bot.id, 'feishu', {
+            enabled: true,
+            appId: 'feishu-app',
+            appSecret: 'feishu-secret',
+            serverUrl,
+          }),
+          BotValidationError,
+        );
+      }
+    });
+
     it('throws when binding a workspace already bound to another bot', () => {
       service.createBot(createBotInput({ activeWorkspaceId: 'ws-shared' }));
       assert.throws(

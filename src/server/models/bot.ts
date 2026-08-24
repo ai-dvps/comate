@@ -19,6 +19,7 @@ export interface FeishuChannelConfig {
   appSecret?: string;
   encryptKey?: string;
   verificationToken?: string;
+  serverUrl?: string;
   botName?: string;
   enabled?: boolean;
 }
