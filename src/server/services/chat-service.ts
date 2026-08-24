@@ -1936,7 +1936,21 @@ export class ChatService {
         botEventHandler,
         () => this.reconcileIdleClose(sessionId),
         () => this.reconcileIdleClose(sessionId),
-        () => this.reconcileIdleClose(sessionId),
+        () => {
+          const trackedRuntime = this.runtimes.get(sessionId);
+          if (trackedRuntime?.isClosed()) {
+            // A backend that cannot prove Stop drained its queue hard-closes
+            // the runtime. Finalize that transition through the owner so
+            // subscribers rebind before the next message.
+            void this.closeRuntime(sessionId).catch((error) => {
+              sidecarLog(
+                `[ChatService] failed to finalize hard-closed runtime ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+              );
+            });
+            return;
+          }
+          this.reconcileIdleClose(sessionId);
+        },
         providerResolution.effective,
         driver,
       );
