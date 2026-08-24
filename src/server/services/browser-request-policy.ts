@@ -31,6 +31,8 @@ export interface BrowserRequestInput {
   limits?: Partial<BrowserRequestPolicyLimits>;
 }
 
+type CommonHttpRequestInput = Omit<BrowserRequestInput, 'authorizedDomain'>;
+
 export interface AuthorizedBrowserRequest {
   url: URL;
   authorizedDomain: string;
@@ -178,17 +180,42 @@ export function containsControlCharacter(value: string): boolean {
   return false;
 }
 
-export function authorizeBrowserRequest(input: BrowserRequestInput): AuthorizedBrowserRequest {
+function parseRequestUrl(input: CommonHttpRequestInput): { url: URL; limits: BrowserRequestPolicyLimits } {
   const limits = limitsFor(input.limits);
   if (typeof input.url !== 'string' || input.url.length === 0 || input.url.length > limits.maxUrlLength) {
     throw new BrowserRequestPolicyError('request_limit_exceeded', 'URL exceeds byte limit');
   }
-  let url: URL;
   try {
-    url = new URL(input.url);
+    return { url: new URL(input.url), limits };
   } catch {
     throw new BrowserRequestPolicyError('invalid_request', 'URL is malformed');
   }
+}
+
+function normalizeRequestShape(
+  input: CommonHttpRequestInput,
+  limits: BrowserRequestPolicyLimits,
+): Pick<AuthorizedBrowserRequest, 'method' | 'headers' | 'body'> {
+  const method = input.method.toUpperCase();
+  if (!METHOD.test(method) || method === 'CONNECT' || method === 'TRACE') {
+    throw new BrowserRequestPolicyError('invalid_request', 'HTTP method is not permitted');
+  }
+  const headers = normalizeHeaders(input.headers, limits);
+  let body: Buffer | undefined;
+  if (input.body !== undefined) {
+    if (method === 'GET' || method === 'HEAD') {
+      throw new BrowserRequestPolicyError('invalid_request', `${method} requests cannot carry a body`);
+    }
+    body = Buffer.isBuffer(input.body) ? Buffer.from(input.body) : Buffer.from(input.body, 'utf8');
+    if (body.byteLength > limits.maxRequestBytes) {
+      throw new BrowserRequestPolicyError('request_limit_exceeded', 'Request body exceeds byte limit');
+    }
+  }
+  return { method, headers, ...(body ? { body } : {}) };
+}
+
+export function authorizeBrowserRequest(input: BrowserRequestInput): AuthorizedBrowserRequest {
+  const { url, limits } = parseRequestUrl(input);
   if (url.protocol !== 'https:') {
     throw new BrowserRequestPolicyError('destination_unsafe', 'Only HTTPS destinations are allowed');
   }
@@ -213,22 +240,32 @@ export function authorizeBrowserRequest(input: BrowserRequestInput): AuthorizedB
   ) {
     throw new BrowserRequestPolicyError('destination_not_allowed', 'Destination is outside the authorized site');
   }
-  const method = input.method.toUpperCase();
-  if (!METHOD.test(method) || method === 'CONNECT' || method === 'TRACE') {
-    throw new BrowserRequestPolicyError('invalid_request', 'HTTP method is not permitted');
+  return { url, authorizedDomain, ...normalizeRequestShape(input, limits) };
+}
+
+/**
+ * Provider endpoints are explicit administrator configuration, so they may
+ * target internal HTTP services. Keep structural and request-shape checks,
+ * but do not apply the browser broker's public-HTTPS destination policy.
+ */
+export function authorizeProviderRequest(input: Omit<BrowserRequestInput, 'authorizedDomain'>): AuthorizedBrowserRequest {
+  const { url, limits } = parseRequestUrl(input);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new BrowserRequestPolicyError('destination_unsafe', 'Only HTTP and HTTPS Provider destinations are allowed');
   }
-  const headers = normalizeHeaders(input.headers, limits);
-  let body: Buffer | undefined;
-  if (input.body !== undefined) {
-    if (method === 'GET' || method === 'HEAD') {
-      throw new BrowserRequestPolicyError('invalid_request', `${method} requests cannot carry a body`);
-    }
-    body = Buffer.isBuffer(input.body) ? Buffer.from(input.body) : Buffer.from(input.body, 'utf8');
-    if (body.byteLength > limits.maxRequestBytes) {
-      throw new BrowserRequestPolicyError('request_limit_exceeded', 'Request body exceeds byte limit');
-    }
+  if (url.username || url.password) {
+    throw new BrowserRequestPolicyError('destination_unsafe', 'URL userinfo is not allowed');
   }
-  return { url, authorizedDomain, method, headers, ...(body ? { body } : {}) };
+  if (url.hash) {
+    throw new BrowserRequestPolicyError('destination_unsafe', 'URL fragments are not allowed');
+  }
+  if (url.port === '0') {
+    throw new BrowserRequestPolicyError('destination_unsafe', 'Provider destination port must be greater than zero');
+  }
+  const hostname = normalizedHostname(url.hostname);
+  if (!hostname) throw new BrowserRequestPolicyError('destination_unsafe', 'Provider URL must have a host');
+  url.hostname = hostname;
+  return { url, authorizedDomain: hostname, ...normalizeRequestShape(input, limits) };
 }
 
 function ipv4Number(address: string): number | undefined {
@@ -331,5 +368,30 @@ export async function resolveSafeDestination(
     address: pinned.address,
     family: pinned.family,
     port: 443,
+  };
+}
+
+export async function resolveProviderDestination(
+  request: AuthorizedBrowserRequest,
+  resolver: BrowserDnsResolver = defaultBrowserDnsResolver,
+): Promise<SafeDestination> {
+  const literal = normalizedHostname(request.url.hostname);
+  const literalFamily = isIP(literal);
+  let usable: DnsAddress[];
+  if (literalFamily === 4 || literalFamily === 6) {
+    usable = [{ address: literal, family: literalFamily }];
+  } else {
+    const answers = await resolver(request.url.hostname);
+    usable = answers.filter((candidate) => isIP(candidate.address) === candidate.family);
+    if (usable.length === 0) {
+      throw new BrowserRequestPolicyError('destination_unsafe', 'Provider destination has no usable DNS answers');
+    }
+  }
+  const pinned = usable[0];
+  return {
+    hostname: literal,
+    address: pinned.address,
+    family: pinned.family,
+    port: request.url.port === '' ? (request.url.protocol === 'https:' ? 443 : 80) : Number(request.url.port),
   };
 }

@@ -20,31 +20,36 @@ function upstream(id: string, credential = `provider-secret-${id}`): ProviderRou
 }
 
 describe('ProviderRouteRegistry', () => {
-  it('fails closed before minting a lease for an invalid upstream snapshot', () => {
+  it('accepts HTTP internal upstreams and fails closed for unsafe URL structure', () => {
     const registry = new ProviderRouteRegistry();
+    const lease = registry.register({
+      sessionId: 's1', generation: 'g1',
+      upstream: { providerId: 'p1', baseUrl: 'http://127.0.0.1:8080/v1', credential: 'secret', model: 'm1' },
+    });
+    assert.ok(registry.authorize(lease.routeId, lease.bearer));
     assert.throws(
       () => registry.register({
-        sessionId: 's1', generation: 'g1',
-        upstream: { providerId: 'p1', baseUrl: 'http://127.0.0.1/v1', credential: 'secret', model: 'm1' },
+        sessionId: 's2', generation: 'g2',
+        upstream: { providerId: 'p1', baseUrl: 'ftp://llm.internal/v1', credential: 'secret', model: 'm1' },
       }),
       (error: unknown) => error instanceof ProviderRouteRegistryError && error.code === 'route_unavailable',
     );
     assert.throws(
       () => registry.register({
-        sessionId: 's1', generation: 'g2',
-        upstream: { providerId: 'p1', baseUrl: 'https://127.0.0.1/v1', credential: 'secret', model: 'm1' },
+        sessionId: 's4', generation: 'g4',
+        upstream: { providerId: 'p1', baseUrl: 'http://llm.internal:0/v1', credential: 'secret', model: 'm1' },
       }),
       (error: unknown) => error instanceof ProviderRouteRegistryError && error.code === 'route_unavailable',
     );
     assert.throws(
       () => registry.register({
-        sessionId: 's1', generation: 'g3',
-        upstream: { providerId: 'p1', baseUrl: 'https://[::1]/v1', credential: 'secret', model: 'm1' },
+        sessionId: 's3', generation: 'g3',
+        upstream: { providerId: 'p1', baseUrl: 'http://user:pass@llm.internal/v1', credential: 'secret', model: 'm1' },
       }),
       (error: unknown) => error instanceof ProviderRouteRegistryError && error.code === 'route_unavailable',
     );
     assert.deepEqual(registry.processStatus(), {
-      leases: 0, activeRequests: 0, historyBytes: 0, bufferedResponseBytes: 0,
+      leases: 1, activeRequests: 0, historyBytes: 0, bufferedResponseBytes: 0,
     });
   });
 

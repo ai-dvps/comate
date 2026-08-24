@@ -122,6 +122,7 @@ describe('BrowserDirectHttpClient redirects and pinning', () => {
         transport,
       }).request({
         url: 'https://api.example.com/v1/models',
+        destinationPolicy: 'provider',
         method: 'GET',
         redirectPolicy: 'error',
         prepareHopHeaders: () => ({ authorization: `Bearer secret-${++hookCalls}` }),
@@ -131,6 +132,46 @@ describe('BrowserDirectHttpClient redirects and pinning', () => {
     assert.equal(resolves, 1);
     assert.equal(hookCalls, 1);
     assert.equal(transport.requests.length, 1);
+  });
+
+  it('pins internal Provider HTTP on a custom port before attaching credentials', async () => {
+    const transport = new FakeTransport();
+    transport.responses.push(response(200, {}, ['ok']));
+    let hookCalls = 0;
+    const result = await new BrowserDirectHttpClient({
+      resolver: async () => [{ address: '10.20.30.40', family: 4 as const }],
+      transport,
+    }).request({
+      url: 'http://llm.internal:8080/v1/models',
+      destinationPolicy: 'provider',
+      redirectPolicy: 'error',
+      method: 'GET',
+      prepareHopHeaders: (_request, destination) => {
+        hookCalls += 1;
+        assert.equal(destination.address, '10.20.30.40');
+        return { authorization: 'Bearer secret' };
+      },
+    });
+    assert.equal(result.status, 200);
+    assert.equal(hookCalls, 1);
+    assert.equal(transport.requests[0].protocol, 'http:');
+    assert.equal(transport.requests[0].port, 8080);
+    assert.equal(transport.requests[0].pinnedAddress, '10.20.30.40');
+    assert.equal(transport.requests[0].headers.authorization, 'Bearer secret');
+  });
+
+  it('treats Provider HTTP as an explicit administrator trust decision', async () => {
+    const transport = new FakeTransport();
+    transport.responses.push(response(200, {}, ['ok']));
+    let hookCalls = 0;
+    await new BrowserDirectHttpClient({ resolver, transport }).request({
+      url: 'http://api.example.com/v1/models',
+      destinationPolicy: 'provider',
+      method: 'GET',
+      prepareHopHeaders: () => ({ authorization: `Bearer secret-${++hookCalls}` }),
+    });
+    assert.equal(hookCalls, 1);
+    assert.equal(transport.requests[0].protocol, 'http:');
   });
 });
 

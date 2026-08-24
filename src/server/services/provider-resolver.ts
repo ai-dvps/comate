@@ -101,8 +101,8 @@ export function resolveProviderForAgent(provider: Provider, agent: BackendId): E
   if (!selected.endpoint.enabled) return unavailable('endpoint-disabled', selected.model);
   try {
     const url = new URL(selected.endpoint.baseUrl);
-    if (url.protocol !== 'https:' || Boolean(url.username || url.password || url.hash)
-        || (url.port !== '' && url.port !== '443') || !url.hostname || selected.endpoint.baseUrl.trim() === '') {
+    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || Boolean(url.username || url.password || url.hash)
+        || !url.hostname || url.port === '0' || selected.endpoint.baseUrl.trim() === '') {
       return unavailable('endpoint-invalid', selected.model);
     }
   } catch {

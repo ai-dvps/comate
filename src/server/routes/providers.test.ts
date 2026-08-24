@@ -78,6 +78,7 @@ describe('provider API projection', () => {
     assert.deepEqual(await runProviderHealthCheck(provider, 'codex', client), { ok: true });
     assert.equal(captured?.url, 'https://api.kimi.com/coding/v1/models');
     assert.equal(captured?.redirectPolicy, 'error');
+    assert.equal(captured?.destinationPolicy, 'provider');
     assert.equal(JSON.stringify(captured?.headers).includes('super-secret'), false);
     assert.deepEqual(captured?.prepareHopHeaders?.({} as never, {} as never), { authorization: 'Bearer super-secret' });
 

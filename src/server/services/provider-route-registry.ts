@@ -1,5 +1,4 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { isIP } from 'node:net';
 
 import type { ConverterLimits } from './codex-chat-route/errors.js';
 
@@ -147,9 +146,8 @@ function registrationIsValid(input: ProviderRouteRegistration): boolean {
       || !input.upstream.model.trim() || !input.upstream.credential.trim()) return false;
   try {
     const url = new URL(input.upstream.baseUrl);
-    return url.protocol === 'https:' && !url.username && !url.password && !url.hash
-      && (url.port === '' || url.port === '443') && Boolean(url.hostname)
-      && isIP(url.hostname.replace(/^\[|\]$/g, '')) === 0;
+    return (url.protocol === 'http:' || url.protocol === 'https:')
+      && !url.username && !url.password && !url.hash && Boolean(url.hostname) && url.port !== '0';
   } catch {
     return false;
   }

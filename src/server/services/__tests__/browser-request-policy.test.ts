@@ -5,7 +5,9 @@ import assert from 'node:assert/strict';
 import {
   BrowserRequestPolicyError,
   authorizeBrowserRequest,
+  authorizeProviderRequest,
   isPublicIpAddress,
+  resolveProviderDestination,
   resolveSafeDestination,
   siteBoundaryForUrl,
 } from '../browser-request-policy.js';
@@ -110,5 +112,40 @@ describe('browser request DNS policy', () => {
       { address: '93.184.216.34', family: 4 },
     ]);
     assert.deepEqual(pinned, { hostname: 'api.example.com', address: '2606:4700:4700::1111', family: 6, port: 443 });
+  });
+});
+
+describe('Provider request destination policy', () => {
+  it('accepts internal HTTP URL shapes and rejects unsafe structures and port zero', () => {
+    const request = authorizeProviderRequest({
+      url: 'http://llm.internal:8080/v1',
+      method: 'get',
+    });
+    assert.equal(request.url.toString(), 'http://llm.internal:8080/v1');
+    for (const url of [
+      'ftp://llm.internal/v1',
+      'http://user:pass@llm.internal/v1',
+      'http://llm.internal/v1#secret',
+      'http://llm.internal:0/v1',
+    ]) {
+      assert.throws(
+        () => authorizeProviderRequest({ url, method: 'GET' }),
+        (error: unknown) => error instanceof BrowserRequestPolicyError && error.code === 'destination_unsafe',
+        url,
+      );
+    }
+  });
+
+  it('pins administrator-configured HTTP and HTTPS destinations', async () => {
+    const internal = authorizeProviderRequest({ url: 'http://llm.internal:8080/v1', method: 'GET' });
+    assert.deepEqual(
+      await resolveProviderDestination(internal, async () => [{ address: '10.20.30.40', family: 4 }]),
+      { hostname: 'llm.internal', address: '10.20.30.40', family: 4, port: 8080 },
+    );
+    const publicHttp = authorizeProviderRequest({ url: 'http://api.example.com/v1', method: 'GET' });
+    assert.equal(
+      (await resolveProviderDestination(publicHttp, async () => [{ address: '93.184.216.34', family: 4 }])).port,
+      80,
+    );
   });
 });

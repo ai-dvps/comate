@@ -98,7 +98,8 @@
     "openCodeProtocol": "OpenCode 使用的协议",
     "claudeCapabilities": "Claude Code 高级能力",
     "endpointRequired": "请至少启用一个端点。",
-    "validHttpsRequired": "已启用的端点必须填写有效的 HTTPS Base URL。",
+    "validHttpRequired": "已启用的端点必须填写有效的 HTTP 或 HTTPS Base URL。",
+    "httpWarning": "HTTP 会以未加密方式发送凭据和模型流量。请仅用于受信任的公司内部服务。",
     "endpointUnreachable": "所选端点不可达。",
     "testEndpoint": "测试端点",
     "retryEndpoint": "重试端点",
@@ -108,7 +109,7 @@
       "reachable": "可连接",
       "unreachable": "无法连接",
       "disabled": "已跳过 — 端点未启用",
-      "invalid": "HTTPS URL 结构无效"
+      "invalid": "HTTP(S) URL 结构无效"
     },
     "discardPresetTitle": "替换当前草稿？",
     "discardPresetMessage": "应用此预设会替换尚未保存的服务商字段。",

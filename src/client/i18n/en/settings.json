@@ -98,7 +98,8 @@
     "openCodeProtocol": "Protocol used by OpenCode",
     "claudeCapabilities": "Advanced Claude Code capabilities",
     "endpointRequired": "Enable at least one endpoint.",
-    "validHttpsRequired": "Enabled endpoints require a valid HTTPS Base URL.",
+    "validHttpRequired": "Enabled endpoints require a valid HTTP or HTTPS Base URL.",
+    "httpWarning": "HTTP sends credentials and model traffic without encryption. Use it only for a trusted internal service.",
     "endpointUnreachable": "The selected endpoint is unreachable.",
     "testEndpoint": "Test endpoint",
     "retryEndpoint": "Retry endpoint",
@@ -108,7 +109,7 @@
       "reachable": "Reachable",
       "unreachable": "Unreachable",
       "disabled": "Skipped — endpoint disabled",
-      "invalid": "Structurally invalid HTTPS URL"
+      "invalid": "Structurally invalid HTTP(S) URL"
     },
     "discardPresetTitle": "Replace the current draft?",
     "discardPresetMessage": "Applying this preset replaces your unsaved Provider fields.",

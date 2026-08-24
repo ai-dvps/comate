@@ -1,13 +1,15 @@
+import http, { type IncomingHttpHeaders, type RequestOptions } from 'node:http';
 import https from 'node:https';
-import type { IncomingHttpHeaders } from 'node:http';
 import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
 
 import {
   BrowserRequestPolicyError,
   authorizeBrowserRequest,
+  authorizeProviderRequest,
   containsControlCharacter,
   defaultBrowserDnsResolver,
   resolveSafeDestination,
+  resolveProviderDestination,
   siteBoundaryForUrl,
   type AuthorizedBrowserRequest,
   type BrowserDnsResolver,
@@ -36,6 +38,7 @@ export class BrowserDirectHttpError extends Error {
 }
 
 export interface DirectHttpTransportRequest {
+  protocol?: 'http:' | 'https:';
   hostname: string;
   servername: string;
   pinnedAddress: string;
@@ -80,6 +83,8 @@ export interface BrowserDirectHttpRequest {
   /** Browser requests set this explicitly. Provider egress derives it from the validated URL. */
   authorizedDomain?: string;
   redirectPolicy?: 'follow' | 'error';
+  /** Explicit Provider configuration may target private HTTP(S) services. */
+  destinationPolicy?: 'public-https' | 'provider';
   method: string;
   headers?: Record<string, string> | ReadonlyArray<readonly [string, string]>;
   body?: string | Buffer;
@@ -139,14 +144,16 @@ function responseHeaders(headers: IncomingHttpHeaders | DirectHttpTransportRespo
   return output;
 }
 
-export class NodeDirectHttpsTransport implements DirectHttpTransport {
+/** Direct pinned HTTP(S) transport; callers remain responsible for destination policy. */
+export class NodeDirectHttpTransport implements DirectHttpTransport {
   request(input: DirectHttpTransportRequest): Promise<DirectHttpTransportResponse> {
+    const protocol = input.protocol ?? 'https:';
+    const client = protocol === 'http:' ? http : https;
     return new Promise((resolve, reject) => {
       let connectTimer: NodeJS.Timeout | undefined;
-      const req = https.request({
-        protocol: 'https:',
+      const options: RequestOptions = {
+        protocol,
         hostname: input.hostname,
-        servername: input.servername,
         port: input.port,
         method: input.method,
         path: input.path,
@@ -156,7 +163,9 @@ export class NodeDirectHttpsTransport implements DirectHttpTransport {
         lookup: (_hostname, _options, callback) => {
           callback(null, input.pinnedAddress, input.family);
         },
-      }, (res) => {
+        ...(protocol === 'https:' ? { servername: input.servername } : {}),
+      };
+      const req = client.request(options, (res) => {
         if (headerTimer) clearTimeout(headerTimer);
         if (connectTimer) clearTimeout(connectTimer);
         res.setTimeout(input.inactivityTimeoutMs, () => {
@@ -172,9 +181,9 @@ export class NodeDirectHttpsTransport implements DirectHttpTransport {
       req.once('socket', (socket) => {
         if (!socket.connecting) return;
         connectTimer = setTimeout(() => {
-          req.destroy(new BrowserDirectHttpError('request_timeout', 'TLS connect timeout'));
+          req.destroy(new BrowserDirectHttpError('request_timeout', 'Connect timeout'));
         }, input.connectTimeoutMs);
-        socket.once('secureConnect', () => {
+        socket.once(protocol === 'https:' ? 'secureConnect' : 'connect', () => {
           if (connectTimer) clearTimeout(connectTimer);
         });
       });
@@ -308,7 +317,7 @@ export class BrowserDirectHttpClient {
 
   constructor(options: BrowserDirectHttpClientOptions = {}) {
     this.resolver = options.resolver ?? defaultBrowserDnsResolver;
-    this.transport = options.transport ?? new NodeDirectHttpsTransport();
+    this.transport = options.transport ?? new NodeDirectHttpTransport();
     this.limits = limitsFor(options.limits);
   }
 
@@ -338,7 +347,7 @@ export class BrowserDirectHttpClient {
         throw new BrowserDirectHttpError(error.code, error.message);
       }
       if (controller.signal.aborted) throw abortError(timedOut);
-      throw new BrowserDirectHttpError('transport_error', 'Direct HTTPS transport failed');
+      throw new BrowserDirectHttpError('transport_error', 'Direct HTTP transport failed');
     } finally {
       clearTimeout(timer);
       input.signal?.removeEventListener('abort', onExternalAbort);
@@ -358,19 +367,29 @@ export class BrowserDirectHttpClient {
     const redirects: BrowserDirectHttpResult['redirects'] = [];
     for (let hop = 0; ; hop += 1) {
       if (signal.aborted) throw abortError(timedOut());
-      const authorized = authorizeBrowserRequest({
-        url,
-        authorizedDomain: input.authorizedDomain ?? siteBoundaryForUrl(url),
-        method,
-        headers: input.headers,
-        ...(body !== undefined ? { body } : {}),
-        limits: { maxRequestBytes: this.limits.maxRequestBytes },
-      });
+      const authorized = input.destinationPolicy === 'provider'
+        ? authorizeProviderRequest({
+            url,
+            method,
+            headers: input.headers,
+            ...(body !== undefined ? { body } : {}),
+            limits: { maxRequestBytes: this.limits.maxRequestBytes },
+          })
+        : authorizeBrowserRequest({
+            url,
+            authorizedDomain: input.authorizedDomain ?? siteBoundaryForUrl(url),
+            method,
+            headers: input.headers,
+            ...(body !== undefined ? { body } : {}),
+            limits: { maxRequestBytes: this.limits.maxRequestBytes },
+          });
       const canonical = authorized.url.toString();
       if (visited.has(canonical)) throw new BrowserDirectHttpError('redirect_loop', 'Redirect loop detected');
       visited.add(canonical);
       const destination = await promiseWithAbort(
-        resolveSafeDestination(authorized, this.resolver),
+        input.destinationPolicy === 'provider'
+          ? resolveProviderDestination(authorized, this.resolver)
+          : resolveSafeDestination(authorized, this.resolver),
         signal,
         timedOut,
       );
@@ -388,6 +407,7 @@ export class BrowserDirectHttpClient {
         ...(authorized.body ? { 'content-length': String(authorized.body.byteLength) } : {}),
       };
       const transportResponse = await promiseWithAbort(this.transport.request({
+        protocol: authorized.url.protocol as 'http:' | 'https:',
         hostname: destination.hostname,
         servername: destination.hostname,
         pinnedAddress: destination.address,

@@ -8,14 +8,13 @@ import { transformChatResponse } from './codex-chat-route/response-transform.js'
 import { ChatSseToResponses, responsesFailedEvent } from './codex-chat-route/sse-transform.js';
 import { byteLength, isRecord } from './codex-chat-route/shared.js';
 import {
-  authorizeBrowserRequest,
+  authorizeProviderRequest,
   defaultBrowserDnsResolver,
-  resolveSafeDestination,
-  siteBoundaryForUrl,
+  resolveProviderDestination,
   type BrowserDnsResolver,
 } from './browser-request-policy.js';
 import {
-  NodeDirectHttpsTransport,
+  NodeDirectHttpTransport,
   type DirectHttpTransport,
 } from './browser-direct-http-client.js';
 import { providerResourceUrl } from './provider-resolver.js';
@@ -154,7 +153,7 @@ export function authorizeProviderRouteRequest(input: {
 
 export function createProviderRouteHttpRouter(options: ProviderRouteHttpOptions = {}): Router {
   const registry = options.registry ?? providerRouteRegistry;
-  const transport = options.transport ?? new PinnedHttpsProviderRouteTransport();
+  const transport = options.transport ?? new PinnedProviderRouteTransport();
   const maxRequestBytes = options.maxRequestBytes ?? converterLimits().maxRequestBytes;
   const router = Router();
 
@@ -410,12 +409,11 @@ function normalizedHeaders(
 }
 
 /**
- * Streaming counterpart of BrowserDirectHttpClient's shared Provider egress
- * policy: HTTPS only, every DNS answer public, one pinned address, original
- * hostname for SNI/certificate validation, no Agent/proxy inheritance, and no
- * redirect following.
+ * Streaming Provider egress for explicit administrator configuration. HTTP,
+ * HTTPS, private DNS, and IP literals are supported; the selected address is
+ * still pinned and redirects remain disabled.
  */
-export class PinnedHttpsProviderRouteTransport implements ProviderRouteUpstreamTransport {
+export class PinnedProviderRouteTransport implements ProviderRouteUpstreamTransport {
   private readonly resolver: BrowserDnsResolver;
   private readonly transport: DirectHttpTransport;
   private readonly totalTimeoutMs: number;
@@ -426,20 +424,19 @@ export class PinnedHttpsProviderRouteTransport implements ProviderRouteUpstreamT
     totalTimeoutMs?: number;
   }) {
     this.resolver = options?.resolver ?? defaultBrowserDnsResolver;
-    this.transport = options?.transport ?? new NodeDirectHttpsTransport();
+    this.transport = options?.transport ?? new NodeDirectHttpTransport();
     this.totalTimeoutMs = options?.totalTimeoutMs ?? 60_000;
   }
 
   async request(input: ProviderRouteUpstreamRequest): Promise<ProviderRouteUpstreamResponse> {
-    const authorized = authorizeBrowserRequest({
+    const authorized = authorizeProviderRequest({
       url: input.url,
-      authorizedDomain: siteBoundaryForUrl(input.url),
       method: input.method,
       headers: Object.entries(input.headers).filter(([name]) => REQUEST_HEADER_ALLOWLIST.has(name.toLowerCase())),
       body: input.body,
       limits: { maxRequestBytes: converterLimits().maxRequestBytes },
     });
-    const destination = await resolveSafeDestination(authorized, this.resolver);
+    const destination = await resolveProviderDestination(authorized, this.resolver);
     const controller = new AbortController();
     let timedOut = false;
     const onAbort = (): void => controller.abort();
@@ -451,6 +448,7 @@ export class PinnedHttpsProviderRouteTransport implements ProviderRouteUpstreamT
     }, this.totalTimeoutMs);
     try {
       const response = await this.transport.request({
+        protocol: authorized.url.protocol as 'http:' | 'https:',
         hostname: destination.hostname,
         servername: destination.hostname,
         pinnedAddress: destination.address,
