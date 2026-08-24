@@ -405,6 +405,27 @@ describe('chat-service idle-close', { concurrency: false }, () => {
     assert.strictEqual(openCalls, 2);
   });
 
+  it('removes and announces a runtime that hard-closes itself', async () => {
+    setupStoreMocks();
+    let activityChanged: (() => void) | undefined;
+    let hardClosed = false;
+    const closedNotifications: string[] = [];
+    SessionRuntime.open = (...args: unknown[]) => {
+      activityChanged = args[8] as (() => void) | undefined;
+      const runtime = createMockRuntime();
+      return { ...runtime, isClosed: () => hardClosed } as SessionRuntime;
+    };
+    service.setOnRuntimeClose((sessionId) => closedNotifications.push(sessionId));
+
+    await service.getOrCreateRuntime('s1', 'ws-1');
+    hardClosed = true;
+    activityChanged?.();
+    await Promise.resolve();
+
+    assert.strictEqual(service.getActiveSessionCount(), 0);
+    assert.deepStrictEqual(closedNotifications, ['s1']);
+  });
+
   it('closeRuntime cancels pending idle timer before closing', async () => {
     setupStoreMocks();
 
