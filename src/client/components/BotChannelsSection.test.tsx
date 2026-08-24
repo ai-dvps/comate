@@ -91,6 +91,63 @@ describe('BotChannelsSection', () => {
     expect(screen.getByText('Authentication failed')).toBeInTheDocument();
   });
 
+  it('renders and updates the Feishu server URL', () => {
+    const onUpdate = vi.fn();
+    renderWithI18n(
+      <BotChannelsSection
+        form={{
+          ...emptyForm(),
+          feishuEnabled: true,
+          feishuServerUrl: 'https://feishu.internal.example:8443',
+        }}
+        onUpdate={onUpdate}
+      />,
+    );
+
+    const input = screen.getByLabelText('Server URL') as HTMLInputElement;
+    expect(input.value).toBe('https://feishu.internal.example:8443');
+    expect(screen.getByText(/Leave blank to use the official Feishu service/i)).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: 'https://new.feishu.internal' } });
+    expect(onUpdate).toHaveBeenCalledWith({ feishuServerUrl: 'https://new.feishu.internal' });
+  });
+
+  it('hides Feishu reconnect when only the server URL is dirty', () => {
+    const originalBot: Bot = {
+      id: 'bot-1',
+      name: 'Bot',
+      activeWorkspaceId: null,
+      channelSettings: {
+        feishu: {
+          enabled: true,
+          appId: 'feishu-app',
+          appSecret: true,
+          serverUrl: 'https://old.feishu.internal',
+        },
+      },
+      rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
+      createdAt: '',
+      updatedAt: '',
+    };
+
+    renderWithI18n(
+      <BotChannelsSection
+        form={{
+          ...emptyForm(),
+          feishuEnabled: true,
+          feishuAppId: 'feishu-app',
+          feishuServerUrl: 'https://new.feishu.internal',
+        }}
+        onUpdate={vi.fn()}
+        originalBot={originalBot}
+        channelStatus={{ wecom: 'not_configured', feishu: 'disconnected' }}
+        onReconnect={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /reconnect/i })).not.toBeInTheDocument();
+  });
+
   it('shows Reconnect button when channel is disconnected and credentials are unchanged', () => {
     const originalBot: Bot = {
       id: 'bot-1',

@@ -15,6 +15,7 @@ export interface BotFormData {
   feishuAppSecret: string;
   feishuEncryptKey: string;
   feishuVerificationToken: string;
+  feishuServerUrl: string;
   feishuBotName: string;
 }
 
@@ -33,6 +34,7 @@ export function emptyForm(): BotFormData {
     feishuAppSecret: '',
     feishuEncryptKey: '',
     feishuVerificationToken: '',
+    feishuServerUrl: '',
     feishuBotName: '',
   };
 }
@@ -54,6 +56,7 @@ export function botToForm(bot: Bot): BotFormData {
     feishuAppSecret: typeof feishu?.appSecret === 'string' ? feishu.appSecret : '',
     feishuEncryptKey: typeof feishu?.encryptKey === 'string' ? feishu.encryptKey : '',
     feishuVerificationToken: typeof feishu?.verificationToken === 'string' ? feishu.verificationToken : '',
+    feishuServerUrl: typeof feishu?.serverUrl === 'string' ? feishu.serverUrl : '',
     feishuBotName: typeof feishu?.botName === 'string' ? feishu.botName : '',
   };
 }
@@ -95,6 +98,7 @@ export function buildCreateBotInput(form: BotFormData): CreateBotInput {
     channelSettings.feishu = {
       enabled: true,
       appId: form.feishuAppId.trim(),
+      serverUrl: form.feishuServerUrl.trim() || undefined,
       botName: form.feishuBotName.trim() || undefined,
     };
     channelSettings.feishu.appSecret = buildSecretValue(
@@ -154,6 +158,7 @@ export function buildUpdateBotInput(
     channelSettings.feishu = {
       enabled: true,
       appId: form.feishuAppId.trim(),
+      serverUrl: form.feishuServerUrl.trim() || undefined,
       botName: form.feishuBotName.trim() || undefined,
     };
     channelSettings.feishu.appSecret = buildSecretValue(
@@ -172,6 +177,7 @@ export function buildUpdateBotInput(
     channelSettings.feishu = {
       enabled: false,
       appId: original.channelSettings.feishu.appId,
+      serverUrl: original.channelSettings.feishu.serverUrl,
       botName: original.channelSettings.feishu.botName,
       appSecret: buildSecretValue(form.feishuAppSecret, original.channelSettings.feishu.appSecret),
       encryptKey: buildSecretValue(form.feishuEncryptKey, original.channelSettings.feishu.encryptKey),
@@ -207,6 +213,28 @@ export function validateBotForm(
   if (form.feishuEnabled && !isEditing && !form.feishuAppSecret.trim()) {
     return t('bots.feishuAppSecretRequired');
   }
+  if (form.feishuEnabled && !isValidFeishuServerUrl(form.feishuServerUrl)) {
+    return t('bots.feishuServerUrlInvalid');
+  }
 
   return null;
+}
+
+function isValidFeishuServerUrl(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+
+  try {
+    const url = new URL(trimmed);
+    return (
+      url.protocol === 'https:'
+      && url.username === ''
+      && url.password === ''
+      && url.search === ''
+      && url.hash === ''
+      && url.pathname === '/'
+    );
+  } catch {
+    return false;
+  }
 }

@@ -617,7 +617,7 @@ async function connectEnabledChannels(bot: import('../models/bot.js').Bot): Prom
   }
 }
 
-function getEffectiveCredentials(
+function getEffectiveConnectionConfig(
   settings: BotChannelSettings,
   channelKey: BotChannelKey,
 ): Record<string, string | undefined> {
@@ -641,16 +641,16 @@ function getEffectiveCredentials(
   return result;
 }
 
-function effectiveCredentialsChanged(
+function effectiveConnectionConfigChanged(
   pre: BotChannelSettings,
   post: BotChannelSettings,
   channelKey: BotChannelKey,
 ): boolean {
-  const preCreds = getEffectiveCredentials(pre, channelKey);
-  const postCreds = getEffectiveCredentials(post, channelKey);
-  const keys = new Set([...Object.keys(preCreds), ...Object.keys(postCreds)]);
+  const preConfig = getEffectiveConnectionConfig(pre, channelKey);
+  const postConfig = getEffectiveConnectionConfig(post, channelKey);
+  const keys = new Set([...Object.keys(preConfig), ...Object.keys(postConfig)]);
   for (const key of keys) {
-    if (preCreds[key] !== postCreds[key]) return true;
+    if (preConfig[key] !== postConfig[key]) return true;
   }
   return false;
 }
@@ -670,10 +670,10 @@ async function reconcileChannelConnections(
     const status = service.getBotStatus(bot.id);
 
     if (enabled) {
-      const credentialsChanged =
+      const connectionConfigChanged =
         preUpdateSettings !== undefined &&
-        effectiveCredentialsChanged(preUpdateSettings, channelSettings, channelKey);
-      if (!wasEnabled || status === 'not_configured' || credentialsChanged) {
+        effectiveConnectionConfigChanged(preUpdateSettings, channelSettings, channelKey);
+      if (!wasEnabled || status === 'not_configured' || connectionConfigChanged) {
         try {
           service.disconnectChannel(bot.id, channelKey);
         } catch (err) {

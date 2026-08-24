@@ -357,6 +357,49 @@ describe('BotManagementPage', () => {
     await waitFor(() => expect(screen.queryByText('Reconnecting…')).not.toBeInTheDocument());
   });
 
+  it('shows a reconnecting hint after saving only a Feishu server URL change', async () => {
+    const originalBot = makeBot({
+      channelSettings: {
+        feishu: {
+          enabled: true,
+          appId: 'feishu-app',
+          appSecret: true,
+          serverUrl: 'https://old.feishu.internal',
+        },
+      },
+    });
+    const updateBot = vi.fn().mockResolvedValue(makeBot({
+      channelSettings: {
+        feishu: {
+          enabled: true,
+          appId: 'feishu-app',
+          appSecret: true,
+          serverUrl: 'https://new.feishu.internal',
+        },
+      },
+    }));
+    const fetchStatus = vi.fn(() => new Promise(() => {}));
+    (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      ...mockState,
+      bots: [originalBot],
+      channelStatusByBotId: { 'bot-1': { wecom: 'not_configured', feishu: 'connected' } },
+      fetchStatus,
+      updateBot,
+    });
+
+    await act(async () => {
+      renderWithI18n(<BotManagementPage />);
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Channels/i }));
+
+    const serverUrlInput = await screen.findByLabelText('Server URL');
+    fireEvent.change(serverUrlInput, { target: { value: 'https://new.feishu.internal' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Save$/i })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
+
+    await waitFor(() => expect(screen.getByText('Reconnecting…')).toBeInTheDocument());
+  });
+
   it('shows unsaved-changes dialog when switching bots with dirty persona config', async () => {
     (useBotStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
       ...mockState,

@@ -49,12 +49,13 @@ function deriveChannelPendingAction(
     return credsChanged ? 'connect' : null;
   }
 
-  const credsChanged =
+  const connectionConfigChanged =
     pre.feishuAppId !== post.feishuAppId ||
     pre.feishuAppSecret !== post.feishuAppSecret ||
     pre.feishuEncryptKey !== post.feishuEncryptKey ||
-    pre.feishuVerificationToken !== post.feishuVerificationToken;
-  return credsChanged ? 'connect' : null;
+    pre.feishuVerificationToken !== post.feishuVerificationToken ||
+    pre.feishuServerUrl !== post.feishuServerUrl;
+  return connectionConfigChanged ? 'connect' : null;
 }
 
 export type BotSectionId = 'general' | 'channels' | 'members' | 'roles' | 'persona' | 'danger';

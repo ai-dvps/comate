@@ -61,6 +61,7 @@ function isChannelDirty(
     form.feishuEnabled !== snapshot.feishuEnabled ||
     form.feishuAppId !== snapshot.feishuAppId ||
     form.feishuAppSecret !== snapshot.feishuAppSecret ||
+    form.feishuServerUrl !== snapshot.feishuServerUrl ||
     form.feishuBotName !== snapshot.feishuBotName ||
     form.feishuEncryptKey !== snapshot.feishuEncryptKey ||
     form.feishuVerificationToken !== snapshot.feishuVerificationToken
@@ -319,6 +320,27 @@ export default function BotChannelsSection({
                   className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
                 />
               </div>
+            </div>
+            <div>
+              <label
+                htmlFor="feishuServerUrl"
+                className="block text-[11px] font-medium text-text-tertiary mb-1"
+              >
+                {t('bots.feishuServerUrl')}
+              </label>
+              <input
+                id="feishuServerUrl"
+                type="url"
+                inputMode="url"
+                value={form.feishuServerUrl}
+                onChange={(e) => onUpdate({ feishuServerUrl: e.target.value })}
+                placeholder={t('bots.feishuServerUrlPlaceholder')}
+                aria-describedby="feishuServerUrlHint"
+                className="w-full px-3 py-2 text-sm bg-bg border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+              />
+              <p id="feishuServerUrlHint" className="mt-1 text-[10px] text-text-tertiary">
+                {t('bots.feishuServerUrlHint')}
+              </p>
             </div>
             <SecretInput
               key={secretKey('feishuAppSecret')}
