@@ -687,6 +687,7 @@ export class SqliteStore {
     this.migrateBotEscalationLedgerSchema();
     this.migrateBrowserOperationLedgerSchema();
     this.migrateProviderConfigurationV1(providerConfigurationRows);
+    this.migrateProviderPresetProvenance();
     this.backfillLastTurnStartedAt();
   }
 
@@ -1093,6 +1094,26 @@ export class SqliteStore {
 
   private preflightProviderConfigurationV1(): Array<{ row: RawProviderRow; result: ProviderOptionsClassification }> {
     return this.validatedProviderConfigurationRows();
+  }
+
+  private migrateProviderPresetProvenance(): void {
+    const state = this.getMigrationState();
+    if (state.version !== null && state.version >= 13) return;
+    const rows = this.validatedProviderConfigurationRows();
+    const update = this.db.prepare('UPDATE providers SET options_json = ? WHERE id = ?');
+    const migrate = this.db.transaction(() => {
+      for (const { row, result } of rows) {
+        if (result.kind !== 'current' || result.configuration.preset) continue;
+        const preset = inferTrustedPresetProvenance(result.configuration);
+        if (preset) update.run(JSON.stringify({ ...result.configuration, preset }), row.id);
+      }
+      const previous = this.getMigrationState().snapshot;
+      this.setMigrationState(13, new Date().toISOString(), {
+        ...previous,
+        provider_preset_provenance: true,
+      });
+    });
+    migrate();
   }
 
   private validatedProviderConfigurationRows(): Array<{ row: RawProviderRow; result: ProviderOptionsClassification }> {
@@ -5637,7 +5658,7 @@ function migrateLegacyProviderOptions(row: RawProviderRow, options: Record<strin
   }
   const protocol = options.protocol === 'openai-responses' ? 'openai-responses' : 'anthropic';
   const model = row.model ?? undefined;
-  return normalizeProviderConfiguration({
+  const configuration = normalizeProviderConfiguration({
     schemaVersion: PROVIDER_CONFIGURATION_VERSION,
     endpoints: protocol === 'openai-responses'
       ? { openai: { enabled: true, baseUrl: row.base_url, format: 'openai-responses' } }
@@ -5654,13 +5675,33 @@ function migrateLegacyProviderOptions(row: RawProviderRow, options: Record<strin
     },
     codex: {},
   });
+  const preset = inferTrustedPresetProvenance(configuration);
+  return preset ? { ...configuration, preset } : configuration;
+}
+
+function inferTrustedPresetProvenance(
+  configuration: ProviderConfigurationV1,
+): ProviderConfigurationV1['preset'] | undefined {
+  const vendors = new Set<string>();
+  for (const endpoint of [configuration.endpoints.anthropic, configuration.endpoints.openai]) {
+    if (!endpoint?.enabled) continue;
+    try {
+      const hostname = new URL(endpoint.baseUrl).hostname.toLowerCase();
+      if (hostname === 'api.kimi.com') vendors.add('kimi');
+      if (hostname === 'open.bigmodel.cn') vendors.add('bigmodel');
+    } catch {
+      return undefined;
+    }
+  }
+  if (vendors.size !== 1) return undefined;
+  return { id: [...vendors][0], version: 1 };
 }
 
 function legacyInputToProviderConfiguration(input: CreateProviderInput): ProviderConfigurationV1 {
   const protocol = input.protocol ?? 'anthropic';
   const baseUrl = input.baseUrl?.trim();
   if (!baseUrl) throw new Error('Provider base URL is required');
-  return {
+  const configuration: ProviderConfigurationV1 = {
     schemaVersion: PROVIDER_CONFIGURATION_VERSION,
     endpoints: protocol === 'openai-responses'
       ? { openai: { enabled: true, baseUrl, format: 'openai-responses' } }
@@ -5677,6 +5718,8 @@ function legacyInputToProviderConfiguration(input: CreateProviderInput): Provide
     },
     codex: {},
   };
+  const preset = inferTrustedPresetProvenance(configuration);
+  return preset ? { ...configuration, preset } : configuration;
 }
 
 function mergeProviderConfiguration(existing: ProviderConfigurationV1, input: UpdateProviderInput): ProviderConfigurationV1 {
@@ -5706,6 +5749,9 @@ function mergeProviderConfiguration(existing: ProviderConfigurationV1, input: Up
     if (input[field] !== undefined) next.claude[field] = input[field];
   }
   if (input.customEnvVars !== undefined) next.claude.customEnvVars = input.customEnvVars;
+  const preset = inferTrustedPresetProvenance(next);
+  if (preset) next.preset = preset;
+  else delete next.preset;
   return next;
 }
 

@@ -1,7 +1,7 @@
 import '../test-utils/test-env.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { discoverProviderModels, hasDefaultProviderChange, hasSnapshottedProviderChange, publicProvider, runProviderHealthCheck } from './providers.js';
+import { discoverProviderModels, hasDefaultProviderChange, hasSnapshottedProviderChange, publicProvider, resolveProviderRequestAgent, runProviderHealthCheck } from './providers.js';
 import type { Provider } from '../models/provider.js';
 import type { BrowserDirectHttpRequest } from '../services/browser-direct-http-client.js';
 
@@ -24,6 +24,12 @@ function canonicalProvider(): Provider {
 }
 
 describe('provider API projection', () => {
+  it('preserves the legacy omitted-Agent contract while rejecting invalid explicit values', () => {
+    assert.equal(resolveProviderRequestAgent(undefined), 'claude');
+    assert.equal(resolveProviderRequestAgent('codex'), 'codex');
+    assert.equal(resolveProviderRequestAgent('invalid'), undefined);
+  });
+
   it('uses an explicit recursive allowlist, preserves canonical editable env values, and never exposes unknown fields', () => {
     const provider = canonicalProvider() as Provider & { futureSecret?: string };
     provider.futureSecret = 'future-secret';

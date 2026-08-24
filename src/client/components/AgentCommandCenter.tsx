@@ -31,6 +31,7 @@ import { useProviderStore } from '../stores/provider-store'
 import {
   useProviderUsageStore,
   hasUsageSupport,
+  providerUsageAgent,
   usagePercentage,
   usageBarColor,
   formatRemainingPercent,
@@ -151,7 +152,7 @@ function UserMenuUsageSection({ active }: { active: boolean }) {
   const usageByProvider = useProviderUsageStore((s) => s.usageByProvider)
   const fetchUsage = useProviderUsageStore((s) => s.fetchUsage)
 
-  const supported = providers.filter((provider) => hasUsageSupport(provider.baseUrl))
+  const supported = providers.filter(hasUsageSupport)
 
   // Lazily load the provider list and refresh usage for each supported
   // provider whenever the menu opens (on-demand; the client throttle prevents
@@ -160,7 +161,9 @@ function UserMenuUsageSection({ active }: { active: boolean }) {
     if (!active) return
     if (providers.length === 0) fetchProviders()
     for (const provider of providers) {
-      if (hasUsageSupport(provider.baseUrl)) fetchUsage(provider.id)
+      if (hasUsageSupport(provider)) {
+        fetchUsage(provider.id, { agent: providerUsageAgent(provider) })
+      }
     }
   }, [active, providers, fetchProviders, fetchUsage])
 

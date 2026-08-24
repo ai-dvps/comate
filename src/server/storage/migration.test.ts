@@ -314,7 +314,7 @@ describe('unified schema migration', { concurrency: false }, () => {
     const store = triggerMigration(seedDb, dbPath);
     const db = openRawDb(store);
 
-    assert.strictEqual(store.getMigrationVersion(), 12);
+    assert.strictEqual(store.getMigrationVersion(), 13);
 
     const tables = tableNames(db);
     assert.ok(tables.includes('bot_channels'));
@@ -429,7 +429,7 @@ describe('unified schema migration', { concurrency: false }, () => {
     const firstStore = triggerMigration(seedDb, dbPath);
 
     const secondStore = new SqliteStore(dbPath);
-    assert.strictEqual(secondStore.getMigrationVersion(), 12);
+    assert.strictEqual(secondStore.getMigrationVersion(), 13);
 
     const db = openRawDb(secondStore);
     assert.strictEqual(tableNames(db).includes('bot_members'), false);
@@ -507,7 +507,7 @@ describe('unified schema migration', { concurrency: false }, () => {
 
     // Must not throw (previously: UNIQUE constraint failed: user_sessions.user_id).
     const store = new SqliteStore(dbPath);
-    assert.strictEqual(store.getMigrationVersion(), 12);
+    assert.strictEqual(store.getMigrationVersion(), 13);
     const db = openRawDb(store);
 
     // No row was lost to the multi-active collisions: wecom-u1 has 2 sessions,
@@ -642,7 +642,7 @@ describe('todos global schema migration (v8)', { concurrency: false }, () => {
     seedDb.close();
 
     const store = new SqliteStore(dbPath);
-    assert.strictEqual(store.getMigrationVersion(), 12);
+    assert.strictEqual(store.getMigrationVersion(), 13);
 
     const db = openRawDb(store);
     const cols = todoColumns(db);
@@ -667,7 +667,7 @@ describe('todos global schema migration (v8)', { concurrency: false }, () => {
 
   it('a fresh db lands on the new shape without a rebuild (shape-keyed gate)', () => {
     const store = new SqliteStore(dbPath); // file does not exist yet -> fresh construction
-    assert.strictEqual(store.getMigrationVersion(), 12);
+    assert.strictEqual(store.getMigrationVersion(), 13);
     const db = openRawDb(store);
     const cols = todoColumns(db);
     assert.strictEqual(cols.find((c) => c.name === 'workspace_id')!.notnull, 0);
@@ -677,7 +677,7 @@ describe('todos global schema migration (v8)', { concurrency: false }, () => {
     assert.strictEqual(store.getAllTodos().length, 1);
   });
 
-  it('is idempotent: a second construction leaves new rows intact and the version at 12', () => {
+  it('is idempotent: a second construction leaves new rows intact and the version at 13', () => {
     const ts = now();
     const seedDb = seedOldTodosDb(dbPath, [
       { id: 't1', workspace_id: 'ws-a', text: 'legacy', status: 'pending', session_id: null, created_at: ts, updated_at: ts },
@@ -686,7 +686,7 @@ describe('todos global schema migration (v8)', { concurrency: false }, () => {
     const first = new SqliteStore(dbPath);
     first.createTodo(null, { text: 'new global todo' });
     const second = new SqliteStore(dbPath);
-    assert.strictEqual(second.getMigrationVersion(), 12);
+    assert.strictEqual(second.getMigrationVersion(), 13);
     const all = second.getAllTodos();
     assert.strictEqual(all.length, 2);
     assert.ok(all.some((t) => t.text === 'new global todo' && t.workspaceId === null));
@@ -1292,11 +1292,12 @@ describe('last_turn_started_at schema and backfill (U1)', { concurrency: false }
 function seedLegacyProviderV1Fixture(
   dbPath: string,
   protocol: 'anthropic' | 'openai-responses' = 'anthropic',
+  baseUrl = 'https://legacy.example/v1',
 ): { providerId: string; timestamp: string } {
   const initial = new SqliteStore(dbPath);
   const provider = initial.createProvider({
     name: 'Legacy Provider',
-    baseUrl: 'https://legacy.example/v1',
+    baseUrl,
     authToken: 'credential-bytes-preserved',
     protocol,
     model: 'legacy-model',
@@ -1313,7 +1314,7 @@ function seedLegacyProviderV1Fixture(
     DROP INDEX IF EXISTS idx_providers_single_default;
   `);
   raw.prepare(`UPDATE providers SET base_url = ?, model = ?, options_json = ?, created_at = ?, updated_at = ? WHERE id = ?`).run(
-    'https://legacy.example/v1',
+    baseUrl,
     'legacy-model',
     JSON.stringify({
       protocol,
@@ -1384,6 +1385,53 @@ describe('Provider configuration migration v1', { concurrency: false }, () => {
     });
     assert.strictEqual(provider.configuration!.openCode.protocol, 'openai');
     store.close();
+  });
+
+  it('persists trusted preset provenance for an existing Kimi coding Provider', () => {
+    const fixture = seedLegacyProviderV1Fixture(dbPath, 'anthropic', 'https://api.kimi.com/coding');
+    const store = new SqliteStore(dbPath);
+
+    assert.deepStrictEqual(store.getProvider(fixture.providerId)?.configuration?.preset, {
+      id: 'kimi', version: 1,
+    });
+    store.close();
+  });
+
+  it('repairs preset provenance for a Provider already migrated before the backfill', () => {
+    const initial = new SqliteStore(dbPath);
+    const kimi = initial.createProvider({
+      name: 'Existing Kimi',
+      baseUrl: 'https://api.kimi.com/coding',
+      authToken: 'existing-credential',
+      model: 'kimi-k2.5',
+    });
+    const bigmodel = initial.createProvider({
+      name: 'Existing BigModel',
+      baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+      authToken: 'existing-credential',
+      model: 'glm-4.5',
+    });
+    const lookalike = initial.createProvider({
+      name: 'Lookalike',
+      baseUrl: 'https://api.kimi.com.attacker.example/coding',
+      authToken: 'existing-credential',
+      model: 'untrusted-model',
+    });
+    initial.close();
+
+    const preBackfill = new Database(dbPath);
+    preBackfill.prepare('UPDATE bot_migration_state SET version = 12').run();
+    preBackfill.close();
+
+    const reopened = new SqliteStore(dbPath);
+    assert.deepStrictEqual(reopened.getProvider(kimi.id)?.configuration?.preset, {
+      id: 'kimi', version: 1,
+    });
+    assert.deepStrictEqual(reopened.getProvider(bigmodel.id)?.configuration?.preset, {
+      id: 'bigmodel', version: 1,
+    });
+    assert.strictEqual(reopened.getProvider(lookalike.id)?.configuration?.preset, undefined);
+    reopened.close();
   });
 
   it('classifies a future row before writing and rolls the full batch back', () => {

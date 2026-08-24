@@ -3,7 +3,8 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { I18nextProvider } from 'react-i18next'
 import i18n from '../i18n'
-import { useProviderStore, type ProviderConfiguration, type ProviderPreset } from '../stores/provider-store'
+import { useProviderStore, type Provider, type ProviderConfiguration, type ProviderPreset } from '../stores/provider-store'
+import { useProviderUsageStore } from '../stores/provider-usage-store'
 import ProviderSection from './ProviderSection'
 
 const customConfiguration: ProviderConfiguration = {
@@ -32,6 +33,26 @@ const presets: ProviderPreset[] = [
   { id: 'custom', version: 1, name: 'Custom', vendorId: 'custom', configuration: customConfiguration, capabilities: { promptCacheRouting: 'unsupported', thinking: 'unknown', codexEffortWireMapping: {}, thirdPartySpeed: false } },
 ]
 
+function kimiProvider(): Provider {
+  const providerId = 'provider-kimi'
+  return {
+    id: providerId,
+    name: 'Kimi',
+    configuration: kimiConfiguration,
+    authTokenPresent: true,
+    isDefault: false,
+    availability: {
+      claude: { available: true, providerId, agent: 'claude', mode: 'anthropic', supportedEfforts: [], speedSupported: false },
+      codex: { available: true, providerId, agent: 'codex', mode: 'routed', supportedEfforts: ['low', 'high', 'xhigh'], speedSupported: false },
+      opencode: { available: true, providerId, agent: 'opencode', mode: 'openai', supportedEfforts: [], speedSupported: false },
+    },
+    baseUrl: 'https://api.kimi.com/coding/v1',
+    protocol: 'openai-responses',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  }
+}
+
 function renderSection() {
   return render(<I18nextProvider i18n={i18n}><ProviderSection /></I18nextProvider>)
 }
@@ -45,6 +66,7 @@ describe('ProviderSection', () => {
       fetchPresets: vi.fn().mockResolvedValue(undefined),
       clearError: vi.fn(),
     })
+    useProviderUsageStore.setState({ usageByProvider: {}, login: null })
   })
 
   it('copies Kimi documented defaults into an editable multi-protocol draft', async () => {
@@ -84,12 +106,7 @@ describe('ProviderSection', () => {
 
   it('loads the truthful affected-session count before opening delete confirmation', async () => {
     const user = userEvent.setup()
-    const provider = {
-      id: 'provider-kimi', name: 'Kimi', configuration: kimiConfiguration,
-      authTokenPresent: true, isDefault: false, availability: {},
-      baseUrl: 'https://api.kimi.com/coding/v1', protocol: 'openai-responses',
-      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
-    } as never
+    const provider = kimiProvider()
     const getDeleteImpact = vi.fn().mockResolvedValue({ ok: true, affectedSessionCount: 3 })
     useProviderStore.setState({ providers: [provider], getDeleteImpact })
 
@@ -100,5 +117,30 @@ describe('ProviderSection', () => {
     expect(screen.getByRole('dialog', { name: 'Delete Provider?' })).toHaveTextContent(
       'This Provider is referenced by 3 sessions',
     )
+  })
+
+  it('keeps the full coding-plan usage details and refresh action', () => {
+    const provider = kimiProvider()
+    useProviderStore.setState({ providers: [provider] })
+    useProviderUsageStore.setState({
+      usageByProvider: {
+        'provider-kimi': {
+          status: 'ready',
+          summary: {
+            used: 3, total: 10, remaining: 7,
+            resetDate: '2026-08-25T00:00:00.000Z',
+            rolling: { remaining: 4, resetDate: '2026-08-24T05:00:00.000Z' },
+            lastUpdated: '2026-08-24T00:00:00.000Z',
+          },
+          lastUpdated: Date.now(),
+        },
+      },
+    })
+
+    renderSection()
+
+    expect(screen.getByText('7 left')).toBeInTheDocument()
+    expect(screen.getByText(/5h window/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Refresh usage' })).toBeInTheDocument()
   })
 })

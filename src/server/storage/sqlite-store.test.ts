@@ -1107,6 +1107,33 @@ describe('SqliteStore provider fast mode capability', { concurrency: false }, ()
     assert.strictEqual(updated?.authToken, 'stored-secret');
   });
 
+  it('records trusted preset provenance for legacy Provider input', () => {
+    const provider = store.createProvider({
+      name: 'Kimi legacy',
+      baseUrl: 'https://api.kimi.com/coding/v1',
+      authToken: 'stored-secret',
+      protocol: 'openai-responses',
+      model: 'kimi-for-coding',
+    });
+
+    assert.deepStrictEqual(provider.configuration?.preset, { id: 'kimi', version: 1 });
+  });
+
+  it('keeps legacy Provider provenance aligned when its endpoint changes', () => {
+    const provider = store.createProvider({
+      name: 'Legacy endpoint',
+      baseUrl: 'https://example.com/v1',
+      authToken: 'stored-secret',
+      protocol: 'openai-responses',
+    });
+
+    const kimi = store.updateProvider(provider.id, { baseUrl: 'https://api.kimi.com/coding/v1' });
+    assert.deepStrictEqual(kimi?.configuration?.preset, { id: 'kimi', version: 1 });
+
+    const custom = store.updateProvider(provider.id, { baseUrl: 'https://example.com/v2' });
+    assert.strictEqual(custom?.configuration?.preset, undefined);
+  });
+
   it('persists the versioned nested configuration without dual-writing legacy columns', () => {
     const provider = store.createProvider({
       name: 'Multi protocol',
@@ -1224,8 +1251,8 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
     const freshStore = new SqliteStore(':memory:');
     // v6: browser_audit (U8); v7: global todos (U1); v8: todos.content;
     // v9: Todo execution; v10: bot_escalation_ledger; v11: browser operations;
-    // v12: versioned Provider configuration.
-    assert.strictEqual(freshStore.getMigrationVersion(), 12);
+    // v12: versioned Provider configuration; v13: Provider preset provenance.
+    assert.strictEqual(freshStore.getMigrationVersion(), 13);
 
     // Old tables should not exist
     const tables = (freshStore as unknown as { db: { prepare: (sql: string) => { all: () => Array<{ name: string }> } } }).db
@@ -1256,11 +1283,11 @@ describe('SqliteStore unified schema migration', { concurrency: false }, () => {
     firstStore.createBot({ name: 'Pre-migration Bot' });
 
     const version = firstStore.getMigrationVersion();
-    assert.strictEqual(version, 12);
+    assert.strictEqual(version, 13);
 
     // Re-opening should not throw or advance the version.
     const secondStore = new SqliteStore(migrationDbPath);
-    assert.strictEqual(secondStore.getMigrationVersion(), 12);
+    assert.strictEqual(secondStore.getMigrationVersion(), 13);
     assert.strictEqual(secondStore.listBots().length, 1);
   });
 });
