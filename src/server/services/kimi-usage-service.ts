@@ -5,7 +5,6 @@ import type { SqliteStore } from '../storage/sqlite-store.js';
 import { diagLog } from '../utils/diag-logger.js';
 import { BrowserSiteAuthReadError, readGlobalSiteAuthEntry } from './browser-site-auth.js';
 import { providerVendorFromProvenance } from './provider-presets.js';
-import { BrowserDirectHttpClient, type BrowserDirectHttpRequest } from './browser-direct-http-client.js';
 
 /**
  * Compile-time constants (R13/KTD8). The Kimi login URL and the GetUsages
@@ -20,11 +19,6 @@ export const KIMI_GET_USAGES_URL =
 export const KIMI_SITE_KEY = 'kimi.com';
 
 const USAGE_TIMEOUT_MS = 8000;
-const usageHttpClient = new BrowserDirectHttpClient({ limits: { totalTimeoutMs: USAGE_TIMEOUT_MS, maxRedirects: 1 } });
-
-export interface ProviderUsageHttpClient {
-  request(input: BrowserDirectHttpRequest): ReturnType<BrowserDirectHttpClient['request']>;
-}
 
 /** A tighter gate than the loose `isKimiProvider` (KTD7): the Kimi coding plan. */
 export function isKimiCodingPlanProvider(provider?: Provider): boolean {
@@ -139,10 +133,7 @@ function parseUsageSummary(body: unknown): UsageSummary | null {
 }
 
 export class KimiUsageService {
-  constructor(
-    private readonly sqlite: SqliteStore,
-    private readonly http: ProviderUsageHttpClient = usageHttpClient,
-  ) {}
+  constructor(private readonly sqlite: SqliteStore) {}
 
   /**
    * Resolve Kimi coding-plan usage for a provider. Always queries the billing
@@ -174,13 +165,16 @@ export class KimiUsageService {
     }
 
     try {
-      const response = await this.http.request({
-        url: KIMI_GET_USAGES_URL,
+      const response = await fetch(KIMI_GET_USAGES_URL, {
         method: 'POST',
-        redirectPolicy: 'error',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        redirect: 'error',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
         body: JSON.stringify({ scope: ['FEATURE_CODING'] }),
-        prepareHopHeaders: (): Record<string, string> => ({ authorization: `Bearer ${token}` }),
+        signal: AbortSignal.timeout(USAGE_TIMEOUT_MS),
       });
 
       if (response.status === 401 || response.status === 403) {
@@ -190,7 +184,7 @@ export class KimiUsageService {
         return { status: 'error' };
       }
 
-      const body = JSON.parse(response.body.toString('utf8')) as unknown;
+      const body = await response.json().catch(() => null) as unknown;
       const summary = parseUsageSummary(body);
       if (!summary) {
         return { status: 'no-plan' };

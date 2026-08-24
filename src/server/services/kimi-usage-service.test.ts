@@ -3,8 +3,7 @@ import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { SqliteStore } from '../storage/sqlite-store.js';
-import { KimiUsageService, KIMI_GET_USAGES_URL, KIMI_SITE_KEY, type ProviderUsageHttpClient } from './kimi-usage-service.js';
-import type { BrowserDirectHttpRequest } from './browser-direct-http-client.js';
+import { KimiUsageService, KIMI_GET_USAGES_URL, KIMI_SITE_KEY } from './kimi-usage-service.js';
 import { applyProviderPreset } from './provider-presets.js';
 
 type FetchImpl = typeof fetch;
@@ -39,25 +38,14 @@ describe('KimiUsageService', () => {
   let sqlite: SqliteStore;
   let svc: KimiUsageService;
   let realFetch: FetchImpl;
+  let fetchInit: RequestInit | undefined;
   let fetchedUrls: string[];
-
-  const fetchBackedClient: ProviderUsageHttpClient = {
-    async request(input: BrowserDirectHttpRequest) {
-      const injected = input.prepareHopHeaders?.({} as never, {} as never) ?? {};
-      const response = await global.fetch(input.url, {
-        method: input.method,
-        headers: { ...input.headers, ...injected },
-        body: typeof input.body === 'string' ? input.body : input.body?.toString(),
-      });
-      const parsed = await response.json();
-      return { url: input.url, method: input.method, status: response.status, headers: {}, body: Buffer.from(JSON.stringify(parsed)), redirects: [] };
-    },
-  };
 
   beforeEach(() => {
     sqlite = new SqliteStore(':memory:');
-    svc = new KimiUsageService(sqlite, fetchBackedClient);
+    svc = new KimiUsageService(sqlite);
     realFetch = global.fetch;
+    fetchInit = undefined;
     fetchedUrls = [];
   });
 
@@ -78,8 +66,9 @@ describe('KimiUsageService', () => {
   }
 
   function trackFetch(responder: (url: string) => Response): void {
-    global.fetch = (((url: string) => {
+    global.fetch = (((url: string, init?: RequestInit) => {
       fetchedUrls.push(url);
+      fetchInit = init;
       return Promise.resolve(responder(url));
     }) as unknown) as FetchImpl;
   }
@@ -116,6 +105,9 @@ describe('KimiUsageService', () => {
     assert.equal(result.summary?.resetDate, '2026-07-29T08:20:53.375248Z');
     assert.equal(result.summary?.rolling?.remaining, 100);
     assert.equal(fetchedUrls[0], KIMI_GET_USAGES_URL);
+    assert.equal(fetchInit?.redirect, 'error');
+    assert.equal((fetchInit?.headers as Record<string, string>).authorization.startsWith('Bearer '), true);
+    assert.ok(fetchInit?.signal instanceof AbortSignal);
   });
 
   test('whitelist: account-identifying fields never reach the summary', async () => {
