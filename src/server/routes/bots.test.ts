@@ -285,6 +285,99 @@ describe('bots routes', { concurrency: false }, () => {
     assert.strictEqual(body.bot.channelSettings.wecom?.botSecret, true);
   });
 
+  it('POST / normalizes and returns a non-secret Feishu server URL', async () => {
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+
+    await handlers['/'].post(
+      {
+        body: {
+          name: 'Private Feishu Bot',
+          channelSettings: {
+            feishu: {
+              enabled: true,
+              appId: 'feishu-app',
+              appSecret: 'feishu-secret',
+              serverUrl: ' https://Feishu.Internal.Example:8443/ ',
+            },
+          },
+        },
+      },
+      res,
+    );
+
+    assert.strictEqual(res.statusCode, 201);
+    const body = res.jsonBody as {
+      bot: { channelSettings: { feishu?: { appSecret?: unknown; serverUrl?: string } } };
+    };
+    assert.strictEqual(body.bot.channelSettings.feishu?.appSecret, true);
+    assert.strictEqual(body.bot.channelSettings.feishu?.serverUrl, 'https://feishu.internal.example:8443');
+  });
+
+  it('PUT /:id reconnects Feishu when the server URL changes or is cleared', async () => {
+    const bot = botService.createBot({ name: 'Private Feishu Bot', activeWorkspaceId: 'ws-1' });
+    botService.updateChannelSettings(bot.id, 'feishu', {
+      enabled: true,
+      appId: 'feishu-app',
+      appSecret: 'feishu-secret',
+      serverUrl: 'https://old.feishu.internal',
+    });
+    let disconnectCount = 0;
+    let connectCount = 0;
+    feishuBotService.getBotStatus = () => 'connected';
+    feishuBotService.disconnectBot = () => { disconnectCount += 1; };
+    feishuBotService.connectBot = async () => { connectCount += 1; };
+
+    const handlers = await importRouteHandlers();
+    const res = createMockRes();
+    await handlers['/:id'].put(
+      {
+        params: { id: bot.id },
+        body: {
+          channelSettings: {
+            feishu: {
+              enabled: true,
+              appId: 'feishu-app',
+              appSecret: 'feishu-secret',
+              serverUrl: 'https://new.feishu.internal',
+            },
+          },
+        },
+      },
+      res,
+    );
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(disconnectCount, 1);
+    assert.strictEqual(connectCount, 1);
+
+    const clearRes = createMockRes();
+    await handlers['/:id'].put(
+      {
+        params: { id: bot.id },
+        body: {
+          channelSettings: {
+            feishu: {
+              enabled: true,
+              appId: 'feishu-app',
+              appSecret: 'feishu-secret',
+              serverUrl: '   ',
+            },
+          },
+        },
+      },
+      clearRes,
+    );
+
+    assert.strictEqual(clearRes.statusCode, 200);
+    assert.strictEqual(disconnectCount, 2);
+    assert.strictEqual(connectCount, 2);
+    const clearBody = clearRes.jsonBody as {
+      bot: { channelSettings: { feishu?: { serverUrl?: string } } };
+    };
+    assert.strictEqual(clearBody.bot.channelSettings.feishu?.serverUrl, undefined);
+  });
+
   it('POST / creates a bot with a persona and returns it', async () => {
     const handlers = await importRouteHandlers();
     const res = createMockRes();

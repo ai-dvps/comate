@@ -152,14 +152,17 @@ export class BotService {
       throw new BotValidationError(`Channel ${channelKey} not found`);
     }
 
-    const errors = this.validateCredentials({ [channelKey]: settings });
+    const normalizedSettings = channelKey === 'feishu'
+      ? normalizeFeishuChannelSettings(settings as FeishuChannelConfig)
+      : settings;
+    const errors = this.validateCredentials({ [channelKey]: normalizedSettings });
     if (errors.length > 0) {
       throw new BotValidationError(errors.join('; '));
     }
 
     const wasEnabled = channel.config[channelKey]?.enabled ?? false;
-    this.store.updateBotChannel(channel.id, { [channelKey]: settings });
-    const isEnabled = settings.enabled ?? false;
+    this.store.updateBotChannel(channel.id, { [channelKey]: normalizedSettings });
+    const isEnabled = normalizedSettings.enabled ?? false;
 
     this.auditLogger.logChannelCredentialsChanged(bot.id, actor, [channelKey]);
     if (!wasEnabled && isEnabled) {
@@ -707,6 +710,14 @@ export class BotService {
       }
     }
 
+    if (feishu?.serverUrl !== undefined) {
+      try {
+        normalizeFeishuServerUrl(feishu.serverUrl);
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : 'Feishu serverUrl is invalid');
+      }
+    }
+
     return errors;
   }
 
@@ -764,6 +775,44 @@ export class BotService {
       throw new BotAuthorizationError('last-owner');
     }
   }
+}
+
+function normalizeFeishuChannelSettings(settings: FeishuChannelConfig): FeishuChannelConfig {
+  const { serverUrl, ...rest } = settings;
+  const normalizedServerUrl = normalizeFeishuServerUrl(serverUrl);
+  return normalizedServerUrl ? { ...rest, serverUrl: normalizedServerUrl } : rest;
+}
+
+function normalizeFeishuServerUrl(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') {
+    throw new BotValidationError('Feishu serverUrl must be an HTTPS origin');
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new BotValidationError('Feishu serverUrl must be a valid HTTPS origin');
+  }
+
+  if (
+    url.protocol !== 'https:'
+    || url.username !== ''
+    || url.password !== ''
+    || url.search !== ''
+    || url.hash !== ''
+    || url.pathname !== '/'
+  ) {
+    throw new BotValidationError(
+      'Feishu serverUrl must be an HTTPS origin without credentials, query, fragment, or path',
+    );
+  }
+
+  return url.origin;
 }
 
 export interface BotActor {

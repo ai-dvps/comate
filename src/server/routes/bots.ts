@@ -636,6 +636,7 @@ function getEffectiveCredentials(
     result.appSecret = cfg.appSecret;
     result.encryptKey = cfg.encryptKey;
     result.verificationToken = cfg.verificationToken;
+    result.serverUrl = cfg.serverUrl;
   }
   return result;
 }
