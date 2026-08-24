@@ -5,8 +5,6 @@ import assert from 'node:assert/strict';
 import { SqliteStore } from '../storage/sqlite-store.js';
 import { BigModelUsageService, BIGMODEL_SITE_KEY } from './bigmodel-usage-service.js';
 import { applyProviderPreset } from './provider-presets.js';
-import type { ProviderUsageHttpClient } from './kimi-usage-service.js';
-import type { BrowserDirectHttpRequest } from './browser-direct-http-client.js';
 
 type FetchImpl = typeof fetch;
 
@@ -42,22 +40,15 @@ describe('BigModelUsageService', () => {
   let sqlite: SqliteStore;
   let svc: BigModelUsageService;
   let realFetch: FetchImpl;
+  let fetchInit: RequestInit | undefined;
   let fetchHeaders: Record<string, string> | undefined;
   let fetchedUrls: string[];
 
-  const fetchBackedClient: ProviderUsageHttpClient = {
-    async request(input: BrowserDirectHttpRequest) {
-      const injected = input.prepareHopHeaders?.({} as never, {} as never) ?? {};
-      const response = await global.fetch(input.url, { method: input.method, headers: { ...input.headers, ...injected } });
-      const parsed = await response.json();
-      return { url: input.url, method: input.method, status: response.status, headers: {}, body: Buffer.from(JSON.stringify(parsed)), redirects: [] };
-    },
-  };
-
   beforeEach(() => {
     sqlite = new SqliteStore(':memory:');
-    svc = new BigModelUsageService(sqlite, fetchBackedClient);
+    svc = new BigModelUsageService(sqlite);
     realFetch = global.fetch;
+    fetchInit = undefined;
     fetchHeaders = undefined;
     fetchedUrls = [];
   });
@@ -78,6 +69,7 @@ describe('BigModelUsageService', () => {
   function trackFetch(responder: (url: string) => Response): void {
     global.fetch = (((url: string, init?: RequestInit) => {
       fetchedUrls.push(url);
+      fetchInit = init;
       fetchHeaders = init?.headers as Record<string, string> | undefined;
       return Promise.resolve(responder(url));
     }) as unknown) as FetchImpl;
@@ -122,6 +114,8 @@ describe('BigModelUsageService', () => {
     trackFetch(() => jsonResponse(200, REAL_RESPONSE));
     await svc.runUsageCheck(id);
     assert.equal(fetchHeaders?.authorization, 'bm-token');
+    assert.equal(fetchInit?.redirect, 'error');
+    assert.ok(fetchInit?.signal instanceof AbortSignal);
   });
 
   test('401 surfaces relogin', async () => {
