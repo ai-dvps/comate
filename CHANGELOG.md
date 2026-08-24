@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Feishu Bots support private deployments** — Each Bot can set an optional HTTPS server origin for both OpenAPI and event WebSocket traffic; leaving it blank keeps the official Feishu service.
 - **Experimental Codex CLI agent backend** — Settings can select Codex as the default Agent for new GUI, Bot, and scheduled sessions while each session remains locked to its original Agent. A signed-in Codex Account appears as a native Provider with selectable model, reasoning effort, and speed; compatible third-party Providers use the OpenAI Responses protocol without exposing stored tokens. Codex keeps ownership of its login, threads, and transcripts. Production selection remains behind `COMATE_ENABLE_EXPERIMENTAL_CODEX=1` until the documented Claude Code parity gaps are closed.
 - **Codex Account usage in Agent settings** — Signed-in Codex accounts now show their native rate-limit windows and reset times, available credits, recent token totals, and lifetime usage without moving account or session ownership into Comate.
 - **Comate's website now explains complete Agent workflows** — The bilingual product site now walks through a controlled finance-report task, presents current desktop product evidence, offers platform-specific downloads, and measures visits and download actions only after consent.
