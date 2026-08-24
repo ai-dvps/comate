@@ -147,11 +147,6 @@ export class BotService {
     }
     this.requireSystemOrUserActor(actor);
 
-    const channel = this.store.getBotChannelByKey(botId, channelKey);
-    if (!channel) {
-      throw new BotValidationError(`Channel ${channelKey} not found`);
-    }
-
     const normalizedSettings = channelKey === 'feishu'
       ? normalizeFeishuChannelSettings(settings as FeishuChannelConfig)
       : settings;
@@ -160,6 +155,13 @@ export class BotService {
       throw new BotValidationError(errors.join('; '));
     }
 
+    const channel = this.store.getBotChannelByKey(botId, channelKey)
+      ?? this.store.createBotChannel(
+        botId,
+        channelKey,
+        channelKey === 'wecom' ? 'WeCom' : 'Feishu',
+        {},
+      );
     const wasEnabled = channel.config[channelKey]?.enabled ?? false;
     this.store.updateBotChannel(channel.id, { [channelKey]: normalizedSettings });
     const isEnabled = normalizedSettings.enabled ?? false;

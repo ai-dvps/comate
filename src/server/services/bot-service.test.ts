@@ -187,6 +187,38 @@ describe('BotService', { concurrency: false }, () => {
       }
     });
 
+    it('creates a missing Feishu channel for a migrated bot only after validation succeeds', () => {
+      const bot = service.createBot(createBotInput());
+      const feishuChannel = store.getBotChannelByKey(bot.id, 'feishu');
+      assert.ok(feishuChannel);
+      store.deleteBotChannel(feishuChannel.id);
+
+      assert.throws(
+        () => service.updateChannelSettings(bot.id, 'feishu', {
+          enabled: true,
+          appId: 'feishu-app',
+          appSecret: 'feishu-secret',
+          serverUrl: 'http://unsafe.internal',
+        }),
+        BotValidationError,
+      );
+      assert.strictEqual(store.getBotChannelByKey(bot.id, 'feishu'), null);
+
+      service.updateChannelSettings(bot.id, 'feishu', {
+        enabled: true,
+        appId: 'feishu-app',
+        appSecret: 'feishu-secret',
+        serverUrl: ' https://Feishu.Internal:8443/ ',
+      });
+
+      assert.deepStrictEqual(store.getBotChannelByKey(bot.id, 'feishu')?.config.feishu, {
+        enabled: true,
+        appId: 'feishu-app',
+        appSecret: 'feishu-secret',
+        serverUrl: 'https://feishu.internal:8443',
+      });
+    });
+
     it('throws when binding a workspace already bound to another bot', () => {
       service.createBot(createBotInput({ activeWorkspaceId: 'ws-shared' }));
       assert.throws(
