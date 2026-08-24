@@ -273,8 +273,8 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
     if (!open) return
     for (const provider of providers) {
       const isCodexCompatible = provider.availability?.[activeBackend]?.available ?? false
-      if (isCodexCompatible && hasUsageSupport(provider.baseUrl)) {
-        fetchUsage(provider.id)
+      if (isCodexCompatible && hasUsageSupport(provider)) {
+        fetchUsage(provider.id, { agent: activeBackend })
       }
     }
   }, [activeBackend, open, providers, fetchUsage])
@@ -390,7 +390,7 @@ export default function ProviderSelector(props: ProviderSelectorProps) {
           const isActive = provider.id === currentProviderId
           const compatibility = provider.availability?.[activeBackend]
           const isCodexCompatible = compatibility?.available ?? false
-          const showUsage = isCodexCompatible && hasUsageSupport(provider.baseUrl)
+          const showUsage = isCodexCompatible && hasUsageSupport(provider)
           return (
             <div
               key={provider.id}

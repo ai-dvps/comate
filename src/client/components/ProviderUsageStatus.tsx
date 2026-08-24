@@ -4,6 +4,8 @@ import { useChatStore } from '../stores/chat-store'
 import { useProviderStore } from '../stores/provider-store'
 import {
   hasUsageSupport,
+  isBackendId,
+  providerUsageAgent,
   useProviderUsageStore,
 } from '../stores/provider-usage-store'
 
@@ -25,18 +27,21 @@ export default function ProviderUsageStatus({
   const defaultProvider = providers.find((provider) => provider.isDefault)
   const activeProvider = selectedProvider ?? defaultProvider
   const supportsUsage = activeProvider
-    ? hasUsageSupport(activeProvider.baseUrl)
+    ? hasUsageSupport(activeProvider)
     : false
   const usage = useProviderUsageStore((s) =>
     activeProvider ? s.usageByProvider[activeProvider.id] : undefined,
   )
   const fetchUsage = useProviderUsageStore((s) => s.fetchUsage)
+  const sessionAgent = isBackendId(session?.backend)
+    ? session.backend
+    : activeProvider ? providerUsageAgent(activeProvider) : 'claude'
 
   useEffect(() => {
     if (activeProvider && supportsUsage) {
-      fetchUsage(activeProvider.id)
+      fetchUsage(activeProvider.id, { agent: sessionAgent })
     }
-  }, [activeProvider, fetchUsage, supportsUsage])
+  }, [activeProvider, fetchUsage, sessionAgent, supportsUsage])
 
   if (!supportsUsage || usage?.status !== 'ready' || !usage.summary) {
     return null

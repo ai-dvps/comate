@@ -6,14 +6,17 @@ import ProviderUsageStatus from './ProviderUsageStatus'
 
 const mockChatStore = {
   sessions: {
-    ws1: [{ id: 's1', providerId: 'p2' }],
+    ws1: [{ id: 's1', providerId: 'p2', backend: 'codex' as const }],
   },
 }
 
 const mockProviderStore = {
   providers: [
     { id: 'p1', name: 'Default', baseUrl: 'https://api.example.com', isDefault: true },
-    { id: 'p2', name: 'Kimi', baseUrl: 'https://www.kimi.com', isDefault: false },
+    {
+      id: 'p2', name: 'Kimi', baseUrl: 'https://api.kimi.com/coding/v1', isDefault: false,
+      configuration: { preset: { id: 'kimi' } },
+    },
   ],
 }
 
@@ -69,7 +72,7 @@ describe('ProviderUsageStatus', () => {
     renderComponent()
 
     expect(screen.getByText(/Usage: 20 \/ 100/i)).toBeInTheDocument()
-    await waitFor(() => expect(fetchUsage).toHaveBeenCalledWith('p2'))
+    await waitFor(() => expect(fetchUsage).toHaveBeenCalledWith('p2', { agent: 'codex' }))
   })
 
   it('renders nothing when the selected provider does not support usage', () => {

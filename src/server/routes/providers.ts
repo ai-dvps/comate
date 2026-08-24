@@ -156,6 +156,10 @@ function validAgent(value: unknown): value is BackendId {
   return value === 'claude' || value === 'codex' || value === 'opencode';
 }
 
+export function resolveProviderRequestAgent(value: unknown): BackendId | undefined {
+  return value === undefined ? 'claude' : validAgent(value) ? value : undefined;
+}
+
 function candidateConfiguration(input: CreateProviderInput): Provider['configuration'] {
   if (input.configuration) return input.configuration;
   if (!input.baseUrl) return undefined;
@@ -297,8 +301,9 @@ router.post('/', async (req, res) => {
     }
 
     if (!input.skipHealthCheck) {
-      if (!validAgent(req.body?.agent)) {
-        res.status(400).json({ error: "agent is required for health checks and must be 'claude', 'codex', or 'opencode'" });
+      const agent = resolveProviderRequestAgent(req.body?.agent);
+      if (!agent) {
+        res.status(400).json({ error: "agent must be 'claude', 'codex', or 'opencode'" });
         return;
       }
       const candidate: Provider = {
@@ -306,7 +311,7 @@ router.post('/', async (req, res) => {
         baseUrl: input.baseUrl ?? '', authToken: input.authToken, protocol: input.protocol,
         model: input.model, isDefault: false, createdAt: '', updatedAt: '',
       };
-      const health = await runProviderHealthCheck(candidate, req.body.agent);
+      const health = await runProviderHealthCheck(candidate, agent);
       if (!health.ok) {
         res.status(422).json({ error: health.error || 'Health check failed.' });
         return;
@@ -364,12 +369,13 @@ router.put('/:id', async (req, res) => {
 
     // Run health check if baseUrl or authToken changed
     if (!input.skipHealthCheck && (input.configuration !== undefined || input.baseUrl !== undefined || input.authToken !== undefined)) {
-      if (!validAgent(req.body?.agent)) {
-        res.status(400).json({ error: "agent is required for health checks and must be 'claude', 'codex', or 'opencode'" });
+      const agent = resolveProviderRequestAgent(req.body?.agent);
+      if (!agent) {
+        res.status(400).json({ error: "agent must be 'claude', 'codex', or 'opencode'" });
         return;
       }
       const candidate = candidateProviderForUpdate(existing, input);
-      const health = await runProviderHealthCheck(candidate, req.body.agent);
+      const health = await runProviderHealthCheck(candidate, agent);
       if (!health.ok) {
         res.status(422).json({ error: health.error || 'Health check failed.' });
         return;
@@ -435,8 +441,8 @@ router.post('/:id/health', async (req, res) => {
       return;
     }
 
-    const agent = req.body?.agent;
-    if (!validAgent(agent)) {
+    const agent = resolveProviderRequestAgent(req.body?.agent);
+    if (!agent) {
       res.status(400).json({ error: "agent must be 'claude', 'codex', or 'opencode'" });
       return;
     }
@@ -477,8 +483,8 @@ router.post('/:id/usage', async (req, res) => {
       res.status(404).json({ error: 'Provider not found' });
       return;
     }
-    const agent = req.body?.agent;
-    if (!validAgent(agent)) {
+    const agent = resolveProviderRequestAgent(req.body?.agent);
+    if (!agent) {
       res.status(400).json({ error: "agent must be 'claude', 'codex', or 'opencode'" });
       return;
     }

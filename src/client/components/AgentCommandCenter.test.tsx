@@ -58,7 +58,13 @@ const openFolderMock = vi.fn((path: string): Promise<void> => {
 })
 
 const providerState = {
-  providers: [] as Array<{ id: string; name: string; baseUrl: string; isDefault: boolean }>,
+  providers: [] as Array<{
+    id: string
+    name: string
+    baseUrl: string
+    isDefault: boolean
+    configuration?: { preset?: { id: string } }
+  }>,
   fetchProviders: vi.fn(() => Promise.resolve()),
 }
 
@@ -323,7 +329,10 @@ describe('AgentCommandCenter', () => {
   it('shows read-only provider usage above Analytics in the user account menu', async () => {
     providerState.providers = [
       { id: 'p1', name: 'Default', baseUrl: 'https://api.example.com', isDefault: true },
-      { id: 'p2', name: 'Kimi', baseUrl: 'https://www.kimi.com', isDefault: false },
+      {
+        id: 'p2', name: 'Kimi', baseUrl: 'https://api.kimi.com/coding/v1', isDefault: false,
+        configuration: { preset: { id: 'kimi' } },
+      },
     ]
     usageState.usageByProvider = {
       p2: {
@@ -368,8 +377,8 @@ describe('AgentCommandCenter', () => {
     expect(kimiRow.querySelector('button')).toBeNull()
 
     // Usage data is fetched live for supported providers only.
-    await waitFor(() => expect(fetchUsage).toHaveBeenCalledWith('p2'))
-    expect(fetchUsage).not.toHaveBeenCalledWith('p1')
+    await waitFor(() => expect(fetchUsage).toHaveBeenCalledWith('p2', { agent: 'claude' }))
+    expect(fetchUsage).not.toHaveBeenCalledWith('p1', expect.anything())
 
     // The usage section sits above the Analytics menu item.
     const usageHeader = screen.getByText('Usage')

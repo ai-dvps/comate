@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { CheckCircle2, ChevronDown, Eye, EyeOff, Loader2, Plus, RefreshCw, Save, Server, Star, Trash2, XCircle } from 'lucide-react'
 import { useProviderStore, type Provider, type ProviderConfiguration, type ProviderFormData, type ProviderPreset } from '../stores/provider-store'
 import type { BackendId } from '../stores/backend-store'
-import { hasUsageSupport, useProviderUsageStore } from '../stores/provider-usage-store'
+import { hasUsageSupport, providerUsageAgent, usageBarColor, usagePercentage, useProviderUsageStore } from '../stores/provider-usage-store'
 import ConfirmDialog from './ConfirmDialog'
 import { cn } from './ui/utils'
 
@@ -57,18 +57,115 @@ function firstHealthAgent(form: ProviderFormData): BackendId {
   return 'opencode'
 }
 
-function ProviderUsagePanel({ providerId }: { providerId: string }) {
+function ProviderUsagePanel({ providerId, agent }: { providerId: string; agent: BackendId }) {
   const { t } = useTranslation('settings')
   const entry = useProviderUsageStore((state) => state.usageByProvider[providerId])
   const fetchUsage = useProviderUsageStore((state) => state.fetchUsage)
-  useEffect(() => { void fetchUsage(providerId) }, [fetchUsage, providerId])
-  if (!entry || entry.status === 'unsupported') return null
-  if (entry.status === 'fetching') return <div role="status" className="mt-1 text-[10px] text-text-tertiary">{t('providers.usage.loading')}</div>
-  if (entry.status === 'ready' && entry.summary) {
-    return <div className="mt-1 text-[10px] text-text-tertiary">{entry.summary.used ?? '—'} / {entry.summary.total ?? '—'} {t('providers.usage.used')}</div>
-  }
-  if (entry.status === 'error') return <button type="button" onClick={() => void fetchUsage(providerId, { force: true })} className="mt-1 text-[10px] text-accent hover:underline">{t('providers.usage.retry')}</button>
-  return null
+  const startLogin = useProviderUsageStore((state) => state.startUsageLogin)
+  const loginOpen = useProviderUsageStore((state) => state.login !== null)
+  const status = entry?.status ?? 'idle'
+  const summary = entry?.summary ?? null
+
+  useEffect(() => {
+    void fetchUsage(providerId, { agent })
+  }, [agent, fetchUsage, providerId])
+
+  if (status === 'unsupported') return null
+
+  const fmt = (value: number | null | undefined) => (
+    value === null || value === undefined ? '—' : String(value)
+  )
+  const fmtDate = (value: string | null | undefined) => (
+    value ? new Date(value).toLocaleString() : '—'
+  )
+  const percentage = usagePercentage(summary)
+
+  return (
+    <div className="mt-1.5 space-y-1">
+      {status === 'fetching' && (
+        <div role="status" className="flex items-center gap-1.5 text-[10px] text-text-tertiary">
+          <RefreshCw className="h-3 w-3 animate-spin" aria-hidden="true" />
+          {t('providers.usage.loading')}
+        </div>
+      )}
+      {status === 'ready' && summary && (
+        <>
+          <div className="flex items-center gap-2">
+            <div className="h-1.5 min-w-[60px] flex-1 overflow-hidden rounded-full bg-border">
+              <div
+                className={cn('h-full rounded-full transition-all duration-300', usageBarColor(percentage))}
+                style={{ width: `${percentage ?? 0}%` }}
+              />
+            </div>
+            <span className="whitespace-nowrap text-[10px] font-medium text-text-secondary">
+              {fmt(summary.used)} / {fmt(summary.total)} {t('providers.usage.used')}
+            </span>
+            <button
+              type="button"
+              onClick={() => void fetchUsage(providerId, { force: true, agent })}
+              className="rounded p-0.5 text-text-tertiary hover:text-text-secondary"
+              title={t('providers.usage.refresh')}
+              aria-label={t('providers.usage.refresh')}
+            >
+              <RefreshCw className="h-3 w-3" aria-hidden="true" />
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-text-tertiary">
+            <span className={cn(
+              'font-medium',
+              percentage !== null && percentage > 80
+                ? 'text-destructive'
+                : percentage !== null && percentage > 60 ? 'text-warning' : 'text-success',
+            )}>
+              {summary.remaining !== null
+                ? `${summary.remaining} ${t('providers.usage.left')}`
+                : '—'}
+            </span>
+            {summary.resetDate && (
+              <span>{t('providers.usage.resets')} {fmtDate(summary.resetDate)}</span>
+            )}
+            {summary.rolling && (summary.rolling.remaining !== null || summary.rolling.resetDate) && (
+              <span>
+                {t('providers.usage.rolling')}:{' '}
+                {summary.rolling.remaining !== null
+                  ? `${summary.rolling.remaining} ${t('providers.usage.left')}`
+                  : '—'}
+                {summary.rolling.resetDate ? ` · ${fmtDate(summary.rolling.resetDate)}` : ''}
+              </span>
+            )}
+            {entry?.lastUpdated && (
+              <span>{fmtDate(new Date(entry.lastUpdated).toISOString())}</span>
+            )}
+          </div>
+        </>
+      )}
+      {(status === 'idle' || status === 'relogin') && (
+        <button
+          type="button"
+          disabled={loginOpen}
+          onClick={() => void startLogin(providerId, agent)}
+          className="text-[10px] text-accent hover:underline disabled:opacity-50"
+        >
+          {status === 'idle' ? t('providers.usage.connect') : t('providers.usage.reconnect')}
+        </button>
+      )}
+      {status === 'no-plan' && (
+        <span className="text-[10px] text-text-tertiary">{t('providers.usage.noPlan')}</span>
+      )}
+      {status === 'error' && (
+        <span className="inline-flex items-center gap-1 text-[10px] text-text-tertiary">
+          <span>{t('providers.usage.unavailable')}</span>
+          <button
+            type="button"
+            onClick={() => void fetchUsage(providerId, { force: true, agent })}
+            className="text-accent hover:underline"
+          >
+            {t('providers.usage.retry')}
+          </button>
+        </span>
+      )}
+    </div>
+  )
 }
 
 function endpointStatusLabel(t: ReturnType<typeof useTranslation>['t'], state: EndpointState): string {
@@ -310,7 +407,7 @@ export default function ProviderSection() {
     <section className="max-w-4xl p-4 sm:p-6" aria-labelledby="providers-title">
       <div className="mb-4 flex items-center justify-between gap-3"><h3 id="providers-title" className="text-sm font-medium text-text-primary">{t('providers.title')}</h3><button type="button" onClick={beginCreate} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"><Plus className="h-3.5 w-3.5" />{t('providers.add')}</button></div>
       {store.error && <div role="alert" className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">{store.error}</div>}
-      {store.isLoading && store.providers.length === 0 ? <div role="status" className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-text-tertiary" /></div> : store.providers.length === 0 ? <div className="rounded-lg border border-dashed border-border py-8 text-center"><Server className="mx-auto mb-2 h-8 w-8 text-text-tertiary" /><p className="text-sm text-text-secondary">{t('providers.emptyTitle')}</p><button type="button" onClick={beginCreate} className="mt-3 rounded-lg bg-accent px-4 py-1.5 text-xs font-medium text-accent-foreground">{t('providers.createFirst')}</button></div> : <div className="space-y-2">{store.providers.map((provider) => <div key={provider.id} className="flex min-w-0 flex-wrap items-center gap-3 rounded-lg border border-border bg-bg px-4 py-3"><Star className={cn('h-4 w-4 shrink-0', provider.isDefault ? 'fill-warning text-warning' : 'text-text-tertiary')} /><div className="min-w-[12rem] flex-1"><div className="truncate text-sm font-medium text-text-primary">{provider.name}</div><div className="truncate text-[11px] text-text-tertiary">{providerSummary(provider)}</div>{hasUsageSupport(providerSummary(provider)) && <ProviderUsagePanel providerId={provider.id} />}</div><button type="button" onClick={() => beginEdit(provider)} className="rounded-md px-2.5 py-1.5 text-xs text-text-secondary hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">{t('providers.edit')}</button>{!provider.isDefault && <button type="button" onClick={() => void store.setDefaultProvider(provider.id)} className="rounded-md px-2.5 py-1.5 text-xs text-text-secondary hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">{t('providers.setDefault')}</button>}<button type="button" disabled={deleteImpactLoadingId === provider.id} onClick={() => void requestDelete(provider.id)} aria-label={deleteImpactLoadingId === provider.id ? t('providers.deleteImpactLoading') : t('providers.deleteProvider', { name: provider.name })} className="rounded-md p-1.5 text-text-tertiary hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50">{deleteImpactLoadingId === provider.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}</button></div>)}</div>}
+      {store.isLoading && store.providers.length === 0 ? <div role="status" className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-text-tertiary" /></div> : store.providers.length === 0 ? <div className="rounded-lg border border-dashed border-border py-8 text-center"><Server className="mx-auto mb-2 h-8 w-8 text-text-tertiary" /><p className="text-sm text-text-secondary">{t('providers.emptyTitle')}</p><button type="button" onClick={beginCreate} className="mt-3 rounded-lg bg-accent px-4 py-1.5 text-xs font-medium text-accent-foreground">{t('providers.createFirst')}</button></div> : <div className="space-y-2">{store.providers.map((provider) => <div key={provider.id} className="flex min-w-0 flex-wrap items-center gap-3 rounded-lg border border-border bg-bg px-4 py-3"><Star className={cn('h-4 w-4 shrink-0', provider.isDefault ? 'fill-warning text-warning' : 'text-text-tertiary')} /><div className="min-w-[12rem] flex-1"><div className="truncate text-sm font-medium text-text-primary">{provider.name}</div><div className="truncate text-[11px] text-text-tertiary">{providerSummary(provider)}</div>{hasUsageSupport(provider) && <ProviderUsagePanel providerId={provider.id} agent={providerUsageAgent(provider)} />}</div><button type="button" onClick={() => beginEdit(provider)} className="rounded-md px-2.5 py-1.5 text-xs text-text-secondary hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">{t('providers.edit')}</button>{!provider.isDefault && <button type="button" onClick={() => void store.setDefaultProvider(provider.id)} className="rounded-md px-2.5 py-1.5 text-xs text-text-secondary hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">{t('providers.setDefault')}</button>}<button type="button" disabled={deleteImpactLoadingId === provider.id} onClick={() => void requestDelete(provider.id)} aria-label={deleteImpactLoadingId === provider.id ? t('providers.deleteImpactLoading') : t('providers.deleteProvider', { name: provider.name })} className="rounded-md p-1.5 text-text-tertiary hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50">{deleteImpactLoadingId === provider.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}</button></div>)}</div>}
       <ConfirmDialog isOpen={Boolean(deleteId)} title={t('providers.deleteConfirmTitle')} message={deleteImpact !== null ? t('providers.deleteConfirmAffectedMessage', { count: deleteImpact }) : t('providers.deleteConfirmMessage')} confirmLabel={t('providers.delete')} cancelLabel={t('actions.cancel')} onConfirm={() => { if (!deleteId) return; void store.deleteProvider(deleteId).then(({ ok }) => { if (ok) { setDeleteId(null); setDeleteImpact(null) } }) }} onCancel={() => { setDeleteId(null); setDeleteImpact(null) }} />
     </section>
   )
