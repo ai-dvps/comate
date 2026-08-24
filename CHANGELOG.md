@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **OpenCode streaming recovers after an interrupted turn** — When stopping a turn forces its runtime to close, the chat now notifies connected clients to rebind before the next message instead of leaving the replacement runtime working invisibly in the background.
 - **The left sidebar collapses on the first click** — The shell no longer requires a second interaction before responding to the collapse control.
 - **Website release and analytics checks are more robust** — Download trust decisions, consent handling, release metadata, and shared bilingual content now have stricter automated coverage.
 
