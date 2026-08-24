@@ -13,6 +13,7 @@ interface PackageJson {
 
 interface WorkflowStep {
   name?: string;
+  if?: string;
   run?: string;
 }
 
@@ -171,6 +172,35 @@ test('every release package must contain updater metadata even when signing is u
     true,
     'the release body update must write real newlines between preserved notes and signing status',
   );
+});
+
+test('unsigned macOS packages receive a fresh ad-hoc signature after Electron fuses are flipped', () => {
+  const packageJson = JSON.parse(readFileSync('package.json', 'utf8')) as PackageJson;
+  const builderConfig = readFileSync('electron-builder.config.ts', 'utf8');
+  const workflow = readFileSync('.github/workflows/build.yml', 'utf8');
+  const parsedWorkflow = parse(workflow) as BuildWorkflow;
+
+  assert.match(
+    builderConfig,
+    /identity:\s*macSigningEnabled\s*\?\s*undefined\s*:\s*['"]-['"]/,
+    'macOS builds without Developer ID credentials must use ad-hoc signing',
+  );
+  assert.doesNotMatch(
+    builderConfig,
+    /identity:\s*macSigningEnabled\s*\?\s*undefined\s*:\s*null/,
+    'skipping signing leaves the Electron Framework signature invalid after fuse changes',
+  );
+  assert.match(
+    packageJson.scripts?.release ?? '',
+    /npm run dist:electron\s*&&\s*npm run verify:electron:mac-signature/,
+    'local releases must reject invalid macOS signatures after packaging',
+  );
+  const signatureGuard = requiredWorkflowStep(
+    parsedWorkflow.jobs?.build?.steps,
+    'Guard macOS package signatures',
+  );
+  assert.equal(signatureGuard.if, "runner.os == 'macOS'");
+  assert.equal(signatureGuard.run, 'npm run verify:electron:mac-signature');
 });
 
 test('packaged updater feed guard validates every macOS architecture and exact feed values', () => {
