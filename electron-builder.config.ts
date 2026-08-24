@@ -197,9 +197,9 @@ const config: Configuration = {
     gatekeeperAssess: false,
     entitlements: 'build/entitlements.mac.plist',
     entitlementsInherit: 'build/entitlements.mac.plist',
-    // identity: null skips signing explicitly (no keychain scan); undefined
-    // lets electron-builder auto-detect the CI-imported certificate.
-    identity: macSigningEnabled ? undefined : null,
+    // Ad-hoc signing is required after Electron fuses modify arm64 executables;
+    // undefined lets electron-builder auto-detect the CI-imported certificate.
+    identity: macSigningEnabled ? undefined : '-',
     notarize: macSigningEnabled && macNotarizeEnabled,
   },
 

@@ -56,7 +56,8 @@
     "test:sidecar-new-chat": "tsx --test scripts/sidecar-new-chat-smoke.test.ts",
     "verify:electron:package": "tsx scripts/verify-packaged-renderer.ts",
     "verify:electron-package": "npm run verify:electron:package",
-    "release": "npm run typecheck && npm run test:browser-acceptance:deterministic && npm run build:sidecar && npm run test:shell-cdp:required && npm run test:electron-cdp:required && npm run dist:electron"
+    "verify:electron:mac-signature": "tsx scripts/verify-packaged-macos-signature.ts",
+    "release": "npm run typecheck && npm run test:browser-acceptance:deterministic && npm run build:sidecar && npm run test:shell-cdp:required && npm run test:electron-cdp:required && npm run dist:electron && npm run verify:electron:mac-signature"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.237",

@@ -201,6 +201,10 @@ jobs:
           set -euo pipefail
           npx tsx scripts/verify-packaged-updater-feed.ts release "${{ runner.os }}"
 
+      - name: Guard macOS package signatures
+        if: runner.os == 'macOS'
+        run: npm run verify:electron:mac-signature
+
       - name: Unsigned smoke build notice
         if: runner.os != 'Linux' && steps.signing.outputs.ready != 'true'
         shell: bash
@@ -233,7 +237,7 @@ jobs:
           fi
           gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
 
-      - name: Verify macOS signature and notarization
+      - name: Verify macOS Gatekeeper acceptance and notarization
         if: runner.os == 'macOS' && steps.signing.outputs.ready == 'true'
         shell: bash
         run: |
@@ -243,14 +247,13 @@ jobs:
           [ "${#apps[@]}" -ge 2 ] || { echo "::error::expected x64 + arm64 unpacked apps under release/, found ${#apps[@]}"; exit 1; }
           for app in "${apps[@]}"; do
             echo "== $app =="
-            codesign --verify --deep --strict --verbose=2 "$app"
             spctl --assess --type execute -vv "$app"
             xcrun stapler validate "$app"
           done
           for dmg in release/*.dmg; do
             xcrun stapler validate "$dmg"
           done
-          echo "macOS signatures + notarization staples verified"
+          echo "macOS Gatekeeper acceptance + notarization staples verified"
 
       - name: Verify Windows Authenticode signatures
         if: runner.os == 'Windows' && steps.signing.outputs.ready == 'true'
