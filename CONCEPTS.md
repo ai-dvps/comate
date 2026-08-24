@@ -65,7 +65,7 @@ The Comate server capability that performs HTTPS requests with saved browser aut
 桌面应用的后端:一个被打包成单一自包含二进制的 Node 服务进程,由 Electron 壳拉起并监督其生命周期。开发模式同样构建并运行这个打包二进制(而非直接用系统 Node 跑源码),因此只存在于打包运行时里的缺陷(如原生 API 崩溃)在开发环境会原样复现——不能用系统 Node 下的正常表现来排除打包产物的缺陷。
 
 ### Agent 后端 (agent backend)
-The runtime layer that executes an agent session (claude via `@anthropic-ai/claude-agent-sdk`, or opencode), distinct from the Provider layer, which only names a model endpoint. The two layers swap independently: an enterprise can run any backend against any Anthropic-compatible endpoint.
+The runtime layer that executes an agent session (Claude Code, Codex, or OpenCode), distinct from the Provider layer. A backend determines session semantics and the client-side protocol it speaks; a Provider supplies the compatible endpoint, credential, model, and any required routing behavior. The two layers are selected independently only where the Provider declares a supported path for that backend.
 
 ### 能力声明表 (capability declaration table)
 A per-backend static table declaring which Comate capabilities are full, degraded, or unavailable on that backend. It is the single source of truth driving both the "disabled + reason" degradation UI and the parity acceptance checklist.
@@ -108,6 +108,12 @@ Workspace 内所有 Session 的有效活动新近度聚合。它沿用 Session A
 todo 同步行为按字段类别分区，而非单一全局策略：评论双向追加（永不冲突）；协作状态（开/关、标签、指派人）接受远端并镜像回本地；结构字段（标题、正文）来源端为准、冲突时提示。GitHub 是第一个后端适配器，后续其他服务端走同一套通用适配器契约。
 
 ## Provider credentials
+
+### 多协议 Provider (multi-protocol Provider)
+A third-party model-service account shared across Agent backends. It owns one coding API credential plus protocol-specific endpoint configuration, while Claude Code, Codex, and OpenCode keep separate default models; OpenCode also chooses which configured protocol it uses. A Provider is selectable for an Agent only when that Agent has a complete direct or Comate-supported routed path.
+
+### Provider 本地路由 (Provider local route)
+A Comate-managed compatibility route started automatically for an Agent session when the Agent's client protocol differs from the Provider's declared upstream format along a supported conversion path. The first supported path translates Codex Responses traffic to an OpenAI Chat Completions upstream. Route failure blocks dispatch and never falls back to another Agent, Provider, or protocol.
 
 ### Provider 用量令牌 (provider usage token)
 Each Provider can carry a second credential alongside its coding API key (`authToken`): a usage token, a web-login session JWT obtained by logging into the provider's website through the embedded browser. It is stored encrypted at rest, used only to query the provider's billing/usage endpoint, and never leaves the server. The coding API key drives model calls; the usage token drives quota/billing reads. Kimi is the first provider to carry one, and this two-credential split is the pattern other providers' usage will follow.
