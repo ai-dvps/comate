@@ -1,7 +1,11 @@
 import '../test-utils/test-env.js';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
-import { FeishuBotService } from './feishu-bot-service.js';
+import {
+  buildFeishuChannelOptions,
+  buildFeishuClientOptions,
+  FeishuBotService,
+} from './feishu-bot-service.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { botService } from './bot-service.js';
 import { chatService } from './chat-service.js';
@@ -43,6 +47,30 @@ interface MockLarkClient {
     };
   };
 }
+
+describe('Feishu SDK options', () => {
+  it('passes one custom origin to REST and WebSocket construction', () => {
+    const serverUrl = 'https://feishu.internal.example:8443';
+    const clientOptions = buildFeishuClientOptions('app-id', 'app-secret', serverUrl);
+    const channelOptions = buildFeishuChannelOptions(
+      { appId: 'app-id', appSecret: 'app-secret' },
+      serverUrl,
+    );
+
+    assert.strictEqual(clientOptions.domain, serverUrl);
+    assert.strictEqual(channelOptions.domain, serverUrl);
+    assert.strictEqual(channelOptions.includeRawEvent, true);
+  });
+
+  it('omits the domain when the official Feishu default should be used', () => {
+    const clientOptions = buildFeishuClientOptions('app-id', 'app-secret');
+    const channelOptions = buildFeishuChannelOptions({ appId: 'app-id', appSecret: 'app-secret' });
+
+    assert.strictEqual('domain' in clientOptions, false);
+    assert.strictEqual('domain' in channelOptions, false);
+    assert.strictEqual(channelOptions.includeRawEvent, true);
+  });
+});
 
 describe('FeishuBotService', () => {
   let service: FeishuBotService;

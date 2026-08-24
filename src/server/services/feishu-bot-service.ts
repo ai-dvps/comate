@@ -44,6 +44,30 @@ interface Connection {
   lastError?: string;
 }
 
+export function buildFeishuClientOptions(
+  appId: string,
+  appSecret: string,
+  serverUrl?: string,
+): ConstructorParameters<typeof lark.Client>[0] {
+  return {
+    appId,
+    appSecret,
+    appType: lark.AppType.SelfBuild,
+    ...(serverUrl ? { domain: serverUrl } : {}),
+  };
+}
+
+export function buildFeishuChannelOptions(
+  options: lark.LarkChannelOptions,
+  serverUrl?: string,
+): lark.LarkChannelOptions {
+  return {
+    ...options,
+    ...(serverUrl ? { domain: serverUrl } : {}),
+    includeRawEvent: true,
+  };
+}
+
 export class FeishuBotService {
   private connections = new Map<string, Connection>();
   private activeBotId: string | null = null;
@@ -74,6 +98,7 @@ export class FeishuBotService {
     const feishu = channelSettings.feishu;
     const appId = feishu?.appId?.trim();
     const appSecret = feishu?.appSecret?.trim();
+    const serverUrl = feishu?.serverUrl;
     if (!appId || !appSecret) {
       diagLog(`[FeishuBotService] bot ${bot.id} missing Feishu credentials`);
       return;
@@ -82,17 +107,13 @@ export class FeishuBotService {
     const workspace = bot.activeWorkspaceId ? await workspaceStore.get(bot.activeWorkspaceId) : null;
     const workspaceId = bot.activeWorkspaceId ?? '';
 
-    const larkClient = new lark.Client({
-      appId,
-      appSecret,
-      appType: lark.AppType.SelfBuild,
-    });
+    const larkClient = new lark.Client(buildFeishuClientOptions(appId, appSecret, serverUrl));
 
     const adapter = createLarkAdapter({
       appId,
       appSecret,
       channelFactory: (((opts: lark.LarkChannelOptions) =>
-        lark.createLarkChannel({ ...opts, includeRawEvent: true })) as unknown as NonNullable<
+        lark.createLarkChannel(buildFeishuChannelOptions(opts, serverUrl))) as unknown as NonNullable<
         LarkAdapterConfig['channelFactory']
       >),
     });
