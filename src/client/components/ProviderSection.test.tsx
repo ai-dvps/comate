@@ -94,14 +94,19 @@ describe('ProviderSection', () => {
     expect(screen.getByLabelText(/Name/)).toHaveValue('Kimi For Coding')
   })
 
-  it('reports disabled and structurally invalid endpoint states without network requests', async () => {
+  it('accepts internal HTTP endpoints and reports disabled endpoints without network requests', async () => {
     renderSection()
     fireEvent.click(screen.getByRole('button', { name: 'Create First Provider' }))
     const anthropicUrl = screen.getByLabelText('Anthropic endpoint Base URL')
-    fireEvent.change(anthropicUrl, { target: { value: 'http://insecure.example' } })
+    fireEvent.change(anthropicUrl, { target: { value: 'http://llm.internal:8080/v1' } })
 
-    expect(screen.getByText('Structurally invalid HTTPS URL')).toBeInTheDocument()
+    expect(screen.getByText('Not tested')).toBeInTheDocument()
+    expect(screen.queryByText('Structurally invalid HTTP(S) URL')).not.toBeInTheDocument()
+    expect(screen.getByText('HTTP sends credentials and model traffic without encryption. Use it only for a trusted internal service.')).toBeInTheDocument()
     expect(screen.getByText('Skipped — endpoint disabled')).toBeInTheDocument()
+
+    fireEvent.change(anthropicUrl, { target: { value: 'http://llm.internal:0/v1' } })
+    expect(screen.getByText('Structurally invalid HTTP(S) URL')).toBeInTheDocument()
   })
 
   it('loads the truthful affected-session count before opening delete confirmation', async () => {

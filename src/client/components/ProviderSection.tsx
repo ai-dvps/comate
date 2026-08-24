@@ -36,7 +36,9 @@ function endpointState(enabled: boolean, baseUrl: string): EndpointState {
   if (!enabled) return 'disabled'
   try {
     const url = new URL(baseUrl)
-    return url.protocol === 'https:' && Boolean(url.hostname) && !url.username && !url.password && !url.hash ? 'idle' : 'invalid'
+    return (url.protocol === 'http:' || url.protocol === 'https:')
+      && Boolean(url.hostname) && url.port !== '0'
+      && !url.username && !url.password && !url.hash ? 'idle' : 'invalid'
   } catch { return 'invalid' }
 }
 
@@ -214,6 +216,9 @@ function EndpointCard({
         placeholder={kind === 'anthropic' ? 'https://api.example.com/anthropic' : 'https://api.example.com/v1'}
         className="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
       />
+      {endpoint.enabled && endpoint.baseUrl.trim().toLowerCase().startsWith('http://') && (
+        <p className="mt-2 text-[11px] text-warning">{t('providers.httpWarning')}</p>
+      )}
       {kind === 'openai' && (
         <label className="mt-3 block text-[11px] font-medium text-text-tertiary" htmlFor={`${id}-format`}>
           {t('providers.upstreamFormat')}
@@ -311,7 +316,7 @@ export default function ProviderSection() {
     if (!form.authToken.trim() && !existing?.authTokenPresent) return t('providers.authTokenRequired')
     const enabled = Object.values(form.configuration.endpoints).filter((endpoint) => endpoint?.enabled)
     if (enabled.length === 0) return t('providers.endpointRequired')
-    if (endpointStates.anthropic.state === 'invalid' || endpointStates.openai.state === 'invalid') return t('providers.validHttpsRequired')
+    if (endpointStates.anthropic.state === 'invalid' || endpointStates.openai.state === 'invalid') return t('providers.validHttpRequired')
     return null
   }
 

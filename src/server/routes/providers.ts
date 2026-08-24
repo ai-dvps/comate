@@ -98,6 +98,7 @@ function requestProviderModels(
     url: effectiveProviderResourceUrl(resolved, 'models'),
     method: 'GET',
     redirectPolicy: 'error',
+    destinationPolicy: 'provider',
     headers: { accept: 'application/json' },
     prepareHopHeaders: (): Record<string, string> => resolved.mode === 'direct-anthropic'
       ? { 'x-api-key': resolved.credential, 'anthropic-version': '2023-06-01' }

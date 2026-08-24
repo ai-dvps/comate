@@ -10,7 +10,7 @@ import {
   createProviderRouteHttpRouter,
   authorizeProviderRouteRequest,
   isLoopbackPeer,
-  PinnedHttpsProviderRouteTransport,
+  PinnedProviderRouteTransport,
   providerRouteAcceptanceTransportFromEnv,
   type ProviderRouteUpstreamRequest,
   type ProviderRouteUpstreamResponse,
@@ -270,27 +270,10 @@ describe('Provider route HTTP', () => {
     });
   });
 
-  it('applies all-answer DNS safety before attaching credentials and pins the safe TLS destination', async () => {
-    let transportCalls = 0;
-    const unsafe = new PinnedHttpsProviderRouteTransport({
-      resolver: async () => [
-        { address: '93.184.216.34', family: 4 },
-        { address: '127.0.0.1', family: 4 },
-      ],
-      transport: { async request() { transportCalls += 1; throw new Error('must not dispatch'); } },
-    });
-    await assert.rejects(() => unsafe.request({
-      url: 'https://api.example.com/v1/chat/completions',
-      method: 'POST',
-      headers: { authorization: 'Bearer provider-secret', 'content-type': 'application/json' },
-      body: Buffer.from('{}'),
-      signal: new AbortController().signal,
-    }));
-    assert.equal(transportCalls, 0);
-
+  it('pins HTTP internal destinations and preserves HTTPS TLS routing', async () => {
     let captured: DirectHttpTransportRequest | undefined;
-    const safe = new PinnedHttpsProviderRouteTransport({
-      resolver: async () => [{ address: '93.184.216.34', family: 4 }],
+    const routed = new PinnedProviderRouteTransport({
+      resolver: async () => [{ address: '10.20.30.40', family: 4 }],
       transport: {
         async request(input) {
           captured = input;
@@ -303,18 +286,50 @@ describe('Provider route HTTP', () => {
         },
       },
     });
-    const response = await safe.request({
-      url: 'https://api.example.com/v1/chat/completions',
+    const response = await routed.request({
+      url: 'http://llm.internal:8080/v1/chat/completions',
       method: 'POST',
       headers: { authorization: 'Bearer provider-secret', 'content-type': 'application/json' },
       body: Buffer.from('{}'),
       signal: new AbortController().signal,
     });
     assert.ok(captured);
-    assert.equal(captured.hostname, 'api.example.com');
-    assert.equal(captured.servername, 'api.example.com');
-    assert.equal(captured.pinnedAddress, '93.184.216.34');
+    assert.equal(captured.protocol, 'http:');
+    assert.equal(captured.hostname, 'llm.internal');
+    assert.equal(captured.servername, 'llm.internal');
+    assert.equal(captured.pinnedAddress, '10.20.30.40');
+    assert.equal(captured.port, 8080);
     assert.equal(captured.headers.authorization, 'Bearer provider-secret');
+    response.close();
+  });
+
+  it('dispatches to a real loopback HTTP Provider without TLS', async () => {
+    let receivedAuthorization: string | undefined;
+    const upstream = createServer((req, res) => {
+      receivedAuthorization = req.headers.authorization;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+    servers.push(upstream);
+    upstream.listen(0, '127.0.0.1');
+    await once(upstream, 'listening');
+    const address = upstream.address();
+    assert.ok(address && typeof address === 'object');
+
+    const transport = new PinnedProviderRouteTransport();
+    const response = await transport.request({
+      url: `http://127.0.0.1:${address.port}/v1/chat/completions`,
+      method: 'POST',
+      headers: { authorization: 'Bearer internal-secret', 'content-type': 'application/json' },
+      body: Buffer.from('{}'),
+      signal: new AbortController().signal,
+    });
+    const chunks: Buffer[] = [];
+    for await (const chunk of response.body) chunks.push(chunk);
+
+    assert.equal(response.status, 200);
+    assert.equal(Buffer.concat(chunks).toString('utf8'), '{"ok":true}');
+    assert.equal(receivedAuthorization, 'Bearer internal-secret');
     response.close();
   });
 

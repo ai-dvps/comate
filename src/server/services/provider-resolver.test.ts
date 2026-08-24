@@ -58,9 +58,22 @@ describe('provider resolver', () => {
     assert.equal(reason(resolveProviderForAgent(provider(blank), 'codex')), 'endpoint-invalid');
     const malformed = structuredClone(config); malformed.endpoints.openai!.baseUrl = 'https://user:pass@example.com/v1';
     assert.equal(reason(resolveProviderForAgent(provider(malformed), 'codex')), 'endpoint-invalid');
+    const portZero = structuredClone(config); portZero.endpoints.openai!.baseUrl = 'http://llm.internal:0/v1';
+    assert.equal(reason(resolveProviderForAgent(provider(portZero), 'codex')), 'endpoint-invalid');
     const noModel = structuredClone(config); delete noModel.models.codex;
     assert.equal(reason(resolveProviderForAgent(provider(noModel), 'codex')), 'model-missing');
     assert.equal(reason(resolveProviderForAgent({ ...provider(), authToken: '' }, 'codex')), 'credential-missing');
+  });
+
+  it('accepts HTTP endpoints, including internal hosts and non-standard ports', () => {
+    const internal = structuredClone(config);
+    internal.endpoints.anthropic!.baseUrl = 'http://llm.internal:8080/anthropic';
+    internal.endpoints.openai!.baseUrl = 'http://10.20.30.40:9000/v1';
+
+    const claude = resolveProviderForAgent(provider(internal), 'claude');
+    const codex = resolveProviderForAgent(provider(internal), 'codex');
+    assert.equal(claude.available && claude.baseUrl, 'http://llm.internal:8080/anthropic');
+    assert.equal(codex.available && codex.baseUrl, 'http://10.20.30.40:9000/v1');
   });
 
   it('projects availability without URL or credential and never supports third-party speed', () => {
