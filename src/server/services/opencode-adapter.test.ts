@@ -39,6 +39,35 @@ function makeResolved(
   };
 }
 
+async function withInterruptResponse(
+  response: Response,
+  run: (interrupt: () => Promise<unknown>) => Promise<void>,
+): Promise<void> {
+  const { OpencodeBackendDriver } = await import('./opencode-adapter.js');
+  const driver = new OpencodeBackendDriver({
+    directory: '/workspace',
+    comateSessionId: 's',
+    provider: makeProvider(),
+    providerName: 'Test Provider',
+    env: {},
+  });
+  const internals = driver as unknown as {
+    instance: { baseUrl: string; directory: string; authHeaders: Record<string, string> };
+    backendSessionId: string;
+  };
+  internals.instance = { baseUrl: 'http://opencode.test', directory: '/workspace', authHeaders: {} };
+  internals.backendSessionId = 'oc-1';
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => response) as typeof fetch;
+
+  try {
+    const { query } = driver.createStreamingQuery(emptyInput(), {} as Options);
+    await run(() => query.interrupt());
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 describe('toAnthropicBaseUrl (via buildServeConfig)', () => {
   it('uses the same task capability in the browser MCP Authorization header', async () => {
     const { __testables } = await import('./opencode-adapter.js');
@@ -225,6 +254,26 @@ describe('extractPromptParts', () => {
       ]),
       undefined,
     );
+  });
+});
+
+describe('OpencodeBackendDriver interrupt', () => {
+  it('returns an empty queue receipt after OpenCode confirms the abort', async () => {
+    await withInterruptResponse(Response.json(true), async (interrupt) => {
+      assert.deepEqual(await interrupt(), { still_queued: [] });
+    });
+  });
+
+  it('rejects an abort that OpenCode does not acknowledge', async () => {
+    await withInterruptResponse(Response.json(false), async (interrupt) => {
+      await assert.rejects(interrupt(), /did not acknowledge/i);
+    });
+  });
+
+  it('rejects an unsuccessful OpenCode abort response', async () => {
+    await withInterruptResponse(new Response(null, { status: 503 }), async (interrupt) => {
+      await assert.rejects(interrupt(), /HTTP 503/);
+    });
   });
 });
 
