@@ -3522,7 +3522,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const body: Record<string, unknown> = {}
       if (options.name?.trim()) body.name = options.name.trim()
       if (options.initialPrompt?.trim()) body.prompt = options.initialPrompt.trim()
-      if (options.approvalMode) body.approvalMode = options.approvalMode
+      body.approvalMode = options.approvalMode ?? getInitialSettings().approvalMode
       if (options.providerId) body.providerId = options.providerId
       if (options.backend) body.backend = options.backend
       if (options.fastMode !== undefined) body.fastMode = options.fastMode
