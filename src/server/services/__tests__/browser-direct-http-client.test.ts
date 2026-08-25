@@ -1,11 +1,14 @@
 import '../../test-utils/test-env.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { gzipSync } from 'node:zlib';
 
 import {
   BrowserDirectHttpClient,
   BrowserDirectHttpError,
+  NodeDirectHttpTransport,
   type DirectHttpTransport,
   type DirectHttpTransportRequest,
   type DirectHttpTransportResponse,
@@ -33,6 +36,38 @@ class FakeTransport implements DirectHttpTransport {
 const resolver = async () => [{ address: '93.184.216.34', family: 4 as const }];
 const response = (statusCode: number, headers: Record<string, string> = {}, chunks: Array<string | Buffer> = ['ok']): DirectHttpTransportResponse => ({
   statusCode, headers, body: body(chunks), close: () => {},
+});
+
+describe('NodeDirectHttpTransport', () => {
+  it('connects to one pinned address when Node requests all lookup results', async () => {
+    const server = createServer((_req, res) => res.end('ok'));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    try {
+      const result = await new NodeDirectHttpTransport().request({
+        protocol: 'http:',
+        hostname: 'provider.test',
+        servername: 'provider.test',
+        pinnedAddress: '127.0.0.1',
+        family: 4,
+        port,
+        path: '/',
+        method: 'GET',
+        headers: {},
+        signal: new AbortController().signal,
+        connectTimeoutMs: 1_000,
+        headerTimeoutMs: 1_000,
+        inactivityTimeoutMs: 1_000,
+      });
+      let received = '';
+      for await (const chunk of result.body) received += chunk.toString();
+      assert.equal(result.statusCode, 200);
+      assert.equal(received, 'ok');
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
 });
 
 describe('BrowserDirectHttpClient redirects and pinning', () => {
