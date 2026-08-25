@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import { GeneralTab } from './SettingsPanel';
 import i18n from '../i18n';
@@ -36,6 +37,8 @@ describe('GeneralTab updater flow', () => {
     onReopenLastWorkspaceChange: vi.fn(),
     useModifierToSubmit: false,
     onUseModifierToSubmitChange: vi.fn(),
+    approvalMode: 'auto' as const,
+    onApprovalModeChange: vi.fn(),
     autoCheckUpdates: false,
     onAutoCheckUpdatesChange: vi.fn(),
     notificationSounds: false,
@@ -71,6 +74,19 @@ describe('GeneralTab updater flow', () => {
     );
 
     expect(screen.getByRole('button', { name: /Check for Updates/i })).toBeInTheDocument();
+  });
+
+  it('changes the global permission mode used by new sessions', async () => {
+    const onApprovalModeChange = vi.fn();
+    const user = userEvent.setup();
+    await renderWithAct(
+      <GeneralTab {...defaultProps} onApprovalModeChange={onApprovalModeChange} />,
+    );
+
+    await user.click(screen.getByRole('combobox', { name: /Default permission mode/i }));
+    await user.click(screen.getByRole('option', { name: /Read only/i }));
+
+    expect(onApprovalModeChange).toHaveBeenCalledWith('readonly');
   });
 
   it('records the check time only when the update check succeeds', async () => {

@@ -16,6 +16,7 @@ import {
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useTheme } from '../hooks/use-theme'
 import { useAppSettings } from '../hooks/use-app-settings'
+import type { ApprovalMode } from '../hooks/use-app-settings'
 import { useUpdaterStore } from '../stores/updater-store'
 import { checkForUpdates, getAppVersion, downloadAndInstallUpdate, restartToUpdate, dismissUpdate } from '../lib/updater-api'
 import { MISSING_UPDATE_FEED_ERROR } from '../../shared/updater-contract'
@@ -28,6 +29,7 @@ import DeleteWorkspaceDialog from './DeleteWorkspaceDialog'
 import BotManagementPage, { type BotManagementPageHandle } from './BotManagementPage'
 import UnsavedChangesDialog from './UnsavedChangesDialog'
 import ModalPanel, { type PanelPresentation } from './ModalPanel'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 
 /**
  * Embedded browser "allow insecure certificates" toggle. App-global (not
@@ -204,7 +206,7 @@ export default function SettingsPanel({
   const storeError = useWorkspaceStore((s) => s.error)
   const isStoreLoading = useWorkspaceStore((s) => s.isLoading)
 
-  const { reopenLastWorkspace, setReopenLastWorkspace, useModifierToSubmit, setUseModifierToSubmit, archiveThresholdDays, setArchiveThresholdDays, autoCheckUpdates, setAutoCheckUpdates, notificationSoundsEnabled, setNotificationSoundsEnabled, notificationSoundsVolume, setNotificationSoundsVolume, lastUpdateCheckAt, setLastUpdateCheckAt } = useAppSettings()
+  const { reopenLastWorkspace, setReopenLastWorkspace, useModifierToSubmit, setUseModifierToSubmit, archiveThresholdDays, setArchiveThresholdDays, autoCheckUpdates, setAutoCheckUpdates, notificationSoundsEnabled, setNotificationSoundsEnabled, notificationSoundsVolume, setNotificationSoundsVolume, lastUpdateCheckAt, setLastUpdateCheckAt, approvalMode, setApprovalMode } = useAppSettings()
   const updateStatus = useUpdaterStore((s) => s.status)
   const updateError = useUpdaterStore((s) => s.error)
   const updateInfo = useUpdaterStore((s) => s.update)
@@ -221,6 +223,7 @@ export default function SettingsPanel({
   // App-level form state
   const [appReopen, setAppReopen] = useState(reopenLastWorkspace)
   const [appModifierSubmit, setAppModifierSubmit] = useState(useModifierToSubmit)
+  const [appApprovalMode, setAppApprovalMode] = useState(approvalMode)
   const [appAutoCheckUpdates, setAppAutoCheckUpdates] = useState(autoCheckUpdates)
   const [appNotificationSounds, setAppNotificationSounds] = useState(notificationSoundsEnabled)
   const [appNotificationSoundsVolume, setAppNotificationSoundsVolume] = useState(notificationSoundsVolume)
@@ -235,6 +238,7 @@ export default function SettingsPanel({
   const snapshotRef = useRef({
     appReopen: reopenLastWorkspace,
     appModifierSubmit: useModifierToSubmit,
+    appApprovalMode: approvalMode,
     appAutoCheckUpdates: autoCheckUpdates,
     appNotificationSounds: notificationSoundsEnabled,
     appNotificationSoundsVolume: notificationSoundsVolume,
@@ -257,6 +261,7 @@ export default function SettingsPanel({
     snapshotRef.current = {
       appReopen: reopenLastWorkspace,
       appModifierSubmit: useModifierToSubmit,
+      appApprovalMode: approvalMode,
       appAutoCheckUpdates: autoCheckUpdates,
       appNotificationSounds: notificationSoundsEnabled,
       appNotificationSoundsVolume: notificationSoundsVolume,
@@ -265,6 +270,7 @@ export default function SettingsPanel({
     }
     setAppReopen(reopenLastWorkspace)
     setAppModifierSubmit(useModifierToSubmit)
+    setAppApprovalMode(approvalMode)
     setAppAutoCheckUpdates(autoCheckUpdates)
     setAppNotificationSounds(notificationSoundsEnabled)
     setAppNotificationSoundsVolume(notificationSoundsVolume)
@@ -276,7 +282,7 @@ export default function SettingsPanel({
     if (initialWorkspaceId) {
       setActiveTab('workspace')
     }
-  }, [workspaces, reopenLastWorkspace, useModifierToSubmit, autoCheckUpdates, notificationSoundsEnabled, notificationSoundsVolume, activeWorkspaceId, archiveThresholdDays, initialWorkspaceId])
+  }, [workspaces, reopenLastWorkspace, useModifierToSubmit, approvalMode, autoCheckUpdates, notificationSoundsEnabled, notificationSoundsVolume, activeWorkspaceId, archiveThresholdDays, initialWorkspaceId])
 
   // Re-seed the selection when the deep-link target changes after mount
   // (e.g. "Edit Workspace" triggered while settings is already open). The
@@ -331,6 +337,7 @@ export default function SettingsPanel({
     return (
       appReopen !== snapshotRef.current.appReopen ||
       appModifierSubmit !== snapshotRef.current.appModifierSubmit ||
+      appApprovalMode !== snapshotRef.current.appApprovalMode ||
       appAutoCheckUpdates !== snapshotRef.current.appAutoCheckUpdates ||
       appNotificationSounds !== snapshotRef.current.appNotificationSounds ||
       appNotificationSoundsVolume !== snapshotRef.current.appNotificationSoundsVolume ||
@@ -339,6 +346,7 @@ export default function SettingsPanel({
   }, [
     appReopen,
     appModifierSubmit,
+    appApprovalMode,
     appAutoCheckUpdates,
     appNotificationSounds,
     appNotificationSoundsVolume,
@@ -399,6 +407,7 @@ export default function SettingsPanel({
   const saveAppSettings = useCallback(() => {
     setReopenLastWorkspace(appReopen)
     setUseModifierToSubmit(appModifierSubmit)
+    setApprovalMode(appApprovalMode)
     setAutoCheckUpdates(appAutoCheckUpdates)
     setNotificationSoundsEnabled(appNotificationSounds)
     setNotificationSoundsVolume(appNotificationSoundsVolume)
@@ -416,6 +425,7 @@ export default function SettingsPanel({
       ...snapshotRef.current,
       appReopen,
       appModifierSubmit,
+      appApprovalMode,
       appAutoCheckUpdates,
       appNotificationSounds,
       appNotificationSoundsVolume,
@@ -424,6 +434,7 @@ export default function SettingsPanel({
   }, [
     appReopen,
     appModifierSubmit,
+    appApprovalMode,
     appAutoCheckUpdates,
     appNotificationSounds,
     appNotificationSoundsVolume,
@@ -431,6 +442,7 @@ export default function SettingsPanel({
     archiveThresholdDays,
     setReopenLastWorkspace,
     setUseModifierToSubmit,
+    setApprovalMode,
     setAutoCheckUpdates,
     setNotificationSoundsEnabled,
     setNotificationSoundsVolume,
@@ -441,6 +453,7 @@ export default function SettingsPanel({
     const snapshot = snapshotRef.current
     setAppReopen(snapshot.appReopen)
     setAppModifierSubmit(snapshot.appModifierSubmit)
+    setAppApprovalMode(snapshot.appApprovalMode)
     setAppAutoCheckUpdates(snapshot.appAutoCheckUpdates)
     setAppNotificationSounds(snapshot.appNotificationSounds)
     setAppNotificationSoundsVolume(snapshot.appNotificationSoundsVolume)
@@ -641,6 +654,8 @@ export default function SettingsPanel({
                 onReopenLastWorkspaceChange={setAppReopen}
                 useModifierToSubmit={appModifierSubmit}
                 onUseModifierToSubmitChange={setAppModifierSubmit}
+                approvalMode={appApprovalMode}
+                onApprovalModeChange={setAppApprovalMode}
                 autoCheckUpdates={appAutoCheckUpdates}
                 onAutoCheckUpdatesChange={setAppAutoCheckUpdates}
                 notificationSounds={appNotificationSounds}
@@ -772,6 +787,8 @@ export function GeneralTab({
   onReopenLastWorkspaceChange,
   useModifierToSubmit,
   onUseModifierToSubmitChange,
+  approvalMode,
+  onApprovalModeChange,
   autoCheckUpdates,
   onAutoCheckUpdatesChange,
   notificationSounds,
@@ -797,6 +814,8 @@ export function GeneralTab({
   onReopenLastWorkspaceChange: (v: boolean) => void
   useModifierToSubmit: boolean
   onUseModifierToSubmitChange: (v: boolean) => void
+  approvalMode: ApprovalMode
+  onApprovalModeChange: (v: ApprovalMode) => void
   autoCheckUpdates: boolean
   onAutoCheckUpdatesChange: (v: boolean) => void
   notificationSounds: boolean
@@ -913,6 +932,34 @@ export function GeneralTab({
 
           <BrowserInsecureCertsToggle />
           <TodoNightWindowSetting />
+
+          <div className="flex items-center justify-between gap-6 py-3 border-t border-border/50">
+            <div>
+              <label htmlFor="default-approval-mode" className="block text-xs font-medium text-text-secondary">
+                {t('general.defaultApprovalMode')}
+              </label>
+              <p id="default-approval-mode-description" className="text-[10px] text-text-tertiary mt-0.5">
+                {t('general.defaultApprovalModeHint')}
+              </p>
+            </div>
+            <Select
+              value={approvalMode}
+              onValueChange={(value) => onApprovalModeChange(value as ApprovalMode)}
+            >
+              <SelectTrigger
+                id="default-approval-mode"
+                aria-describedby="default-approval-mode-description"
+                className="h-8 w-auto min-w-32 bg-surface px-2.5 py-1 text-xs"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value="auto">{t('general.approvalModes.auto')}</SelectItem>
+                <SelectItem value="readonly">{t('general.approvalModes.readonly')}</SelectItem>
+                <SelectItem value="manual">{t('general.approvalModes.manual')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
 
           <div className="flex items-center justify-between py-3 border-t border-border/50">
             <div>

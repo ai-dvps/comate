@@ -11,6 +11,7 @@ import { chooseDefaultNewChatWorkspace } from './new-chat-workspace'
 interface NewChatPageProps {
   workspaces: Workspace[]
   defaultWorkspaceId?: string | null
+  defaultApprovalMode?: ApprovalMode
   selectedWorkspaceId?: string | null
   onWorkspaceChange: (workspaceId: string) => void
   onCreateWorkspace: () => void
@@ -41,19 +42,19 @@ interface NewChatComposerOptions {
   approvalMode: ApprovalMode
 }
 
-const DEFAULT_COMPOSER_OPTIONS: NewChatComposerOptions = {
+const DEFAULT_COMPOSER_OPTIONS: Omit<NewChatComposerOptions, 'approvalMode'> = {
   backendId: null,
   providerId: null,
   codexModel: null,
   codexEffort: null,
   codexSpeed: null,
   fastMode: false,
-  approvalMode: 'manual',
 }
 
 export default function NewChatPage({
   workspaces,
   defaultWorkspaceId,
+  defaultApprovalMode = 'auto',
   selectedWorkspaceId,
   onWorkspaceChange,
   onCreateWorkspace,
@@ -69,13 +70,17 @@ export default function NewChatPage({
   const workspaceId = selectedWorkspaceId && workspaces.some((workspace) => workspace.id === selectedWorkspaceId)
     ? selectedWorkspaceId
     : resolvedDefault ?? ''
-  const [optionsByWorkspace, setOptionsByWorkspace] = useState<Record<string, NewChatComposerOptions>>({})
-  const composerOptions = optionsByWorkspace[workspaceId] ?? DEFAULT_COMPOSER_OPTIONS
+  const [optionsByWorkspace, setOptionsByWorkspace] = useState<Record<string, Partial<NewChatComposerOptions>>>({})
+  const composerOptions: NewChatComposerOptions = {
+    ...DEFAULT_COMPOSER_OPTIONS,
+    approvalMode: defaultApprovalMode,
+    ...optionsByWorkspace[workspaceId],
+  }
   const updateComposerOptions = (patch: Partial<NewChatComposerOptions>) => {
     setOptionsByWorkspace((current) => ({
       ...current,
       [workspaceId]: {
-        ...(current[workspaceId] ?? DEFAULT_COMPOSER_OPTIONS),
+        ...current[workspaceId],
         ...patch,
       },
     }))

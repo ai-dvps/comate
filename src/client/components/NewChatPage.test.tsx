@@ -161,6 +161,49 @@ describe('NewChatPage', () => {
     expect(workspaceSelector.compareDocumentPosition(promptInput) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
+  it('starts new sessions with the global permission mode', () => {
+    renderPage({ defaultApprovalMode: 'readonly' })
+
+    expect(screen.getByTestId('prompt-input')).toHaveAttribute('data-approval-mode', 'readonly')
+  })
+
+  it('follows a changed global mode until the draft overrides its permission mode', () => {
+    const { rerender } = renderPage({ defaultApprovalMode: 'auto' })
+    fireEvent.click(screen.getByRole('button', { name: 'Choose provider' }))
+
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <NewChatPage
+          workspaces={workspaces}
+          defaultWorkspaceId="ws-old"
+          defaultApprovalMode="readonly"
+          onWorkspaceChange={vi.fn()}
+          onCreateWorkspace={vi.fn()}
+          onSubmit={vi.fn(async () => {})}
+        />
+      </I18nextProvider>,
+    )
+
+    expect(screen.getByTestId('prompt-input')).toHaveAttribute('data-provider-id', 'provider-2')
+    expect(screen.getByTestId('prompt-input')).toHaveAttribute('data-approval-mode', 'readonly')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose permission' }))
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <NewChatPage
+          workspaces={workspaces}
+          defaultWorkspaceId="ws-old"
+          defaultApprovalMode="manual"
+          onWorkspaceChange={vi.fn()}
+          onCreateWorkspace={vi.fn()}
+          onSubmit={vi.fn(async () => {})}
+        />
+      </I18nextProvider>,
+    )
+
+    expect(screen.getByTestId('prompt-input')).toHaveAttribute('data-approval-mode', 'auto')
+  })
+
   it('fills the available pane so the composer container stays horizontally centered', () => {
     const { rerender } = renderPage()
 
@@ -220,6 +263,7 @@ describe('NewChatPage', () => {
         <NewChatPage
           workspaces={[...workspaces, { ...workspaces[1], id: 'ws-created', name: 'Created' }]}
           defaultWorkspaceId="ws-old"
+          defaultApprovalMode="manual"
           selectedWorkspaceId="ws-created"
           onWorkspaceChange={vi.fn()}
           onCreateWorkspace={vi.fn()}

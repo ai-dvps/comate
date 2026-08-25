@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { I18nextProvider } from 'react-i18next'
 import i18n from '../i18n'
@@ -29,7 +29,7 @@ describe('ApprovalModeToggle', () => {
       </I18nextProvider>,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /Manual/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Ask before actions/ }))
     fireEvent.click(screen.getByText('Auto'))
 
     expect(onApprovalModeChange).toHaveBeenCalledWith('auto')
@@ -43,9 +43,25 @@ describe('ApprovalModeToggle', () => {
       </I18nextProvider>,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /Manual/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Ask before actions/ }))
     fireEvent.click(screen.getByText('Auto'))
 
     expect(setSessionApprovalMode).toHaveBeenCalledWith('ws-1', 'session-1', 'auto')
+  })
+
+  it('uses the same labels and order as the global setting', () => {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <ApprovalModeToggle workspaceId="ws-1" sessionId="session-1" />
+      </I18nextProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /Ask before actions/ }))
+
+    const menuLabels = within(screen.getByRole('menu'))
+      .getAllByRole('menuitem')
+      .map((item) => item.getAttribute('aria-label'))
+
+    expect(menuLabels).toEqual(['Auto', 'Read only', 'Ask before actions'])
   })
 })
