@@ -14,6 +14,7 @@ interface PackageJson {
 interface WorkflowStep {
   name?: string;
   if?: string;
+  shell?: string;
   run?: string;
 }
 
@@ -201,6 +202,31 @@ test('unsigned macOS packages receive a fresh ad-hoc signature after Electron fu
   );
   assert.equal(signatureGuard.if, "runner.os == 'macOS'");
   assert.equal(signatureGuard.run, 'npm run verify:electron:mac-signature');
+});
+
+test('release packaging tolerates absent signing secrets and resolves annotated tags', () => {
+  const workflow = readFileSync('.github/workflows/build.yml', 'utf8');
+  const parsedWorkflow = parse(workflow) as BuildWorkflow;
+  const buildSteps = parsedWorkflow.jobs?.build?.steps;
+
+  const packageStep = requiredWorkflowStep(buildSteps, 'Package (publish signed builds and Linux)');
+  assert.equal(packageStep.shell, 'bash');
+  assert.match(
+    packageStep.run ?? '',
+    /if \[ -z "\$\{CSC_LINK:-\}" \]; then\s+unset CSC_LINK CSC_KEY_PASSWORD\s+fi/,
+    'an absent macOS signing secret must be removed from the environment before electron-builder resolves it as a file path',
+  );
+
+  const unsignedUpload = requiredWorkflowStep(
+    buildSteps,
+    'Upload unsigned macOS/Windows release assets',
+  ).run;
+  assert.ok(unsignedUpload, 'the unsigned asset upload must define its tag safety check');
+  assert.match(
+    unsignedUpload,
+    /read -r tag_type tag_sha[\s\S]*?\.object[\s\S]*?\.type[\s\S]*?\.sha[\s\S]*?if \[ "\$tag_type" = 'tag' \]; then[\s\S]*?git\/tags\/\$tag_sha[\s\S]*?\.object\.sha/,
+    'the upload safety check must peel annotated tags to their commit before comparing GITHUB_SHA',
+  );
 });
 
 test('packaged updater feed guard validates every macOS architecture and exact feed values', () => {

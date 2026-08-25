@@ -173,13 +173,22 @@ jobs:
           echo "ready=$ready" >> "$GITHUB_OUTPUT"
 
       - name: Package (publish signed builds and Linux)
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # Signed and Linux builds publish through electron-builder. Unsigned
         # macOS/Windows builds use --publish never so they can be uploaded by
         # the explicit, provenance-preserving step below.
         # --config is load-bearing: see the FOOTGUN note at the top.
-        run: npx electron-builder --config electron-builder.config.ts ${{ matrix.builder-args }} ${{ (steps.signing.outputs.ready == 'true' || runner.os == 'Linux') && '--publish onTagOrDraft' || '--publish never' }}
+        run: |
+          set -euo pipefail
+          # GitHub expands unavailable secrets to empty environment variables.
+          # electron-builder treats a present-but-empty CSC_LINK as a path to
+          # the repository root, so remove it to enable ad-hoc macOS signing.
+          if [ -z "${CSC_LINK:-}" ]; then
+            unset CSC_LINK CSC_KEY_PASSWORD
+          fi
+          npx electron-builder --config electron-builder.config.ts ${{ matrix.builder-args }} ${{ (steps.signing.outputs.ready == 'true' || runner.os == 'Linux') && '--publish onTagOrDraft' || '--publish never' }}
 
       - name: Guard packaged renderer contents
         run: npm run verify:electron:package
@@ -225,7 +234,13 @@ jobs:
           assets=(release/*.dmg release/*.zip release/*.exe release/latest*.yml release/*.blockmap)
           [ "${#assets[@]}" -gt 0 ] || { echo "::error::no macOS/Windows release assets found under release/"; exit 1; }
 
-          tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.sha')"
+          read -r tag_type tag_sha < <(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" \
+              --jq '.object | "\(.type) \(.sha)"'
+          )
+          if [ "$tag_type" = 'tag' ]; then
+            tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_sha" --jq '.object.sha')"
+          fi
           [ "$tag_sha" = "$GITHUB_SHA" ] || {
             echo "::error::tag $GITHUB_REF_NAME moved to $tag_sha; refusing to upload assets from stale commit $GITHUB_SHA"
             exit 1
