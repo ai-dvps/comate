@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **New sessions follow a global permission-mode default** — General settings now choose whether new sessions start in Auto, Read only, or Ask before actions mode; the app defaults to Auto while preserving per-session overrides.
+
 ### Fixed
 
 - **Saved Provider Auth Tokens can be inspected again** — Provider editors now show a masked saved-token state and reveal the credential only after an explicit eye-button action through the desktop-authenticated, non-cacheable API path.

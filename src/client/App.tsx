@@ -54,7 +54,7 @@ function App() {
   useTheme()
   useBadgeSync()
   useNotificationSounds()
-  const { uiFontSize, autoCheckUpdates, setLastUpdateCheckAt } = useAppSettings()
+  const { uiFontSize, autoCheckUpdates, setLastUpdateCheckAt, approvalMode } = useAppSettings()
 
   const workspaces = useWorkspaceStore((s) => s.workspaces)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
@@ -693,6 +693,7 @@ function App() {
               <NewChatPage
                 workspaces={workspaces}
                 defaultWorkspaceId={lastSessionWorkspaceIdRef.current}
+                defaultApprovalMode={approvalMode}
                 selectedWorkspaceId={newChatWorkspaceId}
                 onWorkspaceChange={setNewChatWorkspaceId}
                 onCreateWorkspace={() => setShowCreateModal(true)}
