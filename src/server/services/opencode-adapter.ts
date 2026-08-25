@@ -252,11 +252,16 @@ export class OpencodeBackendDriver implements BackendDriver {
     const query = {
       interrupt: async () => {
         if (!this.instance || !this.backendSessionId) return;
-        await opencodeFetch(this.instance, `/session/${this.backendSessionId}/abort`, {
+        const response = await opencodeFetch(this.instance, `/session/${this.backendSessionId}/abort`, {
           method: 'POST',
-        }).catch((err) => {
-          diagLog(`[OpencodeBackendDriver] abort failed: ${err}`);
         });
+        if (!response.ok) {
+          throw new Error(`OpenCode abort failed with HTTP ${response.status}`);
+        }
+        if (await response.json() !== true) {
+          throw new Error('OpenCode did not acknowledge the abort');
+        }
+        return { still_queued: [] };
       },
       close: () => {
         this.closed = true;
