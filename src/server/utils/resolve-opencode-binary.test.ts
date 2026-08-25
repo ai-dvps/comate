@@ -1,10 +1,16 @@
 import '../test-utils/test-env.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { resolveOpencodeBinary, OPENCODE_EXPECTED_VERSION } from './resolve-opencode-binary.js';
+
+const packageJson = createRequire(import.meta.url)('../../../package.json') as {
+  dependencies: Record<string, string>;
+  optionalDependencies: Record<string, string>;
+};
 
 describe('resolveOpencodeBinary', () => {
   it('resolves the bundled platform package in the dev tree (host platform)', () => {
@@ -39,7 +45,10 @@ describe('resolveOpencodeBinary', () => {
     }
   });
 
-  it('pins the compatibility-unit version constant', () => {
-    assert.match(OPENCODE_EXPECTED_VERSION, /^\d+\.\d+\.\d+$/);
+  it('pins the SDK, runtime constant, and platform binaries as one compatibility unit', () => {
+    assert.equal(packageJson.dependencies['@opencode-ai/sdk'], OPENCODE_EXPECTED_VERSION);
+    for (const [name, version] of Object.entries(packageJson.optionalDependencies)) {
+      if (name.startsWith('opencode-')) assert.equal(version, OPENCODE_EXPECTED_VERSION, name);
+    }
   });
 });

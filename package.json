@@ -87,8 +87,8 @@
     "@octokit/plugin-retry": "^8.1.0",
     "@octokit/plugin-throttling": "^11.0.3",
     "@octokit/rest": "^22.0.1",
-    "@opencode-ai/sdk": "1.18.4",
     "@openai/codex": "0.149.0",
+    "@opencode-ai/sdk": "1.18.23",
     "@radix-ui/react-collapsible": "^1.1.0",
     "@radix-ui/react-popover": "^1.1.15",
     "@radix-ui/react-select": "^2.3.1",
@@ -196,12 +196,12 @@
     "@openai/codex-linux-x64": "npm:@openai/codex@0.149.0-linux-x64",
     "@openai/codex-win32-arm64": "npm:@openai/codex@0.149.0-win32-arm64",
     "@openai/codex-win32-x64": "npm:@openai/codex@0.149.0-win32-x64",
-    "opencode-darwin-arm64": "1.18.4",
-    "opencode-darwin-x64": "1.18.4",
-    "opencode-linux-arm64": "1.18.4",
-    "opencode-linux-arm64-musl": "1.18.4",
-    "opencode-linux-x64": "1.18.4",
-    "opencode-linux-x64-musl": "1.18.4",
-    "opencode-windows-x64": "1.18.4"
+    "opencode-darwin-arm64": "1.18.23",
+    "opencode-darwin-x64": "1.18.23",
+    "opencode-linux-arm64": "1.18.23",
+    "opencode-linux-arm64-musl": "1.18.23",
+    "opencode-linux-x64": "1.18.23",
+    "opencode-linux-x64-musl": "1.18.23",
+    "opencode-windows-x64": "1.18.23"
   }
 }
