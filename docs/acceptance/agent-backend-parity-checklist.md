@@ -9,7 +9,7 @@ Generated from the capability declaration table (`src/server/services/agent-back
 | streaming | full | verified | Adapter E2E (`scripts/verify-opencode-adapter.ts`): text/thinking events streamed to result |
 | toolRendering | full | verified | Adapter E2E: tool_use/tool_result events; `opencode-event-mapper.test.ts` |
 | approvals | full | verified | Adapter E2E: permission.asked → core pending_approval → reply → file written; surface probes (`scripts/verify-opencode-surface.ts`) |
-| askUserQuestion | full | verified | Surface probes: question.asked → /question/{id}/reply → session continues (+85 events) on the pinned 1.18.4 binary |
+| askUserQuestion | full | verified | Surface probes: question.asked → /question/{id}/reply → session continues (+85 events); last credentialed proof used 1.18.4 |
 | todos | full | verified | `opencode-event-mapper.test.ts`: todo.updated → task_started/task_updated |
 | sessionManagement | full | verified | backend_session_id persisted + reattach (Adapter E2E); fork/children covered by driver ops |
 | modelSwitching | full | verified | Provider→opencode mapping exercised in every E2E run (Kimi endpoint); `setModel` on the query handle |
@@ -97,7 +97,7 @@ Operational setup and recovery details are in [`docs/operations/codex-backend.md
 | Paste, drop, chooser, reorder, remove, preview, and image-only composition | verified | `PromptInput.browser.test.tsx`; `PromptImageRail.test.tsx`; `image-input.test.ts` |
 | Oversized static normalization and atomic invalid/oversized rejection | verified | client `image-input.test.ts`; server `image-input-validation.test.ts` |
 | Claude Code receives ordered native image blocks | verified with SDK boundary fixtures | `chat-service.test.ts`; `session-runtime.test.ts`; `server.test.ts` |
-| OpenCode receives ordered file parts and replays transcript images | verified with pinned 1.18.4 adapter fixtures | `opencode-adapter.test.ts`; `opencode-transcript.test.ts` |
+| OpenCode receives ordered file parts and replays transcript images | verified with pinned 1.18.23 adapter fixtures | `opencode-adapter.test.ts`; `opencode-transcript.test.ts` |
 | Failed admission restores the full draft; accepted turns release draft bytes | verified | `chat-store.test.ts`; WebSocket admission tests |
 | Reloaded history is backend-owned and optimistic replay is idempotent | verified with transcript fixtures | normalizer, chat-store, adapter, and renderer suites |
 | Unsupported or unknown model disables image intake with a reason | verified | image profile, backend-store, and PromptInput suites |
