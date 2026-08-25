@@ -245,6 +245,99 @@ describe('CodexBackendDriver interactions', () => {
     });
   });
 
+  it('clears a persisted provider override when resuming with the native Codex account', async () => {
+    const client = new FakeClient();
+    const requests: Array<{ method: string; params?: unknown }> = [];
+    const manager = {
+      ensureClient: async () => client,
+      request: async (method: string, params?: unknown) => {
+        requests.push({ method, params });
+        if (method === 'turn/start') return { turn: { id: 'turn-1' } };
+        return {};
+      },
+    } as unknown as CodexAppServerManager;
+    const driver = new CodexBackendDriver({
+      directory: '/tmp/project',
+      backendSessionId: 'thread-existing',
+      model: 'gpt-5.6-codex',
+      onBackendSessionId: () => undefined,
+      manager,
+    });
+    async function* input(): AsyncGenerator<SDKUserMessage> {
+      yield {
+        type: 'user',
+        uuid: 'message-native',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'hello' },
+      } as SDKUserMessage;
+    }
+
+    driver.createStreamingQuery(input(), {} as Options);
+    await waitFor(() => requests.some((request) => request.method === 'turn/start'));
+
+    assert.deepStrictEqual(requests[0], {
+      method: 'thread/resume',
+      params: {
+        threadId: 'thread-existing',
+        cwd: '/tmp/project',
+        approvalPolicy: 'on-request',
+        sandbox: 'workspace-write',
+        config: {},
+        modelProvider: null,
+        model: 'gpt-5.6-codex',
+      },
+    });
+  });
+
+  it('surfaces a failed completed turn as an error result', async () => {
+    const client = new FakeClient();
+    const manager = {
+      ensureClient: async () => client,
+      request: async (method: string) => {
+        if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+        if (method === 'turn/start') return { turn: { id: 'turn-1' } };
+        return {};
+      },
+    } as unknown as CodexAppServerManager;
+    const driver = new CodexBackendDriver({
+      directory: '/tmp/project',
+      onBackendSessionId: () => undefined,
+      manager,
+    });
+    let releaseInput!: () => void;
+    const hold = new Promise<void>((resolve) => { releaseInput = resolve; });
+    async function* input(): AsyncGenerator<SDKUserMessage> {
+      yield {
+        type: 'user',
+        uuid: 'message-failed',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'hello' },
+      } as SDKUserMessage;
+      await hold;
+    }
+
+    const { query, messages } = driver.createStreamingQuery(input(), {} as Options);
+    await waitFor(() => client.listenerCount('notification') === 1);
+    client.emit('notification', {
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: {
+          id: 'turn-1',
+          status: 'failed',
+          error: { message: '401 Unauthorized' },
+        },
+      },
+    });
+
+    const result = await messages.next();
+    assert.strictEqual(result.done, false);
+    assert.strictEqual((result.value as SDKMessage & { is_error?: boolean }).is_error, true);
+    assert.match(JSON.stringify(result.value), /401 Unauthorized/);
+    releaseInput();
+    query.close();
+  });
+
   it('uses an explicit in-memory Responses provider override', () => {
     assert.deepStrictEqual(codexThreadConfig({} as Options, {
       name: 'Enterprise OpenAI',

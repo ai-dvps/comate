@@ -4626,6 +4626,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setSessionBackend: async (workspaceId: string, sessionId: string, backend: string) => {
     const previous = (get().sessions[workspaceId] || []).find((s) => s.id === sessionId)?.backend
+    // Runtime replacement emits runtime_closed while this request is in flight.
+    // Preserve whether this session was live so it can be rebound afterwards.
+    const hadActiveSubscription = sessionSubscriptions.has(sessionId)
     set((state) => {
       const workspaceSessions = state.sessions[workspaceId] || []
       return {
@@ -4644,6 +4647,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         body: JSON.stringify({ backend }),
       })
       if (!res.ok) throw new Error(i18next.t('common:failedToUpdateSession', 'Failed to update session'))
+      if (hadActiveSubscription) {
+        set((state) => ({
+          isRestartingRuntime: { ...state.isRestartingRuntime, [sessionId]: true },
+        }))
+        subscribeToSession(set, get, workspaceId, sessionId)
+      }
     } catch (err) {
       set((state) => {
         const workspaceSessions = state.sessions[workspaceId] || []

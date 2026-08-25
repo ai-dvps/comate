@@ -343,10 +343,8 @@ export class CodexBackendDriver implements BackendDriver {
         sandbox: 'workspace-write',
         config: this.threadConfig(options),
         ...(this.deps.serviceTier ? { serviceTier: this.deps.serviceTier } : {}),
-        ...(this.deps.provider ? {
-          modelProvider: 'comate-enterprise',
-          ...(this.deps.model ? { model: this.deps.model } : {}),
-        } : {}),
+        modelProvider: this.deps.provider ? 'comate-enterprise' : null,
+        ...(this.deps.model ? { model: this.deps.model } : {}),
       });
       return;
     }
@@ -378,10 +376,26 @@ export class CodexBackendDriver implements BackendDriver {
     }
     for (const mapped of this.mapper.map(message.method, params)) this.queue.push(mapped);
     if (message.method === 'turn/completed') {
-      this.queue.push(resultMessage(this.threadId ?? '', undefined));
+      this.queue.push(resultMessage(
+        this.threadId ?? '',
+        redactCodexError(codexTurnFailure(params), this.deps.provider?.bearerToken),
+      ));
       this.turnId = undefined;
     }
   }
+}
+
+function codexTurnFailure(params: Record<string, unknown>): Error | undefined {
+  if (!params.turn || typeof params.turn !== 'object' || Array.isArray(params.turn)) return undefined;
+  const turn = params.turn as Record<string, unknown>;
+  if (turn.status !== 'failed') return undefined;
+  const error = turn.error;
+  if (error && typeof error === 'object' && !Array.isArray(error)) {
+    const message = (error as Record<string, unknown>).message;
+    if (typeof message === 'string' && message.trim()) return new Error(message);
+  }
+  if (typeof error === 'string' && error.trim()) return new Error(error);
+  return new Error('Codex turn failed');
 }
 
 function codexToolAnnotations(value: unknown): { readOnly?: boolean; destructive?: boolean } {
