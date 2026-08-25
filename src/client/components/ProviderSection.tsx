@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CheckCircle2, ChevronDown, Eye, EyeOff, Loader2, Plus, RefreshCw, Save, Server, Star, Trash2, XCircle } from 'lucide-react'
-import { useProviderStore, type Provider, type ProviderConfiguration, type ProviderFormData, type ProviderPreset } from '../stores/provider-store'
+import { useProviderStore, type Provider, type ProviderAuthTokenRevealResult, type ProviderConfiguration, type ProviderFormData, type ProviderPreset } from '../stores/provider-store'
 import type { BackendId } from '../stores/backend-store'
 import { hasUsageSupport, providerUsageAgent, usageBarColor, usagePercentage, useProviderUsageStore } from '../stores/provider-usage-store'
 import ConfirmDialog from './ConfirmDialog'
@@ -57,6 +57,70 @@ function firstHealthAgent(form: ProviderFormData): BackendId {
   if (config.endpoints.anthropic?.enabled && config.models.claudeCode) return 'claude'
   if (config.endpoints.openai?.enabled && config.models.codex) return 'codex'
   return 'opencode'
+}
+
+function ProviderAuthTokenInput({
+  value, saved, onChange, onReveal,
+}: {
+  value: string
+  saved: boolean
+  onChange: (value: string) => void
+  onReveal: () => Promise<ProviderAuthTokenRevealResult>
+}) {
+  const { t } = useTranslation('settings')
+  const [show, setShow] = useState(false)
+  const [revealed, setRevealed] = useState<string | null>(null)
+  const [isRevealing, setIsRevealing] = useState(false)
+  const [revealError, setRevealError] = useState<string | null>(null)
+  const displayValue = value || revealed || ''
+
+  const toggle = async () => {
+    if (!show && !displayValue && saved) {
+      setRevealError(null)
+      setIsRevealing(true)
+      try {
+        const result = await onReveal()
+        if (result.authToken !== null) {
+          setRevealed(result.authToken)
+          setShow(true)
+        } else {
+          setRevealError(result.error ?? t('providers.authTokenRevealFailed'))
+        }
+      } finally {
+        setIsRevealing(false)
+      }
+      return
+    }
+    setShow((current) => !current)
+  }
+
+  return (
+    <label className="text-[11px] font-medium text-text-tertiary">{t('providers.authToken')} *
+      <span className="mt-1 flex gap-2">
+        <input
+          type={show ? 'text' : 'password'}
+          value={displayValue}
+          onChange={(event) => {
+            setRevealed(null)
+            setRevealError(null)
+            onChange(event.target.value)
+          }}
+          placeholder={saved ? '••••••••' : 'sk-…'}
+          className="min-w-0 flex-1 rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+        />
+        <button
+          type="button"
+          onClick={() => void toggle()}
+          disabled={isRevealing}
+          aria-label={show ? t('providers.hideToken') : t('providers.showToken')}
+          className="rounded-lg border border-border p-2 text-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
+        >
+          {isRevealing ? <Loader2 className="h-4 w-4 animate-spin" /> : show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
+      </span>
+      {revealError && <span role="alert" className="mt-1 block text-[10px] text-destructive">{revealError}</span>}
+    </label>
+  )
 }
 
 function ProviderUsagePanel({ providerId, agent }: { providerId: string; agent: BackendId }) {
@@ -261,7 +325,6 @@ export default function ProviderSection() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<ProviderFormData>(emptyForm)
   const [baseline, setBaseline] = useState('')
-  const [showToken, setShowToken] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [pendingPreset, setPendingPreset] = useState<ProviderPreset | null>(null)
@@ -379,9 +442,15 @@ export default function ProviderSection() {
           <label className="text-[11px] font-medium text-text-tertiary">{t('providers.name')} *
             <input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} aria-invalid={Boolean(formError && !form.name.trim())} className="mt-1 block w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent/40" />
           </label>
-          <label className="text-[11px] font-medium text-text-tertiary">{t('providers.authToken')} *
-            <span className="mt-1 flex gap-2"><input type={showToken ? 'text' : 'password'} value={form.authToken} onChange={(event) => setForm((current) => ({ ...current, authToken: event.target.value }))} placeholder={existing?.authTokenPresent ? t('providers.authTokenKeepPlaceholder') : 'sk-…'} className="min-w-0 flex-1 rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent/40" /><button type="button" onClick={() => setShowToken((value) => !value)} aria-label={showToken ? t('providers.hideToken') : t('providers.showToken')} className="rounded-lg border border-border p-2 text-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">{showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></span>
-          </label>
+          <ProviderAuthTokenInput
+            key={editingId}
+            value={form.authToken}
+            saved={existing?.authTokenPresent === true}
+            onChange={(authToken) => setForm((current) => ({ ...current, authToken }))}
+            onReveal={() => existing
+              ? store.revealAuthToken(existing.id)
+              : Promise.resolve({ authToken: null })}
+          />
         </fieldset>
 
         <div className="mb-4 grid min-w-0 gap-4 lg:grid-cols-2">

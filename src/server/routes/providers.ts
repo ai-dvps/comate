@@ -234,6 +234,25 @@ router.get('/', (_req, res) => {
   }
 });
 
+// POST /api/providers/:id/auth-token/reveal
+// This explicit user action is protected by the API's desktop credential
+// middleware. Keep the secret out of cacheable provider reads and diagnostics.
+router.post('/:id/auth-token/reveal', (req, res) => {
+  try {
+    const provider = store.getProvider(req.params.id);
+    if (!provider) {
+      res.status(404).json({ error: 'Provider not found' });
+      return;
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Pragma', 'no-cache');
+    res.json({ authToken: provider.authToken });
+  } catch {
+    console.error('Failed to reveal provider auth token');
+    res.status(500).json({ error: 'Failed to reveal provider auth token' });
+  }
+});
+
 router.get('/presets', (_req, res) => {
   res.json({ presets: listProviderPresets() });
 });

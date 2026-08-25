@@ -1,9 +1,31 @@
 import '../test-utils/test-env.js';
-import { describe, it } from 'node:test';
+import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { discoverProviderModels, hasDefaultProviderChange, hasSnapshottedProviderChange, publicProvider, resolveProviderRequestAgent, runProviderHealthCheck } from './providers.js';
+import type { AddressInfo } from 'node:net';
+import express from 'express';
+import providerRouter, { discoverProviderModels, hasDefaultProviderChange, hasSnapshottedProviderChange, publicProvider, resolveProviderRequestAgent, runProviderHealthCheck } from './providers.js';
 import type { Provider } from '../models/provider.js';
 import type { BrowserDirectHttpRequest } from '../services/browser-direct-http-client.js';
+import { createLoopbackAuthMiddleware } from '../services/security/loopback-auth.js';
+import { store } from '../storage/sqlite-store.js';
+
+function routeHandler(path: string, method: string) {
+  const layer = (providerRouter as unknown as {
+    stack: Array<{ route?: { path: string; methods: Record<string, boolean>; stack: Array<{ handle: (req: unknown, res: unknown) => void }> } }>;
+  }).stack.find((entry) => entry.route?.path === path && entry.route.methods[method]);
+  return layer?.route?.stack[0].handle;
+}
+
+function mockResponse() {
+  return {
+    statusCode: 200,
+    headers: {} as Record<string, string>,
+    jsonBody: undefined as unknown,
+    status(code: number) { this.statusCode = code; return this; },
+    setHeader(name: string, value: string) { this.headers[name.toLowerCase()] = value; },
+    json(body: unknown) { this.jsonBody = body; },
+  };
+}
 
 function canonicalProvider(): Provider {
   return {
@@ -24,6 +46,8 @@ function canonicalProvider(): Provider {
 }
 
 describe('provider API projection', () => {
+  beforeEach(() => store.resetData());
+
   it('preserves the legacy omitted-Agent contract while rejecting invalid explicit values', () => {
     assert.equal(resolveProviderRequestAgent(undefined), 'claude');
     assert.equal(resolveProviderRequestAgent('codex'), 'codex');
@@ -89,5 +113,96 @@ describe('provider API projection', () => {
       }),
     };
     assert.deepEqual(await discoverProviderModels(provider, 'codex', modelsClient), { models: ['kimi-k2.5'] });
+  });
+
+  it('reveals one saved auth token through the explicit no-store endpoint', () => {
+    const provider = store.createProvider({
+      name: 'Revealable',
+      baseUrl: 'https://api.example.com',
+      authToken: 'saved-provider-token',
+    });
+    const handler = routeHandler('/:id/auth-token/reveal', 'post');
+    assert.ok(handler, 'expected provider auth-token reveal route');
+    const res = mockResponse();
+
+    handler({ params: { id: provider.id } }, res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.headers['cache-control'], 'no-store');
+    assert.equal(res.headers.pragma, 'no-cache');
+    assert.deepEqual(res.jsonBody, { authToken: 'saved-provider-token' });
+  });
+
+  it('allows only the desktop credential through the mounted reveal route', async () => {
+    const provider = store.createProvider({
+      name: 'Protected reveal',
+      baseUrl: 'https://api.example.com',
+      authToken: 'protected-provider-token',
+    });
+    const app = express();
+    app.use(createLoopbackAuthMiddleware({
+      getDesktopToken: () => 'desktop-token',
+      resolveSessionToken: (token) => token === 'session-token'
+        ? { sessionId: 'session-1', workspaceId: 'workspace-1', botId: null }
+        : null,
+    }));
+    app.use('/api/providers', providerRouter);
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const url = `${baseUrl}/api/providers/${provider.id}/auth-token/reveal`;
+
+    try {
+      const missingCredential = await fetch(url, { method: 'POST' });
+      assert.equal(missingCredential.status, 401);
+
+      const sessionCredential = await fetch(url, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer session-token' },
+      });
+      assert.equal(sessionCredential.status, 403);
+
+      const desktopCredential = await fetch(url, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer desktop-token' },
+      });
+      assert.equal(desktopCredential.status, 200);
+      assert.equal(desktopCredential.headers.get('cache-control'), 'no-store');
+      assert.equal(desktopCredential.headers.get('pragma'), 'no-cache');
+      assert.deepEqual(await desktopCredential.json(), { authToken: 'protected-provider-token' });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('returns 404 when the auth token provider does not exist', () => {
+    const handler = routeHandler('/:id/auth-token/reveal', 'post');
+    assert.ok(handler);
+    const res = mockResponse();
+
+    handler({ params: { id: 'missing-provider' } }, res);
+
+    assert.equal(res.statusCode, 404);
+    assert.deepEqual(res.jsonBody, { error: 'Provider not found' });
+  });
+
+  it('returns a sanitized 500 response when auth token storage fails', () => {
+    const handler = routeHandler('/:id/auth-token/reveal', 'post');
+    assert.ok(handler);
+    const res = mockResponse();
+    const originalGetProvider = store.getProvider.bind(store);
+    const originalConsoleError = console.error;
+    store.getProvider = () => { throw new Error('storage details'); };
+    console.error = () => {};
+
+    try {
+      handler({ params: { id: 'provider-1' } }, res);
+    } finally {
+      store.getProvider = originalGetProvider;
+      console.error = originalConsoleError;
+    }
+
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(res.jsonBody, { error: 'Failed to reveal provider auth token' });
   });
 });
