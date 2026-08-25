@@ -85,6 +85,7 @@ export interface ProviderFormData {
 }
 
 export interface ProviderMutationResult { provider: Provider | null; status?: number; error?: string }
+export interface ProviderAuthTokenRevealResult { authToken: string | null; error?: string }
 
 interface ProviderState {
   providers: Provider[]
@@ -98,6 +99,7 @@ interface ProviderState {
   detectProviders: () => Promise<void>
   createProvider: (data: ProviderFormData, options?: { skipHealthCheck?: boolean; agent?: BackendId }) => Promise<ProviderMutationResult>
   updateProvider: (id: string, data: ProviderFormData, options?: { skipHealthCheck?: boolean; agent?: BackendId }) => Promise<ProviderMutationResult>
+  revealAuthToken: (id: string) => Promise<ProviderAuthTokenRevealResult>
   getDeleteImpact: (id: string) => Promise<{ ok: boolean; affectedSessionCount?: number }>
   deleteProvider: (id: string) => Promise<{ ok: boolean; affectedSessionCount?: number }>
   setDefaultProvider: (id: string) => Promise<void>
@@ -106,6 +108,7 @@ interface ProviderState {
 }
 
 const API_BASE = '/api/providers'
+const AUTH_TOKEN_REVEAL_TIMEOUT_MS = 5000
 
 function normalizeProvider(raw: Partial<Provider> & Pick<Provider, 'id' | 'name' | 'authTokenPresent' | 'isDefault' | 'createdAt' | 'updatedAt'>): Provider {
   const configuration = raw.configuration
@@ -221,6 +224,27 @@ export const useProviderStore = create<ProviderState>((set) => ({
       const message = error instanceof Error ? error.message : i18next.t('common:unknownError')
       set({ error: message, isSaving: false })
       return { provider: null, error: message }
+    }
+  },
+
+  revealAuthToken: async (id) => {
+    try {
+      const res = await fetch(`${API_BASE}/${id}/auth-token/reveal`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(AUTH_TOKEN_REVEAL_TIMEOUT_MS),
+      })
+      const data = await readJson(res)
+      if (!res.ok || typeof data.authToken !== 'string') {
+        throw new Error(typeof data.error === 'string'
+          ? data.error
+          : i18next.t('settings:providers.authTokenRevealFailed', 'Failed to reveal the saved auth token'))
+      }
+      return { authToken: data.authToken }
+    } catch (error) {
+      return {
+        authToken: null,
+        error: error instanceof Error ? error.message : i18next.t('common:unknownError'),
+      }
     }
   },
 
