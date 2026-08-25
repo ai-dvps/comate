@@ -160,8 +160,9 @@ export class NodeDirectHttpTransport implements DirectHttpTransport {
         headers: input.headers,
         signal: input.signal,
         agent: false,
-        lookup: (_hostname, _options, callback) => {
-          callback(null, input.pinnedAddress, input.family);
+        lookup: (_hostname, options, callback) => {
+          if (options.all) callback(null, [{ address: input.pinnedAddress, family: input.family }]);
+          else callback(null, input.pinnedAddress, input.family);
         },
         ...(protocol === 'https:' ? { servername: input.servername } : {}),
       };
