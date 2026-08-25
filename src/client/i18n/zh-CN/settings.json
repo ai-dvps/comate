@@ -21,6 +21,13 @@
     "todoNightWindowStart": "夜间窗口开始",
     "todoNightWindowTo": "至",
     "todoNightWindowEnd": "夜间窗口结束",
+    "defaultApprovalMode": "默认权限模式",
+    "defaultApprovalModeHint": "新会话将使用此权限模式；仍可在单个会话中修改。",
+    "approvalModes": {
+      "auto": "自动",
+      "readonly": "只读",
+      "manual": "操作前询问"
+    },
     "useModifierToSubmit": "使用 Ctrl/Cmd + Enter 发送",
     "useModifierToSubmitHint": "启用后，按 Ctrl+Enter（Windows）或 Cmd+Enter（Mac）提交，单独按 Enter 插入换行。",
     "notificationSounds": "通知提示音",

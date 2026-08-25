@@ -499,6 +499,28 @@ describe('new chat session creation', () => {
     }
   })
 
+  it('uses the global permission mode when the caller does not override it', async () => {
+    localStorage.setItem('app-settings', JSON.stringify({ approvalMode: 'readonly' }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      void url
+      void init
+      return {
+        ok: true,
+        json: async () => ({ id: 's-global', workspaceId: 'ws-1', name: 'Global', createdAt: '', updatedAt: '' }),
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      await useChatStore.getState().createSession('ws-1', { name: 'Global' })
+
+      assert.strictEqual(JSON.parse(fetchMock.mock.calls[0][1]?.body as string).approvalMode, 'readonly')
+    } finally {
+      localStorage.removeItem('app-settings')
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('returns a structured HTTP failure without retrying the POST', async () => {
     const fetchMock = vi.fn(async () => ({ ok: false }))
     vi.stubGlobal('fetch', fetchMock)
