@@ -47,11 +47,14 @@ export function decideModelFallback(
 
 /** Register both the configured alias and its base form in the serve config
  * models map, so a fallback retry never hits an unregistered model ref. */
-export function expandModelAliases(modelID: string): Record<string, { name: string }> {
+export function expandModelAliases(
+  modelID: string,
+  metadata: Record<string, unknown> = {},
+): Record<string, Record<string, unknown> & { name: string }> {
   const base = stripModelSuffix(modelID);
-  if (base === modelID) return { [modelID]: { name: modelID } };
+  if (base === modelID) return { [modelID]: { ...metadata, name: modelID } };
   return {
-    [modelID]: { name: modelID },
-    [base]: { name: base },
+    [modelID]: { ...metadata, name: modelID },
+    [base]: { ...metadata, name: base },
   };
 }

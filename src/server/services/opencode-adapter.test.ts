@@ -120,6 +120,50 @@ describe('toAnthropicBaseUrl (via buildServeConfig)', () => {
     assert.equal(provider.options.apiKey, 'tok');
     assert.ok(provider.models['kimi-for-coding']);
   });
+
+  it('projects active OpenCode model metadata and variants onto every model alias', async () => {
+    const { __testables } = await import('./opencode-adapter.js');
+    const config = __testables.buildServeConfig({
+      ...makeResolved('direct-openai-chat', 'https://api.example.com/v1', 'glm-5.3[1m]'),
+      openCodeModelProfile: {
+        contextWindow: 1_048_576,
+        maxOutputTokens: 65_536,
+        reasoning: true,
+        toolCall: true,
+        inputModalities: ['text', 'image'],
+        outputModalities: ['text'],
+        reasoningField: 'reasoning_details',
+        variants: { high: { reasoningEffort: 'high', reasoningSummary: 'concise' } },
+      },
+    }, 'BigModel');
+    const models = (config.provider as Record<string, { models: Record<string, unknown> }>)['comate-p1'].models;
+    const expectedMetadata = {
+      reasoning: true,
+      tool_call: true,
+      limit: { context: 1_048_576, output: 65_536 },
+      modalities: { input: ['text', 'image'], output: ['text'] },
+      interleaved: { field: 'reasoning_details' },
+      variants: { high: { reasoningEffort: 'high', reasoningSummary: 'concise' } },
+    };
+    assert.deepStrictEqual(models['glm-5.3[1m]'], { ...expectedMetadata, name: 'glm-5.3[1m]' });
+    assert.deepStrictEqual(models['glm-5.3'], { ...expectedMetadata, name: 'glm-5.3' });
+  });
+
+  it('projects Anthropic thinking-budget variants in OpenCode native shape', async () => {
+    const { __testables } = await import('./opencode-adapter.js');
+    const config = __testables.buildServeConfig({
+      ...makeResolved('direct-anthropic', 'https://api.example.com/anthropic', 'glm-5.3'),
+      openCodeModelProfile: {
+        variants: { deep: { thinkingBudgetTokens: 4096 } },
+      },
+    }, 'BigModel');
+    const models = (config.provider as Record<string, { models: Record<string, unknown> }>)['comate-p1'].models;
+
+    assert.deepStrictEqual(models['glm-5.3'], {
+      name: 'glm-5.3',
+      variants: { deep: { thinking: { type: 'enabled', budgetTokens: 4096 } } },
+    });
+  });
 });
 
 describe('toPermissionReply', () => {

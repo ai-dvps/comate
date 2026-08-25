@@ -112,6 +112,9 @@ todo 同步行为按字段类别分区，而非单一全局策略：评论双向
 ### 多协议 Provider (multi-protocol Provider)
 A third-party model-service account shared across Agent backends. It owns one coding API credential plus protocol-specific endpoint configuration, while Claude Code, Codex, and OpenCode keep separate default models; OpenCode also chooses which configured protocol it uses. A Provider is selectable for an Agent only when that Agent has a complete direct or Comate-supported routed path.
 
+### 后端模型能力档案 (backend model capability profile)
+A Provider-owned declaration keyed by an exact Agent backend and model ID. It records the limits, capabilities, compatibility behavior, and backend-native reasoning controls that the selected runtime can consume. Codex and OpenCode profiles remain independent even when they name the same upstream model; known presets may seed editable values, while unknown values are omitted so the backend retains its defaults.
+
 ### Provider 本地路由 (Provider local route)
 A Comate-managed compatibility route started automatically for an Agent session when the Agent's client protocol differs from the Provider's declared upstream format along a supported conversion path. The first supported path translates Codex Responses traffic to an OpenAI Chat Completions upstream. Route failure blocks dispatch and never falls back to another Agent, Provider, or protocol.
 

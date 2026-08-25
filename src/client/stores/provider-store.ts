@@ -5,6 +5,36 @@ import type { BackendId } from './backend-store'
 export type ProviderOpenAiFormat = 'openai-responses' | 'openai-chat-completions'
 export type ProviderOpenCodeProtocol = 'anthropic' | 'openai'
 export type ProviderEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+export type ProviderReasoningSummary = 'auto' | 'concise' | 'detailed' | 'none'
+
+export interface ProviderCodexModelProfile {
+  contextWindow?: number
+  autoCompactTokenLimit?: number
+  promptCacheRouting?: 'auto' | 'unsupported'
+  thinking?: 'required' | 'supported' | 'unsupported' | 'unknown'
+  supportedEfforts?: ProviderEffort[]
+  effortWireMapping?: Partial<Record<ProviderEffort, string>>
+  reasoningSummary?: ProviderReasoningSummary
+  supportsReasoningSummaries?: boolean
+  verbosity?: 'low' | 'medium' | 'high'
+}
+
+export interface ProviderOpenCodeVariant {
+  reasoningEffort?: string
+  reasoningSummary?: ProviderReasoningSummary
+  thinkingBudgetTokens?: number
+}
+
+export interface ProviderOpenCodeModelProfile {
+  contextWindow?: number
+  maxOutputTokens?: number
+  reasoning?: boolean
+  toolCall?: boolean
+  inputModalities?: Array<'text' | 'image'>
+  outputModalities?: Array<'text'>
+  reasoningField?: 'reasoning' | 'reasoning_content' | 'reasoning_details'
+  variants?: Record<string, ProviderOpenCodeVariant>
+}
 
 export interface ProviderConfiguration {
   schemaVersion: 1
@@ -13,7 +43,10 @@ export interface ProviderConfiguration {
     openai?: { enabled: boolean; baseUrl: string; format: ProviderOpenAiFormat }
   }
   models: { claudeCode?: string; codex?: string; openCode?: string }
-  openCode: { protocol: ProviderOpenCodeProtocol }
+  openCode: {
+    protocol: ProviderOpenCodeProtocol
+    modelProfiles?: Record<string, ProviderOpenCodeModelProfile>
+  }
   claude: {
     defaultOpusModel?: string
     defaultSonnetModel?: string
@@ -23,6 +56,7 @@ export interface ProviderConfiguration {
     customEnvVars?: Record<string, string>
   }
   codex: {
+    modelProfiles?: Record<string, ProviderCodexModelProfile>
     promptCacheRouting?: 'auto' | 'unsupported'
     thinking?: 'required' | 'supported' | 'unsupported' | 'unknown'
     effortByModel?: Record<string, ProviderEffort[]>

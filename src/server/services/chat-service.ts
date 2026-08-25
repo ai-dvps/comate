@@ -1853,9 +1853,8 @@ export class ChatService {
               baseUrl: routedResolution.effective.baseUrl,
               credential: routedResolution.effective.credential,
               model: routedResolution.effective.model,
-              promptCacheRouting: routedResolution.provider.configuration?.codex.promptCacheRouting,
-              effortWireMapping: routedResolution.provider.configuration?.codex
-                .effortWireMappingByModel?.[routedResolution.effective.model],
+              promptCacheRouting: routedResolution.effective.codexModelProfile?.promptCacheRouting,
+              effortWireMapping: routedResolution.effective.codexModelProfile?.effortWireMapping,
               suppressSamplingParameters: routedResolution.effective.vendorId === 'kimi',
             },
           });
@@ -1890,6 +1889,7 @@ export class ChatService {
                   ? `${getSidecarBaseUrl()}/provider-route/${routeLease.routeId}`
                   : providerResolution.effective.baseUrl,
                 bearerToken: routeLease?.bearer ?? providerResolution.effective.credential,
+                modelProfile: providerResolution.effective.codexModelProfile,
                 ...(routeLease ? { disableHostedTools: true } : {}),
               },
             } : {}),
