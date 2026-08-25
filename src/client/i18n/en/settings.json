@@ -76,7 +76,7 @@
     "authToken": "Auth Token",
     "authTokenPlaceholder": "sk-ant-...",
     "authTokenRequired": "Auth token is required",
-    "authTokenKeepPlaceholder": "Leave blank to keep the saved token",
+    "authTokenRevealFailed": "Failed to reveal the saved auth token",
     "showToken": "Show token",
     "hideToken": "Hide token",
     "preset": "Provider preset",

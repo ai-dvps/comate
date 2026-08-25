@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { I18nextProvider } from 'react-i18next'
@@ -58,6 +58,8 @@ function renderSection() {
 }
 
 describe('ProviderSection', () => {
+  afterEach(() => vi.restoreAllMocks())
+
   beforeEach(() => {
     useProviderStore.setState({
       providers: [], presets, isLoading: false, presetsLoading: false, isSaving: false,
@@ -122,6 +124,72 @@ describe('ProviderSection', () => {
     expect(screen.getByRole('dialog', { name: 'Delete Provider?' })).toHaveTextContent(
       'This Provider is referenced by 3 sessions',
     )
+  })
+
+  it('masks a saved auth token and reveals it only after the eye is clicked', async () => {
+    const user = userEvent.setup()
+    const provider = kimiProvider()
+    const updateProvider = vi.fn().mockResolvedValue({ provider: null })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ authToken: 'saved-provider-token' }),
+    } as Response)
+    useProviderStore.setState({ providers: [provider], updateProvider })
+
+    renderSection()
+    await user.click(screen.getByRole('button', { name: 'Edit Provider' }))
+
+    const tokenInput = screen.getByPlaceholderText('••••••••') as HTMLInputElement
+    expect(tokenInput).toHaveValue('')
+    expect(tokenInput.type).toBe('password')
+
+    await user.click(screen.getByRole('button', { name: 'Show token' }))
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/providers/provider-kimi/auth-token/reveal', expect.objectContaining({
+      method: 'POST', signal: expect.any(AbortSignal),
+    }))
+    const revealedInput = await screen.findByDisplayValue('saved-provider-token')
+    expect(revealedInput).toHaveAttribute('type', 'text')
+
+    await user.click(screen.getByRole('button', { name: 'Hide token' }))
+    expect(revealedInput).toHaveAttribute('type', 'password')
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/providers/provider-kimi/auth-token/reveal')).toHaveLength(1)
+
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(updateProvider).toHaveBeenCalledWith(
+      'provider-kimi',
+      expect.objectContaining({ authToken: '' }),
+      expect.any(Object),
+    )
+  })
+
+  it('keeps a saved auth token masked when reveal fails', async () => {
+    const user = userEvent.setup()
+    const provider = { ...kimiProvider(), configuration: customConfiguration }
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({
+        ok: false,
+        json: async () => ({ error: 'Reveal failed' }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ authToken: 'token-after-retry' }),
+      } as Response)
+    useProviderStore.setState({ providers: [provider] })
+
+    renderSection()
+    await user.click(screen.getByRole('button', { name: 'Edit Provider' }))
+    await user.click(screen.getByRole('button', { name: 'Show token' }))
+
+    const tokenInput = screen.getByPlaceholderText('••••••••')
+    expect(tokenInput).toHaveAttribute('type', 'password')
+    expect(tokenInput).toHaveValue('')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Reveal failed')
+    expect(useProviderStore.getState().error).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'Show token' }))
+    expect(await screen.findByDisplayValue('token-after-retry')).toHaveAttribute('type', 'text')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('keeps the full coding-plan usage details and refresh action', () => {
