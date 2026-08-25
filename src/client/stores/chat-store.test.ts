@@ -2142,6 +2142,30 @@ describe('setSessionProvider', () => {
     assert.strictEqual(useChatStore.getState().isRestartingRuntime['s1'], false)
   })
 
+  it('re-subscribes and clears loading after a backend switch for an active session', async () => {
+    useChatStore.getState().setActiveSession('ws-1', 's1')
+    await new Promise((r) => setTimeout(r, 0))
+
+    requestSpy.mockClear()
+    vi.mocked(fetch).mockImplementationOnce(async () => {
+      handleWsEvent(useChatStore.setState as unknown as SseSetter, useChatStore.getState, {
+        type: 'event',
+        eventType: 'runtime_closed',
+        workspaceId: 'ws-1',
+        sessionId: 's1',
+        data: {},
+      })
+      return { ok: true, json: async () => ({}) } as Response
+    })
+
+    await useChatStore.getState().setSessionBackend('ws-1', 's1', 'codex')
+    await new Promise((r) => setTimeout(r, 0))
+
+    const subscribeCalls = requestSpy.mock.calls.filter((call: unknown[]) => call[0] === 'subscribe')
+    assert.strictEqual(subscribeCalls.length, 1, 'should resubscribe after backend switch')
+    assert.strictEqual(useChatStore.getState().isRestartingRuntime['s1'], false)
+  })
+
   it('does not enter a loading state when there is no active subscription', async () => {
     await useChatStore.getState().setSessionProvider('ws-1', 's1', 'p2')
     await new Promise((r) => setTimeout(r, 0))
