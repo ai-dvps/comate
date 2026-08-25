@@ -76,7 +76,7 @@
     "authToken": "Auth Token",
     "authTokenPlaceholder": "sk-ant-...",
     "authTokenRequired": "Auth Token 是必填项",
-    "authTokenKeepPlaceholder": "留空以保留已保存的 Token",
+    "authTokenRevealFailed": "无法显示已保存的 Auth Token",
     "showToken": "显示 Token",
     "hideToken": "隐藏 Token",
     "preset": "服务商预设",
