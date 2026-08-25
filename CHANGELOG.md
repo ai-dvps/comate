@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Provider model capabilities can be configured per Agent and model** — Advanced Provider settings now expose separate Claude Code, Codex, and OpenCode panels for context limits, reasoning behavior, tool and modality support, and protocol-aware OpenCode variants; BigModel's Coding Plan preset uses its documented OpenAI Responses `/api/v1` endpoint and `glm-5.3` model.
 - **New sessions follow a global permission-mode default** — General settings now choose whether new sessions start in Auto, Read only, or Ask before actions mode; the app defaults to Auto while preserving per-session overrides.
 
 ### Fixed

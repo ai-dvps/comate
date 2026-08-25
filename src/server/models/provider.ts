@@ -31,11 +31,48 @@ export type ProviderCodexEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh
 export type ProviderPromptCacheRouting = 'auto' | 'unsupported';
 export type ProviderThinkingSupport = 'required' | 'supported' | 'unsupported' | 'unknown';
 
-export interface ProviderCodexCapabilities {
+export type ProviderReasoningSummary = 'auto' | 'concise' | 'detailed' | 'none';
+export type ProviderVerbosity = 'low' | 'medium' | 'high';
+export type ProviderOpenCodeReasoningField = 'reasoning' | 'reasoning_content' | 'reasoning_details';
+
+export interface ProviderCodexModelProfile {
+  contextWindow?: number;
+  autoCompactTokenLimit?: number;
   promptCacheRouting?: ProviderPromptCacheRouting;
   thinking?: ProviderThinkingSupport;
+  supportedEfforts?: ProviderCodexEffort[];
+  effortWireMapping?: Partial<Record<ProviderCodexEffort, string>>;
+  reasoningSummary?: ProviderReasoningSummary;
+  supportsReasoningSummaries?: boolean;
+  verbosity?: ProviderVerbosity;
+}
+
+export interface ProviderOpenCodeVariant {
+  reasoningEffort?: string;
+  reasoningSummary?: ProviderReasoningSummary;
+  thinkingBudgetTokens?: number;
+}
+
+export interface ProviderOpenCodeModelProfile {
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  reasoning?: boolean;
+  toolCall?: boolean;
+  inputModalities?: Array<'text' | 'image'>;
+  outputModalities?: Array<'text'>;
+  reasoningField?: ProviderOpenCodeReasoningField;
+  variants?: Record<string, ProviderOpenCodeVariant>;
+}
+
+export interface ProviderCodexCapabilities {
+  modelProfiles?: Record<string, ProviderCodexModelProfile>;
+  /** Legacy read input; normalization folds this into modelProfiles. */
+  promptCacheRouting?: ProviderPromptCacheRouting;
+  /** Legacy read input; normalization folds this into modelProfiles. */
+  thinking?: ProviderThinkingSupport;
+  /** Legacy read input; normalization folds this into modelProfiles. */
   effortByModel?: Record<string, ProviderCodexEffort[]>;
-  /** Agent-facing effort -> vendor wire value, scoped by model. */
+  /** Legacy read input; normalization folds this into modelProfiles. */
   effortWireMappingByModel?: Record<string, Partial<Record<ProviderCodexEffort, string>>>;
 }
 
@@ -52,7 +89,10 @@ export interface ProviderConfigurationV1 {
     openai?: ProviderOpenAiEndpoint;
   };
   models: ProviderAgentModels;
-  openCode: { protocol: ProviderOpenCodeProtocol };
+  openCode: {
+    protocol: ProviderOpenCodeProtocol;
+    modelProfiles?: Record<string, ProviderOpenCodeModelProfile>;
+  };
   claude: ProviderClaudeOptions;
   codex: ProviderCodexCapabilities;
   preset?: ProviderPresetProvenance;

@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import type { Options, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { BackendDriver, BackendToolRequestHandler } from './backend-driver.js';
+import type { ProviderCodexModelProfile } from '../models/provider.js';
 import { codexAppServerManager, type CodexAppServerManager } from './codex-app-server-manager.js';
 import { CodexEventMapper } from './codex-event-mapper.js';
 
@@ -24,6 +25,7 @@ export interface CodexProviderOverride {
   bearerToken: string;
   /** Chat compatibility routes cannot represent Codex-hosted tools. */
   disableHostedTools?: boolean;
+  modelProfile?: ProviderCodexModelProfile;
 }
 
 class AsyncMessageQueue {
@@ -429,6 +431,21 @@ export function codexThreadConfig(
     };
   }
   return {
+    ...(provider?.modelProfile?.contextWindow !== undefined
+      ? { model_context_window: provider.modelProfile.contextWindow }
+      : {}),
+    ...(provider?.modelProfile?.autoCompactTokenLimit !== undefined
+      ? { model_auto_compact_token_limit: provider.modelProfile.autoCompactTokenLimit }
+      : {}),
+    ...(provider?.modelProfile?.reasoningSummary !== undefined
+      ? { model_reasoning_summary: provider.modelProfile.reasoningSummary }
+      : {}),
+    ...(provider?.modelProfile?.supportsReasoningSummaries !== undefined
+      ? { model_supports_reasoning_summaries: provider.modelProfile.supportsReasoningSummaries }
+      : {}),
+    ...(provider?.modelProfile?.verbosity !== undefined
+      ? { model_verbosity: provider.modelProfile.verbosity }
+      : {}),
     ...(Object.keys(mcpServers).length > 0 ? { mcp_servers: mcpServers } : {}),
     ...(provider ? {
       ...(provider.disableHostedTools ? {

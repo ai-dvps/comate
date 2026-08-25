@@ -356,6 +356,36 @@ describe('CodexBackendDriver interactions', () => {
     });
   });
 
+  it('projects the active Codex model profile into thread config', () => {
+    assert.deepStrictEqual(codexThreadConfig({} as Options, {
+      name: 'Profiled OpenAI',
+      baseUrl: 'https://llm.example.com/v1',
+      bearerToken: 'enterprise-secret',
+      modelProfile: {
+        contextWindow: 1_048_576,
+        autoCompactTokenLimit: 900_000,
+        reasoningSummary: 'none',
+        supportsReasoningSummaries: true,
+        verbosity: 'low',
+      },
+    }), {
+      model_context_window: 1_048_576,
+      model_auto_compact_token_limit: 900_000,
+      model_reasoning_summary: 'none',
+      model_supports_reasoning_summaries: true,
+      model_verbosity: 'low',
+      model_providers: {
+        'comate-enterprise': {
+          name: 'Profiled OpenAI',
+          base_url: 'https://llm.example.com/v1',
+          wire_api: 'responses',
+          requires_openai_auth: false,
+          experimental_bearer_token: 'enterprise-secret',
+        },
+      },
+    });
+  });
+
   it('can pass only an opaque route capability to Codex', () => {
     const config = codexThreadConfig({} as Options, {
       name: 'Comate route',
