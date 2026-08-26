@@ -30,6 +30,7 @@ export interface OpencodeMapperState {
   nextIndex: number;
   startedMessages: Set<string>;
   startedParts: Set<string>;
+  openTextLikeParts: Set<string>;
   completedTools: Set<string>;
   partTypeById: Map<string, string>;
   lastTextByPartId: Map<string, string>;
@@ -63,6 +64,7 @@ export function createOpencodeMapperState(): OpencodeMapperState {
     nextIndex: 0,
     startedMessages: new Set(),
     startedParts: new Set(),
+    openTextLikeParts: new Set(),
     completedTools: new Set(),
     partTypeById: new Map(),
     lastTextByPartId: new Map(),
@@ -174,6 +176,7 @@ function mapTextLikePart(
   const index = blockIndex(state, part.id);
   if (!state.startedParts.has(part.id)) {
     state.startedParts.add(part.id);
+    state.openTextLikeParts.add(part.id);
     out.push({
       type: 'stream_event',
       event: {
@@ -199,6 +202,20 @@ function mapTextLikePart(
       } as unknown as SDKMessage);
     }
   }
+  return out;
+}
+
+function closeOpenTextLikeParts(state: OpencodeMapperState): SDKMessage[] {
+  const out: SDKMessage[] = [];
+  for (const partId of state.openTextLikeParts) {
+    const index = state.partIndexById.get(partId);
+    if (index === undefined) continue;
+    out.push({
+      type: 'stream_event',
+      event: { type: 'content_block_stop', index },
+    } as unknown as SDKMessage);
+  }
+  state.openTextLikeParts.clear();
   return out;
 }
 
@@ -364,6 +381,7 @@ export function mapOpencodeEvent(
       if (messageID) out.push(...ensureMessageStart(state, messageID));
       if (!state.startedParts.has(partId)) {
         state.startedParts.add(partId);
+        state.openTextLikeParts.add(partId);
         out.push({
           type: 'stream_event',
           event: {
@@ -391,6 +409,7 @@ export function mapOpencodeEvent(
     case 'session.idle': {
       if (state.erroredTurn) return [];
       return [
+        ...closeOpenTextLikeParts(state),
         {
           type: 'result',
           subtype: 'success',
@@ -411,6 +430,7 @@ export function mapOpencodeEvent(
       const message = error.data?.message ?? error.message ?? 'unknown error';
       state.erroredTurn = true;
       return [
+        ...closeOpenTextLikeParts(state),
         {
           type: 'result',
           subtype: 'error_during_execution',
