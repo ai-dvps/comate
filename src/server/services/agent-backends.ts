@@ -115,8 +115,9 @@ const FULL: CapabilityEntry = { state: 'full' };
 /**
  * Static per-backend declarations. claude is the canonical backend and needs
  * no entries (all full). opencode entries flip from unavailable to full as
- * their delivering units land (U4/U6/U7); analytics stays degraded for v1
- * (KTD-10 — opencode sessions are not counted in usage analytics).
+ * their delivering units land (U4/U6/U7). Analytics is full for OpenCode;
+ * Codex remains degraded because its public persisted API exposes exact
+ * thread totals but not per-turn token buckets.
  */
 const CAPABILITY_TABLE: Record<BackendId, Partial<Record<CapabilityId, CapabilityEntry>>> = {
   claude: {
@@ -142,11 +143,7 @@ const CAPABILITY_TABLE: Record<BackendId, Partial<Record<CapabilityId, Capabilit
     slashCommands: { state: 'full', evidence: 'verified' },
     subagents: { state: 'full', evidence: 'verified' },
     imageInput: { state: 'full', evidence: 'declared' },
-    analytics: {
-      state: 'unavailable',
-      reasonKey: 'backend.analyticsNotCounted',
-      evidence: 'verified',
-    },
+    analytics: { state: 'full', evidence: 'verified' },
     // R10: scheduled runs still fire on opencode, but as plain prompt — the
     // Stop-hook completion evaluator only exists on the claude backend.
     scheduledGoalWrap: {
@@ -182,6 +179,11 @@ const CAPABILITY_TABLE: Record<BackendId, Partial<Record<CapabilityId, Capabilit
     subagents: {
       state: 'degraded',
       reasonKey: 'backend.codexSubagentsPartial',
+      evidence: 'verified',
+    },
+    analytics: {
+      state: 'degraded',
+      reasonKey: 'backend.codexAnalyticsPartial',
       evidence: 'verified',
     },
   },

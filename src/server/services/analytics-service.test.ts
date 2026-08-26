@@ -11,7 +11,9 @@ import { join } from 'node:path';
 
 import { AnalyticsCache } from '../storage/analytics-cache.js';
 import { AnalyticsService, type AnalyticsSdkLike, type AnalyticsStoreLike } from './analytics-service.js';
+import type { AnalyticsBackendSource } from './analytics-backend-sources.js';
 import { resolveTranscriptDir } from './analytics-transcript-path.js';
+import type { ChatSession } from '../models/session.js';
 import type { Workspace } from '../models/workspace.js';
 
 /**
@@ -62,6 +64,7 @@ function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
 
 class StubStore implements AnalyticsStoreLike {
   workspaces: Workspace[] = [];
+  sessions: ChatSession[] = [];
   cache: AnalyticsCache;
 
   constructor(db: Database.Database) {
@@ -79,6 +82,37 @@ class StubStore implements AnalyticsStoreLike {
   getAnalyticsCache(): AnalyticsCache {
     return this.cache;
   }
+
+  listLocalSessions(workspaceId?: string): ChatSession[] {
+    return workspaceId
+      ? this.sessions.filter((session) => session.workspaceId === workspaceId)
+      : this.sessions;
+  }
+}
+
+function backendRow(sessionId: string, workspaceId: string, fingerprint: number, tokens: number) {
+  return {
+    sessionId,
+    workspaceId,
+    transcriptMtime: fingerprint,
+    extractedAt: 1_000,
+    totalTokens: tokens,
+    inputTokens: tokens,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    estimatedCostUsd: 0,
+    costCoveragePercent: 100,
+    durationMs: 0,
+    messageCount: 1,
+    firstMessageTs: null,
+    lastMessageTs: null,
+    hasCompaction: false,
+    modelUsage: [],
+    toolUsage: [],
+    dailyStats: [],
+    heatmap: [],
+  };
 }
 
 /**
@@ -294,5 +328,93 @@ describe('AnalyticsService', () => {
     assert.ok(summary);
     assert.equal(summary!.totalTokens, 42);
     assert.equal(summary!.totalSessions, 1);
+  });
+
+  it('refreshes OpenCode and Codex sessions into the shared rollup on every request', async () => {
+    stubStore.workspaces = [makeWorkspace({ id: 'ws-1' })];
+    stubStore.sessions = [
+      {
+        id: 'comate-oc-1', workspaceId: 'ws-1', name: 'OC', backend: 'opencode',
+        backendSessionId: 'ses_oc_1', createdAt: '2026-08-24T00:00:00.000Z',
+        updatedAt: '2026-08-24T01:00:00.000Z', lastTurnStartedAt: 100,
+      },
+      {
+        id: 'comate-codex-1', workspaceId: 'ws-1', name: 'Codex', backend: 'codex',
+        backendSessionId: 'codex-thread-1', createdAt: '2026-08-24T00:00:00.000Z',
+        updatedAt: '2026-08-24T02:00:00.000Z', lastTurnStartedAt: 200,
+      },
+    ];
+    const calls: string[] = [];
+    const sources: AnalyticsBackendSource[] = [
+      {
+        backend: 'opencode',
+        async extractWorkspace(_workspace, targets, extractedAt) {
+          calls.push(`opencode:${targets.map((target) => target.session.id).join(',')}`);
+          return targets.map((target) => ({
+            ...backendRow(target.session.id, 'ws-1', target.fingerprint, 30),
+            extractedAt,
+          }));
+        },
+      },
+      {
+        backend: 'codex',
+        async extractWorkspace(_workspace, targets, extractedAt) {
+          calls.push(`codex:${targets.map((target) => target.session.id).join(',')}`);
+          return targets.map((target) => ({
+            ...backendRow(target.session.id, 'ws-1', target.fingerprint, 70),
+            extractedAt,
+          }));
+        },
+      },
+    ];
+    const service = new AnalyticsService(new DirAwareStubSdk(new Map()), stubStore, sources);
+
+    const first = await service.getWorkspaceSummary('ws-1');
+    const second = await service.getWorkspaceSummary('ws-1');
+
+    assert.equal(first?.totalSessions, 2);
+    assert.equal(first?.totalTokens, 100);
+    assert.equal(second?.totalTokens, 100);
+    assert.deepEqual(calls, [
+      'opencode:comate-oc-1', 'codex:comate-codex-1',
+      'opencode:comate-oc-1', 'codex:comate-codex-1',
+    ]);
+  });
+
+  it('isolates a backend analytics failure and keeps cached/other-backend data', async () => {
+    stubStore.workspaces = [makeWorkspace({ id: 'ws-1' })];
+    stubStore.sessions = [
+      {
+        id: 'comate-oc-1', workspaceId: 'ws-1', name: 'OC', backend: 'opencode',
+        backendSessionId: 'ses_oc_1', createdAt: '2026-08-24T00:00:00.000Z',
+        updatedAt: '2026-08-24T01:00:00.000Z', lastTurnStartedAt: 100,
+      },
+      {
+        id: 'comate-codex-1', workspaceId: 'ws-1', name: 'Codex', backend: 'codex',
+        backendSessionId: 'codex-thread-1', createdAt: '2026-08-24T00:00:00.000Z',
+        updatedAt: '2026-08-24T02:00:00.000Z', lastTurnStartedAt: 200,
+      },
+    ];
+    stubStore.cache.upsert(backendRow('comate-oc-1', 'ws-1', 50, 11));
+    const sources: AnalyticsBackendSource[] = [
+      {
+        backend: 'opencode',
+        async extractWorkspace() {
+          throw new Error('OpenCode unavailable');
+        },
+      },
+      {
+        backend: 'codex',
+        async extractWorkspace(_workspace, targets) {
+          return targets.map((target) => backendRow(target.session.id, 'ws-1', target.fingerprint, 70));
+        },
+      },
+    ];
+    const service = new AnalyticsService(new DirAwareStubSdk(new Map()), stubStore, sources);
+
+    const summary = await service.getWorkspaceSummary('ws-1');
+
+    assert.equal(summary?.totalSessions, 2);
+    assert.equal(summary?.totalTokens, 81);
   });
 });
