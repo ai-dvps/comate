@@ -609,6 +609,14 @@ describe('bot canUseTool browser deny — legacy workspace-level path', { concur
       ({
         id: 'p1',
         name: 'Test Provider',
+        configuration: {
+          schemaVersion: 1,
+          endpoints: { anthropic: { enabled: true, baseUrl: 'http://test' } },
+          models: { claudeCode: 'test-model' },
+          openCode: { protocol: 'anthropic' },
+          claude: {},
+          codex: {},
+        },
         baseUrl: 'http://test',
         authToken: 'test',
         model: 'test-model',

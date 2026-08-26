@@ -7,6 +7,7 @@ import { parse } from 'yaml';
 import { verifyPackagedUpdaterFeeds } from './verify-packaged-updater-feed';
 
 interface PackageJson {
+  version?: string;
   engines?: Record<string, string>;
   scripts?: Record<string, string>;
 }
@@ -47,6 +48,26 @@ test('the repository and sidecar build share the Node 22 runtime contract', () =
     sidecarBuildSource,
     /getPkgTarget/,
     'every packaged sidecar and CLI must use the pinned Node target helper',
+  );
+});
+
+test('Codex clients report the release package version', () => {
+  const packageJson = JSON.parse(readFileSync('package.json', 'utf8')) as PackageJson;
+  const appServerManager = readFileSync('src/server/services/codex-app-server-manager.ts', 'utf8');
+  const appServerVerifier = readFileSync('scripts/verify-codex-app-server.ts', 'utf8');
+  const expectedVersion = packageJson.version;
+
+  assert.ok(expectedVersion, 'package.json must declare the release version');
+  assert.match(
+    appServerManager,
+    new RegExp(`clientInfo: \\{ name: 'comate', title: 'Comate', version: '${expectedVersion}' \\}`),
+    'the production Codex client must report the package version',
+  );
+  assert.deepEqual(
+    [...appServerVerifier.matchAll(/clientInfo: \{[^}]+version: '([^']+)' \}/g)]
+      .map(([, version]) => version),
+    [expectedVersion, expectedVersion],
+    'both Codex verifier clients must report the package version',
   );
 });
 
