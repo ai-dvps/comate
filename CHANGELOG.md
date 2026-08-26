@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **OpenCode skill discovery uses the active session** — Opening the slash-command picker now queries the OpenCode runtime instead of falling back to Claude SDK initialization when the default Provider has no enabled Anthropic endpoint.
+- **OpenCode reloads workspace Skills after they change** — Opening the slash-command picker now detects added, edited, or removed project Skills and safely rebuilds an idle OpenCode runtime; active turns finish before the refresh occurs.
 - **OpenCode thinking indicators stop when sessions finish** — Terminal session events now complete active reasoning blocks instead of leaving the interface stuck in a thinking state.
 - **OpenCode tool calls show their parameters while streaming** — Tool input now crosses the live SSE boundary after OpenCode finishes assembling it, including the normal pending-to-running lifecycle.
 - **OpenCode auto-compaction recovers instead of ending the turn** — Recoverable context-overflow events now show compaction progress while OpenCode compacts and retries; failed recovery still surfaces the original error, including when the event stream disconnects mid-compaction.

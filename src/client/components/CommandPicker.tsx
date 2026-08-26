@@ -12,6 +12,7 @@ import { Loader2 } from 'lucide-react'
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'
 import { cn } from './ui/utils'
 import { useCommands, type SlashCommandDto } from '../stores/commands-store'
+import type { BackendId } from '../stores/backend-store'
 import { filterItems } from '../lib/picker-filter'
 
 export interface CommandPickerHandle {
@@ -22,6 +23,8 @@ export interface CommandPickerHandle {
 
 interface CommandPickerProps {
   workspaceId: string
+  sessionId?: string
+  backendId?: BackendId
   open: boolean
   onOpenChange: (open: boolean) => void
   onSelect: (command: SlashCommandDto) => void
@@ -38,6 +41,8 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
   function CommandPicker(
     {
       workspaceId,
+      sessionId,
+      backendId,
       open,
       onOpenChange,
       onSelect,
@@ -53,7 +58,7 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
   ) {
     const { t } = useTranslation('common')
     const { commands, loading, error, partial, partialReason, fetch, refresh } =
-      useCommands(workspaceId)
+      useCommands(workspaceId, { sessionId, backendId })
     const [filter, setFilter] = useState(initialFilter)
     const [activeIndex, setActiveIndex] = useState(0)
 
