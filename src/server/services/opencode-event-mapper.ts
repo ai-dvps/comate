@@ -50,6 +50,9 @@ export interface OpencodeMapperState {
    * fix — provider errors like 1211 model-not-found ended invisibly before).
    */
   erroredTurn: boolean;
+  /** Context overflow is recoverable while OpenCode auto-compacts. Keep it
+   * pending until compaction succeeds or the session becomes idle. */
+  pendingContextOverflow?: { message: string; sessionID: string };
   lastUsage?: {
     input?: number;
     output?: number;
@@ -308,6 +311,20 @@ function usageToSdk(
   };
 }
 
+function errorResult(message: string, sessionID: string): SDKMessage {
+  return {
+    type: 'result',
+    subtype: 'error_during_execution',
+    is_error: true,
+    duration_ms: 0,
+    duration_api_ms: 0,
+    num_turns: 0,
+    total_cost_usd: 0,
+    session_id: sessionID,
+    errors: [message],
+  } as unknown as SDKMessage;
+}
+
 export function mapOpencodeEvent(
   event: OpencodeEventEnvelope,
   state: OpencodeMapperState,
@@ -407,6 +424,16 @@ export function mapOpencodeEvent(
       return mapTodoUpdated(properties, state);
 
     case 'session.idle': {
+      if (state.pendingContextOverflow) {
+        const pending = state.pendingContextOverflow;
+        state.pendingContextOverflow = undefined;
+        state.erroredTurn = true;
+        return [
+          ...closeOpenTextLikeParts(state),
+          { type: 'system', subtype: 'status', status: null } as unknown as SDKMessage,
+          errorResult(pending.message, pending.sessionID),
+        ];
+      }
       if (state.erroredTurn) return [];
       return [
         ...closeOpenTextLikeParts(state),
@@ -425,23 +452,38 @@ export function mapOpencodeEvent(
       ];
     }
 
+    case 'session.compacted': {
+      const recoveredContextOverflow = state.pendingContextOverflow !== undefined;
+      state.pendingContextOverflow = undefined;
+      if (recoveredContextOverflow) state.erroredTurn = false;
+      return [
+        { type: 'system', subtype: 'status', status: null } as unknown as SDKMessage,
+        { type: 'system', subtype: 'compact_boundary' } as unknown as SDKMessage,
+      ];
+    }
+
     case 'session.error': {
-      const error = (properties.error ?? {}) as { data?: { message?: string }; message?: string };
+      const error = (properties.error ?? {}) as { name?: string; data?: { message?: string }; message?: string };
       const message = error.data?.message ?? error.message ?? 'unknown error';
+      const sessionID = String(properties.sessionID ?? '');
+      if (error.name === 'ContextOverflowError') {
+        const alreadyCompacting = state.pendingContextOverflow !== undefined;
+        state.pendingContextOverflow = { message, sessionID };
+        if (alreadyCompacting) return [];
+        return [
+          ...closeOpenTextLikeParts(state),
+          { type: 'system', subtype: 'status', status: 'compacting' } as unknown as SDKMessage,
+        ];
+      }
+      const wasCompacting = state.pendingContextOverflow !== undefined;
+      state.pendingContextOverflow = undefined;
       state.erroredTurn = true;
       return [
         ...closeOpenTextLikeParts(state),
-        {
-          type: 'result',
-          subtype: 'error_during_execution',
-          is_error: true,
-          duration_ms: 0,
-          duration_api_ms: 0,
-          num_turns: 0,
-          total_cost_usd: 0,
-          session_id: String(properties.sessionID ?? ''),
-          errors: [message],
-        } as unknown as SDKMessage,
+        ...(wasCompacting
+          ? [{ type: 'system', subtype: 'status', status: null } as unknown as SDKMessage]
+          : []),
+        errorResult(message, sessionID),
       ];
     }
 
