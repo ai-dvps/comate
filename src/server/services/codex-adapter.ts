@@ -6,6 +6,7 @@ import type { BackendDriver, BackendToolRequestHandler } from './backend-driver.
 import type { ProviderCodexModelProfile } from '../models/provider.js';
 import { codexAppServerManager, type CodexAppServerManager } from './codex-app-server-manager.js';
 import { CodexEventMapper } from './codex-event-mapper.js';
+import { CodexRpcError } from './codex-rpc-client.js';
 
 interface CodexAdapterDeps {
   directory: string;
@@ -338,17 +339,23 @@ export class CodexBackendDriver implements BackendDriver {
 
   private async ensureThread(options: Options): Promise<void> {
     if (this.threadId) {
-      await this.manager.request('thread/resume', {
-        threadId: this.threadId,
-        cwd: this.deps.directory,
-        approvalPolicy: 'on-request',
-        sandbox: 'workspace-write',
-        config: this.threadConfig(options),
-        ...(this.deps.serviceTier ? { serviceTier: this.deps.serviceTier } : {}),
-        modelProvider: this.deps.provider ? 'comate-enterprise' : null,
-        ...(this.deps.model ? { model: this.deps.model } : {}),
-      });
-      return;
+      const threadId = this.threadId;
+      try {
+        await this.manager.request('thread/resume', {
+          threadId,
+          cwd: this.deps.directory,
+          approvalPolicy: 'on-request',
+          sandbox: 'workspace-write',
+          config: this.threadConfig(options),
+          ...(this.deps.serviceTier ? { serviceTier: this.deps.serviceTier } : {}),
+          modelProvider: this.deps.provider ? 'comate-enterprise' : null,
+          ...(this.deps.model ? { model: this.deps.model } : {}),
+        });
+        return;
+      } catch (error) {
+        if (!isMissingRollout(error, threadId)) throw error;
+        this.threadId = undefined;
+      }
     }
     const response = await this.manager.request<{ thread: { id: string } }>('thread/start', {
       cwd: this.deps.directory,
@@ -385,6 +392,12 @@ export class CodexBackendDriver implements BackendDriver {
       this.turnId = undefined;
     }
   }
+}
+
+function isMissingRollout(error: unknown, threadId: string): boolean {
+  return error instanceof CodexRpcError
+    && error.code === -32600
+    && error.message === `no rollout found for thread id ${threadId}`;
 }
 
 function codexTurnFailure(params: Record<string, unknown>): Error | undefined {

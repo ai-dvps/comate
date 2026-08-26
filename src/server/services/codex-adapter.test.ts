@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { CodexAppServerManager } from './codex-app-server-manager.js';
+import { CodexRpcError } from './codex-rpc-client.js';
 import { CodexBackendDriver, codexThreadConfig, codexUserInput } from './codex-adapter.js';
 
 class FakeClient extends EventEmitter {
@@ -287,6 +288,83 @@ describe('CodexBackendDriver interactions', () => {
         model: 'gpt-5.6-codex',
       },
     });
+  });
+
+  it('replaces a persisted Codex thread whose rollout is missing', async () => {
+    const client = new FakeClient();
+    const requests: Array<{ method: string; params?: Record<string, unknown> }> = [];
+    const persistedThreadIds: string[] = [];
+    const manager = {
+      ensureClient: async () => client,
+      request: async (method: string, params?: Record<string, unknown>) => {
+        requests.push({ method, params });
+        if (method === 'thread/resume') {
+          throw new CodexRpcError(-32600, 'no rollout found for thread id thread-missing');
+        }
+        if (method === 'thread/start') return { thread: { id: 'thread-replacement' } };
+        if (method === 'turn/start') return { turn: { id: 'turn-1' } };
+        return {};
+      },
+    } as unknown as CodexAppServerManager;
+    const driver = new CodexBackendDriver({
+      directory: '/tmp/project',
+      backendSessionId: 'thread-missing',
+      onBackendSessionId: (threadId) => persistedThreadIds.push(threadId),
+      manager,
+    });
+    async function* input(): AsyncGenerator<SDKUserMessage> {
+      yield {
+        type: 'user',
+        uuid: 'message-recovery',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'hello' },
+      } as SDKUserMessage;
+    }
+
+    driver.createStreamingQuery(input(), {} as Options);
+    await waitFor(() => requests.some((request) => request.method === 'turn/start'));
+
+    assert.deepStrictEqual(requests.map((request) => request.method), [
+      'thread/resume',
+      'thread/start',
+      'turn/start',
+    ]);
+    assert.strictEqual(requests[2]?.params?.threadId, 'thread-replacement');
+    assert.deepStrictEqual(persistedThreadIds, ['thread-replacement']);
+  });
+
+  it('does not replace a Codex thread for other resume failures', async () => {
+    const client = new FakeClient();
+    const requests: string[] = [];
+    const manager = {
+      ensureClient: async () => client,
+      request: async (method: string) => {
+        requests.push(method);
+        if (method === 'thread/resume') throw new CodexRpcError(-32600, 'permission denied');
+        return {};
+      },
+    } as unknown as CodexAppServerManager;
+    const driver = new CodexBackendDriver({
+      directory: '/tmp/project',
+      backendSessionId: 'thread-existing',
+      onBackendSessionId: () => assert.fail('resume failure must not replace the thread'),
+      manager,
+    });
+    async function* input(): AsyncGenerator<SDKUserMessage> {
+      yield {
+        type: 'user',
+        uuid: 'message-resume-failure',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'hello' },
+      } as SDKUserMessage;
+    }
+
+    const admission = driver.prepareAdmission('message-resume-failure');
+    const { messages } = driver.createStreamingQuery(input(), {} as Options);
+
+    await assert.rejects(admission, /permission denied/);
+    assert.deepStrictEqual(requests, ['thread/resume']);
+    assert.match(JSON.stringify((await messages.next()).value), /permission denied/);
   });
 
   it('surfaces a failed completed turn as an error result', async () => {
