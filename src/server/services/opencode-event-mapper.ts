@@ -7,9 +7,9 @@
  * Mapping notes:
  * - text/reasoning stream as content_block_start + *_delta via part.delta
  *   events, with suffix-synthesis from part.updated as fallback.
- * - Tool calls emit a complete tool_use block when input is first known
- *   (opencode carries full input at 'running'), and a user tool_result on
- *   completed/error.
+ * - Tool calls translate opencode's complete input at 'running' into the
+ *   Anthropic-shaped input_json_delta stream consumed by SseEmitter, and a
+ *   user tool_result on completed/error.
  * - todo.updated maps to the task panel's task_started/task_updated system
  *   messages; opencode lowercase tool names map to their claude display names
  *   (todowrite → TodoWrite, etc.) so renderers and the task panel key off the
@@ -228,16 +228,25 @@ function mapToolPart(part: OpencodePart, state: OpencodeMapperState): SDKMessage
   const status = part.state?.status;
   const toolName = mapToolName(part.tool ?? 'unknown');
 
-  if (!state.startedParts.has(part.id) && (status === 'running' || status === 'pending')) {
+  if (!state.startedParts.has(part.id) && status === 'running') {
     state.startedParts.add(part.id);
     const index = blockIndex(state, part.id);
+    const input = part.state?.input ?? {};
     out.push(...ensureMessageStart(state, part.messageID));
     out.push({
       type: 'stream_event',
       event: {
         type: 'content_block_start',
         index,
-        content_block: { type: 'tool_use', id: callId, name: toolName, input: part.state?.input ?? {} },
+        content_block: { type: 'tool_use', id: callId, name: toolName, input: {} },
+      },
+    } as unknown as SDKMessage);
+    out.push({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_delta',
+        index,
+        delta: { type: 'input_json_delta', partial_json: JSON.stringify(input) },
       },
     } as unknown as SDKMessage);
     out.push({
