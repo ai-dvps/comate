@@ -5886,6 +5886,32 @@ describe('chat-service session backend update guard (R4)', { concurrency: false 
     );
   });
 
+  it('clears the previous backend session id when switching a draft to Codex', async () => {
+    const { workspace, session } = await createSession();
+    workspaceStore.updateLocalSession(session.id, { providerId: null });
+    workspaceStore.updateSessionBackend(session.id, 'opencode');
+    workspaceStore.updateSessionBackendSessionId(session.id, 'ses_opencode_1');
+
+    await service.updateSession(session.id, { backend: 'codex' }, workspace.id);
+
+    const stored = workspaceStore.getLocalSession(session.id);
+    assert.strictEqual(stored?.backend, 'codex');
+    assert.strictEqual(stored?.backendSessionId, undefined);
+  });
+
+  it('preserves the backend session id when re-selecting the same backend', async () => {
+    const { workspace, session } = await createSession();
+    workspaceStore.updateSessionBackend(session.id, 'opencode');
+    workspaceStore.updateSessionBackendSessionId(session.id, 'ses_opencode_1');
+
+    await service.updateSession(session.id, { backend: 'opencode' }, workspace.id);
+
+    assert.strictEqual(
+      workspaceStore.getLocalSession(session.id)?.backendSessionId,
+      'ses_opencode_1',
+    );
+  });
+
   it('rejects an unknown backend value with 400', async () => {
     const { workspace, session } = await createSession();
     await assert.rejects(

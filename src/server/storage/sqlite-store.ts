@@ -2463,6 +2463,13 @@ export class SqliteStore {
       .run(backend, now, id);
   }
 
+  switchSessionBackend(id: string, backend: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare('UPDATE sessions SET backend = ?, backend_session_id = NULL, updated_at = ? WHERE id = ?')
+      .run(backend, now, id);
+  }
+
   updateSessionBackendSessionId(id: string, backendSessionId: string): void {
     const now = new Date().toISOString();
     this.db
