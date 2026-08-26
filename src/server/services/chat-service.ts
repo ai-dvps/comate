@@ -1150,11 +1150,7 @@ export class ChatService {
     return subagents;
   }
 
-  /**
-   * Slash commands advertised by an opencode session's serve (U7). Empty
-   * when no serve is live for the session (rather than claude-flavored
-   * builtins, which differ between runtimes).
-   */
+  /** OpenCode runtime commands and skills advertised to the slash picker (U7). */
   async getSessionBackendCommands(sessionId: string): Promise<SlashCommandDto[]> {
     let instance = opencodeServerManager.getInstance(sessionId);
     if (!instance) return [];
@@ -1180,18 +1176,34 @@ export class ChatService {
       if (!instance) return [];
     }
 
-    const res = await (opencodeFetchForTesting ?? opencodeFetch)(instance, '/command');
-    if (!res.ok) return [];
-    const commands = (await res.json()) as Array<{
+    const fetchBackend = opencodeFetchForTesting ?? opencodeFetch;
+    const commandResponse = await fetchBackend(instance, '/command');
+    const commands = commandResponse.ok ? (await commandResponse.json()) as Array<{
       name: string;
       description?: string;
       template?: string;
-    }>;
-    return commands.map((command) => ({
+    }> : [];
+    const result: SlashCommandDto[] = commands.map((command) => ({
       name: command.name,
       description: command.description ?? '',
       argumentHint: command.template?.includes('$ARGUMENTS') ? 'arguments' : undefined,
     }));
+    const seen = new Set(result.map((command) => command.name));
+
+    try {
+      const skillResponse = await fetchBackend(instance, '/skill');
+      if (skillResponse.ok) {
+        const skills = (await skillResponse.json()) as Array<{ name: string; description?: string }>;
+        for (const skill of skills) {
+          if (seen.has(skill.name)) continue;
+          seen.add(skill.name);
+          result.push({ name: skill.name, description: skill.description ?? '' });
+        }
+      }
+    } catch {
+      // Skill discovery is best-effort; keep runtime commands available.
+    }
+    return result;
   }
 
   async loadSubagentsForSession(
