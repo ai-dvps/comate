@@ -11,7 +11,7 @@ const backends: BackendInfo[] = [
     id: 'opencode',
     availability: { status: 'unavailable', reason: 'binary missing' },
     capabilities: {
-      analytics: { state: 'unavailable', reasonKey: 'backend.analyticsNotCounted' },
+      analytics: { state: 'full' },
       imageInput: { state: 'full' },
     },
   },
@@ -27,7 +27,7 @@ describe('backendAvailability', () => {
 
 describe('backendCapability', () => {
   it('returns declared entries', () => {
-    expect(backendCapability(backends, 'opencode', 'analytics').state).toBe('unavailable')
+    expect(backendCapability(backends, 'opencode', 'analytics').state).toBe('full')
     expect(backendCapability(backends, 'opencode', 'imageInput').state).toBe('full')
   })
 

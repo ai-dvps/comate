@@ -17,7 +17,7 @@ Generated from the capability declaration table (`src/server/services/agent-back
 | slashCommands | full | verified | Driver command endpoint routing + `getSessionBackendCommands`; discovery route is backend-aware |
 | imageInput | full on declared image-capable models | automated verified; live provider walkthrough remaining | Client normalization/admission suites; Claude native image-block tests; OpenCode `file` part and transcript fixture round trips; shared history renderer tests |
 | subagents | full | verified | `opencode-transcript.test.ts`: history translation + task/child pairing |
-| analytics | unavailable (declared) | verified | KTD-10: opencode sessions not counted in v1; noted in the analytics UI |
+| analytics | full | verified | OpenCode REST history supplies per-message tokens, cost, model, tools, timestamps, and duration to the shared persistent cache |
 | hooks | unavailable (both backends) | verified | Ground truth: hook scripts have no consumer on either backend; execution is its own work item |
 
 ## Capability matrix (Codex backend)
@@ -41,7 +41,7 @@ This matrix covers the bundled `@openai/codex` 0.149.0 app-server integration ad
 | browser | unavailable | verified | Built-in browser MCP requires an Authorization-bearing remote server; credentials are not copied into Codex configuration or thread metadata |
 | slashCommands | unavailable | verified | Codex skills are discoverable, but Claude slash-command syntax and execution routing are not equivalent |
 | todos | unavailable | verified | Codex plan notifications are not yet projected into Comate's Claude task/todo UI |
-| analytics | unavailable | verified | The persistent Analytics dashboard currently reads Claude JSONL only; live Codex context usage remains available |
+| analytics | degraded | verified | Codex thread history and thread-scoped usage feed the persistent dashboard with exact totals, models, available cost, tools, messages, and duration; the public persisted API has no per-turn token buckets, so daily token detail is not fabricated |
 | hooks | unavailable | verified | No cross-backend hook execution surface is wired for Codex |
 | scheduledGoalWrap | unavailable | verified | Scheduled goals use the selected default backend, but Codex-specific wrap-up/tool parity is not implemented |
 

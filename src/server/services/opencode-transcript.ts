@@ -102,6 +102,16 @@ export interface OpencodeRestMessage {
     id: string;
     role: string;
     time?: { created?: number; completed?: number };
+    modelID?: string;
+    providerID?: string;
+    cost?: number;
+    tokens?: {
+      total?: number;
+      input: number;
+      output: number;
+      reasoning?: number;
+      cache: { read: number; write: number };
+    };
     /** Present on failed assistant turns: the provider/agent error that ended
      * the turn (e.g. APIError 1211 model-not-found). opencode stores it on the
      * message, so a failed turn can be made visible in history. */

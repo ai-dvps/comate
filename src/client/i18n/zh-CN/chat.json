@@ -405,7 +405,7 @@
     "noneAvailable": "无可用智能体",
     "fallbackNotice": "默认智能体不可用，已回退到 {{backend}}",
     "capabilityUndeclared": "当前智能体暂不支持",
-    "analyticsNotCounted": "Open Code 会话暂不计入用量统计",
+    "codexAnalyticsPartial": "Codex 会话已计入统计，包含准确的线程总量、模型用量、可用时的费用、工具、消息和时长；持久化的逐日 Token 明细暂不可用",
     "codexSessionManagementPartial": "Codex 已支持历史、重命名与归档；丰富条目和分叉界面仍有限制",
     "codexToolRenderingPartial": "Codex 命令、文件、MCP、动态工具和协作条目已接入统一界面；部分专用条目类型仍有限制",
     "codexInteractionPartial": "Codex 审批与用户提问已接入统一交互界面；尚未开放会话级策略修订",

@@ -26,8 +26,10 @@ describe('getCapability', () => {
 
   it('returns the declared entry for a declared capability', () => {
     const entry = getCapability('opencode', 'analytics');
-    assert.equal(entry.state, 'unavailable');
-    assert.ok(entry.reasonKey, 'analytics degradation must carry a reason (KTD-10)');
+    assert.equal(entry.state, 'full');
+    const codexEntry = getCapability('codex', 'analytics');
+    assert.equal(codexEntry.state, 'degraded');
+    assert.equal(codexEntry.reasonKey, 'backend.codexAnalyticsPartial');
   });
 
   it('defaults undeclared capabilities to full on claude', () => {
@@ -206,9 +208,11 @@ describe('listBackendCapabilities', () => {
     assert.equal(claudeTable.hooks.reasonKey, 'backend.hooksNotWired');
     assert.equal(claudeTable.imageInput.state, 'full');
     const opencodeTable = listBackendCapabilities('opencode');
-    assert.equal(opencodeTable.analytics.state, 'unavailable');
-    assert.equal(opencodeTable.analytics.reasonKey, 'backend.analyticsNotCounted');
+    assert.equal(opencodeTable.analytics.state, 'full');
     assert.equal(opencodeTable.hooks.state, 'unavailable');
     assert.equal(opencodeTable.imageInput.state, 'full');
+    const codexTable = listBackendCapabilities('codex');
+    assert.equal(codexTable.analytics.state, 'degraded');
+    assert.equal(codexTable.analytics.reasonKey, 'backend.codexAnalyticsPartial');
   });
 });
