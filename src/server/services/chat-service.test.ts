@@ -6115,18 +6115,57 @@ describe('chat-service backend review fixes (P1/P2)', { concurrency: false }, ()
       assert.deepStrictEqual(options, { immediate: true });
       currentInstance = freshInstance;
     };
-    __setOpencodeFetchForTesting((async (instance: OpencodeServerInstance) => {
+    __setOpencodeFetchForTesting((async (instance: OpencodeServerInstance, requestPath: string) => {
       assert.strictEqual(instance, freshInstance);
-      return new Response(JSON.stringify([{ name: 'workspace-skill', description: 'fresh' }]), {
+      const body = requestPath === '/skill'
+        ? [
+            { name: 'review', description: 'duplicate skill' },
+            { name: 'workspace-skill', description: 'fresh skill' },
+          ]
+        : [{ name: 'review', description: 'fresh command', template: '$ARGUMENTS' }];
+      return new Response(JSON.stringify(body), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
     }) as never);
 
     try {
-      assert.deepStrictEqual(await service.getSessionBackendCommands('session-1'), [{
-        name: 'workspace-skill',
-        description: 'fresh',
+      assert.deepStrictEqual(await service.getSessionBackendCommands('session-1'), [
+        {
+          name: 'review',
+          description: 'fresh command',
+          argumentHint: 'arguments',
+        },
+        {
+          name: 'workspace-skill',
+          description: 'fresh skill',
+        },
+      ]);
+    } finally {
+      manager.getInstance = originalGetInstance;
+      manager.workspaceSkillsChanged = originalSkillsChanged;
+    }
+  });
+
+  it('keeps OpenCode runtime commands when skill discovery fails', async () => {
+    const instance = { directory: '/workspace', baseUrl: 'http://commands-only' } as OpencodeServerInstance;
+    const originalGetInstance = opencodeServerManager.getInstance.bind(opencodeServerManager);
+    const originalSkillsChanged = opencodeServerManager.workspaceSkillsChanged.bind(opencodeServerManager);
+    const manager = opencodeServerManager as unknown as {
+      getInstance: (sessionId: string) => OpencodeServerInstance | undefined;
+      workspaceSkillsChanged: (instance: OpencodeServerInstance) => Promise<boolean>;
+    };
+    manager.getInstance = () => instance;
+    manager.workspaceSkillsChanged = async () => false;
+    __setOpencodeFetchForTesting((async (_instance: OpencodeServerInstance, requestPath: string) => {
+      if (requestPath === '/skill') throw new Error('skill endpoint unavailable');
+      return Response.json([{ name: 'review', description: 'runtime command' }]);
+    }) as never);
+
+    try {
+      assert.deepStrictEqual(await service.getSessionBackendCommands('session-commands-only'), [{
+        name: 'review',
+        description: 'runtime command',
         argumentHint: undefined,
       }]);
     } finally {

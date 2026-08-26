@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { commandsService } from '../services/commands-service.js';
 import { chatService } from '../services/chat-service.js';
+import { getAvailableSkills } from '../services/opencode-skill-discovery.js';
 
 const router = Router({ mergeParams: true });
 
@@ -17,9 +18,8 @@ router.get('/', async (req, res) => {
       return;
     }
 
-    // Backend-aware discovery (U7): an opencode session's commands come from
-    // its own serve; without a live serve the list is empty rather than
-    // claude-flavored (builtins differ between runtimes).
+    // Backend-aware discovery (U7): live sessions use their own runtime;
+    // new OpenCode chats use only OpenCode-compatible filesystem skills.
     const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined;
     const requestedBackend = typeof req.query.backend === 'string' ? req.query.backend : undefined;
     if (sessionId) {
@@ -32,7 +32,12 @@ router.get('/', async (req, res) => {
         return;
       }
     }
-    if (requestedBackend === 'opencode' || requestedBackend === 'codex') {
+    if (requestedBackend === 'opencode') {
+      const commands = await getAvailableSkills(workspace.folderPath);
+      res.json({ commands, partial: false });
+      return;
+    }
+    if (requestedBackend === 'codex') {
       res.json({ commands: [], partial: false });
       return;
     }
