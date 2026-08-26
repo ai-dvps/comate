@@ -5,7 +5,7 @@ import { SessionRuntime } from './session-runtime.js';
 import type { SdkClient } from './sdk-client.js';
 import type { Query, SDKMessage, SDKUserMessage, Options } from '@anthropic-ai/claude-agent-sdk';
 import type { SseEvent } from '../types/message.js';
-import type { Provider } from '../models/provider.js';
+import type { EffectiveProviderConfiguration } from './provider-resolver.js';
 
 function collectDiagLogs(): { logs: string[]; restore: () => void } {
   const logs: string[] = [];
@@ -1805,29 +1805,32 @@ describe('session-runtime Kimi loop detection', { concurrency: false }, () => {
     } as Options;
   }
 
-  function createKimiProvider(): Provider {
+  function createKimiProvider(): EffectiveProviderConfiguration {
     return {
-      id: 'kimi',
-      name: 'Kimi Provider',
+      available: true,
+      providerId: 'kimi',
+      agent: 'claude',
+      mode: 'direct-anthropic',
       baseUrl: 'https://api.moonshot.cn/v1',
-      authToken: 'test',
+      credential: 'test',
       model: 'kimi-k2',
-      isDefault: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      vendorId: 'kimi',
+      supportedEfforts: [],
+      speedSupported: false,
     };
   }
 
-  function createAnthropicProvider(): Provider {
+  function createAnthropicProvider(): EffectiveProviderConfiguration {
     return {
-      id: 'anthropic',
-      name: 'Anthropic Provider',
+      available: true,
+      providerId: 'anthropic',
+      agent: 'claude',
+      mode: 'direct-anthropic',
       baseUrl: 'https://api.anthropic.com',
-      authToken: 'test',
+      credential: 'test',
       model: 'claude-3-5-sonnet',
-      isDefault: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      supportedEfforts: [],
+      speedSupported: false,
     };
   }
 

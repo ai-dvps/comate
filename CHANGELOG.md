@@ -5,11 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] - 2026-08-25
+## [0.4.1] - 2026-08-26
 
 ### Added
 
 - **Analytics now includes OpenCode and Codex sessions** — OpenCode contributes per-message tokens, cost, models, tools, activity, and duration; Codex contributes exact thread totals and activity while clearly degrading only the unavailable per-day token breakdown.
+
+### Fixed
+
+- **OpenCode thinking indicators stop when sessions finish** — Terminal session events now complete active reasoning blocks instead of leaving the interface stuck in a thinking state.
+- **OpenCode tool calls show their parameters while streaming** — Tool input now crosses the live SSE boundary after OpenCode finishes assembling it, including the normal pending-to-running lifecycle.
+- **OpenCode auto-compaction recovers instead of ending the turn** — Recoverable context-overflow events now show compaction progress while OpenCode compacts and retries; failed recovery still surfaces the original error, including when the event stream disconnects mid-compaction.
+
+## [0.4.0] - 2026-08-25
+
+### Added
+
 - **Provider model capabilities can be configured per Agent and model** — Advanced Provider settings now expose separate Claude Code, Codex, and OpenCode panels for context limits, reasoning behavior, tool and modality support, and protocol-aware OpenCode variants; BigModel's Coding Plan preset uses its documented OpenAI Responses `/api/v1` endpoint and `glm-5.3` model.
 - **New sessions follow a global permission-mode default** — General settings now choose whether new sessions start in Auto, Read only, or Ask before actions mode; the app defaults to Auto while preserving per-session overrides.
 
@@ -19,8 +30,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **OpenCode tool calls show their parameters while streaming** — Tool input now crosses the live SSE boundary after OpenCode finishes assembling it, including the normal pending-to-running lifecycle.
-- **OpenCode auto-compaction recovers instead of ending the turn** — Recoverable context-overflow events now show compaction progress while OpenCode compacts and retries; failed recovery still surfaces the original error, including when the event stream disconnects mid-compaction.
 - **Saved Provider Auth Tokens can be inspected again** — Provider editors now show a masked saved-token state and reveal the credential only after an explicit eye-button action through the desktop-authenticated, non-cacheable API path.
 
 ## [0.3.1] - 2026-08-22
