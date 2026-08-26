@@ -23,6 +23,7 @@ import {
   OPENCODE_EXPECTED_VERSION,
 } from '../utils/resolve-opencode-binary.js';
 import { diagLog } from '../utils/diag-logger.js';
+import { getWorkspaceSkillSnapshot } from './opencode-skill-discovery.js';
 
 export interface OpencodeServerInstance {
   sessionKey: string;
@@ -30,6 +31,8 @@ export interface OpencodeServerInstance {
   proc: ChildProcess;
   baseUrl: string;
   authHeaders: Record<string, string>;
+  /** Project-local skills present when this runtime was initialized. */
+  workspaceSkillSnapshot: string;
 }
 
 export interface OpencodeServerConfig {
@@ -123,6 +126,7 @@ export class OpencodeServerManager {
       throw new Error('opencode binary not found (packaging or install issue)');
     }
     assertOpencodeVersion(binary);
+    const workspaceSkillSnapshot = await getWorkspaceSkillSnapshot(directory);
     const port = await findFreePort();
     const password = randomBytes(16).toString('hex');
     const env: NodeJS.ProcessEnv = {
@@ -183,7 +187,13 @@ export class OpencodeServerManager {
       authHeaders: {
         Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`,
       },
+      workspaceSkillSnapshot,
     };
+  }
+
+  /** OpenCode snapshots skills at instance init, so changes require a runtime rebuild. */
+  async workspaceSkillsChanged(instance: OpencodeServerInstance): Promise<boolean> {
+    return (await getWorkspaceSkillSnapshot(instance.directory)) !== instance.workspaceSkillSnapshot;
   }
 
   async stopServer(sessionKey: string): Promise<void> {
