@@ -111,6 +111,7 @@ type PendingItem = PendingApproval | PendingQuestion
 
 interface ApprovalSurfaceProps {
   workspaceId: string
+  sessionId?: string
   pendingItem: PendingItem
   queueDepth: number
   isResolving?: boolean
@@ -125,6 +126,7 @@ interface ApprovalSurfaceProps {
 
 export default function ApprovalSurface({
   workspaceId,
+  sessionId,
   pendingItem,
   queueDepth,
   isResolving = false,
@@ -246,6 +248,7 @@ export default function ApprovalSurface({
               {isQuestion ? (
                 <QuestionView
                   workspaceId={workspaceId}
+                  sessionId={sessionId}
                   item={pendingItem as PendingQuestion}
                   isResolving={isResolving}
                   stepIndex={stepIndex}
@@ -465,6 +468,7 @@ type FocusedOption = { qIdx: number; oIdx: number } | null
 
 function QuestionView({
   workspaceId,
+  sessionId,
   item,
   isResolving,
   stepIndex,
@@ -473,6 +477,7 @@ function QuestionView({
   onChatAbout,
 }: {
   workspaceId: string
+  sessionId?: string
   item: PendingQuestion
   isResolving: boolean
   stepIndex: number
@@ -809,6 +814,7 @@ function QuestionView({
         {otherIsOn && (
           <OtherInput
             workspaceId={workspaceId}
+            sessionId={sessionId}
             value={otherText[q.question] || ''}
             disabled={isResolving}
             onChange={(v) => setOtherTextFor(q.question, v)}
@@ -892,6 +898,7 @@ function QuestionView({
 
 interface OtherInputProps {
   workspaceId: string
+  sessionId?: string
   value: string
   disabled: boolean
   onChange: (value: string) => void
@@ -899,6 +906,7 @@ interface OtherInputProps {
 
 function OtherInput({
   workspaceId,
+  sessionId,
   value,
   disabled,
   onChange,
@@ -1112,6 +1120,7 @@ function OtherInput({
         <CommandPicker
           ref={commandHandleRef}
           workspaceId={workspaceId}
+          sessionId={sessionId}
           open={commandOpen}
           onOpenChange={setCommandOpen}
           onSelect={handleCommandSelect}
