@@ -344,6 +344,152 @@ describe('todos and lifecycle', () => {
 });
 
 describe('error turn handling (silent-error fix)', () => {
+  it('keeps context overflow recoverable while OpenCode auto-compacts', () => {
+    const state = createOpencodeMapperState();
+    const overflow = mapOpencodeEvent(
+      {
+        type: 'session.error',
+        properties: {
+          sessionID: 's1',
+          error: {
+            name: 'ContextOverflowError',
+            data: { message: 'Requested token count exceeds the model context length' },
+          },
+        },
+      },
+      state,
+    ) as Array<{ type: string; subtype?: string; status?: string }>;
+
+    assert.deepEqual(
+      overflow.map((message) => ({ type: message.type, subtype: message.subtype, status: message.status })),
+      [{ type: 'system', subtype: 'status', status: 'compacting' }],
+      'a recoverable overflow should show compaction progress, not a fatal result',
+    );
+
+    const compacted = mapOpencodeEvent(
+      { type: 'session.compacted', properties: { sessionID: 's1' } },
+      state,
+    ) as Array<{ type: string; subtype?: string; status?: null }>;
+    assert.deepEqual(
+      compacted.map((message) => ({ type: message.type, subtype: message.subtype, status: message.status })),
+      [
+        { type: 'system', subtype: 'status', status: null },
+        { type: 'system', subtype: 'compact_boundary', status: undefined },
+      ],
+    );
+
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+    for (const message of [...overflow, ...compacted]) emitter.handle(message as never);
+    assert.deepEqual(events, [
+      { type: 'compact_status', active: true },
+      { type: 'compact_status', active: false },
+      { type: 'compact_boundary' },
+    ]);
+
+    mapOpencodeEvent(
+      { type: 'message.updated', properties: { info: { id: 'm-retry', role: 'assistant' } } },
+      state,
+    );
+    const idle = mapOpencodeEvent(
+      { type: 'session.idle', properties: { sessionID: 's1' } },
+      state,
+    ) as Array<{ type: string; subtype: string; is_error: boolean }>;
+    assert.equal(idle.at(-1)?.subtype, 'success');
+    assert.equal(idle.at(-1)?.is_error, false);
+  });
+
+  it('surfaces context overflow when compaction cannot recover', () => {
+    const state = createOpencodeMapperState();
+    mapOpencodeEvent(
+      {
+        type: 'session.error',
+        properties: {
+          sessionID: 's1',
+          error: {
+            name: 'ContextOverflowError',
+            data: { message: 'Session too large to compact' },
+          },
+        },
+      },
+      state,
+    );
+
+    const idle = mapOpencodeEvent(
+      { type: 'session.idle', properties: { sessionID: 's1' } },
+      state,
+    ) as Array<{ type: string; subtype?: string; is_error?: boolean; errors?: string[] }>;
+    const result = idle.find((message) => message.type === 'result');
+    assert.equal(result?.subtype, 'error_during_execution');
+    assert.equal(result?.is_error, true);
+    assert.deepEqual(result?.errors, ['Session too large to compact']);
+  });
+
+  it('does not emit duplicate compacting status for repeated context overflow errors', () => {
+    const state = createOpencodeMapperState();
+    const overflow = {
+      type: 'session.error',
+      properties: {
+        sessionID: 's1',
+        error: { name: 'ContextOverflowError', data: { message: 'still too large' } },
+      },
+    };
+    assert.equal(mapOpencodeEvent(overflow, state).length, 1);
+    assert.deepEqual(mapOpencodeEvent(overflow, state), []);
+
+    const idle = mapOpencodeEvent(
+      { type: 'session.idle', properties: { sessionID: 's1' } },
+      state,
+    ) as Array<{ type: string; errors?: string[] }>;
+    assert.deepEqual(idle.find((message) => message.type === 'result')?.errors, ['still too large']);
+  });
+
+  it('clears compacting status before a different fatal session error', () => {
+    const state = createOpencodeMapperState();
+    mapOpencodeEvent({
+      type: 'session.error',
+      properties: {
+        sessionID: 's1',
+        error: { name: 'ContextOverflowError', data: { message: 'too large' } },
+      },
+    }, state);
+
+    const fatal = mapOpencodeEvent(
+      { type: 'session.error', properties: { sessionID: 's1', error: { data: { message: 'provider unavailable' } } } },
+      state,
+    ) as Array<{ type: string; subtype?: string; status?: null; errors?: string[] }>;
+    assert.deepEqual(
+      fatal.map((message) => ({ type: message.type, subtype: message.subtype, status: message.status, errors: message.errors })),
+      [
+        { type: 'system', subtype: 'status', status: null, errors: undefined },
+        { type: 'result', subtype: 'error_during_execution', status: undefined, errors: ['provider unavailable'] },
+      ],
+    );
+    assert.deepEqual(mapOpencodeEvent(
+      { type: 'session.idle', properties: { sessionID: 's1' } },
+      state,
+    ), []);
+  });
+
+  it('does not let an unrelated compaction turn a fatal error into success', () => {
+    const state = createOpencodeMapperState();
+    mapOpencodeEvent(
+      { type: 'session.error', properties: { sessionID: 's1', error: { data: { message: 'boom' } } } },
+      state,
+    );
+
+    mapOpencodeEvent(
+      { type: 'session.compacted', properties: { sessionID: 's1' } },
+      state,
+    );
+
+    const idle = mapOpencodeEvent(
+      { type: 'session.idle', properties: { sessionID: 's1' } },
+      state,
+    );
+    assert.deepEqual(idle, [], 'compaction must not erase an unrelated fatal-error state');
+  });
+
   it('suppresses success results for idles that follow a session.error in the same turn', () => {
     const state = createOpencodeMapperState();
     const errorOut = mapOpencodeEvent(
