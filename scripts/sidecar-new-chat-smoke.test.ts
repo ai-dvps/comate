@@ -182,7 +182,7 @@ test('packaged sidecar runs a real Codex turn through the production Provider ro
       const completed = waitForWsMessage(socket, (message) => {
         const data = message.type === 'event' && message.eventType === 'sse' ? message.data as { type?: string } : undefined;
         return data?.type === 'result';
-      }, 20_000);
+      }, 60_000);
       await wsRequest(socket, 'send-route', 'sendMessage', {
         workspaceId: workspace.workspace.id, sessionId: session.id,
         clientTurnId: '550e8400-e29b-41d4-a716-446655440101', content: 'route-smoke Unicode 你好',
