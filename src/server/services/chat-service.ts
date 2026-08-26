@@ -804,13 +804,15 @@ export class ChatService {
           409,
         );
       }
-      workspaceStore.updateSessionBackend(id, input.backend);
       if (localSession?.backend !== input.backend) {
+        workspaceStore.switchSessionBackend(id, input.backend);
         const existing = this.getRuntimeIfExists(id);
         if (existing) {
           diagLog(`[ChatService] session ${id} backend changed to '${input.backend}' — closing runtime for rebuild`);
           await this.closeRuntime(id);
         }
+      } else {
+        workspaceStore.updateSessionBackend(id, input.backend);
       }
     }
 
