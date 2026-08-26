@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **OpenCode tool calls show their parameters while streaming** — Tool input now crosses the live SSE boundary after OpenCode finishes assembling it, including the normal pending-to-running lifecycle.
 - **OpenCode auto-compaction recovers instead of ending the turn** — Recoverable context-overflow events now show compaction progress while OpenCode compacts and retries; failed recovery still surfaces the original error, including when the event stream disconnects mid-compaction.
 - **Saved Provider Auth Tokens can be inspected again** — Provider editors now show a masked saved-token state and reveal the credential only after an explicit eye-button action through the desktop-authenticated, non-cacheable API path.
 
