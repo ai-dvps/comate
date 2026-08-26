@@ -1154,9 +1154,31 @@ export class ChatService {
    * builtins, which differ between runtimes).
    */
   async getSessionBackendCommands(sessionId: string): Promise<SlashCommandDto[]> {
-    const instance = opencodeServerManager.getInstance(sessionId);
+    let instance = opencodeServerManager.getInstance(sessionId);
     if (!instance) return [];
-    const res = await opencodeFetch(instance, '/command');
+
+    if (await opencodeServerManager.workspaceSkillsChanged(instance)) {
+      const runtime = this.getRuntimeIfExists(sessionId);
+      const context = this.runtimeContexts.get(sessionId);
+      const rebuildInFlight = this.rebuildChains.get(sessionId);
+      if (rebuildInFlight) {
+        await rebuildInFlight;
+      } else if (runtime && context) {
+        if (runtime.isProcessingTurn()) {
+          // Preserve the active turn. The existing rebuild poller performs the
+          // refresh as soon as the runtime becomes idle.
+          if (!this.pendingRebuilds.has(sessionId)) {
+            this.scheduleRuntimeRebuild(sessionId, context);
+          }
+        } else {
+          await this.scheduleRuntimeRebuild(sessionId, context, { immediate: true });
+        }
+      }
+      instance = opencodeServerManager.getInstance(sessionId);
+      if (!instance) return [];
+    }
+
+    const res = await (opencodeFetchForTesting ?? opencodeFetch)(instance, '/command');
     if (!res.ok) return [];
     const commands = (await res.json()) as Array<{
       name: string;
