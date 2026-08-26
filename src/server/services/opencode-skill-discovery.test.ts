@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { getWorkspaceSkillSnapshot } from './opencode-skill-discovery.js';
+import { getAvailableSkills, getWorkspaceSkillSnapshot } from './opencode-skill-discovery.js';
 
 const tempDirs: string[] = [];
 
@@ -32,6 +32,53 @@ afterEach(async () => {
 });
 
 describe('OpenCode workspace skill discovery snapshot', () => {
+  it('lists skills from every project-local root supported by OpenCode', async () => {
+    const workspace = await createWorkspace();
+    for (const [index, root] of [
+      '.opencode/skill',
+      '.opencode/skills',
+      '.claude/skills',
+      '.agents/skills',
+    ].entries()) {
+      await writeSkill(workspace, root, `skill-${index}`, [
+        '---',
+        `name: skill-${index}`,
+        `description: Skill from ${root}`,
+        '---',
+        '',
+      ].join('\n'));
+    }
+
+    assert.deepEqual(
+      (await getAvailableSkills(
+        workspace,
+        join(workspace, 'empty-home'),
+        join(workspace, 'empty-config'),
+      ))
+        .map(({ name, description }) => ({ name, description })),
+      [
+        { name: 'skill-0', description: 'Skill from .opencode/skill' },
+        { name: 'skill-1', description: 'Skill from .opencode/skills' },
+        { name: 'skill-2', description: 'Skill from .claude/skills' },
+        { name: 'skill-3', description: 'Skill from .agents/skills' },
+      ],
+    );
+  });
+
+  it('lists global skills available to the workspace', async () => {
+    const workspace = await createWorkspace();
+    const homeDirectory = join(workspace, 'home');
+    await writeSkill(homeDirectory, '.config/opencode/skills', 'global-opencode');
+    await writeSkill(homeDirectory, '.claude/skills', 'global-claude');
+    await writeSkill(homeDirectory, '.agents/skills', 'global-agents');
+
+    assert.deepEqual(
+      (await getAvailableSkills(workspace, homeDirectory, join(homeDirectory, '.config')))
+        .map((skill) => skill.name),
+      ['global-agents', 'global-claude', 'global-opencode'],
+    );
+  });
+
   it('tracks every project-local skill root supported by OpenCode', async () => {
     const workspace = await createWorkspace();
     const initial = await getWorkspaceSkillSnapshot(workspace);
@@ -86,5 +133,13 @@ describe('OpenCode workspace skill discovery snapshot', () => {
     for (let attempt = 0; attempt < 10; attempt += 1) {
       assert.equal(await getWorkspaceSkillSnapshot(workspace), expected);
     }
+    assert.deepEqual(
+      (await getAvailableSkills(
+        workspace,
+        join(workspace, 'empty-home'),
+        join(workspace, 'empty-config'),
+      )).map((skill) => skill.name),
+      ['linked-skill'],
+    );
   });
 });
