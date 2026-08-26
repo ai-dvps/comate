@@ -6,6 +6,8 @@ import {
   mapOpencodeEvent,
   mapToolName,
 } from './opencode-event-mapper.js';
+import { SseEmitter } from './sse-emitter.js';
+import type { SseEvent } from '../types/message.js';
 
 const textPart = (over: Record<string, unknown> = {}) => ({
   id: 'p1',
@@ -245,15 +247,93 @@ describe('todos and lifecycle', () => {
     assert.equal(out[0].usage.output_tokens, 20);
   });
 
+  it('completes an open reasoning part before session.idle finishes the turn', () => {
+    const state = createOpencodeMapperState();
+    const sdkMessages = [
+      ...mapOpencodeEvent(
+        { type: 'message.updated', properties: { info: { id: 'm1', role: 'assistant' } } },
+        state,
+      ),
+      ...mapOpencodeEvent(
+        {
+          type: 'message.part.updated',
+          properties: {
+            part: {
+              id: 'r1',
+              type: 'reasoning',
+              messageID: 'm1',
+              text: 'finished reasoning',
+              time: { start: 1 },
+            },
+          },
+        },
+        state,
+      ),
+      ...mapOpencodeEvent(
+        { type: 'session.idle', properties: { sessionID: 's1' } },
+        state,
+      ),
+    ];
+
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+    for (const message of sdkMessages) emitter.handle(message);
+
+    assert.deepEqual(
+      events.map((event) => event.type),
+      ['assistant_start', 'thinking_start', 'thinking_delta', 'thinking_done', 'assistant_done', 'result'],
+    );
+
+    for (const message of mapOpencodeEvent(
+      { type: 'session.idle', properties: { sessionID: 's1' } },
+      state,
+    )) {
+      emitter.handle(message);
+    }
+    assert.equal(
+      events.filter((event) => event.type === 'thinking_done').length,
+      1,
+      'repeated idle events must not complete the same reasoning part twice',
+    );
+  });
+
   it('maps session.error to an error result', () => {
     const state = createOpencodeMapperState();
-    const out = mapOpencodeEvent(
-      { type: 'session.error', properties: { sessionID: 's1', error: { data: { message: 'boom' } } } },
-      state,
-    ) as Array<{ subtype: string; is_error: boolean; errors: string[] }>;
-    assert.equal(out[0].subtype, 'error_during_execution');
-    assert.equal(out[0].is_error, true);
-    assert.deepEqual(out[0].errors, ['boom']);
+    const sdkMessages = [
+      ...mapOpencodeEvent(
+        { type: 'message.updated', properties: { info: { id: 'm1', role: 'assistant' } } },
+        state,
+      ),
+      ...mapOpencodeEvent(
+        {
+          type: 'message.part.updated',
+          properties: {
+            part: { id: 'r1', type: 'reasoning', messageID: 'm1', text: 'partial reasoning' },
+          },
+        },
+        state,
+      ),
+      ...mapOpencodeEvent(
+        { type: 'session.error', properties: { sessionID: 's1', error: { data: { message: 'boom' } } } },
+        state,
+      ),
+    ];
+    const result = sdkMessages.find((message) => message.type === 'result') as {
+      subtype: string;
+      is_error: boolean;
+      errors: string[];
+    };
+    assert.equal(result.subtype, 'error_during_execution');
+    assert.equal(result.is_error, true);
+    assert.deepEqual(result.errors, ['boom']);
+
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+    for (const message of sdkMessages) emitter.handle(message);
+    assert.deepEqual(
+      events.map((event) => event.type),
+      ['assistant_start', 'thinking_start', 'thinking_delta', 'thinking_done', 'assistant_done', 'result', 'error_note'],
+    );
   });
 
   it('ignores non-mapped events', () => {
@@ -293,10 +373,12 @@ describe('error turn handling (silent-error fix)', () => {
       state,
     );
     const idleOut = mapOpencodeEvent({ type: 'session.idle', properties: { sessionID: 's1' } }, state) as Array<{
+      type: string;
       subtype: string;
     }>;
-    assert.equal(idleOut.length, 1);
-    assert.equal(idleOut[0].subtype, 'success');
+    const results = idleOut.filter((message) => message.type === 'result');
+    assert.equal(results.length, 1);
+    assert.equal(results[0].subtype, 'success');
   });
 
   it('keeps idles suppressed when the failed turn’s in-flight message still updates (same messageID)', () => {
