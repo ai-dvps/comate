@@ -21,6 +21,7 @@ router.get('/', async (req, res) => {
     // its own serve; without a live serve the list is empty rather than
     // claude-flavored (builtins differ between runtimes).
     const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined;
+    const requestedBackend = typeof req.query.backend === 'string' ? req.query.backend : undefined;
     if (sessionId) {
       const session = workspaceStore.getLocalSession(sessionId);
       if (session?.backend === 'opencode' || session?.backend === 'codex') {
@@ -30,6 +31,10 @@ router.get('/', async (req, res) => {
         res.json({ commands, partial: false });
         return;
       }
+    }
+    if (requestedBackend === 'opencode' || requestedBackend === 'codex') {
+      res.json({ commands: [], partial: false });
+      return;
     }
 
     const result = await commandsService.getCommands(workspace);
