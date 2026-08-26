@@ -71,9 +71,27 @@ describe('text streaming', () => {
 });
 
 describe('tool parts', () => {
-  it('emits a complete tool_use block with input at running', () => {
+  it('waits for running input before emitting a tool through the browser SSE boundary', () => {
     const state = createOpencodeMapperState();
-    const out = mapOpencodeEvent(
+    const pending = mapOpencodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 't1',
+            type: 'tool',
+            messageID: 'm1',
+            callID: 'call-1',
+            tool: 'write',
+            state: { status: 'pending', input: {} },
+          },
+        },
+      },
+      state,
+    );
+    assert.deepEqual(pending, []);
+
+    const running = mapOpencodeEvent(
       {
         type: 'message.part.updated',
         properties: {
@@ -89,11 +107,13 @@ describe('tool parts', () => {
       },
       state,
     );
-    const start = out.find(
-      (m) => (m as { event?: { type: string } }).event?.type === 'content_block_start',
-    ) as { event: { content_block: { type: string; name: string; input: unknown } } };
-    assert.equal(start.event.content_block.name, 'Write');
-    assert.deepEqual(start.event.content_block.input, { filePath: '/tmp/a' });
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+    for (const message of running) emitter.handle(message);
+
+    const done = events.find((event) => event.type === 'tool_use_done');
+    assert.ok(done && done.type === 'tool_use_done');
+    assert.deepEqual(done.input, { filePath: '/tmp/a' });
   });
 
   it('emits a user tool_result on completed, is_error on error', () => {
