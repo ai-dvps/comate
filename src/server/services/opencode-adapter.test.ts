@@ -537,6 +537,104 @@ describe('OpencodeBackendDriver multimodal prompt dispatch', () => {
   });
 });
 
+describe('OpencodeBackendDriver event subscription recovery', () => {
+  it('surfaces a pending context overflow before an unexpected event-stream EOF', async () => {
+    const { OpencodeBackendDriver } = await import('./opencode-adapter.js');
+    const driver = new OpencodeBackendDriver({
+      directory: '/workspace',
+      comateSessionId: 's',
+      provider: makeProvider(),
+      providerName: 'Test Provider',
+      env: {},
+    });
+    const internals = driver as unknown as {
+      instance: { baseUrl: string; directory: string; authHeaders: Record<string, string> };
+      backendSessionId: string;
+      startEventSubscription: (options: Options) => void;
+      eventStream: AsyncIterable<unknown>;
+    };
+    internals.instance = { baseUrl: 'http://opencode.test', directory: '/workspace', authHeaders: {} };
+    internals.backendSessionId = 'oc-1';
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(
+      'data: {"type":"session.error","properties":{"sessionID":"oc-1","error":{"name":"ContextOverflowError","data":{"message":"session too large"}}}}\n\n',
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    )) as typeof fetch;
+
+    try {
+      internals.startEventSubscription({} as Options);
+      const iterator = internals.eventStream[Symbol.asyncIterator]();
+      const messages = [];
+      for (let index = 0; index < 4; index += 1) messages.push(await iterator.next());
+      assert.deepEqual(
+        messages.map(({ value }) => value && {
+          type: (value as { type?: string }).type,
+          subtype: (value as { subtype?: string }).subtype,
+          status: (value as { status?: string | null }).status,
+          errors: (value as { errors?: string[] }).errors,
+        }),
+        [
+          { type: 'system', subtype: 'status', status: 'compacting', errors: undefined },
+          { type: 'system', subtype: 'status', status: null, errors: undefined },
+          { type: 'result', subtype: 'error_during_execution', status: undefined, errors: ['session too large'] },
+          null,
+        ],
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('does not synthesize a compaction failure during deliberate shutdown', async () => {
+    const { OpencodeBackendDriver } = await import('./opencode-adapter.js');
+    const driver = new OpencodeBackendDriver({
+      directory: '/workspace',
+      comateSessionId: 's',
+      provider: makeProvider(),
+      providerName: 'Test Provider',
+      env: {},
+    });
+    const internals = driver as unknown as {
+      instance: { baseUrl: string; directory: string; authHeaders: Record<string, string> };
+      backendSessionId: string;
+      closed: boolean;
+      startEventSubscription: (options: Options) => void;
+      eventStream: AsyncIterable<unknown>;
+    };
+    internals.instance = { baseUrl: 'http://opencode.test', directory: '/workspace', authHeaders: {} };
+    internals.backendSessionId = 'oc-1';
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller;
+      },
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(body, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })) as typeof fetch;
+
+    try {
+      internals.startEventSubscription({} as Options);
+      const iterator = internals.eventStream[Symbol.asyncIterator]();
+      streamController.enqueue(new TextEncoder().encode(
+        'data: {"type":"session.error","properties":{"sessionID":"oc-1","error":{"name":"ContextOverflowError","data":{"message":"session too large"}}}}\n\n',
+      ));
+      const compacting = (await iterator.next()).value as { type: string; subtype: string; status: string };
+      assert.deepEqual(
+        { type: compacting.type, subtype: compacting.subtype, status: compacting.status },
+        { type: 'system', subtype: 'status', status: 'compacting' },
+      );
+      internals.closed = true;
+      streamController.close();
+      assert.equal((await iterator.next()).value, null);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 describe('OpencodeBackendDriver model preprocessing', () => {
   it('strips claude-code alias suffix from the provider model at construction', async () => {
     const { OpencodeBackendDriver } = await import('./opencode-adapter.js');
