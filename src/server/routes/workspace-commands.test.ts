@@ -1,6 +1,9 @@
 import '../test-utils/test-env.js';
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import commandRouter from './workspace-commands.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { commandsService } from '../services/commands-service.js';
@@ -32,19 +35,33 @@ const originalWorkspaceGet = workspaceStore.get.bind(workspaceStore);
 const originalLocalSessionGet = workspaceStore.getLocalSession.bind(workspaceStore);
 const originalGetCommands = commandsService.getCommands.bind(commandsService);
 const originalGetSessionBackendCommands = chatService.getSessionBackendCommands.bind(chatService);
+const tempDirs: string[] = [];
 
-afterEach(() => {
+afterEach(async () => {
   workspaceStore.get = originalWorkspaceGet;
   workspaceStore.getLocalSession = originalLocalSessionGet;
   commandsService.getCommands = originalGetCommands;
   chatService.getSessionBackendCommands = originalGetSessionBackendCommands;
+  await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
 describe('workspace command discovery', () => {
-  it('does not initialize Claude discovery for a new OpenCode chat', async () => {
+  it('loads project skills without initializing Claude discovery for a new OpenCode chat', async () => {
     const handler = routeHandler();
     assert.ok(handler);
-    workspaceStore.get = async () => ({ id: 'workspace-1' }) as never;
+    const workspace = await mkdtemp(join(tmpdir(), 'comate-opencode-new-chat-'));
+    tempDirs.push(workspace);
+    const skillDirectory = join(workspace, '.agents/skills/project-review');
+    await mkdir(skillDirectory, { recursive: true });
+    await writeFile(join(skillDirectory, 'SKILL.md'), [
+      '---',
+      'name: project-review',
+      'description: Review this project',
+      'argument-hint: "[path]"',
+      '---',
+      '',
+    ].join('\n'));
+    workspaceStore.get = async () => ({ id: 'workspace-1', folderPath: workspace }) as never;
     commandsService.getCommands = async () => {
       throw new Error('Claude discovery should not run');
     };
@@ -55,7 +72,17 @@ describe('workspace command discovery', () => {
       query: { backend: 'opencode' },
     }, res);
 
-    assert.deepEqual(res.jsonBody, { commands: [], partial: false });
+    assert.equal((res.jsonBody as { partial: boolean }).partial, false);
+    assert.deepEqual(
+      (res.jsonBody as { commands: Array<{ name: string; description: string; argumentHint?: string }> })
+        .commands.find((command) => command.name === 'project-review'),
+      {
+        name: 'project-review',
+        description: 'Review this project',
+        argumentHint: '[path]',
+        aliases: undefined,
+      },
+    );
   });
 
   it('loads commands from the active OpenCode session runtime', async () => {
