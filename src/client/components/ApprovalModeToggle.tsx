@@ -6,6 +6,7 @@ import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 interface ApprovalModeToggleCommonProps {
   workspaceId: string
   disabled?: boolean
+  hideNameBelowSm?: boolean
 }
 
 interface SessionApprovalModeToggleProps extends ApprovalModeToggleCommonProps {
@@ -61,7 +62,7 @@ const MODE_META: Record<
 }
 
 export default function ApprovalModeToggle(props: ApprovalModeToggleProps) {
-  const { workspaceId, disabled = false } = props
+  const { workspaceId, disabled = false, hideNameBelowSm = false } = props
   const isNewChat = props.mode === 'new-chat'
   const sessionId = isNewChat ? null : props.sessionId
   const { t } = useTranslation(['chat', 'settings'])
@@ -93,7 +94,9 @@ export default function ApprovalModeToggle(props: ApprovalModeToggleProps) {
           title={t(`approvalMode.${currentMode}Desc`)}
         >
           <Icon className="w-3 h-3" />
-          <span>{t(`settings:general.approvalModes.${currentMode}`)}</span>
+          <span className={hideNameBelowSm ? 'hidden sm:inline' : ''}>
+            {t(`settings:general.approvalModes.${currentMode}`)}
+          </span>
           <ChevronDown className="w-3 h-3 opacity-60" />
         </button>
       </PopoverTrigger>

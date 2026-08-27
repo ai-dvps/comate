@@ -1857,6 +1857,7 @@ export default function PromptInput(props: PromptInputProps) {
                         approvalMode={props.approvalMode}
                         onApprovalModeChange={props.onApprovalModeChange}
                         disabled={disabled}
+                        hideNameBelowSm
                       />
                     )}
                   </>
@@ -1865,7 +1866,7 @@ export default function PromptInput(props: PromptInputProps) {
                     <BackendSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} hideNameBelowSm />
                     {showProvider && <ProviderSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} hideNameBelowSm />}
                     {showFast && <FastModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} />}
-                    {showApproval && <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} />}
+                    {showApproval && <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} hideNameBelowSm />}
                   </>
                 ) : null}
                 {canClear && showClear && (
