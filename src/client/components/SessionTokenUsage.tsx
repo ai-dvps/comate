@@ -3,12 +3,10 @@ import { useTranslation } from 'react-i18next'
 import { Gauge } from 'lucide-react'
 import { useChatStore, type ContextUsage } from '../stores/chat-store'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
-import { formatTokenCount } from './TokenSettlement'
+import { formatTokenCount } from '../utils/token-format'
 
 interface SessionTokenUsageProps {
   sessionId: string
-  workspaceId: string
-  modelUsage?: Record<string, unknown>
 }
 
 /** Segment palette for the category bar (stable per index). */
@@ -203,15 +201,11 @@ function ContextUsageCard({ usage }: { usage: ContextUsage }) {
 
 export default function SessionTokenUsage({
   sessionId,
-  workspaceId,
-  modelUsage,
 }: SessionTokenUsageProps) {
   const { t } = useTranslation('chat')
   const [open, setOpen] = useState(false)
   const cumulative = useChatStore((s) => s.sessionUsage[sessionId])
   const contextUsage = useChatStore((s) => s.contextUsage[sessionId])
-  void workspaceId
-  void modelUsage
   const cumulativeTotal = cumulative?.cumulativeTotal ?? (cumulative
     ? cumulative.cumulativeInput + cumulative.cumulativeOutput +
       cumulative.cumulativeCacheRead + cumulative.cumulativeCacheWrite

@@ -5,9 +5,31 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { CodexAppServerManager } from './codex-app-server-manager.js';
-import { CodexSessionService } from './codex-session-service.js';
+import { CodexSessionService, parseCodexRolloutTokenUsage } from './codex-session-service.js';
 
 describe('CodexSessionService history projection', () => {
+  it('resets a turn estimate to the latest snapshot when cumulative counts regress', () => {
+    const events = [
+      { payload: { type: 'task_started', turn_id: 'turn-1' } },
+      { payload: { type: 'token_count', info: {
+        total_token_usage: { total_tokens: 100, input_tokens: 70, output_tokens: 30 },
+        last_token_usage: { total_tokens: 30, input_tokens: 20, output_tokens: 10 },
+      } } },
+      { payload: { type: 'token_count', info: {
+        total_token_usage: { total_tokens: 90, input_tokens: 60, output_tokens: 30 },
+        last_token_usage: { total_tokens: 12, input_tokens: 8, output_tokens: 4 },
+      } } },
+      { payload: { type: 'task_complete', turn_id: 'turn-1' } },
+    ];
+
+    assert.deepStrictEqual(parseCodexRolloutTokenUsage(
+      events.map((event) => JSON.stringify(event)).join('\n'),
+    ).get('turn-1'), {
+      quality: 'estimated', totalTokens: 12, inputTokens: 8, outputTokens: 4,
+      cacheReadTokens: 0, cacheWriteTokens: 0, thinkingTokens: 0,
+    });
+  });
+
   it('reconstructs per-turn usage from the rollout path returned by app-server', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'comate-codex-rollout-'));
     const rolloutPath = join(dir, 'rollout.jsonl');

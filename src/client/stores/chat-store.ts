@@ -802,15 +802,23 @@ function deriveSessionUsage(messages: ChatMessage[]): SessionUsage | undefined {
     .filter((usage): usage is Exclude<TurnTokenUsage, { quality: 'unavailable' }> =>
       usage !== undefined && usage.quality !== 'unavailable')
   if (usages.length === 0) return undefined
-  return {
-    cumulativeTotal: usages.reduce((sum, usage) => sum + usage.totalTokens, 0),
-    cumulativeInput: usages.reduce((sum, usage) => sum + (usage.inputTokens ?? 0), 0),
-    cumulativeOutput: usages.reduce((sum, usage) => sum + (usage.outputTokens ?? 0), 0),
-    cumulativeCacheRead: usages.reduce((sum, usage) => sum + (usage.cacheReadTokens ?? 0), 0),
-    cumulativeCacheWrite: usages.reduce((sum, usage) => sum + (usage.cacheWriteTokens ?? 0), 0),
-    cumulativeThinkingTokens: usages.reduce((sum, usage) => sum + (usage.thinkingTokens ?? 0), 0),
-    quality: usages.some((usage) => usage.quality === 'estimated') ? 'estimated' : 'exact',
-  }
+  return usages.reduce<SessionUsage>((total, usage) => ({
+    cumulativeTotal: (total.cumulativeTotal ?? 0) + usage.totalTokens,
+    cumulativeInput: total.cumulativeInput + (usage.inputTokens ?? 0),
+    cumulativeOutput: total.cumulativeOutput + (usage.outputTokens ?? 0),
+    cumulativeCacheRead: total.cumulativeCacheRead + (usage.cacheReadTokens ?? 0),
+    cumulativeCacheWrite: total.cumulativeCacheWrite + (usage.cacheWriteTokens ?? 0),
+    cumulativeThinkingTokens: (total.cumulativeThinkingTokens ?? 0) + (usage.thinkingTokens ?? 0),
+    quality: total.quality === 'estimated' || usage.quality === 'estimated' ? 'estimated' : 'exact',
+  }), {
+    cumulativeTotal: 0,
+    cumulativeInput: 0,
+    cumulativeOutput: 0,
+    cumulativeCacheRead: 0,
+    cumulativeCacheWrite: 0,
+    cumulativeThinkingTokens: 0,
+    quality: 'exact',
+  })
 }
 
 function sanitizeContextUsageSnapshot(value: unknown): ContextUsage | undefined {
@@ -863,15 +871,14 @@ function sanitizeMessages(messages: unknown): ChatMessage[] {
       : []
     if (parts.length === 0) continue
 
+    const tokenUsage = sanitizeTurnTokenUsage(msg.tokenUsage)
     sanitized.push({
       id: typeof msg.id === 'string' ? msg.id : generateId(),
       role,
       parts,
       timestamp: typeof msg.timestamp === 'number' ? msg.timestamp : Date.now(),
       ...(msg.isStreaming === true && { isStreaming: true }),
-      ...(sanitizeTurnTokenUsage(msg.tokenUsage) ? {
-        tokenUsage: sanitizeTurnTokenUsage(msg.tokenUsage),
-      } : {}),
+      ...(tokenUsage ? { tokenUsage } : {}),
     })
   }
 

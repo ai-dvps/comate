@@ -41,6 +41,20 @@ describe('message-normalizer historical images', () => {
     });
   });
 
+  it('marks an old historical assistant turn unavailable when usage was not persisted', () => {
+    const messages = [
+      { id: 'u1', role: 'user' as const, parts: [{ type: 'text' as const, text: 'go' }], timestamp: 1 },
+      { id: 'a1', role: 'assistant' as const, parts: [{ type: 'text' as const, text: 'done' }], timestamp: 2 },
+    ];
+
+    settleHistoricalAssistantTurns(messages);
+
+    assert.deepStrictEqual(
+      (messages[1] as unknown as { tokenUsage?: unknown }).tokenUsage,
+      { quality: 'unavailable' },
+    );
+  });
+
   it('preserves Claude image blocks in their original order', () => {
     const parts = partsFromSdkContent([
       { type: 'text', text: 'before' },

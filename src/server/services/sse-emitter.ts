@@ -287,8 +287,7 @@ export class SseEmitter {
         return;
       }
 
-      case 'result':
-        {
+      case 'result': {
         const resultMessageId = this.currentMessageId && this.assistantStartEmitted
           ? this.currentMessageId
           : undefined;
@@ -352,7 +351,7 @@ export class SseEmitter {
         this.blockStates.clear();
         this.seenStreamPartIndexes.clear();
         return;
-        }
+      }
 
       default:
         // tool_progress and other internal SDK frames are dropped; the new
