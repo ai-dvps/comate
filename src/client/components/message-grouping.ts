@@ -117,6 +117,7 @@ export function mergeAssistantTurns(messages: ChatMessage[]): TimestampedChatMes
           sourceTimestamps,
           sourcePartAnchors,
           isStreaming: buffer.some((m) => m.isStreaming),
+          tokenUsage: buffer[buffer.length - 1].tokenUsage,
         }
         mergedTurnCache.set(buffer[0], { refs: buffer.slice(), result })
         out.push(result)
