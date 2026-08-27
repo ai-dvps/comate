@@ -350,4 +350,28 @@ describe('CustomTitlebar', () => {
 
     expect(screen.getByTestId('titlebar-context')).toHaveStyle({ width: '138px' })
   })
+
+  it('keeps Windows window controls inside the expanded context width', () => {
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={0}
+        rightWidth={320}
+        leftCollapsed
+        rightCollapsed={false}
+        contextAvailable
+        tabs={[]}
+        activeTabId={null}
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
+        onToggleLeft={vi.fn()}
+        onToggleRight={vi.fn()}
+        isWindows
+      />,
+    )
+
+    expect(screen.getByTestId('titlebar-context')).toHaveStyle({ width: '320px' })
+    expect(screen.getByRole('button', { name: 'Collapse context panel' })).toBeVisible()
+  })
 })

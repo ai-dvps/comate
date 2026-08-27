@@ -41,6 +41,7 @@ const COLLAPSED_LEFT_WIDTH = 48
 const MACOS_TRAFFIC_LIGHTS_WIDTH = 72
 const LEFT_TOGGLE_SLOT_WIDTH = 40
 const NEW_CHAT_SLOT_WIDTH = 40
+const WINDOWS_WINDOW_CONTROLS_WIDTH = 138
 
 function TabIcon({ tab }: { tab: ContextTab }) {
   const className = 'h-3.5 w-3.5 text-text-tertiary/70 transition-colors group-hover:text-text-secondary'
@@ -80,6 +81,11 @@ export default function CustomTitlebar({
       : COLLAPSED_LEFT_WIDTH + NEW_CHAT_SLOT_WIDTH
     : leftWidth
   const contextSegmentWidth = contextAvailable ? (rightCollapsed ? 44 : rightWidth) : 0
+  const titlebarContextWidth = isWindows
+    ? contextAvailable && !rightCollapsed
+      ? Math.max(contextSegmentWidth, WINDOWS_WINDOW_CONTROLS_WIDTH)
+      : contextSegmentWidth + WINDOWS_WINDOW_CONTROLS_WIDTH
+    : contextSegmentWidth
   const leftToggleRef = useRef<HTMLButtonElement>(null)
   const rightToggleRef = useRef<HTMLButtonElement>(null)
   const previousCollapse = useRef({ left: leftCollapsed, right: rightCollapsed })
@@ -188,7 +194,7 @@ export default function CustomTitlebar({
           contextAvailable && !rightCollapsed && 'border-l border-border/70',
           isWindows && 'pr-[138px]',
         )}
-        style={{ width: contextSegmentWidth + (isWindows ? 138 : 0) }}
+        style={{ width: titlebarContextWidth }}
       >
         {!contextAvailable ? (
           <div data-electron-drag-region className="flex-1 self-stretch" />
