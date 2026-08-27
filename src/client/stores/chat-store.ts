@@ -13,6 +13,7 @@ import type {
   TaskItem,
   UserTurnImage,
   WorkflowState,
+  TurnTokenUsage,
 } from '../types/message'
 import { diagLog } from '../utils/diag-logger'
 import { getInitialSettings } from '../hooks/use-app-settings'
@@ -464,11 +465,13 @@ export interface TurnUsage {
 }
 
 export interface SessionUsage {
+  cumulativeTotal?: number
   cumulativeInput: number
   cumulativeOutput: number
   cumulativeCacheRead: number
   cumulativeCacheWrite: number
   cumulativeThinkingTokens?: number
+  quality?: 'exact' | 'estimated'
 }
 
 export interface ContextUsageCategory {
@@ -740,6 +743,108 @@ function sanitizeMessagePart(part: unknown): MessagePart | null {
   }
 }
 
+function sanitizeTurnTokenUsage(value: unknown): TurnTokenUsage | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const raw = value as Record<string, unknown>
+  if (raw.quality === 'unavailable') {
+    return { quality: 'unavailable', ...(typeof raw.reason === 'string' ? { reason: raw.reason } : {}) }
+  }
+  if ((raw.quality !== 'exact' && raw.quality !== 'estimated') ||
+      typeof raw.totalTokens !== 'number' || !Number.isFinite(raw.totalTokens) || raw.totalTokens < 0) {
+    return undefined
+  }
+  const usage: Exclude<TurnTokenUsage, { quality: 'unavailable' }> = {
+    quality: raw.quality,
+    totalTokens: raw.totalTokens,
+  }
+  for (const key of ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'thinkingTokens'] as const) {
+    const amount = raw[key]
+    if (typeof amount === 'number' && Number.isFinite(amount) && amount >= 0) usage[key] = amount
+  }
+  return usage
+}
+
+function legacyTurnTokenUsage(value: unknown): TurnTokenUsage | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const raw = value as Record<string, unknown>
+  const amount = (key: string): number | undefined => {
+    const candidate = raw[key]
+    return typeof candidate === 'number' && Number.isFinite(candidate) && candidate >= 0
+      ? candidate
+      : undefined
+  }
+  const inputTokens = amount('input_tokens')
+  const outputTokens = amount('output_tokens')
+  const cacheReadTokens = amount('cache_read_input_tokens')
+  const cacheWriteTokens = amount('cache_creation_input_tokens')
+  if ([inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens].every((entry) => entry === undefined)) {
+    return undefined
+  }
+  const details = raw.output_tokens_details
+  const thinkingTokens = details && typeof details === 'object'
+    ? (details as Record<string, unknown>).thinking_tokens
+    : undefined
+  return {
+    quality: 'exact',
+    totalTokens: (inputTokens ?? 0) + (outputTokens ?? 0) + (cacheReadTokens ?? 0) + (cacheWriteTokens ?? 0),
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
+    ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
+    ...(typeof thinkingTokens === 'number' && Number.isFinite(thinkingTokens) && thinkingTokens >= 0
+      ? { thinkingTokens }
+      : {}),
+  }
+}
+
+function deriveSessionUsage(messages: ChatMessage[]): SessionUsage | undefined {
+  const usages = messages.map((message) => message.tokenUsage)
+    .filter((usage): usage is Exclude<TurnTokenUsage, { quality: 'unavailable' }> =>
+      usage !== undefined && usage.quality !== 'unavailable')
+  if (usages.length === 0) return undefined
+  return {
+    cumulativeTotal: usages.reduce((sum, usage) => sum + usage.totalTokens, 0),
+    cumulativeInput: usages.reduce((sum, usage) => sum + (usage.inputTokens ?? 0), 0),
+    cumulativeOutput: usages.reduce((sum, usage) => sum + (usage.outputTokens ?? 0), 0),
+    cumulativeCacheRead: usages.reduce((sum, usage) => sum + (usage.cacheReadTokens ?? 0), 0),
+    cumulativeCacheWrite: usages.reduce((sum, usage) => sum + (usage.cacheWriteTokens ?? 0), 0),
+    cumulativeThinkingTokens: usages.reduce((sum, usage) => sum + (usage.thinkingTokens ?? 0), 0),
+    quality: usages.some((usage) => usage.quality === 'estimated') ? 'estimated' : 'exact',
+  }
+}
+
+function sanitizeContextUsageSnapshot(value: unknown): ContextUsage | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const raw = value as Record<string, unknown>
+  if (typeof raw.totalTokens !== 'number' || typeof raw.maxTokens !== 'number' ||
+      typeof raw.percentage !== 'number' || !Array.isArray(raw.categories)) return undefined
+  return {
+    totalTokens: raw.totalTokens,
+    maxTokens: raw.maxTokens,
+    percentage: raw.percentage,
+    categories: raw.categories.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object') return []
+      const category = entry as Record<string, unknown>
+      if (typeof category.name !== 'string' || typeof category.tokens !== 'number') return []
+      return [{ name: category.name, tokens: category.tokens,
+        ...(category.isDeferred === true ? { isDeferred: true } : {}) }]
+    }),
+    ...(typeof raw.model === 'string' ? { model: raw.model } : {}),
+    ...(typeof raw.rawMaxTokens === 'number' ? { rawMaxTokens: raw.rawMaxTokens } : {}),
+  }
+}
+
+function toLegacyTurnUsage(usage: TurnTokenUsage): TurnUsage | undefined {
+  if (usage.quality === 'unavailable') return undefined
+  return {
+    inputTokens: usage.inputTokens ?? 0,
+    outputTokens: usage.outputTokens ?? 0,
+    cacheReadTokens: usage.cacheReadTokens ?? 0,
+    cacheWriteTokens: usage.cacheWriteTokens ?? 0,
+    ...(usage.thinkingTokens !== undefined ? { thinkingTokens: usage.thinkingTokens } : {}),
+  }
+}
+
 function sanitizeMessages(messages: unknown): ChatMessage[] {
   if (!Array.isArray(messages)) return []
 
@@ -764,6 +869,9 @@ function sanitizeMessages(messages: unknown): ChatMessage[] {
       parts,
       timestamp: typeof msg.timestamp === 'number' ? msg.timestamp : Date.now(),
       ...(msg.isStreaming === true && { isStreaming: true }),
+      ...(sanitizeTurnTokenUsage(msg.tokenUsage) ? {
+        tokenUsage: sanitizeTurnTokenUsage(msg.tokenUsage),
+      } : {}),
     })
   }
 
@@ -2379,15 +2487,6 @@ export function handleSseEvent(
         delete newLastTurnUsage[sessionId]
         const newContextUsage = { ...state.contextUsage }
         delete newContextUsage[sessionId]
-        const resetSessionUsage = {
-          ...state.sessionUsage,
-          [sessionId]: {
-            cumulativeInput: 0,
-            cumulativeOutput: 0,
-            cumulativeCacheRead: 0,
-            cumulativeCacheWrite: 0,
-          },
-        }
         if (lastMessage && lastMessage.role === 'system') {
           return {
             ...withMessage,
@@ -2400,7 +2499,6 @@ export function handleSseEvent(
             isCompacting: { ...state.isCompacting, [sessionId]: false },
             compactingStartTime: { ...state.compactingStartTime, [sessionId]: 0 },
             lastTurnUsage: newLastTurnUsage,
-            sessionUsage: resetSessionUsage,
             contextUsage: newContextUsage,
           }
         }
@@ -2409,7 +2507,6 @@ export function handleSseEvent(
           isCompacting: { ...state.isCompacting, [sessionId]: false },
           compactingStartTime: { ...state.compactingStartTime, [sessionId]: 0 },
           lastTurnUsage: newLastTurnUsage,
-          sessionUsage: resetSessionUsage,
           contextUsage: newContextUsage,
         }
       })
@@ -2805,60 +2902,28 @@ export function handleSseEvent(
         // completion shows through the unread badge instead.
         const next: Partial<ChatState> = {}
 
-        const usage = data.usage as Record<string, unknown> | undefined
-        if (usage && typeof usage === 'object') {
-          const inputTokens =
-            typeof usage.input_tokens === 'number' ? usage.input_tokens : 0
-          const outputTokens =
-            typeof usage.output_tokens === 'number' ? usage.output_tokens : 0
-          const cacheReadTokens =
-            typeof usage.cache_read_input_tokens === 'number'
-              ? usage.cache_read_input_tokens
-              : 0
-          const cacheWriteTokens =
-            typeof usage.cache_creation_input_tokens === 'number'
-              ? usage.cache_creation_input_tokens
-              : 0
-          // CLI 2.1.237+ reports reasoning tokens in output_tokens_details.
-          const outputDetails = usage.output_tokens_details as
-            | { thinking_tokens?: unknown }
-            | undefined
-          const thinkingTokens =
-            typeof outputDetails?.thinking_tokens === 'number'
-              ? outputDetails.thinking_tokens
-              : undefined
-
-          const turnUsage: TurnUsage = {
-            inputTokens,
-            outputTokens,
-            cacheReadTokens,
-            cacheWriteTokens,
-            ...(thinkingTokens !== undefined && { thinkingTokens }),
-          }
-
-          const prevSession = state.sessionUsage[sessionId]
-          const sessionUsage: SessionUsage = {
-            cumulativeInput:
-              (prevSession?.cumulativeInput || 0) + inputTokens,
-            cumulativeOutput:
-              (prevSession?.cumulativeOutput || 0) + outputTokens,
-            cumulativeCacheRead:
-              (prevSession?.cumulativeCacheRead || 0) + cacheReadTokens,
-            cumulativeCacheWrite:
-              (prevSession?.cumulativeCacheWrite || 0) + cacheWriteTokens,
-            ...(thinkingTokens !== undefined && {
-              cumulativeThinkingTokens:
-                (prevSession?.cumulativeThinkingTokens || 0) + thinkingTokens,
-            }),
-          }
-
-          next.lastTurnUsage = {
-            ...state.lastTurnUsage,
-            [sessionId]: turnUsage,
-          }
-          next.sessionUsage = {
-            ...state.sessionUsage,
-            [sessionId]: sessionUsage,
+        const messageId = typeof data.messageId === 'string' ? data.messageId : undefined
+        const tokenUsage = sanitizeTurnTokenUsage(data.tokenUsage)
+          ?? legacyTurnTokenUsage(data.usage)
+          ?? (messageId ? { quality: 'unavailable' as const } : undefined)
+        if (messageId && tokenUsage) {
+          const currentMessages = state.messages[sessionId] ?? []
+          const messageIndex = currentMessages.findIndex(
+            (message) => message.id === messageId && message.role === 'assistant',
+          )
+          if (messageIndex >= 0) {
+            const messages = currentMessages.slice()
+            messages[messageIndex] = { ...messages[messageIndex], tokenUsage }
+            next.messages = { ...state.messages, [sessionId]: messages }
+            const sessionUsage = deriveSessionUsage(messages)
+            const nextSessionUsage = { ...state.sessionUsage }
+            if (sessionUsage) nextSessionUsage[sessionId] = sessionUsage
+            else delete nextSessionUsage[sessionId]
+            next.sessionUsage = nextSessionUsage
+            const turnUsage = toLegacyTurnUsage(tokenUsage)
+            if (turnUsage) {
+              next.lastTurnUsage = { ...state.lastTurnUsage, [sessionId]: turnUsage }
+            }
           }
         }
 
@@ -3941,19 +4006,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
         subagents?: unknown
         workflows?: unknown
         total?: number
+        contextUsage?: unknown
       }
       if (historyLoadRequests.get(sessionId) !== requestToken) return
 
       const mappedMessages = sanitizeMessages(data.messages)
+      const historicalContextUsage = sanitizeContextUsageSnapshot(data.contextUsage)
       const serverTasks = data.tasks ?? []
       const serverSubagents = sanitizeSubagents(data.subagents)
       const serverWorkflows = Array.isArray(data.workflows) ? (data.workflows as WorkflowState[]) : []
 
       set((state) => {
         const existing = state.messages[sessionId] || []
-        const loadedIds = new Set(mappedMessages.map((message) => message.id))
+        const existingById = new Map(existing.map((message) => [message.id, message]))
+        const mergedHistory = mappedMessages.map((message) => {
+          const live = existingById.get(message.id)
+          return live?.tokenUsage ? { ...message, tokenUsage: live.tokenUsage } : message
+        })
+        const loadedIds = new Set(mergedHistory.map((message) => message.id))
         const liveTail = existing.filter((message) => !loadedIds.has(message.id))
-        const combined = [...mappedMessages, ...liveTail]
+        const combined = [...mergedHistory, ...liveTail]
         const scannedTasks = scanMessagesForTasks(mappedMessages)
         const taskMap = new Map<string, TaskItem>()
         for (const task of serverTasks) {
@@ -3978,8 +4050,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         const mergedSubagentList = Array.from(mergedSubagents.values())
 
+        const sessionUsage = deriveSessionUsage(combined)
+        const nextSessionUsage = { ...state.sessionUsage }
+        if (sessionUsage) nextSessionUsage[sessionId] = sessionUsage
+        else delete nextSessionUsage[sessionId]
         return {
           messages: { ...state.messages, [sessionId]: combined },
+          sessionUsage: nextSessionUsage,
+          ...(historicalContextUsage && !state.contextUsage[sessionId] ? {
+            contextUsage: { ...state.contextUsage, [sessionId]: historicalContextUsage },
+          } : {}),
           isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false },
           historyLoadState: { ...state.historyLoadState, [sessionId]: 'loaded' },
           tasks: { ...state.tasks, [sessionId]: Array.from(taskMap.values()) },
