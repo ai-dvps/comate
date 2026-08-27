@@ -43,7 +43,7 @@ describe('CustomTitlebar', () => {
     expect(screen.getByTestId('custom-titlebar')).not.toHaveClass('border-b')
     expect(screen.getByTestId('titlebar-command-center')).toHaveStyle({ width: '288px' })
     expect(screen.getByTestId('titlebar-command-center')).toHaveClass('border-r')
-    expect(screen.getByTestId('titlebar-command-center')).not.toHaveClass('border-b')
+    expect(screen.getByTestId('titlebar-command-center')).toHaveClass('border-b')
     expect(screen.getByTestId('titlebar-conversation')).toHaveClass('border-b')
     expect(screen.getByTestId('titlebar-context')).toHaveClass('border-b')
     expect(screen.getByTestId('titlebar-context')).toHaveAttribute('data-electron-drag-region')
@@ -155,6 +155,7 @@ describe('CustomTitlebar', () => {
     )
 
     expect(screen.getByTestId('titlebar-command-center')).toHaveStyle({ width: '112px' })
+    expect(screen.getByTestId('titlebar-command-center')).toHaveClass('border-b')
     expect(screen.getByTestId('titlebar-command-center')).not.toHaveClass('border-r')
     expect(screen.getByTestId('titlebar-macos-traffic-lights')).toHaveClass('flex-shrink-0')
   })
