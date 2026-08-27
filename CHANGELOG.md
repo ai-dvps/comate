@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Agent selectors use recognizable brand icons** — Settings and the prompt toolbar now show the Claude, OpenCode, and OpenAI marks; locked conversations keep the selected agent mark and add a small lock overlay.
 - **Comate's main window supports a narrower compact layout** — The main window can now resize down to 480px while retaining its 1280px initial width and the detached browser's 640px minimum width.
 - **File tree expand/collapse uses a short animation** — Folder chevrons rotate and children open/close over ~150ms with a light fade; selection highlight eases in.
 - **File tree scroll-to-active-tab is smooth** — Switching editor tabs scrolls the navigator to the file with `behavior: 'smooth'` instead of jumping instantly.
