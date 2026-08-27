@@ -577,6 +577,71 @@ describe('CodexBackendDriver interactions', () => {
     ]);
   });
 
+  it('converts a selected slash Skill into native Codex Skill input', () => {
+    assert.deepStrictEqual(codexUserInput('/review inspect this change', [{
+      name: 'review',
+      description: 'Review changes',
+      path: '/tmp/project/.codex/skills/review/SKILL.md',
+    }]), [
+      {
+        type: 'text',
+        text: '$review inspect this change',
+        text_elements: [],
+      },
+      {
+        type: 'skill',
+        name: 'review',
+        path: '/tmp/project/.codex/skills/review/SKILL.md',
+      },
+    ]);
+  });
+
+  it('loads native Skill metadata before starting a slash Skill turn', async () => {
+    const client = new FakeClient();
+    const requests: Array<{ method: string; params?: Record<string, unknown> }> = [];
+    const manager = {
+      ensureClient: async () => client,
+      registerSkillRoots: async () => undefined,
+      listSkills: async () => [{
+        name: 'review',
+        description: 'Review changes',
+        path: '/tmp/project/.codex/skills/review/SKILL.md',
+      }],
+      request: async (method: string, params?: Record<string, unknown>) => {
+        requests.push({ method, params });
+        if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+        if (method === 'turn/start') return { turn: { id: 'turn-1' } };
+        return {};
+      },
+    } as unknown as CodexAppServerManager;
+    const driver = new CodexBackendDriver({
+      directory: '/tmp/project',
+      onBackendSessionId: () => undefined,
+      manager,
+    });
+    async function* input(): AsyncGenerator<SDKUserMessage> {
+      yield {
+        type: 'user',
+        uuid: 'message-skill',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: '/review inspect this change' },
+      } as SDKUserMessage;
+    }
+
+    driver.createStreamingQuery(input(), {} as Options);
+    await waitFor(() => requests.some((request) => request.method === 'turn/start'));
+
+    const turnStart = requests.find((request) => request.method === 'turn/start');
+    assert.deepStrictEqual(turnStart?.params?.input, [
+      { type: 'text', text: '$review inspect this change', text_elements: [] },
+      {
+        type: 'skill',
+        name: 'review',
+        path: '/tmp/project/.codex/skills/review/SKILL.md',
+      },
+    ]);
+  });
+
   it('routes command approval through the shared tool policy', async () => {
     const client = new FakeClient();
     const manager = {
