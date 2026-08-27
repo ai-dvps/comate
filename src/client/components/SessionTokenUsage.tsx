@@ -2,9 +2,8 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Gauge } from 'lucide-react'
 import { useChatStore, type ContextUsage } from '../stores/chat-store'
-import { useProviderStore } from '../stores/provider-store'
-import { getContextWindowForModel } from '../utils/model-context'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
+import { formatTokenCount } from './TokenSettlement'
 
 interface SessionTokenUsageProps {
   sessionId: string
@@ -24,11 +23,7 @@ const CATEGORY_COLORS = [
   '#3b82f6', // blue
 ] as const
 
-function formatTokens(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
-  if (value >= 1_000) return `${Math.round(value / 1_000)}k`
-  return String(value)
-}
+const formatTokens = formatTokenCount
 
 interface SectionRow {
   key: string
@@ -215,62 +210,40 @@ export default function SessionTokenUsage({
   const [open, setOpen] = useState(false)
   const cumulative = useChatStore((s) => s.sessionUsage[sessionId])
   const contextUsage = useChatStore((s) => s.contextUsage[sessionId])
-  const session = useChatStore((s) =>
-    s.sessions[workspaceId]?.find((ses) => ses.id === sessionId),
-  )
-  const providers = useProviderStore((s) => s.providers)
-  const activeProvider = providers.find((p) => p.id === session?.providerId)
-  const modelName =
-    activeProvider?.model || activeProvider?.name || 'claude-sonnet-4-6'
-
-  const contextWindow = getContextWindowForModel(modelName, modelUsage)
-  const hasSessionData = !!cumulative
-  const hasContextUsage = !!contextUsage
-
-  const fillPercentage = hasContextUsage
-    ? contextUsage.percentage
-    : hasSessionData
-      ? Math.min(
-          Math.round((cumulative.cumulativeInput / contextWindow) * 100),
-          100,
-        )
-      : undefined
-
-  if (fillPercentage === undefined) {
-    return (
-      <span className="text-[11px] text-text-tertiary">—</span>
-    )
-  }
-
-  // Without structured context data there is nothing to show in the card.
-  if (!hasContextUsage) {
-    return (
-      <span className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
-        {t('tokenUsage.context')}: {fillPercentage}%
-      </span>
-    )
-  }
+  void workspaceId
+  void modelUsage
+  const cumulativeTotal = cumulative?.cumulativeTotal ?? (cumulative
+    ? cumulative.cumulativeInput + cumulative.cumulativeOutput +
+      cumulative.cumulativeCacheRead + cumulative.cumulativeCacheWrite
+    : undefined)
+  const cumulativePrefix = cumulative?.quality === 'estimated'
+    ? `${t('tokenUsage.approx')} `
+    : ''
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 text-[11px] text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-secondary"
-          title={t('tokenUsage.contextCardTitle')}
-        >
-          <Gauge className="size-3" />
-          {t('tokenUsage.context')}: {fillPercentage}%
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
-        side="top"
-        align="end"
-        sideOffset={6}
-        className="z-50 rounded-lg border border-border bg-surface-active p-3 shadow-lg"
-      >
-        <ContextUsageCard usage={contextUsage} />
-      </PopoverContent>
-    </Popover>
+    <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] text-text-tertiary">
+      <span>{t('tokenUsage.session')}: {cumulativeTotal === undefined
+        ? '—'
+        : `${cumulativePrefix}${formatTokens(cumulativeTotal)}`}</span>
+      <span aria-hidden="true">·</span>
+      {contextUsage ? (
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <button type="button"
+              className="inline-flex items-center gap-1 rounded-md px-1 py-0.5 transition-colors hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              title={t('tokenUsage.contextCardTitle')}>
+              <Gauge className="size-3" aria-hidden="true" />
+              {t('tokenUsage.context')}: {contextUsage.percentage}%
+            </button>
+          </PopoverTrigger>
+          <PopoverContent side="top" align="end" sideOffset={6}
+            className="z-50 rounded-lg border border-border bg-surface-active p-3 shadow-lg">
+            <ContextUsageCard usage={contextUsage} />
+          </PopoverContent>
+        </Popover>
+      ) : (
+        <span>{t('tokenUsage.context')}: —</span>
+      )}
+    </div>
   )
 }

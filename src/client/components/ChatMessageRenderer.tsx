@@ -42,6 +42,7 @@ import { groupMessageParts } from './message-grouping'
 import ProcessRegionGhost from './ProcessRegionGhost'
 import type { DisplayMode } from '../hooks/use-app-settings'
 import type { ResultFocusRegion } from '../lib/result-focus-view'
+import TokenSettlement from './TokenSettlement'
 
 /* ------------------------------------------------------------------ */
 /*  Component props                                                     */
@@ -512,6 +513,9 @@ function ChatMessageRenderer({
           })}
         </MessageContent>
       </Message>
+      {message.role === 'assistant' && message.tokenUsage && (
+        <TokenSettlement usage={message.tokenUsage} />
+      )}
       {showTimestamp && (
         <MessageTimestamp
           timestamp={message.timestamp}
