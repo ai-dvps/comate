@@ -889,6 +889,9 @@ describe('CodexBackendDriver interactions', () => {
       threadId: 'thread-1', turnId: 'turn-1', tokenUsage: snapshot(100, 70, 30),
     }});
     client.emit('notification', { method: 'thread/tokenUsage/updated', params: {
+      threadId: 'thread-1', turnId: 'turn-1', tokenUsage: snapshot(100, 70, 30),
+    }});
+    client.emit('notification', { method: 'thread/tokenUsage/updated', params: {
       threadId: 'thread-1', turnId: 'turn-1', tokenUsage: snapshot(125, 88, 37),
     }});
     client.emit('notification', { method: 'turn/completed', params: {

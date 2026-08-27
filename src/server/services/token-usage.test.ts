@@ -1,3 +1,4 @@
+import '../test-utils/test-env.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeProviderTokenUsage, sumTurnTokenUsages } from './token-usage.js';

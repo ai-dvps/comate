@@ -295,6 +295,9 @@ describe('todos and lifecycle', () => {
     assert.equal(out[0].is_error, false);
     assert.equal(out[0].usage.input_tokens, 10);
     assert.equal(out[0].usage.output_tokens, 20);
+    assert.equal('cache_read_input_tokens' in out[0].usage, false);
+    assert.equal('cache_creation_input_tokens' in out[0].usage, false);
+    assert.equal('output_tokens_details' in out[0].usage, false);
   });
 
   it('completes an open reasoning part before session.idle finishes the turn', () => {

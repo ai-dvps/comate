@@ -313,11 +313,17 @@ function usageToSdk(
 ): Record<string, unknown> | undefined {
   if (!usage) return undefined;
   return {
-    input_tokens: usage.input ?? 0,
-    output_tokens: usage.output ?? 0,
-    cache_read_input_tokens: usage.cache?.read ?? 0,
-    cache_creation_input_tokens: usage.cache?.write ?? 0,
-    output_tokens_details: { thinking_tokens: usage.reasoning ?? 0 },
+    ...(usage.input !== undefined ? { input_tokens: usage.input } : {}),
+    ...(usage.output !== undefined ? { output_tokens: usage.output } : {}),
+    ...(usage.cache?.read !== undefined
+      ? { cache_read_input_tokens: usage.cache.read }
+      : {}),
+    ...(usage.cache?.write !== undefined
+      ? { cache_creation_input_tokens: usage.cache.write }
+      : {}),
+    ...(usage.reasoning !== undefined
+      ? { output_tokens_details: { thinking_tokens: usage.reasoning } }
+      : {}),
   };
 }
 

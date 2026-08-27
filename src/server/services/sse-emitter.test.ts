@@ -572,6 +572,34 @@ describe('SseEmitter async subagent lifecycle', { concurrency: false }, () => {
     assert.strictEqual(dones[0].parentToolUseId, 'tu-agent-1');
   });
 
+  it('does not fold an independent subagent settlement into its parent turn', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+    emitter.handle({
+      type: 'assistant',
+      message: { id: 'msg-parent', content: [{ type: 'text', text: 'parent' }] },
+    } as unknown as SDKMessage);
+    emitter.startSubagent('tu-agent-1', 'Research');
+    emitter.handle({
+      type: 'assistant', parent_tool_use_id: 'tu-agent-1',
+      message: { id: 'msg-child', content: [{ type: 'text', text: 'child' }] },
+    } as unknown as SDKMessage);
+    emitter.handle({
+      type: 'result', subtype: 'success', is_error: false, parent_tool_use_id: 'tu-agent-1',
+      usage: { input_tokens: 80, output_tokens: 20 },
+    } as unknown as SDKMessage);
+    emitter.handle({
+      type: 'result', subtype: 'success', is_error: false,
+      usage: { input_tokens: 8, output_tokens: 2 },
+    } as unknown as SDKMessage);
+
+    const parentResults = events.filter((event) => event.type === 'result');
+    assert.strictEqual(parentResults.length, 1);
+    assert.deepStrictEqual(parentResults[0].tokenUsage, {
+      quality: 'exact', totalTokens: 10, inputTokens: 8, outputTokens: 2,
+    });
+  });
+
   it('still finalizes a synchronous Agent tool_result', () => {
     const events: SseEvent[] = [];
     const emitter = new SseEmitter(null, (_id, event) => events.push(event));

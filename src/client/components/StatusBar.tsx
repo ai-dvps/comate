@@ -7,13 +7,11 @@ import SessionTokenUsage from './SessionTokenUsage'
 interface StatusBarProps {
   sessionId: string
   workspaceId: string
-  modelUsage?: Record<string, unknown>
 }
 
 export default function StatusBar({
   sessionId,
   workspaceId,
-  modelUsage,
 }: StatusBarProps) {
   return (
     <div className="flex items-center justify-between px-4 py-1.5 border-t border-border/10 gap-3 bg-chrome">
@@ -25,11 +23,7 @@ export default function StatusBar({
       <div className="flex items-center gap-2 min-w-0 overflow-hidden">
         <ProviderUsageStatus sessionId={sessionId} workspaceId={workspaceId} />
         <SessionEffortBadge sessionId={sessionId} />
-        <SessionTokenUsage
-          sessionId={sessionId}
-          workspaceId={workspaceId}
-          modelUsage={modelUsage}
-        />
+        <SessionTokenUsage sessionId={sessionId} />
       </div>
     </div>
   )

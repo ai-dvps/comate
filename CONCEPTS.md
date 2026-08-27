@@ -146,6 +146,9 @@ Agent Command Center 侧栏 Workspace 与 Session 列表的排序契约：列表
 ### 会话变更文件 (session changed files)
 聊天视图右侧浮动 Task 面板下方的浮动卡片，按会话派生 agent 通过文件工具（Edit/Write/MultiEdit/NotebookEdit）触碰过的文件（新增/修改/删除），供一眼感知与一键打开。它与工作区范围的 Changes tab 是不同表面：不依赖 git 状态、不含 bash 改动、从持久化会话历史重建（重启与历史会话仍可见），且不提供 review/diff 动作。
 
+### Token 结算条 (token settlement bar)
+每个 assistant 回合完成后归属于对应回复的用量摘要，显示该轮 Token 总量及后端可提供的输入、输出、缓存和推理拆分；准确值直接展示，推导或估算值标注“约”，后续回合不得覆盖既有结算结果。
+
 ### 桥接版本 (bridge release)
 Tauri→Electron 壳迁移中，最后一个 Tauri 版本承担的特殊角色：其自动更新通道指向首个 Electron 安装包，把存量用户平滑带到 Electron 线；更新失败时用户可回滚到该版本安装包。Linux 无桥接版本——首个 Linux 版本即 Electron 版本。
 

@@ -1,5 +1,6 @@
 import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk';
-import { readFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
 import type { ThreadItem } from '../generated/codex-protocol/v2/ThreadItem.js';
 import type { ThreadReadResponse } from '../generated/codex-protocol/v2/ThreadReadResponse.js';
 import type { Thread } from '../generated/codex-protocol/v2/Thread.js';
@@ -66,66 +67,78 @@ interface CodexRolloutHistory {
   contextUsage?: ContextUsageSnapshot;
 }
 
-function parseCodexRolloutHistory(contents: string): CodexRolloutHistory {
-  const settlements = new Map<string, TurnTokenUsage>();
-  let contextUsage: ContextUsageSnapshot | undefined;
-  let lastTotal: RolloutTokenCounts | undefined;
-  let active: { turnId: string; usage?: RolloutTokenCounts } | undefined;
-  for (const line of contents.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    let record: Record<string, unknown>;
-    try {
-      record = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      continue;
-    }
-    const payload = record.payload;
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) continue;
-    const event = payload as Record<string, unknown>;
-    if (event.type === 'task_started' && typeof event.turn_id === 'string') {
-      active = { turnId: event.turn_id };
-      continue;
-    }
-    if (event.type === 'token_count') {
-      const info = event.info;
-      if (!active || !info || typeof info !== 'object' || Array.isArray(info)) continue;
-      const details = info as Record<string, unknown>;
-      const total = rolloutCounts(details.total_token_usage);
-      const last = rolloutCounts(details.last_token_usage);
-      const maxTokens = typeof details.model_context_window === 'number'
-        ? details.model_context_window
-        : 0;
-      if (last && maxTokens > 0) {
-        contextUsage = {
-          totalTokens: last.totalTokens,
-          maxTokens,
-          rawMaxTokens: maxTokens,
-          percentage: (last.totalTokens / maxTokens) * 100,
-          categories: [
-            { name: 'input', tokens: last.inputTokens },
-            { name: 'cached input', tokens: last.cachedInputTokens },
-            { name: 'output', tokens: last.outputTokens },
-            { name: 'reasoning', tokens: last.reasoningOutputTokens },
-          ],
-        };
-      }
-      if (!total) continue;
-      if (!lastTotal) {
-        if (last) active.usage = addCounts(active.usage, last);
-      } else if (total.totalTokens !== lastTotal.totalTokens) {
-        const delta = subtractCounts(total, lastTotal);
-        active.usage = delta ? addCounts(active.usage, delta) : last;
-      }
-      lastTotal = total;
-      continue;
-    }
-    if (event.type === 'task_complete' && typeof event.turn_id === 'string'
-        && active?.turnId === event.turn_id) {
-      if (active.usage) settlements.set(active.turnId, toSettlement(active.usage));
-      active = undefined;
-    }
+interface CodexRolloutParseState extends CodexRolloutHistory {
+  lastTotal?: RolloutTokenCounts;
+  active?: { turnId: string; usage?: RolloutTokenCounts };
+}
+
+function createRolloutParseState(): CodexRolloutParseState {
+  return { settlements: new Map() };
+}
+
+function parseCodexRolloutLine(state: CodexRolloutParseState, line: string): void {
+  if (!line.trim()) return;
+  let record: Record<string, unknown>;
+  try {
+    record = JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return;
   }
-  return { settlements, contextUsage };
+  const payload = record.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
+  const event = payload as Record<string, unknown>;
+  if (event.type === 'task_started' && typeof event.turn_id === 'string') {
+    state.active = { turnId: event.turn_id };
+    return;
+  }
+  if (event.type === 'token_count') {
+    const info = event.info;
+    if (!state.active || !info || typeof info !== 'object' || Array.isArray(info)) return;
+    const details = info as Record<string, unknown>;
+    const total = rolloutCounts(details.total_token_usage);
+    const last = rolloutCounts(details.last_token_usage);
+    const maxTokens = typeof details.model_context_window === 'number'
+      ? details.model_context_window
+      : 0;
+    if (last && maxTokens > 0) {
+      state.contextUsage = {
+        totalTokens: last.totalTokens,
+        maxTokens,
+        rawMaxTokens: maxTokens,
+        percentage: (last.totalTokens / maxTokens) * 100,
+        categories: [
+          { name: 'input', tokens: last.inputTokens },
+          { name: 'cached input', tokens: last.cachedInputTokens },
+          { name: 'output', tokens: last.outputTokens },
+          { name: 'reasoning', tokens: last.reasoningOutputTokens },
+        ],
+      };
+    }
+    if (!total) return;
+    if (!state.lastTotal) {
+      if (last) state.active.usage = addCounts(state.active.usage, last);
+    } else if (total.totalTokens !== state.lastTotal.totalTokens) {
+      const delta = subtractCounts(total, state.lastTotal);
+      state.active.usage = delta ? addCounts(state.active.usage, delta) : last;
+    }
+    state.lastTotal = total;
+    return;
+  }
+  if (event.type === 'task_complete' && typeof event.turn_id === 'string'
+      && state.active?.turnId === event.turn_id) {
+    if (state.active.usage) {
+      state.settlements.set(state.active.turnId, toSettlement(state.active.usage));
+    }
+    state.active = undefined;
+  }
+}
+
+function parseCodexRolloutHistory(contents: string): CodexRolloutHistory {
+  const state = createRolloutParseState();
+  for (const line of contents.split(/\r?\n/)) {
+    parseCodexRolloutLine(state, line);
+  }
+  return { settlements: state.settlements, contextUsage: state.contextUsage };
 }
 
 export function parseCodexRolloutTokenUsage(contents: string): Map<string, TurnTokenUsage> {
@@ -135,7 +148,13 @@ export function parseCodexRolloutTokenUsage(contents: string): Map<string, TurnT
 async function readRolloutHistory(path: string | null): Promise<CodexRolloutHistory> {
   if (!path) return { settlements: new Map() };
   try {
-    return parseCodexRolloutHistory(await readFile(path, 'utf8'));
+    const state = createRolloutParseState();
+    const lines = createInterface({
+      input: createReadStream(path, { encoding: 'utf8' }),
+      crlfDelay: Infinity,
+    });
+    for await (const line of lines) parseCodexRolloutLine(state, line);
+    return { settlements: state.settlements, contextUsage: state.contextUsage };
   } catch {
     return { settlements: new Map() };
   }

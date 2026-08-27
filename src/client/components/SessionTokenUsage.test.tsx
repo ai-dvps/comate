@@ -37,7 +37,7 @@ vi.mock('../stores/provider-store', () => ({
 
 describe('SessionTokenUsage', () => {
   it('renders independent dashes when no usage data exists', () => {
-    renderWithI18n(<SessionTokenUsage sessionId="s1" workspaceId="ws1" />)
+    renderWithI18n(<SessionTokenUsage sessionId="s1" />)
     expect(screen.getByText(/Session: —/i)).toBeInTheDocument()
     expect(screen.getByText(/Context: —/i)).toBeInTheDocument()
   })
@@ -50,7 +50,7 @@ describe('SessionTokenUsage', () => {
       cumulativeCacheRead: 0,
       cumulativeCacheWrite: 0,
     }
-    renderWithI18n(<SessionTokenUsage sessionId="s1" workspaceId="ws1" />)
+    renderWithI18n(<SessionTokenUsage sessionId="s1" />)
     expect(screen.getByText(/Session: 11k/i)).toBeInTheDocument()
     expect(screen.getByText(/Context: —/i)).toBeInTheDocument()
   })
@@ -69,7 +69,7 @@ describe('SessionTokenUsage', () => {
       cumulativeCacheRead: 0,
       cumulativeCacheWrite: 0,
     }
-    renderWithI18n(<SessionTokenUsage sessionId="s1" workspaceId="ws1" />)
+    renderWithI18n(<SessionTokenUsage sessionId="s1" />)
     expect(screen.getByText(/Context: 15%/i)).toBeInTheDocument()
   })
 })
