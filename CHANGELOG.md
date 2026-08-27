@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **File tree expand/collapse uses a short animation** — Folder chevrons rotate and children open/close over ~150ms with a light fade; selection highlight eases in.
 - **File tree scroll-to-active-tab is smooth** — Switching editor tabs scrolls the navigator to the file with `behavior: 'smooth'` instead of jumping instantly.
 
+### Fixed
+
+- **Permission mode matches the compact prompt toolbar** — At narrow window widths, the permission selector now hides its text label like the other prompt controls instead of crowding the toolbar.
+
 ## [0.4.2] - 2026-08-27
 
 ### Fixed

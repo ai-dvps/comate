@@ -64,4 +64,18 @@ describe('ApprovalModeToggle', () => {
 
     expect(menuLabels).toEqual(['Auto', 'Read only', 'Ask before actions'])
   })
+
+  it('hides the selected mode label below the small breakpoint when requested', () => {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <ApprovalModeToggle
+          workspaceId="ws-1"
+          sessionId="session-1"
+          hideNameBelowSm
+        />
+      </I18nextProvider>,
+    )
+
+    expect(screen.getByText('Ask before actions')).toHaveClass('hidden', 'sm:inline')
+  })
 })
