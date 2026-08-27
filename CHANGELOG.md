@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **File tree syncs with the active editor tab** — Switching back to an open file tab now exits file search, expands the file's parent folders, highlights the file in the navigator, and scrolls it into view.
+- **Collapsed sidebar keeps New Chat within reach** — The titlebar now shows a New Chat shortcut beside the command-center expand button while the left sidebar is collapsed.
 
 ### Changed
 
@@ -98,6 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Titlebar icons now use a quieter visual weight** — Panel toggles, New Chat, context tabs, add, and close controls use softer semantic colors and a consistent thinner stroke while retaining clear hover and focus feedback.
 - **Claude Code settings are grouped with their Agent** — Agent choices now use a compact grouped-list layout with clearer selection and focus states, while Claude Code-specific options live in a default-open, smoothly animated Settings group with compact controls that match the rest of Settings.
 - **Comate desktop now shares the product's brand color system** — Primary controls use the logo-derived blue, Agent activity uses cyan, user-attention states use orange, and the light and dark work surfaces use cooler neutrals while success, destructive, Provider, code-syntax, and analytics colors retain their existing meanings.
 - **Comate website now presents a general-purpose Agent task workspace** — The bilingual site keeps its existing information architecture while replacing developer-first positioning with controlled everyday work, a complete finance-report workflow, current Electron product evidence, macOS/Windows/Linux download choices, an explicit bring-your-own-Provider prerequisite, and consent-gated measurement of anonymous visits and download actions.
