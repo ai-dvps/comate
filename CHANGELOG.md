@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **OpenCode Skills appear in every slash-command picker** — New chats discover project and global Skills before a runtime exists, while active sessions merge the OpenCode runtime's command and Skill catalogs instead of falling back to Claude SDK initialization.
 - **OpenCode reloads workspace Skills after they change** — Opening the slash-command picker now detects added, edited, or removed project Skills and safely rebuilds an idle OpenCode runtime; active turns finish before the refresh occurs.
 - **Codex conversations recover when a saved thread has no rollout** — Comate replaces only the missing thread, persists the replacement ID, and continues the pending first turn without hiding unrelated resume failures.
+- **Codex tool calls preserve live input parameters** — Streaming tool-use events now carry their JSON arguments through the shared SSE layer instead of exposing an empty input object.
 
 ## [0.4.1] - 2026-08-26
 
