@@ -4,7 +4,11 @@ import path from 'node:path';
 import type { Options, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { BackendDriver, BackendToolRequestHandler } from './backend-driver.js';
 import type { ProviderCodexModelProfile } from '../models/provider.js';
-import { codexAppServerManager, type CodexAppServerManager } from './codex-app-server-manager.js';
+import {
+  codexAppServerManager,
+  type CodexAppServerManager,
+  type CodexSkill,
+} from './codex-app-server-manager.js';
 import { CodexEventMapper } from './codex-event-mapper.js';
 import { CodexRpcError } from './codex-rpc-client.js';
 
@@ -183,10 +187,13 @@ export class CodexBackendDriver implements BackendDriver {
       for await (const message of input) {
         if (this.closed) break;
         const clientTurnId = message.uuid ?? randomUUID();
+        const skills = hasSlashReference(message.message.content)
+          ? await this.manager.listSkills(this.deps.directory)
+          : [];
         const response = await this.manager.request<{ turn: { id: string } }>('turn/start', {
           threadId: this.threadId,
           clientUserMessageId: clientTurnId,
-          input: codexUserInput(message.message.content),
+          input: codexUserInput(message.message.content, skills),
           ...(this.deps.model ? { model: this.deps.model } : {}),
           ...(this.deps.effort ? { effort: this.deps.effort } : {}),
           ...(this.deps.serviceTier ? { serviceTier: this.deps.serviceTier } : {}),
@@ -477,15 +484,44 @@ export function codexThreadConfig(
   };
 }
 
-export function codexUserInput(content: unknown): Array<Record<string, unknown>> {
-  if (typeof content === 'string') {
-    return [{ type: 'text', text: content, text_elements: [] }];
-  }
-  if (!Array.isArray(content)) {
-    return [{ type: 'text', text: String(content ?? ''), text_elements: [] }];
-  }
+const SLASH_REFERENCE_PATTERN = /(^|\s)\/(\S+)/g;
+
+function hasSlashReference(content: unknown): boolean {
+  if (typeof content === 'string') return /(^|\s)\/\S+/.test(content);
+  if (!Array.isArray(content)) return false;
+  return content.some((value) => {
+    if (!value || typeof value !== 'object') return false;
+    const block = value as { type?: unknown; text?: unknown };
+    return block.type === 'text' &&
+      typeof block.text === 'string' &&
+      /(^|\s)\/\S+/.test(block.text);
+  });
+}
+
+function codexSkillText(
+  text: string,
+  skillsByName: Map<string, CodexSkill>,
+  referencedSkills: Map<string, CodexSkill>,
+): string {
+  return text.replace(SLASH_REFERENCE_PATTERN, (match, prefix: string, name: string) => {
+    const skill = skillsByName.get(name);
+    if (!skill) return match;
+    referencedSkills.set(skill.path, skill);
+    return `${prefix}$${name}`;
+  });
+}
+
+export function codexUserInput(
+  content: unknown,
+  skills: CodexSkill[] = [],
+): Array<Record<string, unknown>> {
+  const values = Array.isArray(content)
+    ? content
+    : [{ type: 'text', text: typeof content === 'string' ? content : String(content ?? '') }];
   const input: Array<Record<string, unknown>> = [];
-  for (const value of content) {
+  const skillsByName = new Map(skills.map((skill) => [skill.name, skill]));
+  const referencedSkills = new Map<string, CodexSkill>();
+  for (const value of values) {
     if (!value || typeof value !== 'object') continue;
     const block = value as {
       type?: unknown;
@@ -493,7 +529,11 @@ export function codexUserInput(content: unknown): Array<Record<string, unknown>>
       source?: { type?: unknown; media_type?: unknown; data?: unknown };
     };
     if (block.type === 'text' && typeof block.text === 'string') {
-      input.push({ type: 'text', text: block.text, text_elements: [] });
+      input.push({
+        type: 'text',
+        text: codexSkillText(block.text, skillsByName, referencedSkills),
+        text_elements: [],
+      });
     } else if (
       block.type === 'image' &&
       block.source?.type === 'base64' &&
@@ -505,6 +545,9 @@ export function codexUserInput(content: unknown): Array<Record<string, unknown>>
         url: `data:${block.source.media_type};base64,${block.source.data}`,
       });
     }
+  }
+  for (const skill of referencedSkills.values()) {
+    input.push({ type: 'skill', name: skill.name, path: skill.path });
   }
   return input.length > 0 ? input : [{ type: 'text', text: '', text_elements: [] }];
 }

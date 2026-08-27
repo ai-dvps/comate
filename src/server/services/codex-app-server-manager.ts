@@ -1,8 +1,14 @@
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { homedir } from 'node:os';
+import path from 'node:path';
 import { sanitizeSubprocessEnv } from '../utils/sanitize-env.js';
 import { CODEX_EXPECTED_VERSION, resolveCodexBinary } from '../utils/resolve-codex-binary.js';
+import type { SkillMetadata } from '../generated/codex-protocol/v2/SkillMetadata.js';
+import type { SkillsListResponse } from '../generated/codex-protocol/v2/SkillsListResponse.js';
 import { CodexRpcClient, CodexRpcError } from './codex-rpc-client.js';
+
+export type CodexSkill = Pick<SkillMetadata, 'name' | 'description' | 'path'>;
 
 export class CodexAppServerManager extends EventEmitter {
   private process?: ChildProcessWithoutNullStreams;
@@ -43,6 +49,25 @@ export class CodexAppServerManager extends EventEmitter {
         });
       });
     await this.skillRootsUpdate;
+  }
+
+  async listSkills(cwd: string): Promise<CodexSkill[]> {
+    await this.registerSkillRoots([
+      path.join(cwd, '.claude', 'skills'),
+      path.join(homedir(), '.claude', 'skills'),
+    ]);
+    const response = await this.request<SkillsListResponse>('skills/list', {
+      cwds: [cwd],
+      forceReload: true,
+    });
+    const entry = response.data.find((item) => item.cwd === cwd) ?? response.data[0];
+    return (entry?.skills ?? [])
+      .filter((skill) => skill.enabled)
+      .map(({ name, description, path: skillPath }) => ({
+        name,
+        description,
+        path: skillPath,
+      }));
   }
 
   private async start(): Promise<CodexRpcClient> {
