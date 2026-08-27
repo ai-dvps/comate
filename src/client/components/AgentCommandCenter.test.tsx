@@ -745,7 +745,7 @@ describe('AgentCommandCenter', () => {
     expect(chatState.renameSession).toHaveBeenCalledWith('ws-1', 'session-a', 'Renamed draft')
   })
 
-  it('only offers deletion for Draft Sessions and confirms it', () => {
+  it('offers deletion for every session, draft or not, and confirms it', () => {
     renderCommandCenter(
       <AgentCommandCenter
         width={288}
@@ -758,8 +758,14 @@ describe('AgentCommandCenter', () => {
       />,
     )
 
+    // Non-draft sessions (real conversations with on-disk transcripts) are
+    // deletable too: deleting removes only Comate's record, so the menu item
+    // is no longer gated behind isDraft.
     fireEvent.contextMenu(screen.getByRole('button', { name: /Feishu conversation/ }))
-    expect(screen.queryByRole('menuitem', { name: 'Delete session' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete session' }))
+    expect(screen.getByRole('dialog', { name: 'Delete session?' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(chatState.deleteSession).toHaveBeenCalledWith('ws-1', 'session-feishu')
     fireEvent.keyDown(document, { key: 'Escape' })
 
     fireEvent.contextMenu(screen.getByRole('button', { name: /Needs approval/ }))
