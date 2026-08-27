@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Deleting a session no longer erases its conversation transcript** — Removing a session now deletes only Comate's own record and permanently hides the conversation from the sidebar for every source (GUI, WeCom, Feishu, and scheduled sessions); the underlying `.jsonl` transcript stays on disk and remains resumable or inspectable with the Claude CLI. Previously, deleting a non-draft session destroyed the transcript file.
+- **Deleting a session no longer erases its conversation transcript** — Every session is now deletable (previously only drafts offered the delete action), and removing one deletes only Comate's own record and permanently hides the conversation from the sidebar for every source (GUI, WeCom, Feishu, and scheduled sessions); the underlying `.jsonl` transcript stays on disk and remains resumable or inspectable with the Claude CLI. Previously, deleting a non-draft session destroyed the transcript file.
 
 ### Fixed
 
