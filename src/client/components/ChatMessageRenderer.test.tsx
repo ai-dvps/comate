@@ -76,6 +76,17 @@ describe('ChatMessageRenderer width', () => {
   })
 })
 
+describe('ChatMessageRenderer token settlement', () => {
+  it('renders one settlement line for an assistant message', () => {
+    render(<ChatMessageRenderer {...baseProps} message={{
+      ...makeTextMessage('done'),
+      tokenUsage: { quality: 'estimated', totalTokens: 1200 },
+    }} />)
+
+    expect(screen.getByRole('button', { name: /tokenUsage.turn.*1k/i })).toBeInTheDocument()
+  })
+})
+
 describe('ChatMessageRenderer historical images', () => {
   const imageMessage: RenderableMessage = {
     id: 'image-message',
