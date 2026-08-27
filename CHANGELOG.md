@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-08-27
+
+### Fixed
+
+- **Packaged Codex turns tolerate normal startup time** — The release acceptance gate now allows healthy Codex Provider turns up to 60 seconds to start while preserving its route, authorization, payload, and credential-leak checks.
+- **Switching a draft conversation to Codex starts a fresh thread** — Changing from Claude Code or OpenCode now clears the incompatible backend session reference, while reselecting the same backend keeps its resumable session.
+- **OpenCode Skills appear in every slash-command picker** — New chats discover project and global Skills before a runtime exists, while active sessions merge the OpenCode runtime's command and Skill catalogs instead of falling back to Claude SDK initialization.
+- **OpenCode reloads workspace Skills after they change** — Opening the slash-command picker now detects added, edited, or removed project Skills and safely rebuilds an idle OpenCode runtime; active turns finish before the refresh occurs.
+- **Codex conversations recover when a saved thread has no rollout** — Comate replaces only the missing thread, persists the replacement ID, and continues the pending first turn without hiding unrelated resume failures.
+
 ## [0.4.1] - 2026-08-26
 
 ### Added
@@ -13,8 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **OpenCode Skills appear in every slash-command picker** — New chats discover project and global Skills before a runtime exists, while active sessions merge the OpenCode runtime's command and Skill catalogs instead of falling back to Claude SDK initialization.
-- **OpenCode reloads workspace Skills after they change** — Opening the slash-command picker now detects added, edited, or removed project Skills and safely rebuilds an idle OpenCode runtime; active turns finish before the refresh occurs.
 - **OpenCode thinking indicators stop when sessions finish** — Terminal session events now complete active reasoning blocks instead of leaving the interface stuck in a thinking state.
 - **OpenCode tool calls show their parameters while streaming** — Tool input now crosses the live SSE boundary after OpenCode finishes assembling it, including the normal pending-to-running lifecycle.
 - **OpenCode auto-compaction recovers instead of ending the turn** — Recoverable context-overflow events now show compaction progress while OpenCode compacts and retries; failed recovery still surfaces the original error, including when the event stream disconnects mid-compaction.

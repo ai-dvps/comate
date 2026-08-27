@@ -71,7 +71,7 @@ export class CodexAppServerManager extends EventEmitter {
     });
     try {
       await client.request('initialize', {
-        clientInfo: { name: 'comate', title: 'Comate', version: '0.4.1' },
+        clientInfo: { name: 'comate', title: 'Comate', version: '0.4.2' },
         capabilities: null,
       }, 10_000);
     } catch (error) {
