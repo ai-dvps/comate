@@ -374,7 +374,9 @@ describe('FileExplorer', () => {
     })
 
     await waitFor(() => {
-      expect(scrollIntoView).toHaveBeenCalled()
+      expect(scrollIntoView).toHaveBeenCalledWith(
+        expect.objectContaining({ block: 'nearest', behavior: 'smooth' }),
+      )
     })
 
     expect(screen.getByTestId('file-tree-item')).toHaveAttribute('data-path', 'src/utils.ts')
