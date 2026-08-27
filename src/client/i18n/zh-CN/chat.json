@@ -173,7 +173,7 @@
   "forkSession": "分叉会话",
   "deleteSession": "删除会话",
   "deleteSessionConfirmTitle": "删除会话？",
-  "deleteSessionConfirmMessage": "确定要删除 \"{{name}}\" 吗？此操作无法撤销。",
+  "deleteSessionConfirmMessage": "确定要从 Comate 中移除 \"{{name}}\" 吗？此操作无法撤销。对话记录文件仍保留在磁盘上，可通过 Claude CLI 查看。",
   "deleteSessionConfirm": "删除",
   "deleteSessionCancel": "取消",
   "deleteSessionFailed": "删除会话失败",
