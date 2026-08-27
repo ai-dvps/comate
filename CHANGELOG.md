@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **File tree syncs with the active editor tab** — Switching back to an open file tab now exits file search, expands the file's parent folders, highlights the file in the navigator, and scrolls it into view.
+
+### Changed
+
+- **File tree expand/collapse uses a short animation** — Folder chevrons rotate and children open/close over ~150ms with a light fade; selection highlight eases in.
+- **File tree scroll-to-active-tab is smooth** — Switching editor tabs scrolls the navigator to the file with `behavior: 'smooth'` instead of jumping instantly.
+
 ## [0.4.2] - 2026-08-27
 
 ### Fixed
