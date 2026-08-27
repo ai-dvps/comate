@@ -6177,3 +6177,153 @@ describe('chat-service Provider rebuild generation', { concurrency: false }, () 
     }
   });
 });
+
+describe('chat-service deleteSession keeps transcripts (tombstone hide)', { concurrency: false }, () => {
+  const originalHome = process.env.HOME;
+  const originalGetDefaultProvider = workspaceStore.getDefaultProvider.bind(workspaceStore);
+
+  class TombstoneMockSdkClient extends SdkClient {
+    /** Sessions the disk scan "finds" (listSessions/getSessionInfo). */
+    known: SDKSessionInfo[] = [];
+    /** Messages the history scan "reads" (getSessionMessages). */
+    messages: SessionMessage[] = [];
+
+    override async listSessions(): Promise<SDKSessionInfo[]> {
+      return this.known;
+    }
+    override async getSessionInfo(sessionId: string): Promise<SDKSessionInfo | undefined> {
+      return this.known.find((s) => s.sessionId === sessionId);
+    }
+    override async getSessionMessages(): Promise<SessionMessage[]> {
+      return this.messages;
+    }
+    override async listSubagents(): Promise<string[]> {
+      return [];
+    }
+    override async getSubagentMessages(): Promise<SessionMessage[]> {
+      return [];
+    }
+    override async renameSession(): Promise<void> {}
+    override async forkSession(): Promise<{ sessionId: string }> {
+      return { sessionId: 'fork-s1' };
+    }
+  }
+
+  class TombstoneTestChatService extends ChatService {
+    constructor(sdk: TombstoneMockSdkClient) {
+      super(sdk);
+    }
+    protected override async testClaudeBinary(): Promise<void> {
+      // no-op to avoid spawning the real Claude binary in tests
+    }
+  }
+
+  const createdWorkspaceIds: string[] = [];
+
+  let service: ChatService;
+  let sdk: TombstoneMockSdkClient;
+  let tempHome: string;
+  let folderPath: string;
+
+  const transcriptPath = (sessionId: string) =>
+    path.join(tempHome, '.claude', 'projects', encodeProjectDir(folderPath), `${sessionId}.jsonl`);
+
+  const sdkInfo = (sessionId: string, summary: string): SDKSessionInfo => ({
+    sessionId,
+    summary,
+    lastModified: Date.now(),
+  });
+
+  async function createWorkspace(name: string): Promise<Workspace> {
+    const ws = await workspaceStore.create({ name, folderPath });
+    createdWorkspaceIds.push(ws.id);
+    return ws;
+  }
+
+  beforeEach(() => {
+    tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'comate-test-tombstone-'));
+    process.env.HOME = tempHome;
+    folderPath = path.join(tempHome, 'project');
+    sdk = new TombstoneMockSdkClient();
+    service = new TombstoneTestChatService(sdk);
+    workspaceStore.getDefaultProvider = () => createMockProvider();
+  });
+
+  afterEach(async () => {
+    await service.closeAllRuntimes();
+    workspaceStore.getDefaultProvider = originalGetDefaultProvider;
+    for (const id of createdWorkspaceIds.splice(0)) {
+      // Also clears this workspace's tombstones via the delete cascade.
+      await workspaceStore.delete(id);
+    }
+    process.env.HOME = originalHome;
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  });
+
+  it('deleting a non-draft session keeps its transcript file on disk', async () => {
+    const ws = await createWorkspace('Tombstone WS');
+    const session = workspaceStore.createLocalSession(ws.id, 'Real chat');
+    workspaceStore.setSessionDraft(session.id, false);
+    const file = transcriptPath(session.id);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '{"type":"user","message":{"role":"user","content":"hi"}}\n');
+
+    assert.equal(await service.deleteSession(session.id, ws.id), true);
+
+    assert.ok(fs.existsSync(file), 'transcript file survives deletion');
+    assert.equal(workspaceStore.getLocalSession(session.id), null, 'local row is gone');
+    assert.equal(workspaceStore.isSessionDeleted(session.id), true, 'tombstone recorded');
+  });
+
+  it('listSessions does not resurrect a deleted session discovered on disk', async () => {
+    const ws = await createWorkspace('Tombstone WS 2');
+    const dead = workspaceStore.createLocalSession(ws.id, 'Deleted chat');
+    workspaceStore.setSessionDraft(dead.id, false);
+    assert.equal(await service.deleteSession(dead.id, ws.id), true);
+
+    const liveId = '0e470f7a-1111-4222-8333-444455556666';
+    sdk.known = [sdkInfo(dead.id, 'deleted but still on disk'), sdkInfo(liveId, 'live session')];
+
+    const sessions = await service.listSessions(ws.id);
+    const ids = sessions.map((s) => s.id);
+    assert.ok(!ids.includes(dead.id), 'deleted session stays hidden');
+    assert.ok(ids.includes(liveId), 'control: a live discovered session appears');
+    assert.equal(workspaceStore.getLocalSession(dead.id), null, 'no row resurrected');
+  });
+
+  it('getSession returns null for a tombstoned id even when the SDK still knows it', async () => {
+    const ws = await createWorkspace('Tombstone WS 3');
+    const session = workspaceStore.createLocalSession(ws.id, 'Deleted chat');
+    workspaceStore.setSessionDraft(session.id, false);
+    assert.equal(await service.deleteSession(session.id, ws.id), true);
+
+    sdk.known = [sdkInfo(session.id, 'still on disk')];
+    assert.equal(await service.getSession(session.id, ws.id), null);
+    assert.equal(workspaceStore.getLocalSession(session.id), null, 'no row resurrected');
+  });
+
+  it('deleting a draft session keeps local-only semantics', async () => {
+    const ws = await createWorkspace('Tombstone WS 4');
+    const draft = workspaceStore.createLocalSession(ws.id, 'Draft chat');
+    assert.equal(draft.isDraft, true, 'createLocalSession starts as a draft');
+
+    assert.equal(await service.deleteSession(draft.id, ws.id), true);
+    assert.equal(workspaceStore.getLocalSession(draft.id), null);
+    assert.equal(workspaceStore.isSessionDeleted(draft.id), true);
+  });
+
+  it('loadMessages cannot resurrect a tombstoned session', async () => {
+    const ws = await createWorkspace('Tombstone WS 5');
+    const session = workspaceStore.createLocalSession(ws.id, 'Deleted chat');
+    workspaceStore.setSessionDraft(session.id, false);
+    assert.equal(await service.deleteSession(session.id, ws.id), true);
+
+    sdk.messages = [
+      { type: 'user', uuid: 'u1', message: { role: 'user', content: 'hi' } },
+    ] as unknown as SessionMessage[];
+    sdk.known = [sdkInfo(session.id, 'still on disk')];
+
+    await service.loadMessages(session.id, ws.id);
+    assert.equal(workspaceStore.getLocalSession(session.id), null, 'history load does not resurrect');
+  });
+});

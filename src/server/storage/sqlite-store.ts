@@ -665,6 +665,23 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_capability_tokens_session
         ON session_capability_tokens (session_id, revoked_at)
     `);
+    // Deleted-session tombstones: deleting a session removes only Comate's own
+    // record — the on-disk .jsonl transcript stays (recoverable via the Claude
+    // CLI). Because listSessions/getSession re-discover sessions from disk on
+    // every call, a tombstone is required so discovery can never re-insert a
+    // deleted ID ("zombie session"). Rows are permanent by design (no restore
+    // UI); they are cleaned up only when the owning workspace is deleted.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS deleted_sessions (
+        session_id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        deleted_at TEXT NOT NULL
+      )
+    `);
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_deleted_sessions_workspace
+        ON deleted_sessions (workspace_id)
+    `);
 
     ensureAnalyticsCacheSchema(this.db);
 
@@ -2333,6 +2350,9 @@ export class SqliteStore {
       `).run(id);
       this.db.prepare('DELETE FROM session_metadata WHERE session_id IN (SELECT id FROM sessions WHERE workspace_id = ?)').run(id);
       this.db.prepare('DELETE FROM sessions WHERE workspace_id = ?').run(id);
+      // Deleted-session tombstones die with their workspace: a re-added
+      // workspace starts clean and re-discovers whatever is on disk.
+      this.db.prepare('DELETE FROM deleted_sessions WHERE workspace_id = ?').run(id);
       // R15: deleting a workspace nulls the soft link on global todos; it never destroys them.
       this.db.prepare('UPDATE todos SET workspace_id = NULL WHERE workspace_id = ?').run(id);
       this.db.prepare('DELETE FROM wecom_proactive_messages WHERE workspace_id = ?').run(id);
@@ -2572,6 +2592,35 @@ export class SqliteStore {
     })();
   }
 
+  /** Permanent-hide tombstone check: true when this session ID was deleted locally. */
+  isSessionDeleted(sessionId: string): boolean {
+    return this.db
+      .prepare('SELECT 1 FROM deleted_sessions WHERE session_id = ?')
+      .get(sessionId) !== undefined;
+  }
+
+  /**
+   * Delete a session row AND record a permanent-hide tombstone in one
+   * transaction, so discovery sync (syncSdkSession) can never resurrect the
+   * ID while its transcript still exists on disk. Either both land or neither.
+   */
+  deleteSessionWithTombstone(id: string): boolean {
+    return this.db.transaction(() => {
+      const session = this.db.prepare('SELECT workspace_id FROM sessions WHERE id = ?').get(id) as
+        { workspace_id: string } | undefined;
+      if (!session) return false;
+      this.purgeBrowserTasksForSession(session.workspace_id, id);
+      this.db.prepare('DELETE FROM user_sessions WHERE session_id = ?').run(id);
+      const result = this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+      this.db.prepare(`
+        INSERT INTO deleted_sessions (session_id, workspace_id, deleted_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(session_id) DO UPDATE SET deleted_at = excluded.deleted_at
+      `).run(id, session.workspace_id, new Date().toISOString());
+      return result.changes > 0;
+    })();
+  }
+
   clearDraftFlag(id: string): boolean {
     const result = this.db.prepare(`
       UPDATE sessions SET is_draft = 0, updated_at = ? WHERE id = ?
@@ -2635,6 +2684,10 @@ export class SqliteStore {
   }
 
   syncSdkSession(session: ChatSession): void {
+    // Permanent hide: a tombstoned session must never be re-discovered into
+    // the sessions table, no matter which caller asks (list refresh,
+    // getSession, updateSession, history load).
+    if (this.isSessionDeleted(session.id)) return;
     // KTD4: transcript discovery initializes the ordering key from the
     // pre-upgrade client comparator expression (lastModified ?? Date.parse(createdAt)),
     // computed TS-side — created_at is ISO TEXT, so a raw SQL COALESCE would mix

@@ -174,7 +174,7 @@
   "forkSession": "Fork session",
   "deleteSession": "Delete session",
   "deleteSessionConfirmTitle": "Delete session?",
-  "deleteSessionConfirmMessage": "Are you sure you want to delete \"{{name}}\"? This cannot be undone.",
+  "deleteSessionConfirmMessage": "Remove \"{{name}}\" from Comate? This cannot be undone. The conversation transcript stays on disk and remains readable with the Claude CLI.",
   "deleteSessionConfirm": "Delete",
   "deleteSessionCancel": "Cancel",
   "deleteSessionFailed": "Failed to delete session",
