@@ -58,6 +58,21 @@ export type PermissionSuggestion =
 
 export type MessageRole = 'user' | 'assistant' | 'system'
 
+export type TokenUsageQuality = 'exact' | 'estimated' | 'unavailable'
+
+export interface TokenUsageBreakdown {
+  inputTokens?: number
+  outputTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  thinkingTokens?: number
+}
+
+/** Token settlement for one completed semantic assistant turn. */
+export type TurnTokenUsage =
+  | ({ quality: 'exact' | 'estimated'; totalTokens: number } & TokenUsageBreakdown)
+  | { quality: 'unavailable'; reason?: string }
+
 export type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
 
 /** Normalized image bytes submitted in one ordered user turn. */
@@ -141,6 +156,7 @@ export interface ChatMessage {
   isStreaming?: boolean
   isCompactBoundary?: boolean
   subType?: string
+  tokenUsage?: TurnTokenUsage
 }
 
 /**
@@ -334,11 +350,14 @@ export type SseEvent =
   | { type: 'assistant_done'; messageId: string }
   | {
       type: 'result'
+      /** Terminal assistant message for this turn; absent when no assistant started. */
+      messageId?: string
       subtype: string
       isError: boolean
       result?: string
       errors?: unknown
       usage?: unknown
+      tokenUsage?: TurnTokenUsage
       modelUsage?: unknown
       stopReason?: string | null
       terminalReason?: string

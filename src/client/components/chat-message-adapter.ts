@@ -1,4 +1,4 @@
-import type { ChatMessage } from '../types/message'
+import type { ChatMessage, TurnTokenUsage } from '../types/message'
 import type { SubagentMessage } from '../stores/chat-store'
 import type { MessageSearchMatch, SearchHighlightRange } from '../hooks/useMessageSearch'
 
@@ -51,6 +51,7 @@ export interface RenderableMessage {
   subType?: string
   timestamp?: number
   parts: RenderablePart[]
+  tokenUsage?: TurnTokenUsage
 }
 
 /* ------------------------------------------------------------------ */
@@ -72,6 +73,7 @@ export function adaptChatMessage(
     role: msg.role,
     subType: msg.subType,
     timestamp: msg.timestamp,
+    tokenUsage: msg.tokenUsage,
     parts: msg.parts
       .map((part, index): RenderablePart | null => {
         if (!part) return null
