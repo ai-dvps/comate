@@ -60,6 +60,8 @@ describe('BackendSection', () => {
     expect(screen.getByRole('radiogroup', { name: 'Agent' })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /Claude Code/ })).toBeChecked()
     expect(screen.getByRole('radio', { name: /Open Code/ })).not.toBeChecked()
+    expect(document.querySelector('[data-backend-option="claude"] [data-agent-icon="claude"]')).toBeInTheDocument()
+    expect(document.querySelector('[data-backend-option="opencode"] [data-agent-icon="opencode"]')).toBeInTheDocument()
   })
 
   it('exposes output style as a Claude Code-only agent setting', () => {
@@ -185,6 +187,7 @@ describe('BackendSection', () => {
     const user = userEvent.setup()
     renderSection()
 
+    expect(document.querySelector('[data-backend-option="codex"] [data-agent-icon="codex"]')).toBeInTheDocument()
     expect(await screen.findByRole('button', { name: 'Sign in with ChatGPT' })).toBeInTheDocument()
     await user.type(screen.getByLabelText('OpenAI API key'), 'sk-secret')
     await user.click(screen.getByRole('button', { name: 'Use API key' }))
