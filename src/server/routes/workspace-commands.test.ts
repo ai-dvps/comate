@@ -8,6 +8,7 @@ import commandRouter from './workspace-commands.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { commandsService } from '../services/commands-service.js';
 import { chatService } from '../services/chat-service.js';
+import { codexAppServerManager } from '../services/codex-app-server-manager.js';
 
 function routeHandler() {
   const layer = (commandRouter as unknown as {
@@ -35,6 +36,7 @@ const originalWorkspaceGet = workspaceStore.get.bind(workspaceStore);
 const originalLocalSessionGet = workspaceStore.getLocalSession.bind(workspaceStore);
 const originalGetCommands = commandsService.getCommands.bind(commandsService);
 const originalGetSessionBackendCommands = chatService.getSessionBackendCommands.bind(chatService);
+const originalListSkills = codexAppServerManager.listSkills.bind(codexAppServerManager);
 const tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -42,6 +44,7 @@ afterEach(async () => {
   workspaceStore.getLocalSession = originalLocalSessionGet;
   commandsService.getCommands = originalGetCommands;
   chatService.getSessionBackendCommands = originalGetSessionBackendCommands;
+  codexAppServerManager.listSkills = originalListSkills;
   await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
@@ -103,6 +106,60 @@ describe('workspace command discovery', () => {
 
     assert.deepEqual(res.jsonBody, {
       commands: [{ name: 'session-1', description: 'runtime command' }],
+      partial: false,
+    });
+  });
+
+  it('loads skills from Codex before a new chat has a session', async () => {
+    const handler = routeHandler();
+    assert.ok(handler);
+    workspaceStore.get = async () => ({
+      id: 'workspace-1',
+      folderPath: '/workspace',
+    }) as never;
+    codexAppServerManager.listSkills = async (cwd) => [{
+      name: `skill-for-${cwd}`,
+      description: 'Codex skill',
+      path: '/workspace/.codex/skills/new-chat/SKILL.md',
+    }];
+    const res = mockResponse();
+
+    await handler({
+      params: { id: 'workspace-1' },
+      query: { backend: 'codex' },
+    }, res);
+
+    assert.deepEqual(res.jsonBody, {
+      commands: [{ name: 'skill-for-/workspace', description: 'Codex skill' }],
+      partial: false,
+    });
+  });
+
+  it('loads skills from Codex rather than the OpenCode runtime for an existing session', async () => {
+    const handler = routeHandler();
+    assert.ok(handler);
+    workspaceStore.get = async () => ({
+      id: 'workspace-1',
+      folderPath: '/workspace',
+    }) as never;
+    workspaceStore.getLocalSession = () => ({ backend: 'codex' }) as never;
+    chatService.getSessionBackendCommands = async () => {
+      throw new Error('Codex discovery should not query the OpenCode runtime');
+    };
+    codexAppServerManager.listSkills = async () => [{
+      name: 'existing-session-skill',
+      description: 'Codex skill',
+      path: '/workspace/.codex/skills/existing/SKILL.md',
+    }];
+    const res = mockResponse();
+
+    await handler({
+      params: { id: 'workspace-1' },
+      query: { sessionId: 'session-1', backend: 'codex' },
+    }, res);
+
+    assert.deepEqual(res.jsonBody, {
+      commands: [{ name: 'existing-session-skill', description: 'Codex skill' }],
       partial: false,
     });
   });
