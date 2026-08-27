@@ -74,9 +74,9 @@ describe('useRightPanelWidth', () => {
     expect(storage.get('right-panel-previous-width')).toBe('500')
   })
 
-  it('clamps a restored previous width within [360, 90% of window width]', () => {
+  it('clamps a restored previous width to at most two thirds of the window', () => {
     storage.set('right-panel-width', '500')
-    storage.set('right-panel-previous-width', '900')
+    storage.set('right-panel-previous-width', '1400')
     storage.set('right-panel-collapsed', 'true')
     const { result } = renderHook(() => useRightPanelWidth())
 
@@ -84,7 +84,7 @@ describe('useRightPanelWidth', () => {
       result.current.toggleCollapse()
     })
 
-    expect(result.current.width).toBe(900)
+    expect(result.current.width).toBe(1066)
   })
 
   it('falls back to sensible defaults when localStorage entries are missing or corrupted', () => {
@@ -151,6 +151,24 @@ describe('useRightPanelWidth', () => {
     act(() => {
       result.current.setWidth(1500)
     })
-    expect(result.current.width).toBe(1440)
+    expect(result.current.width).toBe(1066)
+  })
+
+  it('constrains a saved expanded width when the window becomes narrower', () => {
+    storage.set('right-panel-collapsed', 'false')
+    storage.set('right-panel-width', '1000')
+    const { result, rerender } = renderHook(() => useRightPanelWidth())
+
+    expect(result.current.expandedWidth).toBe(1000)
+
+    Object.defineProperty(window, 'innerWidth', {
+      writable: true,
+      configurable: true,
+      value: 900,
+    })
+    rerender()
+
+    expect(result.current.expandedWidth).toBe(600)
+    expect(result.current.width).toBe(600)
   })
 })

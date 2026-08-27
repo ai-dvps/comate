@@ -50,9 +50,13 @@ export default function WorkspaceGitBranch({
   }
 
   return (
-    <span className="flex items-center gap-1 text-[11px] text-text-tertiary whitespace-nowrap shrink-0">
-      <GitBranch className="w-3 h-3" />
-      {gitRef}
+    <span
+      className="status-bar-git flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] text-text-tertiary"
+      title={gitRef}
+      aria-label={gitRef}
+    >
+      <GitBranch className="size-3" aria-hidden="true" />
+      <span className="status-bar-branch-value" aria-hidden="true">{gitRef}</span>
     </span>
   )
 }

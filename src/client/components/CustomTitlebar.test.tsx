@@ -350,4 +350,86 @@ describe('CustomTitlebar', () => {
 
     expect(screen.getByTestId('titlebar-context')).toHaveStyle({ width: '138px' })
   })
+
+  it('keeps Windows window controls beside the expanded context segment', () => {
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={288}
+        rightWidth={320}
+        leftCollapsed={false}
+        rightCollapsed={false}
+        contextAvailable
+        viewportWidth={1000}
+        tabs={[]}
+        activeTabId={null}
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
+        onToggleLeft={vi.fn()}
+        onToggleRight={vi.fn()}
+        isWindows
+      />,
+    )
+
+    expect(screen.getByTestId('titlebar-context')).toHaveStyle({ width: '458px' })
+  })
+
+  it('hides the conversation identity when an expanded context leaves too little space', () => {
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={0}
+        rightWidth={320}
+        leftCollapsed
+        rightCollapsed={false}
+        contextAvailable
+        viewportWidth={480}
+        workspaceName="Comate"
+        sessionName="Narrow session"
+        tabs={[]}
+        activeTabId={null}
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
+        onToggleLeft={vi.fn()}
+        onToggleRight={vi.fn()}
+        isMac
+      />,
+    )
+
+    expect(screen.getByTestId('titlebar-context')).toHaveStyle({ width: '320px' })
+    expect(screen.getByTestId('titlebar-conversation')).not.toHaveClass('px-3')
+    expect(screen.queryByText('Comate')).not.toBeInTheDocument()
+    expect(screen.queryByText('Narrow session')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Collapse context panel' })).toBeVisible()
+  })
+
+  it('keeps the conversation identity and spacing when enough width remains', () => {
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={0}
+        rightWidth={320}
+        leftCollapsed
+        rightCollapsed={false}
+        contextAvailable
+        viewportWidth={800}
+        workspaceName="Comate"
+        sessionName="Wide session"
+        tabs={[]}
+        activeTabId={null}
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
+        onToggleLeft={vi.fn()}
+        onToggleRight={vi.fn()}
+        isMac
+      />,
+    )
+
+    expect(screen.getByTestId('titlebar-conversation')).toHaveClass('px-3')
+    expect(screen.getByText('Comate')).toBeVisible()
+    expect(screen.getByText('Wide session')).toBeVisible()
+  })
 })

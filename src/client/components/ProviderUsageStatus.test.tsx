@@ -71,7 +71,7 @@ describe('ProviderUsageStatus', () => {
   it('loads and displays usage for the provider selected by the current session', async () => {
     renderComponent()
 
-    expect(screen.getByText(/Usage: 20 \/ 100/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Usage: 20 \/ 100/i)).toBeInTheDocument()
     await waitFor(() => expect(fetchUsage).toHaveBeenCalledWith('p2', { agent: 'codex' }))
   })
 
