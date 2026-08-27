@@ -21,6 +21,7 @@ interface CustomTitlebarProps {
   leftCollapsed: boolean
   rightCollapsed: boolean
   contextAvailable: boolean
+  viewportWidth?: number
   workspaceName?: string
   sessionName?: string
   managementTitle?: string
@@ -42,6 +43,7 @@ const MACOS_TRAFFIC_LIGHTS_WIDTH = 72
 const LEFT_TOGGLE_SLOT_WIDTH = 40
 const NEW_CHAT_SLOT_WIDTH = 40
 const WINDOWS_WINDOW_CONTROLS_WIDTH = 138
+const MIN_CONVERSATION_TITLE_WIDTH = 160
 
 function TabIcon({ tab }: { tab: ContextTab }) {
   const className = 'h-3.5 w-3.5 text-text-tertiary/70 transition-colors group-hover:text-text-secondary'
@@ -60,6 +62,7 @@ export default function CustomTitlebar({
   leftCollapsed,
   rightCollapsed,
   contextAvailable,
+  viewportWidth,
   workspaceName,
   sessionName,
   managementTitle,
@@ -81,11 +84,15 @@ export default function CustomTitlebar({
       : COLLAPSED_LEFT_WIDTH + NEW_CHAT_SLOT_WIDTH
     : leftWidth
   const contextSegmentWidth = contextAvailable ? (rightCollapsed ? 44 : rightWidth) : 0
-  const titlebarContextWidth = isWindows
-    ? contextAvailable && !rightCollapsed
-      ? Math.max(contextSegmentWidth, WINDOWS_WINDOW_CONTROLS_WIDTH)
-      : contextSegmentWidth + WINDOWS_WINDOW_CONTROLS_WIDTH
-    : contextSegmentWidth
+  const titlebarContextWidth = contextSegmentWidth
+    + (isWindows ? WINDOWS_WINDOW_CONTROLS_WIDTH : 0)
+  const availableConversationWidth = viewportWidth === undefined
+    ? Number.POSITIVE_INFINITY
+    : viewportWidth - leftSegmentWidth - titlebarContextWidth
+  const hideConversationTitle = contextAvailable
+    && !managementTitle
+    && !rightCollapsed
+    && availableConversationWidth < MIN_CONVERSATION_TITLE_WIDTH
   const leftToggleRef = useRef<HTMLButtonElement>(null)
   const rightToggleRef = useRef<HTMLButtonElement>(null)
   const previousCollapse = useRef({ left: leftCollapsed, right: rightCollapsed })
@@ -169,20 +176,25 @@ export default function CustomTitlebar({
 
       <div
         data-testid="titlebar-conversation"
-        className="flex min-w-0 flex-1 items-center border-b border-border px-3"
+        className={cn(
+          'flex min-w-0 flex-1 items-center border-b border-border',
+          !hideConversationTitle && 'px-3',
+        )}
       >
         <div data-electron-drag-region className="min-w-0 flex-1 self-stretch" />
-        <div className="pointer-events-none min-w-0 max-w-[70%] text-center">
-          {managementTitle ? (
-            <div className="truncate text-xs font-medium text-text-primary">{managementTitle}</div>
-          ) : (
-            <div className="flex min-w-0 items-center justify-center gap-1.5 text-xs">
-              <span className="truncate text-text-tertiary">{workspaceName}</span>
-              {workspaceName && sessionName ? <span className="text-text-tertiary/50">/</span> : null}
-              <span className="truncate font-medium text-text-primary">{sessionName}</span>
-            </div>
-          )}
-        </div>
+        {hideConversationTitle ? null : (
+          <div className="pointer-events-none min-w-0 max-w-[70%] text-center">
+            {managementTitle ? (
+              <div className="truncate text-xs font-medium text-text-primary">{managementTitle}</div>
+            ) : (
+              <div className="flex min-w-0 items-center justify-center gap-1.5 text-xs">
+                <span className="truncate text-text-tertiary">{workspaceName}</span>
+                {workspaceName && sessionName ? <span className="text-text-tertiary/50">/</span> : null}
+                <span className="truncate font-medium text-text-primary">{sessionName}</span>
+              </div>
+            )}
+          </div>
+        )}
         <div data-electron-drag-region className="min-w-0 flex-1 self-stretch" />
       </div>
 
