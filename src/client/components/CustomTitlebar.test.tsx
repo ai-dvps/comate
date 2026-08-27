@@ -9,6 +9,42 @@ function renderTitlebar(ui: React.ReactElement) {
 }
 
 describe('CustomTitlebar', () => {
+  it('renders every titlebar icon with a softer color and thinner stroke', () => {
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={0}
+        rightWidth={520}
+        leftCollapsed
+        rightCollapsed={false}
+        contextAvailable
+        tabs={[{
+          type: 'file',
+          id: 'file:App.tsx',
+          workspaceId: 'ws-1',
+          path: 'App.tsx',
+          name: 'App.tsx',
+          content: '',
+          isBinary: false,
+          preview: false,
+        }]}
+        activeTabId="file:App.tsx"
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
+        onToggleLeft={vi.fn()}
+        onToggleRight={vi.fn()}
+      />,
+    )
+
+    const icons = screen.getByTestId('custom-titlebar').querySelectorAll('svg')
+    expect(icons.length).toBeGreaterThan(0)
+    icons.forEach((icon) => {
+      expect(icon).toHaveAttribute('stroke-width', '1.5')
+      expect(icon).toHaveClass('text-text-tertiary/70')
+    })
+  })
+
   it('aligns conversation identity and typed tabs with interactive no-drag controls', () => {
     const onToggleLeft = vi.fn()
     const onToggleRight = vi.fn()

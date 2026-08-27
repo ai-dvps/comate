@@ -80,6 +80,6 @@ describe('Comate theme contract', () => {
     expect(commandCenter).toContain('WorkspaceFolderIcon')
     expect(commandCenter).toContain('flex-shrink-0 text-text-secondary')
     expect(commandCenter).toContain("icon: SquarePen, action: onNewChat")
-    expect(titlebar).toContain('SquarePen className="h-4 w-4"')
+    expect(titlebar).toContain('SquarePen className="h-4 w-4 text-text-tertiary/70')
   })
 })
