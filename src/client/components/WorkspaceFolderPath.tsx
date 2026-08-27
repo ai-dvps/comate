@@ -19,11 +19,15 @@ export default function WorkspaceFolderPath({
   }
 
   return (
-    <span className="flex items-center gap-1 min-w-0">
-      <Folder className="w-3 h-3 text-text-tertiary shrink-0" />
+    <span
+      className="status-bar-workspace flex min-w-0 items-center gap-1"
+      title={folderPath}
+      aria-label={folderPath}
+    >
+      <Folder className="size-3 shrink-0 text-text-tertiary" aria-hidden="true" />
       <span
-        className="text-[11px] text-text-tertiary truncate max-w-[200px]"
-        title={folderPath}
+        className="status-bar-path-value max-w-[200px] truncate text-[11px] text-text-tertiary"
+        aria-hidden="true"
       >
         {folderPath}
       </span>

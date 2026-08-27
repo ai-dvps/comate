@@ -419,6 +419,61 @@
   -webkit-app-region: drag;
 }
 
+/* The conversation column can be much narrower than the viewport when both
+   side panels are open, so the status bar responds to its own inline size. */
+.status-bar-shell {
+  container-type: inline-size;
+}
+
+.status-bar {
+  gap: 0.75rem;
+}
+
+@container (max-width: 560px) {
+  .status-bar-label,
+  .status-bar-path-value,
+  .status-bar-branch-value,
+  .status-bar-separator {
+    display: none;
+  }
+
+  .status-bar-compact-icon {
+    display: block;
+  }
+
+  .status-bar-location,
+  .status-bar-metrics {
+    gap: 0.5rem;
+  }
+}
+
+@container (max-width: 360px) {
+  .status-bar {
+    gap: 0.25rem;
+    padding-inline: 0.5rem;
+  }
+
+  .status-bar-git,
+  .status-bar-effort {
+    display: none;
+  }
+
+  .status-bar-provider-usage .status-bar-compact-icon,
+  .status-bar-session-usage > span:first-child .status-bar-compact-icon {
+    display: none;
+  }
+
+  .status-bar-context-usage {
+    padding-inline: 0;
+  }
+
+  .status-bar-location,
+  .status-bar-metrics,
+  .status-bar-session-usage {
+    gap: 0.375rem;
+  }
+}
+
 /* Windows drops the native top edge for a hidden title bar. Restore that
    subtle frame while the window is restored, without shifting header layout. */
 [data-windows-restored-frame] {
