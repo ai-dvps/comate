@@ -827,23 +827,80 @@ describe('CodexBackendDriver interactions', () => {
             outputTokens: 30,
             reasoningOutputTokens: 10,
           },
-          last: {},
+          last: {
+            totalTokens: 60,
+            inputTokens: 40,
+            cachedInputTokens: 10,
+            cacheWriteInputTokens: 0,
+            outputTokens: 15,
+            reasoningOutputTokens: 5,
+          },
           modelContextWindow: 1_000,
         },
       },
     });
     const usage = await query.getContextUsage();
 
-    assert.strictEqual(usage.totalTokens, 120);
+    assert.strictEqual(usage.totalTokens, 60);
     assert.strictEqual(usage.maxTokens, 1_000);
-    assert.strictEqual(usage.percentage, 12);
+    assert.strictEqual(usage.percentage, 6);
     assert.strictEqual(usage.model, 'gpt-codex');
     assert.deepStrictEqual(usage.categories.map((category) => [category.name, category.tokens]), [
-      ['input', 80],
-      ['cached input', 20],
-      ['output', 30],
-      ['reasoning', 10],
+      ['input', 40],
+      ['cached input', 10],
+      ['output', 15],
+      ['reasoning', 5],
     ]);
+    releaseInput();
+    query.close();
+  });
+
+  it('settles a Codex turn from monotonic token snapshot deltas', async () => {
+    const client = new FakeClient();
+    const manager = {
+      ensureClient: async () => client,
+      request: async (method: string) => {
+        if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+        if (method === 'turn/start') return { turn: { id: 'turn-1' } };
+        return {};
+      },
+    } as unknown as CodexAppServerManager;
+    const driver = new CodexBackendDriver({
+      directory: '/tmp/project', onBackendSessionId: () => undefined, manager,
+    });
+    let releaseInput!: () => void;
+    const hold = new Promise<void>((resolve) => { releaseInput = resolve; });
+    async function* input(): AsyncGenerator<SDKUserMessage> {
+      yield { type: 'user', uuid: 'message-1', parent_tool_use_id: null,
+        message: { role: 'user', content: 'hello' } } as SDKUserMessage;
+      await hold;
+    }
+    const { query, messages } = driver.createStreamingQuery(input(), {} as Options);
+    await waitFor(() => client.listenerCount('notification') === 1);
+
+    const snapshot = (totalTokens: number, inputTokens: number, outputTokens: number) => ({
+      total: { totalTokens, inputTokens, cachedInputTokens: 10,
+        cacheWriteInputTokens: 2, outputTokens, reasoningOutputTokens: 3 },
+      last: { totalTokens: 30, inputTokens: 20, cachedInputTokens: 5,
+        cacheWriteInputTokens: 1, outputTokens: 10, reasoningOutputTokens: 3 },
+      modelContextWindow: 1_000,
+    });
+    client.emit('notification', { method: 'thread/tokenUsage/updated', params: {
+      threadId: 'thread-1', turnId: 'turn-1', tokenUsage: snapshot(100, 70, 30),
+    }});
+    client.emit('notification', { method: 'thread/tokenUsage/updated', params: {
+      threadId: 'thread-1', turnId: 'turn-1', tokenUsage: snapshot(125, 88, 37),
+    }});
+    client.emit('notification', { method: 'turn/completed', params: {
+      threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' },
+    }});
+
+    const result = await messages.next();
+    assert.strictEqual(result.done, false);
+    assert.deepStrictEqual((result.value as unknown as { tokenUsage?: unknown }).tokenUsage, {
+      quality: 'estimated', totalTokens: 55, inputTokens: 38, outputTokens: 17,
+      cacheReadTokens: 5, cacheWriteTokens: 1, thinkingTokens: 3,
+    });
     releaseInput();
     query.close();
   });

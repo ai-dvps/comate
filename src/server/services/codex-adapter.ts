@@ -11,6 +11,52 @@ import {
 } from './codex-app-server-manager.js';
 import { CodexEventMapper } from './codex-event-mapper.js';
 import { CodexRpcError } from './codex-rpc-client.js';
+import type { TurnTokenUsage } from '../types/message.js';
+
+interface CodexTokenCounts {
+  totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+}
+
+interface CodexThreadTokenUsage {
+  total: CodexTokenCounts;
+  last: CodexTokenCounts;
+  modelContextWindow: number | null;
+}
+
+function addTokenCounts(left: CodexTokenCounts | undefined, right: CodexTokenCounts): CodexTokenCounts {
+  return {
+    totalTokens: (left?.totalTokens ?? 0) + right.totalTokens,
+    inputTokens: (left?.inputTokens ?? 0) + right.inputTokens,
+    cachedInputTokens: (left?.cachedInputTokens ?? 0) + right.cachedInputTokens,
+    cacheWriteInputTokens: (left?.cacheWriteInputTokens ?? 0) + right.cacheWriteInputTokens,
+    outputTokens: (left?.outputTokens ?? 0) + right.outputTokens,
+    reasoningOutputTokens: (left?.reasoningOutputTokens ?? 0) + right.reasoningOutputTokens,
+  };
+}
+
+function subtractTokenCounts(next: CodexTokenCounts, previous: CodexTokenCounts): CodexTokenCounts | null {
+  const keys = Object.keys(next) as Array<keyof CodexTokenCounts>;
+  if (keys.some((key) => next[key] < previous[key])) return null;
+  return Object.fromEntries(keys.map((key) => [key, next[key] - previous[key]])) as unknown as CodexTokenCounts;
+}
+
+function estimatedCodexSettlement(usage: CodexTokenCounts | undefined): TurnTokenUsage | undefined {
+  if (!usage) return undefined;
+  return {
+    quality: 'estimated',
+    totalTokens: usage.totalTokens,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    cacheReadTokens: usage.cachedInputTokens,
+    cacheWriteTokens: usage.cacheWriteInputTokens,
+    thinkingTokens: usage.reasoningOutputTokens,
+  };
+}
 
 interface CodexAdapterDeps {
   directory: string;
@@ -73,16 +119,9 @@ export class CodexBackendDriver implements BackendDriver {
     string,
     { resolve(): void; reject(error: unknown): void }
   >();
-  private tokenUsage?: {
-    total: {
-      totalTokens: number;
-      inputTokens: number;
-      cachedInputTokens: number;
-      outputTokens: number;
-      reasoningOutputTokens: number;
-    };
-    modelContextWindow: number | null;
-  };
+  private tokenUsage?: CodexThreadTokenUsage;
+  private lastTokenTotal?: CodexTokenCounts;
+  private currentTurnUsage?: CodexTokenCounts;
 
   constructor(private readonly deps: CodexAdapterDeps) {
     this.manager = deps.manager ?? codexAppServerManager;
@@ -117,7 +156,7 @@ export class CodexBackendDriver implements BackendDriver {
         this.queue.end();
       },
       getContextUsage: async () => {
-        const usage = this.tokenUsage?.total;
+        const usage = this.tokenUsage?.last;
         const totalTokens = usage?.totalTokens ?? 0;
         const maxTokens = this.tokenUsage?.modelContextWindow ?? 0;
         return {
@@ -199,6 +238,7 @@ export class CodexBackendDriver implements BackendDriver {
           ...(this.deps.serviceTier ? { serviceTier: this.deps.serviceTier } : {}),
         });
         this.turnId = response.turn.id;
+        this.currentTurnUsage = undefined;
         this.pendingAdmissions.get(clientTurnId)?.resolve();
         this.pendingAdmissions.delete(clientTurnId);
       }
@@ -388,14 +428,29 @@ export class CodexBackendDriver implements BackendDriver {
     const params = message.params;
     if (params.threadId !== this.threadId) return;
     if (message.method === 'thread/tokenUsage/updated') {
-      this.tokenUsage = params.tokenUsage as typeof this.tokenUsage;
+      const tokenUsage = params.tokenUsage as CodexThreadTokenUsage;
+      this.tokenUsage = tokenUsage;
+      if (tokenUsage?.total && tokenUsage?.last &&
+          (typeof params.turnId !== 'string' || params.turnId === this.turnId)) {
+        if (!this.lastTokenTotal) {
+          this.currentTurnUsage = addTokenCounts(this.currentTurnUsage, tokenUsage.last);
+        } else if (tokenUsage.total.totalTokens !== this.lastTokenTotal.totalTokens) {
+          const delta = subtractTokenCounts(tokenUsage.total, this.lastTokenTotal);
+          this.currentTurnUsage = delta
+            ? addTokenCounts(this.currentTurnUsage, delta)
+            : tokenUsage.last;
+        }
+        this.lastTokenTotal = tokenUsage.total;
+      }
     }
     for (const mapped of this.mapper.map(message.method, params)) this.queue.push(mapped);
     if (message.method === 'turn/completed') {
       this.queue.push(resultMessage(
         this.threadId ?? '',
         redactCodexError(codexTurnFailure(params), this.deps.provider?.bearerToken),
+        estimatedCodexSettlement(this.currentTurnUsage),
       ));
+      this.currentTurnUsage = undefined;
       this.turnId = undefined;
     }
   }
@@ -552,12 +607,18 @@ export function codexUserInput(
   return input.length > 0 ? input : [{ type: 'text', text: '', text_elements: [] }];
 }
 
-function resultMessage(sessionId: string, error?: unknown): SDKMessage {
+function resultMessage(
+  sessionId: string,
+  error?: unknown,
+  tokenUsage?: TurnTokenUsage,
+): SDKMessage {
   const message = error instanceof Error ? error.message : error ? String(error) : undefined;
   return {
     type: 'result', subtype: message ? 'error_during_execution' : 'success', is_error: Boolean(message),
     duration_ms: 0, duration_api_ms: 0, num_turns: 1, total_cost_usd: 0,
-    session_id: sessionId, ...(message ? { errors: [`codex backend error: ${message}`] } : {}),
+    session_id: sessionId,
+    ...(tokenUsage ? { tokenUsage } : {}),
+    ...(message ? { errors: [`codex backend error: ${message}`] } : {}),
   } as unknown as SDKMessage;
 }
 

@@ -317,6 +317,7 @@ function usageToSdk(
     output_tokens: usage.output ?? 0,
     cache_read_input_tokens: usage.cache?.read ?? 0,
     cache_creation_input_tokens: usage.cache?.write ?? 0,
+    output_tokens_details: { thinking_tokens: usage.reasoning ?? 0 },
   };
 }
 
@@ -444,6 +445,8 @@ export function mapOpencodeEvent(
         ];
       }
       if (state.erroredTurn) return [];
+      const usage = usageToSdk(state.lastUsage);
+      state.lastUsage = undefined;
       return [
         ...closeOpenTextLikeParts(state),
         {
@@ -455,7 +458,7 @@ export function mapOpencodeEvent(
           num_turns: 1,
           total_cost_usd: 0,
           session_id: String(properties.sessionID ?? ''),
-          usage: usageToSdk(state.lastUsage),
+          usage,
           modelUsage: {},
         } as unknown as SDKMessage,
       ];
