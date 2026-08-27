@@ -5,12 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] - 2026-08-28
+
+### Added
+
+- **Collapsed sidebar keeps New Chat within reach** — The titlebar now shows a New Chat shortcut beside the command-center expand button while the left sidebar is collapsed.
+
+### Changed
+
+- **Titlebar icons now use a quieter visual weight** — Panel toggles, New Chat, context tabs, add, and close controls use softer semantic colors and a consistent thinner stroke while retaining clear hover and focus feedback.
+
+### Fixed
+
+- **The conversation status bar now remains readable in narrow layouts** — Workspace, account usage, Session tokens, and Context usage switch from long labels to semantic icons and compact values as the conversation column shrinks, instead of clipping their text.
+- **The right context panel no longer crowds out conversations in narrow windows** — Its expanded width is capped at two thirds of the current window, saved widths are constrained again after the window becomes smaller, and the workspace/Session title hides when the expanded panel leaves too little titlebar space for its collapse control.
+
 ## [0.4.3] - 2026-08-27
 
 ### Added
 
 - **File tree syncs with the active editor tab** — Switching back to an open file tab now exits file search, expands the file's parent folders, highlights the file in the navigator, and scrolls it into view.
-- **Collapsed sidebar keeps New Chat within reach** — The titlebar now shows a New Chat shortcut beside the command-center expand button while the left sidebar is collapsed.
 
 ### Changed
 
@@ -99,7 +113,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Titlebar icons now use a quieter visual weight** — Panel toggles, New Chat, context tabs, add, and close controls use softer semantic colors and a consistent thinner stroke while retaining clear hover and focus feedback.
 - **Claude Code settings are grouped with their Agent** — Agent choices now use a compact grouped-list layout with clearer selection and focus states, while Claude Code-specific options live in a default-open, smoothly animated Settings group with compact controls that match the rest of Settings.
 - **Comate desktop now shares the product's brand color system** — Primary controls use the logo-derived blue, Agent activity uses cyan, user-attention states use orange, and the light and dark work surfaces use cooler neutrals while success, destructive, Provider, code-syntax, and analytics colors retain their existing meanings.
 - **Comate website now presents a general-purpose Agent task workspace** — The bilingual site keeps its existing information architecture while replacing developer-first positioning with controlled everyday work, a complete finance-report workflow, current Electron product evidence, macOS/Windows/Linux download choices, an explicit bring-your-own-Provider prerequisite, and consent-gated measurement of anonymous visits and download actions.
@@ -117,8 +130,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **The conversation status bar now remains readable in narrow layouts** — Workspace, account usage, Session tokens, and Context usage switch from long labels to semantic icons and compact values as the conversation column shrinks, instead of clipping their text.
-- **The right context panel no longer crowds out conversations in narrow windows** — Its expanded width is capped at two thirds of the current window, saved widths are constrained again after the window becomes smaller, and the workspace/Session title hides when the expanded panel leaves too little titlebar space for its collapse control.
 - **Agent settings now use consistent responsive spacing** — The Agent configuration page now aligns with the other Settings tabs, keeps comfortable gutters from compact windows through desktop widths, and presents availability and default state in clearer accessible selection cards.
 - **Electron updater manifests are generated even without signing credentials** — Release builds now always emit and validate `latest-mac.yml`, `latest.yml`, `latest-linux.yml`, and their available blockmaps. Unsigned macOS and Windows packages are still uploaded, with the release notes explicitly warning that they are unsigned, alongside the metadata required by Electron auto-update.
 - **Desktop update checks now report real failures** — Manual and automatic checks no longer record a failed feed request as successful, packaged builds without an updater feed show a localized recovery message, and signed release jobs verify every packaged architecture contains an exact `ai-dvps/comate` updater configuration.
