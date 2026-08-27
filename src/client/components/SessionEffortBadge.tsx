@@ -19,10 +19,10 @@ export default function SessionEffortBadge({ sessionId }: SessionEffortBadgeProp
 
   return (
     <span
-      className="shrink-0 whitespace-nowrap text-[11px] text-text-tertiary"
+      className="status-bar-effort shrink-0 whitespace-nowrap text-[11px] text-text-tertiary"
       title={t('tokenUsage.effortTitle')}
     >
-      {t('tokenUsage.effort')}: {effort}
+      <span className="status-bar-label">{t('tokenUsage.effort')}: </span>{effort}
     </span>
   )
 }

@@ -117,6 +117,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The conversation status bar now remains readable in narrow layouts** — Workspace, account usage, Session tokens, and Context usage switch from long labels to semantic icons and compact values as the conversation column shrinks, instead of clipping their text.
 - **The right context panel no longer crowds out conversations in narrow windows** — Its expanded width is capped at two thirds of the current window, saved widths are constrained again after the window becomes smaller, and the workspace/Session title hides when the expanded panel leaves too little titlebar space for its collapse control.
 - **Agent settings now use consistent responsive spacing** — The Agent configuration page now aligns with the other Settings tabs, keeps comfortable gutters from compact windows through desktop widths, and presents availability and default state in clearer accessible selection cards.
 - **Electron updater manifests are generated even without signing credentials** — Release builds now always emit and validate `latest-mac.yml`, `latest.yml`, `latest-linux.yml`, and their available blockmaps. Unsigned macOS and Windows packages are still uploaded, with the release notes explicitly warning that they are unsigned, alongside the metadata required by Electron auto-update.

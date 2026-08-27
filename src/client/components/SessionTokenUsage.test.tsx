@@ -38,8 +38,8 @@ vi.mock('../stores/provider-store', () => ({
 describe('SessionTokenUsage', () => {
   it('renders independent dashes when no usage data exists', () => {
     renderWithI18n(<SessionTokenUsage sessionId="s1" />)
-    expect(screen.getByText(/Session: —/i)).toBeInTheDocument()
-    expect(screen.getByText(/Context: —/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Session: —/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Context: —/i)).toBeInTheDocument()
   })
 
   it('renders cumulative tokens but does not infer context from them', () => {
@@ -51,8 +51,8 @@ describe('SessionTokenUsage', () => {
       cumulativeCacheWrite: 0,
     }
     renderWithI18n(<SessionTokenUsage sessionId="s1" />)
-    expect(screen.getByText(/Session: 11k/i)).toBeInTheDocument()
-    expect(screen.getByText(/Context: —/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Session: 11k/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Context: —/i)).toBeInTheDocument()
   })
 
   it('renders contextUsage percentage when available', () => {
@@ -70,6 +70,7 @@ describe('SessionTokenUsage', () => {
       cumulativeCacheWrite: 0,
     }
     renderWithI18n(<SessionTokenUsage sessionId="s1" />)
-    expect(screen.getByText(/Context: 15%/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Context: 15%/i })).toBeInTheDocument()
+    expect(document.querySelector('.status-bar-compact-icon')).toBeInTheDocument()
   })
 })

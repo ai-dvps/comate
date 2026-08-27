@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Gauge } from 'lucide-react'
+import { Coins, Gauge } from 'lucide-react'
 import { useChatStore, type ContextUsage } from '../stores/chat-store'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import { formatTokenCount } from '../utils/token-format'
@@ -213,21 +213,29 @@ export default function SessionTokenUsage({
   const cumulativePrefix = cumulative?.quality === 'estimated'
     ? `${t('tokenUsage.approx')} `
     : ''
+  const cumulativeValue = cumulativeTotal === undefined
+    ? '—'
+    : `${cumulativePrefix}${formatTokens(cumulativeTotal)}`
+  const sessionLabel = `${t('tokenUsage.session')}: ${cumulativeValue}`
 
   return (
-    <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] text-text-tertiary">
-      <span>{t('tokenUsage.session')}: {cumulativeTotal === undefined
-        ? '—'
-        : `${cumulativePrefix}${formatTokens(cumulativeTotal)}`}</span>
-      <span aria-hidden="true">·</span>
+    <div className="status-bar-session-usage flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] text-text-tertiary">
+      <span className="flex items-center gap-1" title={sessionLabel} aria-label={sessionLabel}>
+        <Coins className="status-bar-compact-icon hidden size-3" aria-hidden="true" />
+        <span className="status-bar-label">{t('tokenUsage.session')}: </span>
+        <span className="tabular-nums" aria-hidden="true">{cumulativeValue}</span>
+      </span>
+      <span className="status-bar-separator" aria-hidden="true">·</span>
       {contextUsage ? (
         <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>
             <button type="button"
-              className="inline-flex items-center gap-1 rounded-md px-1 py-0.5 transition-colors hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              title={t('tokenUsage.contextCardTitle')}>
+              className="status-bar-context-usage inline-flex items-center gap-1 rounded-md px-1 py-0.5 transition-colors hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              title={`${t('tokenUsage.contextCardTitle')}: ${contextUsage.percentage}%`}
+              aria-label={`${t('tokenUsage.context')}: ${contextUsage.percentage}%`}>
               <Gauge className="size-3" aria-hidden="true" />
-              {t('tokenUsage.context')}: {contextUsage.percentage}%
+              <span className="status-bar-label">{t('tokenUsage.context')}: </span>
+              <span className="tabular-nums" aria-hidden="true">{contextUsage.percentage}%</span>
             </button>
           </PopoverTrigger>
           <PopoverContent side="top" align="end" sideOffset={6}
@@ -236,7 +244,15 @@ export default function SessionTokenUsage({
           </PopoverContent>
         </Popover>
       ) : (
-        <span>{t('tokenUsage.context')}: —</span>
+        <span
+          className="flex items-center gap-1"
+          title={`${t('tokenUsage.context')}: —`}
+          aria-label={`${t('tokenUsage.context')}: —`}
+        >
+          <Gauge className="status-bar-compact-icon hidden size-3" aria-hidden="true" />
+          <span className="status-bar-label">{t('tokenUsage.context')}: </span>
+          <span aria-hidden="true">—</span>
+        </span>
       )}
     </div>
   )
