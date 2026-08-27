@@ -3,6 +3,7 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { commandsService } from '../services/commands-service.js';
 import { chatService } from '../services/chat-service.js';
 import { getAvailableSkills } from '../services/opencode-skill-discovery.js';
+import { codexAppServerManager } from '../services/codex-app-server-manager.js';
 
 const router = Router({ mergeParams: true });
 
@@ -24,7 +25,13 @@ router.get('/', async (req, res) => {
     const requestedBackend = typeof req.query.backend === 'string' ? req.query.backend : undefined;
     if (sessionId) {
       const session = workspaceStore.getLocalSession(sessionId);
-      if (session?.backend === 'opencode' || session?.backend === 'codex') {
+      if (session?.backend === 'codex') {
+        const skills = await codexAppServerManager.listSkills(workspace.folderPath);
+        const commands = skills.map(({ name, description }) => ({ name, description }));
+        res.json({ commands, partial: false });
+        return;
+      }
+      if (session?.backend === 'opencode') {
         const commands = await chatService.getSessionBackendCommands(sessionId);
         // Same envelope as the claude path so clients never read undefined
         // for fields the other backend always sends (review P2).
@@ -38,7 +45,9 @@ router.get('/', async (req, res) => {
       return;
     }
     if (requestedBackend === 'codex') {
-      res.json({ commands: [], partial: false });
+      const skills = await codexAppServerManager.listSkills(workspace.folderPath);
+      const commands = skills.map(({ name, description }) => ({ name, description }));
+      res.json({ commands, partial: false });
       return;
     }
 

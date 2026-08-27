@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Codex Skills appear and run from the slash-command picker** — New chats and existing Codex sessions now load the native Codex Skill catalog, and selected Skills are submitted through Codex's structured Skill input instead of an empty or text-only `/` flow.
 - **Packaged Codex turns tolerate normal startup time** — The release acceptance gate now allows healthy Codex Provider turns up to 60 seconds to start while preserving its route, authorization, payload, and credential-leak checks.
 - **Switching a draft conversation to Codex starts a fresh thread** — Changing from Claude Code or OpenCode now clears the incompatible backend session reference, while reselecting the same backend keeps its resumable session.
 - **OpenCode Skills appear in every slash-command picker** — New chats discover project and global Skills before a runtime exists, while active sessions merge the OpenCode runtime's command and Skill catalogs instead of falling back to Claude SDK initialization.
