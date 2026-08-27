@@ -1670,3 +1670,90 @@ describe('SqliteStore stampTurnStarted (U2, KTD1/R2)', { concurrency: false }, (
     assert.strictEqual((await store.get(ws.id))?.lastTurnStartedAt, ws.lastTurnStartedAt);
   });
 });
+
+describe('SqliteStore deleted-session tombstones', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(':memory:');
+    store.resetData();
+  });
+
+  function discoveredSession(wsId: string, id: string): ChatSession {
+    return {
+      id,
+      workspaceId: wsId,
+      name: 'Discovered',
+      isDraft: false,
+      createdAt: '2025-08-10T10:00:00.000Z',
+      updatedAt: '2025-08-12T12:30:45.678Z',
+      lastModified: 1_755_500_000_123,
+    };
+  }
+
+  it('deleteSessionWithTombstone removes the row and records a tombstone', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/tombstone-basic' });
+    const session = store.createLocalSession(ws.id, 'S1');
+    store.setSessionDraft(session.id, false);
+
+    assert.equal(store.deleteSessionWithTombstone(session.id), true);
+    assert.equal(store.getLocalSession(session.id), null);
+    assert.equal(store.isSessionDeleted(session.id), true);
+    assert.equal(store.listLocalSessions(ws.id).length, 0);
+  });
+
+  it('syncSdkSession never resurrects a tombstoned id', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/tombstone-resurrect' });
+    const session = store.createLocalSession(ws.id, 'S1');
+    store.deleteSessionWithTombstone(session.id);
+
+    store.syncSdkSession(discoveredSession(ws.id, session.id));
+    store.syncSdkSession(discoveredSession(ws.id, 'sdk-live-1'));
+
+    assert.equal(store.getLocalSession(session.id), null, 'tombstoned id stays deleted');
+    assert.ok(store.getLocalSession('sdk-live-1'), 'control: a different id still upserts');
+  });
+
+  it('unknown id returns false and writes no tombstone', () => {
+    assert.equal(store.deleteSessionWithTombstone('never-existed'), false);
+    assert.equal(store.isSessionDeleted('never-existed'), false);
+  });
+
+  it('re-deleting a tombstoned id is a no-op that keeps the tombstone', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/tombstone-idempotent' });
+    const session = store.createLocalSession(ws.id, 'S1');
+    assert.equal(store.deleteSessionWithTombstone(session.id), true);
+
+    assert.equal(store.deleteSessionWithTombstone(session.id), false);
+    assert.equal(store.isSessionDeleted(session.id), true);
+  });
+
+  it('workspace delete cascades tombstone cleanup', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/tombstone-cascade' });
+    const session = store.createLocalSession(ws.id, 'S1');
+    store.deleteSessionWithTombstone(session.id);
+    assert.equal(store.isSessionDeleted(session.id), true);
+
+    await store.delete(ws.id);
+    assert.equal(store.isSessionDeleted(session.id), false, 'tombstone dies with its workspace');
+  });
+
+  it('deleteSessionWithTombstone purges browser task state like deleteLocalSession', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/tombstone-browser' });
+    const session = store.createLocalSession(ws.id, 'S1');
+    store.createBrowserTask({
+      workspaceId: ws.id,
+      sessionId: session.id,
+      principalId: 'principal-1',
+      runtimeGeneration: 'runtime-1',
+      capabilityId: 'capability-1',
+      taskId: 'task-1',
+      goalEpoch: 'goal-1',
+      lifecycle: 'active',
+    }, []);
+
+    assert.ok(store.getActiveBrowserTask(ws.id, session.id));
+    assert.equal(store.deleteSessionWithTombstone(session.id), true);
+    assert.equal(store.getActiveBrowserTask(ws.id, session.id), null);
+  });
+});

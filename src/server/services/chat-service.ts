@@ -724,6 +724,10 @@ export class ChatService {
   }
 
   async getSession(id: string, workspaceId: string): Promise<ChatSession | null> {
+    // Permanent hide: the transcript still exists on disk, so the SDK would
+    // happily return this ID — returning null keeps a stale client reference
+    // from resurrecting the row via syncSdkSession below.
+    if (workspaceStore.isSessionDeleted(id)) return null;
     const localSession = workspaceStore.getLocalSession(id);
     if (localSession && localSession.workspaceId !== workspaceId) {
       return null;
@@ -987,17 +991,12 @@ export class ChatService {
     browserTaskStateService.purgeSession(workspaceId, id);
     if (localSession && localSession.isDraft) {
       sessionCapabilityService.revokeForSession(id);
-      return workspaceStore.deleteLocalSession(id);
+      return workspaceStore.deleteSessionWithTombstone(id);
     }
 
-    try {
-      // Import deleteSession from SDK
-      const { deleteSession } = await import('@anthropic-ai/claude-agent-sdk');
-      await deleteSession(id, { dir: workspace.folderPath });
-    } catch (err) {
-      console.error('Failed to delete SDK session:', err);
-      // Still delete from local DB even if SDK deletion fails
-    }
+    // Deletion removes only Comate's record — the on-disk .jsonl transcript
+    // stays (recoverable via the Claude CLI). The tombstone written by the
+    // store keeps the next discovery sync from resurrecting the row.
 
     // U12: the session's loopback capability dies with the session.
     const revokedOnDelete = sessionCapabilityService.revokeForSession(id);
@@ -1012,7 +1011,7 @@ export class ChatService {
         });
       }
     }
-    return workspaceStore.deleteLocalSession(id);
+    return workspaceStore.deleteSessionWithTombstone(id);
   }
 
   async forkSession(id: string, workspaceId: string): Promise<{ sessionId: string }> {

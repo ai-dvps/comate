@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Deleting a session no longer erases its conversation transcript** — Removing a session now deletes only Comate's own record and permanently hides the conversation from the sidebar for every source (GUI, WeCom, Feishu, and scheduled sessions); the underlying `.jsonl` transcript stays on disk and remains resumable or inspectable with the Claude CLI. Previously, deleting a non-draft session destroyed the transcript file.
+
 ### Fixed
 
 - **Saved Provider Auth Tokens can be inspected again** — Provider editors now show a masked saved-token state and reveal the credential only after an explicit eye-button action through the desktop-authenticated, non-cacheable API path.
