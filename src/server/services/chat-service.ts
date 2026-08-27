@@ -20,8 +20,9 @@ import type {
   WorkflowState,
   SessionActivitySnapshot,
   UserTurnContent,
+  ContextUsageSnapshot,
 } from '../types/message.js';
-import { normalizeSessionMessage, scanSdkMessagesForTasks } from './message-normalizer.js';
+import { normalizeSessionMessage, scanSdkMessagesForTasks, settleHistoricalAssistantTurns } from './message-normalizer.js';
 import type { StatusResult } from '../websocket/types.js';
 import { SdkClient } from './sdk-client.js';
 import {
@@ -1412,7 +1413,7 @@ export class ChatService {
   async loadMessages(
     sessionId: string,
     workspaceId: string,
-  ): Promise<{ messages: ChatMessage[]; tasks: TaskItem[]; subagents: SubagentState[]; workflows: WorkflowState[]; total: number }> {
+  ): Promise<{ messages: ChatMessage[]; tasks: TaskItem[]; subagents: SubagentState[]; workflows: WorkflowState[]; total: number; contextUsage?: ContextUsageSnapshot }> {
     const startedAt = Date.now();
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) {
@@ -1430,8 +1431,11 @@ export class ChatService {
     // refresh.
     const localSession = workspaceStore.getLocalSession(sessionId);
     let sdkMessages: SessionMessage[];
+    let historicalContextUsage: ContextUsageSnapshot | undefined;
     if (localSession?.backend === 'codex' && localSession.backendSessionId) {
-      sdkMessages = await codexSessionService.loadMessages(localSession.backendSessionId);
+      const history = await codexSessionService.loadMessagesWithContext(localSession.backendSessionId);
+      sdkMessages = history.messages;
+      historicalContextUsage = history.contextUsage;
     } else if (localSession?.backend === 'opencode' && localSession.backendSessionId) {
       sdkMessages = await this.loadOpencodeSessionMessages(
         sessionId,
@@ -1471,6 +1475,7 @@ export class ChatService {
         normalized.push(chatMessage);
       }
     });
+    settleHistoricalAssistantTurns(normalized);
     const normalizeMs = Date.now() - normalizeStartedAt;
     const total = normalized.length;
     const derivedStateStartedAt = Date.now();
@@ -1487,7 +1492,10 @@ export class ChatService {
       derivedStateMs: Date.now() - derivedStateStartedAt,
       totalMs: Date.now() - startedAt,
     });
-    return { messages: normalized, tasks, subagents, workflows, total };
+    return {
+      messages: normalized, tasks, subagents, workflows, total,
+      ...(historicalContextUsage ? { contextUsage: historicalContextUsage } : {}),
+    };
   }
 
   async loadMessagesAfter(

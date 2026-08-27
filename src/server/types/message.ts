@@ -73,6 +73,21 @@ export type TurnTokenUsage =
   | ({ quality: 'exact' | 'estimated'; totalTokens: number } & TokenUsageBreakdown)
   | { quality: 'unavailable'; reason?: string }
 
+export interface ContextUsageSnapshot {
+  totalTokens: number
+  maxTokens: number
+  percentage: number
+  categories: { name: string; tokens: number; isDeferred?: boolean }[]
+  model?: string
+  rawMaxTokens?: number
+  overLimit?: { tokensOver: number; kind: 'hard_limit' | 'compaction_window' }
+  autoCompactThreshold?: number
+  mcpTools?: { name: string; serverName: string; tokens: number }[]
+  memoryFiles?: { path: string; type: string; tokens: number }[]
+  agents?: { agentType: string; source: string; tokens: number }[]
+  skills?: { name: string; source: string; tokens: number }[]
+}
+
 export type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
 
 /** Normalized image bytes submitted in one ordered user turn. */

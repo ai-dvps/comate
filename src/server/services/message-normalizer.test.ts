@@ -1,10 +1,46 @@
 import '../test-utils/test-env.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { normalizeSessionMessage, partsFromSdkContent, scanSdkMessagesForTasks } from './message-normalizer.js';
+import { normalizeSessionMessage, partsFromSdkContent, scanSdkMessagesForTasks, settleHistoricalAssistantTurns } from './message-normalizer.js';
 import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 
 describe('message-normalizer historical images', () => {
+  it('normalizes persisted Claude usage on assistant messages', () => {
+    const normalized = normalizeSessionMessage({
+      type: 'assistant', uuid: 'a-usage', session_id: 's1',
+      message: {
+        role: 'assistant', content: [{ type: 'text', text: 'done' }],
+        usage: { input_tokens: 10, output_tokens: 4,
+          cache_read_input_tokens: 3, cache_creation_input_tokens: 2 },
+      },
+    } as unknown as SessionMessage);
+
+    assert.deepStrictEqual(normalized?.tokenUsage, {
+      quality: 'exact', totalTokens: 19, inputTokens: 10, outputTokens: 4,
+      cacheReadTokens: 3, cacheWriteTokens: 2,
+    });
+  });
+
+  it('settles a multi-step historical turn on its terminal assistant message', () => {
+    const messages = [
+      { id: 'u1', role: 'user' as const, parts: [{ type: 'text' as const, text: 'go' }], timestamp: 1 },
+      { id: 'a1', role: 'assistant' as const, parts: [{ type: 'tool_use' as const,
+        toolUseId: 't1', toolName: 'Bash', input: {}, state: 'complete' as const }], timestamp: 2,
+        tokenUsage: { quality: 'exact' as const, totalTokens: 10, inputTokens: 8, outputTokens: 2 } },
+      { id: 'tr1', role: 'user' as const, parts: [{ type: 'tool_result' as const,
+        toolUseId: 't1', output: 'ok', isError: false }], timestamp: 3 },
+      { id: 'a2', role: 'assistant' as const, parts: [{ type: 'text' as const, text: 'done' }], timestamp: 4,
+        tokenUsage: { quality: 'exact' as const, totalTokens: 7, inputTokens: 5, outputTokens: 2 } },
+    ];
+
+    settleHistoricalAssistantTurns(messages);
+
+    assert.strictEqual(messages[1].tokenUsage, undefined);
+    assert.deepStrictEqual(messages[3].tokenUsage, {
+      quality: 'estimated', totalTokens: 17, inputTokens: 13, outputTokens: 4,
+    });
+  });
+
   it('preserves Claude image blocks in their original order', () => {
     const parts = partsFromSdkContent([
       { type: 'text', text: 'before' },
