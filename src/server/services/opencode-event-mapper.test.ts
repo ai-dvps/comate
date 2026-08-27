@@ -30,6 +30,36 @@ describe('mapToolName', () => {
 });
 
 describe('text streaming', () => {
+  it('forwards OpenCode reasoning usage in the normalized result settlement', () => {
+    const state = createOpencodeMapperState();
+    const sdkMessages = [
+      ...mapOpencodeEvent({
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'm1', role: 'assistant',
+            tokens: { input: 20, output: 8, reasoning: 3, cache: { read: 5, write: 2 } },
+          },
+        },
+      }, state),
+      ...mapOpencodeEvent({
+        type: 'message.part.updated',
+        properties: { part: textPart({ text: 'done' }) },
+      }, state),
+      ...mapOpencodeEvent({ type: 'session.idle', properties: { sessionID: 's1' } }, state),
+    ];
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+    for (const message of sdkMessages) emitter.handle(message);
+
+    const result = events.find((event) => event.type === 'result');
+    assert.ok(result && result.type === 'result');
+    assert.deepStrictEqual(result.tokenUsage, {
+      quality: 'exact', totalTokens: 35, inputTokens: 20, outputTokens: 8,
+      cacheReadTokens: 5, cacheWriteTokens: 2, thinkingTokens: 3,
+    });
+  });
+
   it('emits message_start + content_block_start + delta on first text update', () => {
     const state = createOpencodeMapperState();
     const out = mapOpencodeEvent(

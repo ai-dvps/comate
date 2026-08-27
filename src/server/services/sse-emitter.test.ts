@@ -194,6 +194,59 @@ describe('SseEmitter pending approval', { concurrency: false }, () => {
 });
 
 describe('SseEmitter result metadata', { concurrency: false }, () => {
+  it('binds normalized usage to the completed assistant and clears the binding after result', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+    emitter.handle({
+      type: 'assistant',
+      message: { id: 'message-1', content: [{ type: 'text', text: 'done' }] },
+    } as unknown as SDKMessage);
+    emitter.handle({
+      type: 'result', subtype: 'success', is_error: false, result: 'done',
+      usage: {
+        input_tokens: 10,
+        output_tokens: 4,
+        cache_read_input_tokens: 3,
+        cache_creation_input_tokens: 2,
+        output_tokens_details: { thinking_tokens: 1 },
+      },
+    } as unknown as SDKMessage);
+
+    const result = events.find((event) => event.type === 'result');
+    assert.ok(result && result.type === 'result');
+    assert.strictEqual(result.messageId, 'message-1');
+    assert.deepStrictEqual(result.tokenUsage, {
+      quality: 'exact',
+      totalTokens: 19,
+      inputTokens: 10,
+      outputTokens: 4,
+      cacheReadTokens: 3,
+      cacheWriteTokens: 2,
+      thinkingTokens: 1,
+    });
+
+    emitter.handle({
+      type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['startup failed'],
+    } as unknown as SDKMessage);
+    const results = events.filter((event) => event.type === 'result');
+    assert.strictEqual(results[1].type, 'result');
+    assert.strictEqual(results[1].messageId, undefined);
+  });
+
+  it('marks a completed assistant turn unavailable when the backend omits usage', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+    emitter.handle({
+      type: 'assistant',
+      message: { id: 'message-1', content: [{ type: 'text', text: 'done' }] },
+    } as unknown as SDKMessage);
+    emitter.handle({ type: 'result', subtype: 'success', is_error: false } as unknown as SDKMessage);
+
+    const result = events.find((event) => event.type === 'result');
+    assert.ok(result && result.type === 'result');
+    assert.deepStrictEqual(result.tokenUsage, { quality: 'unavailable' });
+  });
+
   it('forwards stop_reason, terminal_reason, and origin on result events', () => {
     const events: SseEvent[] = [];
     const emitter = new SseEmitter(null, (_id, event) => events.push(event));
