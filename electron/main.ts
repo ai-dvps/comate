@@ -471,7 +471,7 @@ function createMainWindow(): BrowserWindow {
     title: 'Comate',
     width: 1280,
     height: 800,
-    minWidth: 800,
+    minWidth: 480,
     minHeight: 600,
     center: true,
     icon: nativeImage.createFromPath(shellIconPath()),
