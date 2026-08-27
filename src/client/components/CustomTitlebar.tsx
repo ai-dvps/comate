@@ -104,7 +104,7 @@ export default function CustomTitlebar({
       <div
         data-testid="titlebar-command-center"
         className={cn(
-          'flex flex-shrink-0 items-center transition-[width] duration-200 ease-out motion-reduce:transition-none',
+          'flex flex-shrink-0 items-center border-b border-border transition-[width] duration-200 ease-out motion-reduce:transition-none',
           !leftCollapsed && 'border-r border-border/70',
         )}
         style={{ width: leftSegmentWidth }}
