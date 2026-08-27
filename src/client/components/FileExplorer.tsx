@@ -6,6 +6,7 @@ import { revealInFileManager } from '../lib/desktop-api'
 import { ChevronRight, Folder, Loader2, RefreshCw, X } from 'lucide-react'
 import { cn } from './ui/utils'
 import { getFileIcon } from '../lib/file-helpers'
+import { isAncestorPath } from '../lib/file-tree-path'
 
 interface FileNode {
   name: string
@@ -23,6 +24,7 @@ interface TreeNodeProps {
   onFileOpen: (path: string, name: string) => void
   onContextMenu?: (e: React.MouseEvent, nodePath: string, nodeType: 'file' | 'folder') => void
   refreshToken: number
+  revealPath?: string
   level: number
 }
 
@@ -36,6 +38,7 @@ function TreeNode({
   onFileOpen,
   onContextMenu,
   refreshToken,
+  revealPath,
   level,
 }: TreeNodeProps) {
   const { t } = useTranslation('common')
@@ -44,6 +47,7 @@ function TreeNode({
   const [loading, setLoading] = useState(false)
   const requestRef = useRef<AbortController | null>(null)
   const lastRefreshTokenRef = useRef(refreshToken)
+  const rowRef = useRef<HTMLDivElement>(null)
 
   const nodePath = path ? `${path}/${node.name}` : node.name
 
@@ -93,6 +97,32 @@ function TreeNode({
     setExpanded(!expanded)
   }, [children.length, expanded, loadChildren, node.type])
 
+  useEffect(() => {
+    if (node.type !== 'folder' || !revealPath || !isAncestorPath(nodePath, revealPath)) return
+
+    let cancelled = false
+    void (async () => {
+      if (children.length === 0) {
+        await loadChildren()
+      }
+      if (!cancelled) {
+        setExpanded(true)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [children.length, loadChildren, node.type, nodePath, revealPath])
+
+  useEffect(() => {
+    if (node.type !== 'file' || revealPath !== nodePath || !rowRef.current) return
+    const element = rowRef.current
+    requestAnimationFrame(() => {
+      element.scrollIntoView({ block: 'nearest' })
+    })
+  }, [node.type, nodePath, revealPath])
+
   if (node.type === 'folder') {
     return (
       <div>
@@ -131,6 +161,7 @@ function TreeNode({
                   onFileOpen={onFileOpen}
                   onContextMenu={onContextMenu}
                   refreshToken={refreshToken}
+                  revealPath={revealPath}
                   level={level + 1}
                 />
               ))
@@ -145,6 +176,9 @@ function TreeNode({
 
   return (
     <div
+      ref={rowRef}
+      data-testid="file-tree-item"
+      data-path={nodePath}
       className={cn(
         'flex items-center gap-1.5 py-1 px-2 rounded-lg cursor-pointer text-xs',
         isSelected ? 'bg-accent/10 text-text-primary' : 'hover:bg-surface-hover text-text-secondary',
@@ -193,7 +227,9 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFilePreview
   const [treeRefreshToken, setTreeRefreshToken] = useState(0)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; itemPath: string; itemType: 'file' | 'folder' } | null>(null)
   const prevWorkspaceIdRef = useRef<string | null>(null)
+  const prevSelectedPathRef = useRef<string | undefined>(undefined)
   const rootRequestRef = useRef<AbortController | null>(null)
+  const [revealPath, setRevealPath] = useState<string | undefined>(undefined)
 
   useEffect(() => {
     setSearchQuery('')
@@ -203,6 +239,19 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFilePreview
     }
     prevWorkspaceIdRef.current = activeWorkspaceId ?? null
   }, [activeWorkspaceId, clear])
+
+  useEffect(() => {
+    if (!selectedPath || selectedPath === prevSelectedPathRef.current) return
+
+    prevSelectedPathRef.current = selectedPath
+    setSearchQuery((query) => {
+      if (query.trim()) {
+        clear()
+      }
+      return ''
+    })
+    setRevealPath(selectedPath)
+  }, [clear, selectedPath])
 
   const loadRoot = useCallback(async () => {
     if (!activeWorkspaceId) {
@@ -422,6 +471,7 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFilePreview
                 onFileOpen={onFileClick}
                 onContextMenu={handleContextMenu}
                 refreshToken={treeRefreshToken}
+                revealPath={revealPath}
                 level={0}
               />
             ))}
