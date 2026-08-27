@@ -35,6 +35,7 @@ describe('CustomTitlebar', () => {
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
         onToggleLeft={onToggleLeft}
         onToggleRight={onToggleRight}
       />,
@@ -95,6 +96,7 @@ describe('CustomTitlebar', () => {
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
         onToggleLeft={vi.fn()}
         onToggleRight={vi.fn()}
       />,
@@ -126,6 +128,7 @@ describe('CustomTitlebar', () => {
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
         onToggleLeft={vi.fn()}
         onToggleRight={vi.fn()}
       />,
@@ -135,7 +138,8 @@ describe('CustomTitlebar', () => {
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
   })
 
-  it('keeps the macOS left toggle clear of the traffic lights when collapsed', () => {
+  it('shows a new chat shortcut beside the collapsed left toggle', () => {
+    const onNewChat = vi.fn()
     renderTitlebar(
       <CustomTitlebar
         leftWidth={0}
@@ -148,13 +152,61 @@ describe('CustomTitlebar', () => {
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onAddTab={vi.fn()}
+        onNewChat={onNewChat}
+        onToggleLeft={vi.fn()}
+        onToggleRight={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+
+    expect(onNewChat).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('titlebar-command-center')).toHaveStyle({ width: '88px' })
+  })
+
+  it('hides the new chat shortcut while the left panel is expanded', () => {
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={288}
+        rightWidth={520}
+        leftCollapsed={false}
+        rightCollapsed={false}
+        contextAvailable
+        tabs={[]}
+        activeTabId={null}
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
+        onToggleLeft={vi.fn()}
+        onToggleRight={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: 'New chat' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the macOS left controls clear of the traffic lights when collapsed', () => {
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={0}
+        rightWidth={520}
+        leftCollapsed
+        rightCollapsed={false}
+        contextAvailable
+        tabs={[]}
+        activeTabId={null}
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
         onToggleLeft={vi.fn()}
         onToggleRight={vi.fn()}
         isMac
       />,
     )
 
-    expect(screen.getByTestId('titlebar-command-center')).toHaveStyle({ width: '112px' })
+    expect(screen.getByTestId('titlebar-command-center')).toHaveStyle({ width: '152px' })
     expect(screen.getByTestId('titlebar-command-center')).toHaveClass('border-b')
     expect(screen.getByTestId('titlebar-command-center')).not.toHaveClass('border-r')
     expect(screen.getByTestId('titlebar-macos-traffic-lights')).toHaveClass('flex-shrink-0')
@@ -173,6 +225,7 @@ describe('CustomTitlebar', () => {
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
         onToggleLeft={vi.fn()}
         onToggleRight={vi.fn()}
       />,
@@ -200,6 +253,7 @@ describe('CustomTitlebar', () => {
       onSelectTab: vi.fn(),
       onCloseTab: vi.fn(),
       onAddTab: vi.fn(),
+      onNewChat: vi.fn(),
       onToggleLeft: vi.fn(),
       onToggleRight: vi.fn(),
     }
@@ -224,6 +278,7 @@ describe('CustomTitlebar', () => {
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
         onToggleLeft={vi.fn()}
         onToggleRight={onToggleRight}
       />,
@@ -250,6 +305,7 @@ describe('CustomTitlebar', () => {
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
         onToggleLeft={vi.fn()}
         onToggleRight={vi.fn()}
         isWindows

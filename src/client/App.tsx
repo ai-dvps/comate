@@ -520,6 +520,7 @@ function App() {
             if (!activeWorkspaceId) return
             setShowContextMenu((open) => !open)
           }}
+          onNewChat={openNewChat}
           onToggleLeft={handleToggleLeft}
           onToggleRight={handleToggleRight}
           isMac={isMac}
