@@ -77,6 +77,7 @@ vi.mock('../components/CustomTitlebar', () => ({
   default: ({
     contextAvailable,
     onAddTab,
+    onNewChat,
     onToggleLeft,
     onToggleRight,
     leftCollapsed,
@@ -84,6 +85,7 @@ vi.mock('../components/CustomTitlebar', () => ({
   }: {
     contextAvailable: boolean
     onAddTab: () => void
+    onNewChat: () => void
     onToggleLeft: () => void
     onToggleRight: () => void
     leftCollapsed: boolean
@@ -96,6 +98,7 @@ vi.mock('../components/CustomTitlebar', () => ({
       data-right-collapsed={rightCollapsed}
     >
       <button type="button" onClick={onAddTab}>Add context tab</button>
+      {leftCollapsed ? <button type="button" onClick={onNewChat}>Titlebar new chat</button> : null}
       <button type="button" onClick={onToggleLeft}>Toggle left panel</button>
       <button type="button" onClick={onToggleRight}>Toggle right panel</button>
     </div>
@@ -348,6 +351,18 @@ describe('App layout', () => {
         { text: 'Fix redirects', images: [] },
       )
     })
+  })
+
+  it('opens New Chat from the titlebar shortcut when the left panel is collapsed', async () => {
+    leftPanelInitiallyCollapsed = true
+    mockWorkspaceStore.workspaces = [{ id: 'ws-1', name: 'Comate', folderPath: '/comate' }]
+    mockWorkspaceStore.activeWorkspaceId = 'ws-1'
+    mockWorkspaceStore.openWorkspaceIds = ['ws-1']
+
+    renderWithI18n(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Titlebar new chat' }))
+
+    expect(await screen.findByRole('textbox', { name: 'Prompt' })).toBeInTheDocument()
   })
 
   it('keeps the active session mounted but hidden while New Chat is open', async () => {

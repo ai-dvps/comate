@@ -8,6 +8,7 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  MessageSquarePlus,
   Plus,
   X,
 } from 'lucide-react'
@@ -28,6 +29,7 @@ interface CustomTitlebarProps {
   onSelectTab: (id: string) => void
   onCloseTab: (id: string) => void
   onAddTab: () => void
+  onNewChat: () => void
   onToggleLeft: () => void
   onToggleRight: () => void
   isMac?: boolean
@@ -38,6 +40,7 @@ const interactiveStyle = { WebkitAppRegion: 'no-drag' } as CSSProperties
 const COLLAPSED_LEFT_WIDTH = 48
 const MACOS_TRAFFIC_LIGHTS_WIDTH = 72
 const LEFT_TOGGLE_SLOT_WIDTH = 40
+const NEW_CHAT_SLOT_WIDTH = 40
 
 function TabIcon({ tab }: { tab: ContextTab }) {
   if (tab.type === 'browser') return <Globe2 className="h-3.5 w-3.5" aria-hidden="true" />
@@ -59,6 +62,7 @@ export default function CustomTitlebar({
   onSelectTab,
   onCloseTab,
   onAddTab,
+  onNewChat,
   onToggleLeft,
   onToggleRight,
   isMac = false,
@@ -67,8 +71,8 @@ export default function CustomTitlebar({
   const { t } = useTranslation('common')
   const leftSegmentWidth = leftCollapsed
     ? isMac
-      ? MACOS_TRAFFIC_LIGHTS_WIDTH + LEFT_TOGGLE_SLOT_WIDTH
-      : COLLAPSED_LEFT_WIDTH
+      ? MACOS_TRAFFIC_LIGHTS_WIDTH + LEFT_TOGGLE_SLOT_WIDTH + NEW_CHAT_SLOT_WIDTH
+      : COLLAPSED_LEFT_WIDTH + NEW_CHAT_SLOT_WIDTH
     : leftWidth
   const contextSegmentWidth = contextAvailable ? (rightCollapsed ? 44 : rightWidth) : 0
   const leftToggleRef = useRef<HTMLButtonElement>(null)
@@ -133,6 +137,22 @@ export default function CustomTitlebar({
             ? <PanelLeftOpen className="h-4 w-4" aria-hidden="true" />
             : <PanelLeftClose className="h-4 w-4" aria-hidden="true" />}
         </button>
+        {leftCollapsed ? (
+          <button
+            type="button"
+            data-testid="titlebar-interactive"
+            style={interactiveStyle}
+            onClick={onNewChat}
+            className={cn(
+              'm-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-text-tertiary',
+              'hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+            )}
+            aria-label={t('newChat.title')}
+            title={t('newChat.title')}
+          >
+            <MessageSquarePlus className="h-4 w-4" aria-hidden="true" />
+          </button>
+        ) : null}
         <div data-electron-drag-region className="min-w-0 flex-1 self-stretch" />
       </div>
 

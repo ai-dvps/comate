@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **File tree syncs with the active editor tab** — Switching back to an open file tab now exits file search, expands the file's parent folders, highlights the file in the navigator, and scrolls it into view.
+- **Collapsed sidebar keeps New Chat within reach** — The titlebar now shows a New Chat shortcut beside the command-center expand button while the left sidebar is collapsed.
 
 ### Changed
 
