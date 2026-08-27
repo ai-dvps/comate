@@ -10,6 +10,7 @@ import type {
 } from '../types/message.js';
 import type { PermissionSuggestion } from '../types/message.js';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
+import { isTurnTokenUsage, normalizeProviderTokenUsage } from './token-usage.js';
 
 /**
  * Tracks the in-flight type for each SDK content-block index inside the
@@ -26,56 +27,11 @@ interface BlockState {
 
 const EDE_DIAGNOSTIC_PREFIX = '[ede_diagnostic]';
 
-function nonNegativeNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0
-    ? value
-    : undefined;
-}
-
 function normalizeTurnTokenUsage(msg: SDKMessage): TurnTokenUsage {
   const record = msg as unknown as Record<string, unknown>;
   const direct = record.tokenUsage;
-  if (direct && typeof direct === 'object' && !Array.isArray(direct)) {
-    const usage = direct as Record<string, unknown>;
-    if (usage.quality === 'unavailable') {
-      return {
-        quality: 'unavailable',
-        ...(typeof usage.reason === 'string' ? { reason: usage.reason } : {}),
-      };
-    }
-    const totalTokens = nonNegativeNumber(usage.totalTokens);
-    if ((usage.quality === 'exact' || usage.quality === 'estimated') && totalTokens !== undefined) {
-      return direct as TurnTokenUsage;
-    }
-  }
-
-  const raw = record.usage;
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { quality: 'unavailable' };
-  const usage = raw as Record<string, unknown>;
-  const inputTokens = nonNegativeNumber(usage.input_tokens) ?? 0;
-  const outputTokens = nonNegativeNumber(usage.output_tokens) ?? 0;
-  const cacheReadTokens = nonNegativeNumber(usage.cache_read_input_tokens) ?? 0;
-  const cacheWriteTokens = nonNegativeNumber(usage.cache_creation_input_tokens) ?? 0;
-  const hasKnownField = [
-    'input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens',
-  ].some((key) => nonNegativeNumber(usage[key]) !== undefined);
-  if (!hasKnownField && nonNegativeNumber(usage.total_tokens) === undefined) {
-    return { quality: 'unavailable' };
-  }
-  const details = usage.output_tokens_details;
-  const thinkingTokens = details && typeof details === 'object' && !Array.isArray(details)
-    ? nonNegativeNumber((details as Record<string, unknown>).thinking_tokens)
-    : undefined;
-  return {
-    quality: 'exact',
-    totalTokens: nonNegativeNumber(usage.total_tokens)
-      ?? inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens,
-    inputTokens,
-    outputTokens,
-    cacheReadTokens,
-    cacheWriteTokens,
-    ...(thinkingTokens !== undefined ? { thinkingTokens } : {}),
-  };
+  if (isTurnTokenUsage(direct)) return direct;
+  return normalizeProviderTokenUsage(record.usage) ?? { quality: 'unavailable' };
 }
 
 export function containsEdeDiagnostic(value: unknown): boolean {

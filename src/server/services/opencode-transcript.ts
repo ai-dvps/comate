@@ -171,7 +171,20 @@ export function opencodeMessagesToSessionMessages(
         type: msg.info.role === 'user' ? 'user' : 'assistant',
         parent_tool_use_id: null,
         session_id: '',
-        message: { role: msg.info.role === 'user' ? 'user' : 'assistant', content },
+        message: {
+          role: msg.info.role === 'user' ? 'user' : 'assistant',
+          content,
+          ...(msg.info.role === 'assistant' && msg.info.tokens ? { usage: {
+            ...(msg.info.tokens.total !== undefined ? { total_tokens: msg.info.tokens.total } : {}),
+            input_tokens: msg.info.tokens.input,
+            output_tokens: msg.info.tokens.output,
+            cache_read_input_tokens: msg.info.tokens.cache.read,
+            cache_creation_input_tokens: msg.info.tokens.cache.write,
+            ...(msg.info.tokens.reasoning !== undefined ? {
+              output_tokens_details: { thinking_tokens: msg.info.tokens.reasoning },
+            } : {}),
+          } } : {}),
+        },
       } as unknown as SessionMessage);
     }
     if (toolResults.length > 0) {
