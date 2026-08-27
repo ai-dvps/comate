@@ -87,6 +87,21 @@ test('the Electron distribution build produces both renderer and shell bundles',
   );
 });
 
+test('the main window supports its compact width without changing launch or detached browser sizing', () => {
+  const electronMainSource = readFileSync('electron/main.ts', 'utf8');
+
+  assert.match(
+    electronMainSource,
+    /function createMainWindow\(\): BrowserWindow \{[\s\S]*?new BrowserWindow\(\{[\s\S]*?width: 1280,[\s\S]*?minWidth: 480,/,
+    'the main window must launch at 1280px wide and remain resizable down to 480px',
+  );
+  assert.match(
+    electronMainSource,
+    /function createDetachedBrowserWindow\(\): BrowserWindow \{[\s\S]*?new BrowserWindow\(\{[\s\S]*?minWidth: 640,/,
+    'the detached browser must retain its 640px minimum width',
+  );
+});
+
 test('every release package must contain updater metadata even when signing is unavailable', () => {
   const packageJson = JSON.parse(readFileSync('package.json', 'utf8')) as PackageJson;
   const workflow = readFileSync('.github/workflows/build.yml', 'utf8');
