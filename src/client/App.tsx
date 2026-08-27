@@ -509,6 +509,7 @@ function App() {
           leftCollapsed={isLeftEffectivelyCollapsed}
           rightCollapsed={isRightEffectivelyCollapsed}
           contextAvailable={activeWorkspaceId !== null && !newChatVisible}
+          viewportWidth={viewportWidth}
           workspaceName={activeWorkspace?.name}
           sessionName={activeSession?.name}
           managementTitle={managementTitle}
