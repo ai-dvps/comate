@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { FolderPlus, MessageSquarePlus } from 'lucide-react'
+import { FolderPlus, SquarePen } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { BackendId } from '../stores/backend-store'
 import type { ApprovalMode, PromptTurnDraft } from '../stores/chat-store'
@@ -113,7 +113,7 @@ export default function NewChatPage({
       <div className="flex min-h-0 flex-1 items-center justify-center">
         <div className="text-center">
           <span className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-2xl border border-border bg-surface shadow-sm">
-            <MessageSquarePlus className="h-5 w-5 text-text-secondary" aria-hidden="true" />
+            <SquarePen className="h-5 w-5 text-text-secondary" aria-hidden="true" />
           </span>
           <h1 className="text-xl font-semibold tracking-tight text-text-primary">{t('newChat.title')}</h1>
           <p className="mt-1.5 text-sm text-text-secondary">{t('newChat.description')}</p>

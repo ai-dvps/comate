@@ -8,8 +8,8 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  MessageSquarePlus,
   Plus,
+  SquarePen,
   X,
 } from 'lucide-react'
 import type { ContextTab } from '../stores/context-tab-store'
@@ -150,7 +150,7 @@ export default function CustomTitlebar({
             aria-label={t('newChat.title')}
             title={t('newChat.title')}
           >
-            <MessageSquarePlus className="h-4 w-4" aria-hidden="true" />
+            <SquarePen className="h-4 w-4" aria-hidden="true" />
           </button>
         ) : null}
         <div data-electron-drag-region className="min-w-0 flex-1 self-stretch" />
