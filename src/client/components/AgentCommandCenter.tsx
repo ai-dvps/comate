@@ -1072,14 +1072,12 @@ export default function AgentCommandCenter({
                 : <Archive className="h-3.5 w-3.5" aria-hidden="true" />}
               {session.isArchived ? tc('unarchive') : tc('archive')}
             </button>
-            {session.isDraft ? (
-              <button type="button" role="menuitem" className={cn(menuItemClass, 'text-destructive hover:text-destructive')} onClick={() => {
-                setDeleteTarget({ workspaceId: contextMenu.workspaceId, session })
-                setContextMenu(null)
-              }}>
-                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />{tc('deleteSession')}
-              </button>
-            ) : null}
+            <button type="button" role="menuitem" className={cn(menuItemClass, 'text-destructive hover:text-destructive')} onClick={() => {
+              setDeleteTarget({ workspaceId: contextMenu.workspaceId, session })
+              setContextMenu(null)
+            }}>
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />{tc('deleteSession')}
+            </button>
             <div className="my-1 border-t border-border" />
             <button type="button" role="menuitem" className={menuItemClass} onClick={() => void copySessionId(session.id)}>
               <Copy className="h-3.5 w-3.5" aria-hidden="true" />{tc('copySessionId')}
