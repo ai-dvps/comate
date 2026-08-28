@@ -1,7 +1,8 @@
 import { useTranslation } from 'react-i18next'
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useUpdaterStore } from '../stores/updater-store'
 import { restartToUpdate, dismissUpdate } from '../lib/updater-api'
+import { sanitizePreviewHtml } from '../lib/sanitize-html'
 
 interface UpdateRestartDialogProps {
   onForceShowWindow?: () => void
@@ -10,6 +11,10 @@ interface UpdateRestartDialogProps {
 export default function UpdateRestartDialog({ onForceShowWindow }: UpdateRestartDialogProps) {
   const { t } = useTranslation('common')
   const { status, update } = useUpdaterStore()
+  const releaseNotesHtml = useMemo(
+    () => sanitizePreviewHtml(update?.body ?? ''),
+    [update?.body],
+  )
 
   useEffect(() => {
     if (status === 'ready') {
@@ -48,7 +53,10 @@ export default function UpdateRestartDialog({ onForceShowWindow }: UpdateRestart
           </p>
           {update?.body && (
             <div className="mt-3 max-h-32 overflow-y-auto rounded-lg bg-bg border border-border p-3">
-              <p className="text-xs text-text-secondary whitespace-pre-wrap">{update.body}</p>
+              <div
+                className="preview-content text-xs whitespace-pre-wrap"
+                dangerouslySetInnerHTML={{ __html: releaseNotesHtml }}
+              />
             </div>
           )}
         </div>
