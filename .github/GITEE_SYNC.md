@@ -15,7 +15,10 @@ The `Sync to Gitee` GitHub Actions workflow mirrors this repository to
    code from an arbitrary feature branch from receiving the organization token.
 3. If the destination should differ from `ai-dvps/<GitHub repository name>`,
    add Actions variables named `GITEE_OWNER` and/or `GITEE_REPO`.
-4. Run the `Sync to Gitee` workflow manually once to bootstrap the mirror.
+4. Run the `Sync to Gitee` workflow manually once to bootstrap the mirror. Leave
+   `release_tag` empty when only branches and tags need reconciliation. Enter an
+   existing published tag such as `v0.4.4` to backfill that Release's metadata
+   and every attachment as part of the same run.
 
 The workflow creates the Gitee repository automatically when it does not yet
 exist. The service account must be allowed to force-update and delete mirrored
@@ -29,7 +32,9 @@ branches/tags; otherwise pruning a deleted or rewritten GitHub ref will fail.
   token to workflow code from those branches.
 - A GitHub Release is synchronized only after it is published. Draft Releases
   stay private on GitHub and are never exposed early on Gitee. Unpublishing or
-  deleting a GitHub Release removes the corresponding Gitee Release.
+  deleting a GitHub Release removes the corresponding Gitee Release. Existing
+  published Releases can be synchronized on demand with the manual
+  `release_tag` input.
 - Release title, notes, prerelease state, and every attached installer/update
   file (`.dmg`, `.exe`, `.AppImage`, `.deb`, manifests, blockmaps, and archives)
   are copied to the matching Gitee Release.

@@ -230,7 +230,57 @@ test('deleteRelease removes a withdrawn release and treats absence as success', 
 
 test('workflow passes release tags through an environment variable', () => {
   const workflow = readFileSync('.github/workflows/sync-gitee.yml', 'utf8');
-  assert.match(workflow, /RELEASE_TAG: \$\{\{ github\.event\.release\.tag_name \}\}/);
+  assert.match(workflow, /release_tag:\n\s+description:/);
+  assert.match(
+    workflow,
+    /RELEASE_TAG: \$\{\{ github\.event\.release\.tag_name \|\| inputs\.release_tag \}\}/,
+  );
+  assert.match(
+    workflow,
+    /github\.event_name == 'workflow_dispatch' && inputs\.release_tag != ''/,
+  );
+  assert.match(
+    workflow,
+    /GITHUB_EVENT_NAME" == "workflow_dispatch" && -n "\$RELEASE_TAG"/,
+  );
+  assert.match(workflow, /GITEE_RELEASE_EVENT_PATH=/);
+  assert.match(workflow, /name: Resolve current release metadata/);
+  assert.doesNotMatch(
+    workflow,
+    /name: Resolve current release metadata\n\s+if:/,
+  );
+  assert.match(workflow, /jq -r '\.release\.assets \| length' "\$release_event_path"/);
+  assert.doesNotMatch(workflow, /gh release view/);
   assert.match(workflow, /gh release download "\$RELEASE_TAG"/);
   assert.doesNotMatch(workflow, /gh release download "\$\{\{/);
+});
+
+test('syncRelease accepts a resolved release event path for manual backfills', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const dispatchEventPath = createEventFile({});
+  const resolvedEventPath = createEventFile({
+    tag_name: 'v3.0.0',
+    name: '3.0.0',
+    body: 'Backfilled release',
+    prerelease: false,
+  });
+  const client = {
+    owner: 'ai-dvps',
+    repo: 'comate',
+    async request(path: string, options: { method?: string } = {}) {
+      if (path.endsWith('/releases/tags/v3.0.0')) return null;
+      if (options.method === 'POST' && path.endsWith('/releases')) return { id: 30 };
+      if (path.includes('/attach_files?')) return [];
+      throw new Error(`Unexpected ${options.method || 'GET'} ${path}`);
+    },
+  };
+
+  await syncRelease(
+    '/unused',
+    {
+      GITHUB_EVENT_PATH: dispatchEventPath,
+      GITEE_RELEASE_EVENT_PATH: resolvedEventPath,
+    },
+    { client, readLocalAssets: () => [] },
+  );
 });
