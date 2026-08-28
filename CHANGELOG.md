@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Collapsed sidebar keeps New Chat within reach** — The titlebar now shows a New Chat shortcut beside the command-center expand button while the left sidebar is collapsed.
+- **Comate can launch automatically when you sign in** — General settings now let desktop users enable or disable the operating system's login startup entry on macOS, Windows, and Linux.
 
 ### Changed
 

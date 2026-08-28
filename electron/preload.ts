@@ -104,6 +104,13 @@ const api = {
   /** package.json version of the shell. */
   getVersion: (): Promise<string> => ipcRenderer.invoke('comate:get-app-version'),
 
+  /** Whether Comate is registered to launch when the user signs in. */
+  getLaunchAtLogin: (): Promise<boolean> => ipcRenderer.invoke('comate:get-launch-at-login'),
+
+  /** Updates the OS login-item registration and returns the effective state. */
+  setLaunchAtLogin: (enabled: boolean): Promise<boolean> =>
+    ipcRenderer.invoke('comate:set-launch-at-login', enabled),
+
   dialog: {
     /** Native folder picker; resolves null when cancelled. */
     openDirectory: (): Promise<string | null> =>

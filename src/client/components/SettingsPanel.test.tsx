@@ -5,6 +5,7 @@ import { I18nextProvider } from 'react-i18next';
 import { GeneralTab } from './SettingsPanel';
 import i18n from '../i18n';
 import * as updaterApi from '../lib/updater-api';
+import * as desktopApi from '../lib/desktop-api';
 import { MISSING_UPDATE_FEED_ERROR } from '../../shared/updater-contract';
 
 vi.mock('../lib/updater-api', async () => {
@@ -16,6 +17,16 @@ vi.mock('../lib/updater-api', async () => {
     downloadAndInstallUpdate: vi.fn(),
     restartToUpdate: vi.fn(),
     dismissUpdate: vi.fn(),
+  };
+});
+
+vi.mock('../lib/desktop-api', async () => {
+  const actual = await vi.importActual<typeof import('../lib/desktop-api')>('../lib/desktop-api');
+  return {
+    ...actual,
+    isDesktop: vi.fn(() => true),
+    getLaunchAtLogin: vi.fn(() => Promise.resolve(false)),
+    setLaunchAtLogin: vi.fn(() => Promise.resolve(false)),
   };
 });
 
@@ -63,7 +74,36 @@ describe('GeneralTab updater flow', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(desktopApi.isDesktop).mockReturnValue(true);
+    vi.mocked(desktopApi.getLaunchAtLogin).mockResolvedValue(false);
+    vi.mocked(desktopApi.setLaunchAtLogin).mockImplementation((enabled) => Promise.resolve(enabled));
     cleanup();
+  });
+
+  it('loads and updates the operating system launch-at-login setting', async () => {
+    vi.mocked(desktopApi.getLaunchAtLogin).mockResolvedValueOnce(true);
+    const user = userEvent.setup();
+    await renderWithAct(<GeneralTab {...defaultProps} />);
+
+    const toggle = await screen.findByRole('switch', { name: /Launch Comate at login/i });
+    expect(toggle).toBeChecked();
+
+    await user.click(toggle);
+
+    expect(desktopApi.setLaunchAtLogin).toHaveBeenCalledWith(false);
+    expect(toggle).not.toBeChecked();
+  });
+
+  it('restores the launch-at-login toggle and shows an error when the OS update fails', async () => {
+    vi.mocked(desktopApi.setLaunchAtLogin).mockRejectedValueOnce(new Error('permission denied'));
+    const user = userEvent.setup();
+    await renderWithAct(<GeneralTab {...defaultProps} />);
+
+    const toggle = await screen.findByRole('switch', { name: /Launch Comate at login/i });
+    await user.click(toggle);
+
+    expect(toggle).not.toBeChecked();
+    expect(await screen.findByText(/Could not update the launch-at-login setting/i)).toBeInTheDocument();
   });
 
   it('renders Check for Updates button when idle', async () => {
