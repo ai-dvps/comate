@@ -76,6 +76,8 @@ export interface ComateBridge {
   openUrl?: (url: string) => Promise<void>;
   prepareUpdaterRelaunch?: () => Promise<void>;
   getVersion?: () => Promise<string>;
+  getLaunchAtLogin?: () => Promise<boolean>;
+  setLaunchAtLogin?: (enabled: boolean) => Promise<boolean>;
   dialog?: {
     openDirectory?: () => Promise<string | null>;
   };
@@ -257,6 +259,20 @@ export function syncTitleBarOverlay(theme: 'dark' | 'light'): void {
 /** Dock/taskbar badge. No-op outside the shell (badge is desktop-only). */
 export async function updateBadgeState(count: number): Promise<void> {
   await getBridge()?.updateBadgeState?.(count);
+}
+
+/** Reads the effective OS login-item registration. */
+export async function getLaunchAtLogin(): Promise<boolean> {
+  const bridge = getBridge();
+  if (!bridge?.getLaunchAtLogin) throw unsupported('getLaunchAtLogin');
+  return bridge.getLaunchAtLogin();
+}
+
+/** Updates the OS login-item registration and returns its effective state. */
+export async function setLaunchAtLogin(enabled: boolean): Promise<boolean> {
+  const bridge = getBridge();
+  if (!bridge?.setLaunchAtLogin) throw unsupported('setLaunchAtLogin');
+  return bridge.setLaunchAtLogin(enabled);
 }
 
 /** Reveal a file or folder in the OS file manager. Rejects without the bridge. */

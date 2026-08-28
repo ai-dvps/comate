@@ -203,6 +203,23 @@ describe('shell capabilities through the bridge', () => {
     await expect(api.updateBadgeState(0)).resolves.toBeUndefined()
   })
 
+  it('reads and updates the launch-at-login setting through the bridge', async () => {
+    const getLaunchAtLogin = vi.fn(() => Promise.resolve(true))
+    const setLaunchAtLogin = vi.fn((enabled: boolean) => Promise.resolve(enabled))
+    installBridge({ getApiInfo: vi.fn(), getLaunchAtLogin, setLaunchAtLogin })
+    const api = await importBridge()
+
+    await expect(api.getLaunchAtLogin()).resolves.toBe(true)
+    await expect(api.setLaunchAtLogin(false)).resolves.toBe(false)
+    expect(setLaunchAtLogin).toHaveBeenCalledWith(false)
+  })
+
+  it('rejects launch-at-login access when the desktop capability is unavailable', async () => {
+    const api = await importBridge()
+    await expect(api.getLaunchAtLogin()).rejects.toThrow(/unavailable/)
+    await expect(api.setLaunchAtLogin(true)).rejects.toThrow(/unavailable/)
+  })
+
   it('revealInFileManager forwards the path', async () => {
     const revealInFileManager = vi.fn(() => Promise.resolve())
     installBridge({ getApiInfo: vi.fn(), revealInFileManager })

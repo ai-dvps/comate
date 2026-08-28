@@ -68,6 +68,7 @@ import {
 import { resolvePackagedRuntime, resolveUpdaterRuntimeConfig } from './runtime-mode';
 import { isTrustedUiUrl as matchesTrustedUiUrl } from './trusted-ui-url';
 import { addSidecarAuthorization } from './api-request-auth';
+import { getLinuxLaunchAtLogin, setLinuxLaunchAtLogin } from './launch-at-login';
 
 // ---------------------------------------------------------------------------
 // Early, pre-ready setup (order matters: these must run before 'ready')
@@ -637,6 +638,28 @@ function registerIpcHandlers(): void {
   // Shell version (SettingsPanel "Check for updates" footer), previously
   // @tauri-apps/api/app getVersion().
   ipcMain.handle('comate:get-app-version', () => app.getVersion());
+
+  // The OS owns persistence for launch-at-login. Reading the effective state
+  // after writes keeps the renderer aligned when the platform rejects or
+  // normalizes the requested registration.
+  const linuxConfigHome =
+    process.env['XDG_CONFIG_HOME'] || join(homedir(), '.config');
+  ipcMain.handle('comate:get-launch-at-login', () =>
+    process.platform === 'linux'
+      ? getLinuxLaunchAtLogin(linuxConfigHome)
+      : app.getLoginItemSettings().openAtLogin,
+  );
+  ipcMain.handle('comate:set-launch-at-login', (_event, enabled: unknown) => {
+    if (typeof enabled !== 'boolean') {
+      throw new Error('set-launch-at-login: enabled must be a boolean');
+    }
+    if (process.platform === 'linux') {
+      setLinuxLaunchAtLogin(linuxConfigHome, process.execPath, enabled);
+      return getLinuxLaunchAtLogin(linuxConfigHome);
+    }
+    app.setLoginItemSettings({ openAtLogin: enabled });
+    return app.getLoginItemSettings().openAtLogin;
+  });
 
   // Native folder picker (CreateWorkspaceModal). Resolves null on cancel.
   ipcMain.handle('comate:open-directory-dialog', async () => {

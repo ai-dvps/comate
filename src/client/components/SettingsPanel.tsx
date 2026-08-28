@@ -22,6 +22,7 @@ import { checkForUpdates, getAppVersion, downloadAndInstallUpdate, restartToUpda
 import { MISSING_UPDATE_FEED_ERROR } from '../../shared/updater-contract'
 import i18n from '../i18n'
 import { clampFontSize, MAX_FONT_SIZE, MIN_FONT_SIZE } from '../lib/font-size'
+import { getLaunchAtLogin, isDesktop, setLaunchAtLogin } from '../lib/desktop-api'
 import type { Workspace } from '../stores/workspace-store'
 import ProviderSection from './ProviderSection'
 import BackendSection from './BackendSection'
@@ -96,6 +97,89 @@ function BrowserInsecureCertsToggle() {
           }`}
         />
       </button>
+    </div>
+  )
+}
+
+function LaunchAtLoginToggle() {
+  const { t } = useTranslation('settings')
+  const desktop = isDesktop()
+  const [enabled, setEnabled] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    if (!desktop) return
+    let alive = true
+    getLaunchAtLogin()
+      .then((value) => {
+        if (alive) setEnabled(value)
+      })
+      .catch(() => {
+        if (alive) setError(true)
+      })
+      .finally(() => {
+        if (alive) setLoaded(true)
+      })
+    return () => {
+      alive = false
+    }
+  }, [desktop])
+
+  if (!desktop) return null
+
+  const toggle = async (): Promise<void> => {
+    if (!loaded || pending) return
+    const previous = enabled
+    const requested = !previous
+    setEnabled(requested)
+    setPending(true)
+    setError(false)
+    try {
+      setEnabled(await setLaunchAtLogin(requested))
+    } catch {
+      setEnabled(previous)
+      setError(true)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <div className="py-3 border-t border-border/50">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <label className="block text-xs font-medium text-text-secondary">
+            {t('general.launchAtLogin')}
+          </label>
+          <p className="text-[10px] text-text-tertiary mt-0.5">
+            {t('general.launchAtLoginHint')}
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-label={t('general.launchAtLogin')}
+          aria-checked={enabled}
+          onClick={() => void toggle()}
+          disabled={!loaded || pending}
+          className={`relative w-9 h-5 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+            enabled ? 'bg-accent' : 'bg-border'
+          }`}
+        >
+          <span
+            className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+              enabled ? 'translate-x-4' : 'translate-x-0'
+            }`}
+          />
+        </button>
+      </div>
+      {error && (
+        <p role="alert" className="text-[10px] text-destructive mt-1">
+          {t('general.launchAtLoginError')}
+        </p>
+      )}
     </div>
   )
 }
@@ -929,6 +1013,8 @@ export function GeneralTab({
               />
             </button>
           </div>
+
+          <LaunchAtLoginToggle />
 
           <BrowserInsecureCertsToggle />
           <TodoNightWindowSetting />
