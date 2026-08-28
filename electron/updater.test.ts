@@ -27,6 +27,7 @@ class FakeAdapter implements UpdaterAdapter {
   downloadCalls = 0;
   quitAndInstallCalls = 0;
   private progressHandlers: Array<(p: { transferred: number; total: number }) => void> = [];
+  private restartHandlers: Array<() => void> = [];
 
   async checkForUpdates(): Promise<UpdaterCheckInfo | null> {
     this.checkCalls += 1;
@@ -47,10 +48,18 @@ class FakeAdapter implements UpdaterAdapter {
     this.progressHandlers.push(handler);
   }
 
+  onDownloadRestart(handler: () => void): void {
+    this.restartHandlers.push(handler);
+  }
+
   emitProgress(transferred: number, total: number): void {
     for (const handler of this.progressHandlers) {
       handler({ transferred, total });
     }
+  }
+
+  emitDownloadRestart(): void {
+    for (const handler of this.restartHandlers) handler();
   }
 }
 
@@ -172,6 +181,26 @@ describe('download', () => {
       { event: 'Finished' },
     ]);
     assert.strictEqual(controller.getState().status, 'downloaded');
+  });
+
+  it('starts progress over when the adapter switches update sources', async () => {
+    const { adapter, controller, events } = createHarness();
+    adapter.checkInfo = { version: '0.0.34' };
+    await controller.check();
+
+    const downloadPromise = controller.download();
+    adapter.emitProgress(40, 100);
+    adapter.emitDownloadRestart();
+    adapter.emitProgress(10, 100);
+    await downloadPromise;
+
+    assert.deepStrictEqual(events, [
+      { event: 'Started', data: { contentLength: 100 } },
+      { event: 'Progress', data: { chunkLength: 40 } },
+      { event: 'Started', data: { contentLength: 100 } },
+      { event: 'Progress', data: { chunkLength: 10 } },
+      { event: 'Finished' },
+    ]);
   });
 
   it('rejects when no update is available', async () => {

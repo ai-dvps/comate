@@ -13,9 +13,8 @@
  *    autoInstallOnAppQuit fires on tray-quit / Cmd+Q too);
  *  - failures (manifest 404, signature/checksum mismatch) land in a retryable
  *    `error` state and are logged — never silent;
- *  - a failed/interrupted download retries straight through
- *    `adapter.downloadUpdate()`: electron-updater resumes from its download
- *    cache, so no client-visible reset is needed.
+ *  - same-source retries can resume through electron-updater's cache, while a
+ *    cross-source failover resets byte progress and emits a fresh Started event.
  *
  * Event contract: the client (`src/client/lib/updater-api.ts`) keeps the old
  * plugin-updater DownloadEvent shape — Started{contentLength}, then per-chunk
@@ -57,6 +56,8 @@ export interface UpdaterAdapter {
   downloadUpdate(): Promise<void>;
   quitAndInstall(): void;
   onDownloadProgress(handler: (progress: { transferred: number; total: number }) => void): void;
+  /** Signals that an automatic source failover restarted byte progress. */
+  onDownloadRestart?(handler: () => void): void;
 }
 
 export type UpdaterStatus =
@@ -104,7 +105,7 @@ export interface UpdaterController {
 
 const noopLogger: UpdaterLogger = { info: () => {}, warn: () => {}, error: () => {} };
 
-function errorMessage(err: unknown): string {
+export function updaterErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
@@ -132,6 +133,10 @@ export function createUpdaterController(deps: UpdaterControllerDeps): UpdaterCon
     lastTransferred = transferred;
     deps.onDownloadEvent?.({ event: 'Progress', data: { chunkLength } });
   });
+  deps.adapter.onDownloadRestart?.(() => {
+    downloadStarted = false;
+    lastTransferred = 0;
+  });
 
   async function doCheck(): Promise<UpdaterUpdateInfo | null> {
     setState({ status: 'checking', update: state.update, error: null });
@@ -139,7 +144,7 @@ export function createUpdaterController(deps: UpdaterControllerDeps): UpdaterCon
     try {
       checkInfo = await deps.adapter.checkForUpdates();
     } catch (err) {
-      const message = errorMessage(err);
+      const message = updaterErrorMessage(err);
       logger.error(`Update check failed: ${message}`);
       setState({ status: 'error', update: null, error: message });
       throw err;
@@ -179,7 +184,7 @@ export function createUpdaterController(deps: UpdaterControllerDeps): UpdaterCon
     try {
       await deps.adapter.downloadUpdate();
     } catch (err) {
-      const message = errorMessage(err);
+      const message = updaterErrorMessage(err);
       logger.error(`Update download failed (retryable): ${message}`);
       setState({ status: 'error', update, error: message });
       throw err;
