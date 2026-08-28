@@ -8,6 +8,7 @@ import {
   deleteRelease,
   parseReleaseEvent,
   planAssetChanges,
+  readLocalAssets,
   releaseNeedsUpdate,
   syncRelease,
 } from './sync-gitee.mjs';
@@ -93,6 +94,18 @@ test('planAssetChanges can replace matching names when content identity is unava
 
   const verificationPlan = planAssetChanges(local, [remote[0]]);
   assert.deepEqual(verificationPlan, { deletions: [], uploads: [local[1]] });
+});
+
+test('readLocalAssets uploads small updater metadata before large packages', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'sync-gitee-assets-'));
+  writeFileSync(join(directory, 'Comate.exe'), Buffer.alloc(200));
+  writeFileSync(join(directory, 'latest.yml'), Buffer.alloc(10));
+  writeFileSync(join(directory, 'Comate.exe.blockmap'), Buffer.alloc(20));
+
+  assert.deepEqual(
+    readLocalAssets(directory).map((asset) => asset.name),
+    ['latest.yml', 'Comate.exe.blockmap', 'Comate.exe'],
+  );
 });
 
 test('parseReleaseEvent rejects non-release payloads', () => {
@@ -253,6 +266,7 @@ test('workflow passes release tags through an environment variable', () => {
   assert.doesNotMatch(workflow, /gh release view/);
   assert.match(workflow, /gh release download "\$RELEASE_TAG"/);
   assert.doesNotMatch(workflow, /gh release download "\$\{\{/);
+  assert.match(readFileSync('scripts/sync-gitee.mjs', 'utf8'), /'7200'/);
 });
 
 test('syncRelease accepts a resolved release event path for manual backfills', async (t) => {
