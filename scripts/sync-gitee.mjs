@@ -136,14 +136,14 @@ async function ensureRepository(environment = process.env, dependencies = {}) {
   return created;
 }
 
-function readLocalAssets(assetDirectory) {
+export function readLocalAssets(assetDirectory) {
   return readdirSync(assetDirectory, { withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) => {
       const path = join(assetDirectory, entry.name);
       return { name: entry.name, path, size: statSync(path).size };
     })
-    .sort((left, right) => left.name.localeCompare(right.name));
+    .sort((left, right) => left.size - right.size || left.name.localeCompare(right.name));
 }
 
 async function listRemoteAssets(client, releaseId) {
@@ -171,7 +171,7 @@ function uploadAsset(client, releaseId, asset) {
       '--connect-timeout',
       '30',
       '--max-time',
-      '1800',
+      '7200',
       '--request',
       'POST',
       '--header',
