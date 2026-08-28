@@ -16,11 +16,15 @@ describe('provider presets', () => {
     const kimi = getProviderPreset('kimi')!;
     assert.equal(kimi.configuration.endpoints.openai?.baseUrl, 'https://api.kimi.com/coding/v1');
     assert.equal(kimi.configuration.endpoints.openai?.format, 'openai-chat-completions');
-    assert.deepEqual(kimi.configuration.codex.effortByModel?.['kimi-k2.5'], ['low', 'high', 'xhigh']);
-    assert.equal(kimi.configuration.codex.effortWireMappingByModel?.['kimi-k2.5']?.xhigh, 'max');
+    assert.deepEqual(kimi.configuration.codex.modelProfiles?.['kimi-k2.5']?.supportedEfforts, ['low', 'high', 'xhigh']);
+    assert.equal(kimi.configuration.codex.modelProfiles?.['kimi-k2.5']?.effortWireMapping?.xhigh, 'max');
     const bigmodel = getProviderPreset('bigmodel')!;
     assert.equal(bigmodel.configuration.endpoints.anthropic?.baseUrl, 'https://open.bigmodel.cn/api/anthropic');
-    assert.equal(bigmodel.configuration.endpoints.openai?.baseUrl, 'https://open.bigmodel.cn/api/coding/paas/v4');
+    assert.equal(bigmodel.configuration.endpoints.openai?.baseUrl, 'https://open.bigmodel.cn/api/v1');
+    assert.equal(bigmodel.configuration.endpoints.openai?.format, 'openai-responses');
+    assert.equal(bigmodel.configuration.models.codex, 'glm-5.3');
+    assert.equal(bigmodel.configuration.codex.modelProfiles?.['glm-5.3']?.contextWindow, 1_048_576);
+    assert.equal(bigmodel.configuration.openCode.modelProfiles?.['glm-5.3']?.maxOutputTokens, undefined);
   });
 
   it('returns editable detached copies and never reapplies catalog changes', () => {

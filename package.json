@@ -1,6 +1,6 @@
 {
   "name": "comate",
-  "version": "0.3.1",
+  "version": "0.4.4",
   "description": "Your friendly AI workspace companion",
   "author": "ai-dvps",
   "type": "module",
@@ -38,7 +38,7 @@
     "test:electron-cdp:required": "tsx scripts/test-electron-cdp.ts --required",
     "test:browser-acceptance:deterministic": "tsx --test src/server/services/__tests__/browser-task-trace.test.ts src/server/services/browser-mcp-http.test.ts scripts/evaluate-browser-task.test.ts scripts/fixtures/dynamic-publishing-task-fixture.test.ts scripts/browser-production-neutrality.test.ts",
     "test:server": "npm run build:contracts && tsx scripts/test-server.ts",
-    "test:scripts": "tsx --test scripts/electron-build-contract.test.ts scripts/patch-electron-dev-name.test.ts scripts/verify-packaged-renderer.test.ts scripts/test-server.test.ts scripts/lib/process-cleanup.test.ts scripts/lib/sidecar-node-version.test.ts scripts/evaluate-browser-task.test.ts scripts/fixtures/dynamic-publishing-task-fixture.test.ts scripts/browser-production-neutrality.test.ts scripts/codex-protocol-drift.test.ts",
+    "test:scripts": "tsx --test scripts/electron-build-contract.test.ts scripts/patch-electron-dev-name.test.ts scripts/verify-packaged-renderer.test.ts scripts/test-server.test.ts scripts/lib/process-cleanup.test.ts scripts/lib/sidecar-node-version.test.ts scripts/evaluate-browser-task.test.ts scripts/fixtures/dynamic-publishing-task-fixture.test.ts scripts/browser-production-neutrality.test.ts scripts/codex-protocol-drift.test.ts scripts/sync-gitee.test.ts",
     "test:packages": "npm run build:cli && npm test -w packages/comate-api-contracts -w packages/comate-cli -w packages/wecom-cli",
     "typecheck": "npm run build:contracts && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "check": "npm run lint && npm run typecheck && npm test",
@@ -87,8 +87,8 @@
     "@octokit/plugin-retry": "^8.1.0",
     "@octokit/plugin-throttling": "^11.0.3",
     "@octokit/rest": "^22.0.1",
-    "@opencode-ai/sdk": "1.18.4",
     "@openai/codex": "0.149.0",
+    "@opencode-ai/sdk": "1.18.23",
     "@radix-ui/react-collapsible": "^1.1.0",
     "@radix-ui/react-popover": "^1.1.15",
     "@radix-ui/react-select": "^2.3.1",
@@ -196,12 +196,12 @@
     "@openai/codex-linux-x64": "npm:@openai/codex@0.149.0-linux-x64",
     "@openai/codex-win32-arm64": "npm:@openai/codex@0.149.0-win32-arm64",
     "@openai/codex-win32-x64": "npm:@openai/codex@0.149.0-win32-x64",
-    "opencode-darwin-arm64": "1.18.4",
-    "opencode-darwin-x64": "1.18.4",
-    "opencode-linux-arm64": "1.18.4",
-    "opencode-linux-arm64-musl": "1.18.4",
-    "opencode-linux-x64": "1.18.4",
-    "opencode-linux-x64-musl": "1.18.4",
-    "opencode-windows-x64": "1.18.4"
+    "opencode-darwin-arm64": "1.18.23",
+    "opencode-darwin-x64": "1.18.23",
+    "opencode-linux-arm64": "1.18.23",
+    "opencode-linux-arm64-musl": "1.18.23",
+    "opencode-linux-x64": "1.18.23",
+    "opencode-linux-x64-musl": "1.18.23",
+    "opencode-windows-x64": "1.18.23"
   }
 }

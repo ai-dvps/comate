@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { create } from 'zustand';
 import i18next from 'i18next';
+import type { BackendId } from './backend-store';
 
 export interface SlashCommandDto {
   name: string;
@@ -22,8 +23,8 @@ interface CommandsState {
   loadingByWorkspace: Record<string, boolean>;
   errorByWorkspace: Record<string, string | undefined>;
 
-  fetchCommands: (workspaceId: string) => Promise<void>;
-  refreshCommands: (workspaceId: string) => Promise<void>;
+  fetchCommands: (workspaceId: string, scope?: CommandScope) => Promise<void>;
+  refreshCommands: (workspaceId: string, scope?: CommandScope) => Promise<void>;
   clearCommandsForWorkspace: (workspaceId: string) => void;
 }
 
@@ -34,19 +35,39 @@ const inflight = new Map<string, Promise<void>>();
 
 const API_BASE = '/api';
 const COMMAND_REFRESH_TIMEOUT_MS = 10_000;
+const SCOPED_QUERY_PREFIX = '?';
+
+export interface CommandScope {
+  sessionId?: string;
+  backendId?: BackendId;
+}
+
+function commandScopeQuery(scope?: CommandScope): string {
+  const params = new URLSearchParams();
+  if (scope?.sessionId) params.set('sessionId', scope.sessionId);
+  if (scope?.backendId) params.set('backend', scope.backendId);
+  const query = params.toString();
+  return query ? `${SCOPED_QUERY_PREFIX}${query}` : '';
+}
+
+function commandScopeKey(workspaceId: string, scope?: CommandScope): string {
+  return `${workspaceId}${commandScopeQuery(scope)}`;
+}
 
 async function doFetch(
   set: (
     updater: (state: CommandsState) => CommandsState | Partial<CommandsState>,
   ) => void,
   workspaceId: string,
+  scope?: CommandScope,
 ): Promise<void> {
+  const scopeKey = commandScopeKey(workspaceId, scope);
   set((state) => ({
-    loadingByWorkspace: { ...state.loadingByWorkspace, [workspaceId]: true },
-    errorByWorkspace: { ...state.errorByWorkspace, [workspaceId]: undefined },
+    loadingByWorkspace: { ...state.loadingByWorkspace, [scopeKey]: true },
+    errorByWorkspace: { ...state.errorByWorkspace, [scopeKey]: undefined },
   }));
   try {
-    const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/commands`, {
+    const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/commands${commandScopeQuery(scope)}`, {
       signal: AbortSignal.timeout(COMMAND_REFRESH_TIMEOUT_MS),
     });
     if (!res.ok) {
@@ -57,7 +78,7 @@ async function doFetch(
     set((state) => ({
       commandsByWorkspace: {
         ...state.commandsByWorkspace,
-        [workspaceId]: {
+        [scopeKey]: {
           commands: Array.isArray(data.commands) ? data.commands : [],
           partial: Boolean(data.partial),
           partialReason: data.partialReason,
@@ -66,13 +87,13 @@ async function doFetch(
             : undefined,
         },
       },
-      loadingByWorkspace: { ...state.loadingByWorkspace, [workspaceId]: false },
+      loadingByWorkspace: { ...state.loadingByWorkspace, [scopeKey]: false },
     }));
   } catch (err) {
     const message = err instanceof Error ? err.message : i18next.t('common:failedToFetchCommands', 'Failed to fetch commands');
     set((state) => ({
-      errorByWorkspace: { ...state.errorByWorkspace, [workspaceId]: message },
-      loadingByWorkspace: { ...state.loadingByWorkspace, [workspaceId]: false },
+      errorByWorkspace: { ...state.errorByWorkspace, [scopeKey]: message },
+      loadingByWorkspace: { ...state.loadingByWorkspace, [scopeKey]: false },
     }));
   }
 }
@@ -82,35 +103,37 @@ export const useCommandsStore = create<CommandsState>((set, get) => ({
   loadingByWorkspace: {},
   errorByWorkspace: {},
 
-  fetchCommands: async (workspaceId: string) => {
+  fetchCommands: async (workspaceId: string, scope?: CommandScope) => {
     if (!workspaceId) return;
-    if (get().commandsByWorkspace[workspaceId]) return;
+    const scopeKey = commandScopeKey(workspaceId, scope);
+    if (get().commandsByWorkspace[scopeKey]) return;
 
-    const existing = inflight.get(workspaceId);
+    const existing = inflight.get(scopeKey);
     if (existing) return existing;
 
-    const promise = doFetch(set, workspaceId).finally(() => {
-      inflight.delete(workspaceId);
+    const promise = doFetch(set, workspaceId, scope).finally(() => {
+      inflight.delete(scopeKey);
     });
-    inflight.set(workspaceId, promise);
+    inflight.set(scopeKey, promise);
     return promise;
   },
 
-  refreshCommands: async (workspaceId: string) => {
+  refreshCommands: async (workspaceId: string, scope?: CommandScope) => {
     if (!workspaceId) return;
+    const scopeKey = commandScopeKey(workspaceId, scope);
 
-    const existing = inflight.get(workspaceId);
+    const existing = inflight.get(scopeKey);
     if (existing) return existing;
 
     set((state) => {
       const next = { ...state.commandsByWorkspace };
-      delete next[workspaceId];
+      delete next[scopeKey];
       return { commandsByWorkspace: next };
     });
-    const promise = doFetch(set, workspaceId).finally(() => {
-      inflight.delete(workspaceId);
+    const promise = doFetch(set, workspaceId, scope).finally(() => {
+      inflight.delete(scopeKey);
     });
-    inflight.set(workspaceId, promise);
+    inflight.set(scopeKey, promise);
     return promise;
   },
 
@@ -120,9 +143,17 @@ export const useCommandsStore = create<CommandsState>((set, get) => ({
       const nextCommands = { ...state.commandsByWorkspace };
       const nextLoading = { ...state.loadingByWorkspace };
       const nextError = { ...state.errorByWorkspace };
-      delete nextCommands[workspaceId];
-      delete nextLoading[workspaceId];
-      delete nextError[workspaceId];
+      const scopedPrefix = `${workspaceId}${SCOPED_QUERY_PREFIX}`;
+      for (const key of new Set([
+        ...Object.keys(nextCommands),
+        ...Object.keys(nextLoading),
+        ...Object.keys(nextError),
+      ])) {
+        if (key !== workspaceId && !key.startsWith(scopedPrefix)) continue;
+        delete nextCommands[key];
+        delete nextLoading[key];
+        delete nextError[key];
+      }
       return {
         commandsByWorkspace: nextCommands,
         loadingByWorkspace: nextLoading,
@@ -142,28 +173,31 @@ export interface UseCommandsResult {
   refresh: () => Promise<{ commands: SlashCommandDto[]; succeeded: boolean }>;
 }
 
-export function useCommands(workspaceId: string): UseCommandsResult {
-  const cached = useCommandsStore((s) => s.commandsByWorkspace[workspaceId]);
-  const loading = useCommandsStore((s) => Boolean(s.loadingByWorkspace[workspaceId]));
-  const error = useCommandsStore((s) => s.errorByWorkspace[workspaceId]);
+export function useCommands(workspaceId: string, scope?: CommandScope): UseCommandsResult {
+  const sessionId = scope?.sessionId;
+  const backendId = scope?.backendId;
+  const scopeKey = commandScopeKey(workspaceId, { sessionId, backendId });
+  const cached = useCommandsStore((s) => s.commandsByWorkspace[scopeKey]);
+  const loading = useCommandsStore((s) => Boolean(s.loadingByWorkspace[scopeKey]));
+  const error = useCommandsStore((s) => s.errorByWorkspace[scopeKey]);
   const fetchCommands = useCommandsStore((s) => s.fetchCommands);
   const refreshCommands = useCommandsStore((s) => s.refreshCommands);
 
   const fetch = useCallback(
-    () => fetchCommands(workspaceId),
-    [fetchCommands, workspaceId],
+    () => fetchCommands(workspaceId, { sessionId, backendId }),
+    [backendId, fetchCommands, sessionId, workspaceId],
   );
   const refresh = useCallback(async () => {
-    await refreshCommands(workspaceId);
+    await refreshCommands(workspaceId, { sessionId, backendId });
     const state = useCommandsStore.getState();
-    const succeeded = !state.errorByWorkspace[workspaceId];
+    const succeeded = !state.errorByWorkspace[scopeKey];
     return {
       commands: succeeded
-        ? (state.commandsByWorkspace[workspaceId]?.commands ?? [])
+        ? (state.commandsByWorkspace[scopeKey]?.commands ?? [])
         : (cached?.commands ?? []),
       succeeded,
     };
-  }, [cached?.commands, refreshCommands, workspaceId]);
+  }, [backendId, cached?.commands, refreshCommands, scopeKey, sessionId, workspaceId]);
 
   return {
     commands: cached?.commands ?? [],

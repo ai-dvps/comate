@@ -123,7 +123,7 @@ async function characterize(mode: Mode): Promise<{ recording: Recording; message
   }
 }
 
-describe('pinned OpenCode 1.18.4 Provider transport characterization', { concurrency: false }, () => {
+describe('pinned OpenCode 1.18.23 Provider transport characterization', { concurrency: false }, () => {
   for (const mode of ['direct-anthropic', 'direct-openai-chat'] as const) {
     it(`records ${mode} path, auth, payload, streaming text, and tool events`, { timeout: 30_000 }, async () => {
       const { recording, messages } = await characterize(mode);

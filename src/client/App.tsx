@@ -54,7 +54,7 @@ function App() {
   useTheme()
   useBadgeSync()
   useNotificationSounds()
-  const { uiFontSize, autoCheckUpdates, setLastUpdateCheckAt } = useAppSettings()
+  const { uiFontSize, autoCheckUpdates, setLastUpdateCheckAt, approvalMode } = useAppSettings()
 
   const workspaces = useWorkspaceStore((s) => s.workspaces)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
@@ -509,6 +509,7 @@ function App() {
           leftCollapsed={isLeftEffectivelyCollapsed}
           rightCollapsed={isRightEffectivelyCollapsed}
           contextAvailable={activeWorkspaceId !== null && !newChatVisible}
+          viewportWidth={viewportWidth}
           workspaceName={activeWorkspace?.name}
           sessionName={activeSession?.name}
           managementTitle={managementTitle}
@@ -520,6 +521,7 @@ function App() {
             if (!activeWorkspaceId) return
             setShowContextMenu((open) => !open)
           }}
+          onNewChat={openNewChat}
           onToggleLeft={handleToggleLeft}
           onToggleRight={handleToggleRight}
           isMac={isMac}
@@ -693,6 +695,7 @@ function App() {
               <NewChatPage
                 workspaces={workspaces}
                 defaultWorkspaceId={lastSessionWorkspaceIdRef.current}
+                defaultApprovalMode={approvalMode}
                 selectedWorkspaceId={newChatWorkspaceId}
                 onWorkspaceChange={setNewChatWorkspaceId}
                 onCreateWorkspace={() => setShowCreateModal(true)}

@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Activity } from 'lucide-react'
 import { useChatStore } from '../stores/chat-store'
 import { useProviderStore } from '../stores/provider-store'
 import {
@@ -59,10 +60,13 @@ export default function ProviderUsageStatus({
 
   return (
     <span
-      className="text-[11px] text-text-tertiary whitespace-nowrap shrink-0"
-      title={activeProvider?.name}
+      className="status-bar-provider-usage flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] text-text-tertiary"
+      title={`${activeProvider?.name ?? ''} ${t('provider.usage.label')}: ${value}`.trim()}
+      aria-label={`${t('provider.usage.label')}: ${value}`}
     >
-      {t('provider.usage.label')}: {value}
+      <Activity className="status-bar-compact-icon hidden size-3" aria-hidden="true" />
+      <span className="status-bar-label">{t('provider.usage.label')}: </span>
+      <span className="tabular-nums" aria-hidden="true">{value}</span>
     </span>
   )
 }

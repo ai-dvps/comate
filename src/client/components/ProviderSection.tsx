@@ -5,6 +5,8 @@ import { useProviderStore, type Provider, type ProviderAuthTokenRevealResult, ty
 import type { BackendId } from '../stores/backend-store'
 import { hasUsageSupport, providerUsageAgent, usageBarColor, usagePercentage, useProviderUsageStore } from '../stores/provider-usage-store'
 import ConfirmDialog from './ConfirmDialog'
+import ProviderAdvancedCapabilities from './ProviderAdvancedCapabilities'
+import { validateProviderCapabilities } from './provider-capability-validation'
 import { cn } from './ui/utils'
 
 type EndpointState = 'idle' | 'checking' | 'reachable' | 'unreachable' | 'disabled' | 'invalid'
@@ -17,7 +19,7 @@ const EMPTY_CONFIGURATION: ProviderConfiguration = {
     openai: { enabled: false, baseUrl: '', format: 'openai-responses' },
   },
   models: {}, openCode: { protocol: 'anthropic' }, claude: {},
-  codex: { promptCacheRouting: 'unsupported', thinking: 'unknown' },
+  codex: {},
 }
 
 function emptyForm(): ProviderFormData {
@@ -380,6 +382,8 @@ export default function ProviderSection() {
     const enabled = Object.values(form.configuration.endpoints).filter((endpoint) => endpoint?.enabled)
     if (enabled.length === 0) return t('providers.endpointRequired')
     if (endpointStates.anthropic.state === 'invalid' || endpointStates.openai.state === 'invalid') return t('providers.validHttpRequired')
+    const capabilityError = validateProviderCapabilities(form.configuration)
+    if (capabilityError) return t(`providers.capabilityErrors.${capabilityError}`)
     return null
   }
 
@@ -462,12 +466,16 @@ export default function ProviderSection() {
           <legend className="px-1 text-xs font-semibold text-text-primary">{t('providers.agentModels')}</legend>
           {(['claudeCode', 'codex', 'openCode'] as const).map((agent) => <label key={agent} className="text-[11px] font-medium text-text-tertiary">{t(`providers.models.${agent}`)}<input value={form.configuration.models[agent] ?? ''} onChange={(event) => updateConfiguration({ ...form.configuration, models: { ...form.configuration.models, [agent]: event.target.value } })} className="mt-1 block w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent/40" /></label>)}
           <label className="text-[11px] font-medium text-text-tertiary sm:col-span-3">{t('providers.openCodeProtocol')}
-            <select value={form.configuration.openCode.protocol} onChange={(event) => updateConfiguration({ ...form.configuration, openCode: { protocol: event.target.value as 'anthropic' | 'openai' } })} className="mt-1 block w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent/40"><option value="anthropic">Anthropic</option><option value="openai">OpenAI</option></select>
+            <select value={form.configuration.openCode.protocol} onChange={(event) => {
+              const protocol = event.target.value as 'anthropic' | 'openai'
+              const modelProfiles = Object.fromEntries(Object.entries(form.configuration.openCode.modelProfiles ?? {}).map(([model, profile]) => [model, { ...profile, variants: undefined, reasoningField: undefined }]))
+              updateConfiguration({ ...form.configuration, openCode: { protocol, ...(Object.keys(modelProfiles).length && { modelProfiles }) } })
+            }} className="mt-1 block w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent/40"><option value="anthropic">Anthropic</option><option value="openai">OpenAI</option></select>
           </label>
         </fieldset>
 
         <button type="button" aria-expanded={showAdvanced} onClick={() => setShowAdvanced((value) => !value)} className="mb-4 inline-flex items-center gap-1 text-xs text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"><ChevronDown className={cn('h-3.5 w-3.5 transition-transform', showAdvanced && 'rotate-180')} />{t('providers.advanced')}</button>
-        {showAdvanced && <fieldset className="mb-4 grid gap-4 rounded-xl border border-border p-4 sm:grid-cols-2"><legend className="px-1 text-xs font-semibold text-text-primary">{t('providers.claudeCapabilities')}</legend>{(['defaultOpusModel', 'defaultSonnetModel', 'defaultHaikuModel', 'subagentModel', 'effortLevel'] as const).map((key) => <label key={key} className="text-[11px] font-medium text-text-tertiary">{t(`providers.${key}`)}<input value={form.configuration.claude[key] ?? ''} onChange={(event) => updateConfiguration({ ...form.configuration, claude: { ...form.configuration.claude, [key]: event.target.value } })} className="mt-1 block w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-accent/40" /></label>)}</fieldset>}
+        {showAdvanced && <ProviderAdvancedCapabilities configuration={form.configuration} onChange={updateConfiguration} />}
 
         <div className="flex flex-wrap justify-end gap-2"><button type="button" onClick={resetEditor} className="rounded-lg bg-surface-hover px-4 py-2 text-xs text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40">{t('actions.cancel')}</button><button type="button" onClick={() => void save()} disabled={store.isSaving} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-xs font-medium text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50">{store.isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}{store.isSaving ? t('providers.checkingHealth') : t('actions.save')}</button></div>
 

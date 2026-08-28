@@ -9,6 +9,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Plus,
+  SquarePen,
   X,
 } from 'lucide-react'
 import type { ContextTab } from '../stores/context-tab-store'
@@ -20,6 +21,7 @@ interface CustomTitlebarProps {
   leftCollapsed: boolean
   rightCollapsed: boolean
   contextAvailable: boolean
+  viewportWidth?: number
   workspaceName?: string
   sessionName?: string
   managementTitle?: string
@@ -28,6 +30,7 @@ interface CustomTitlebarProps {
   onSelectTab: (id: string) => void
   onCloseTab: (id: string) => void
   onAddTab: () => void
+  onNewChat: () => void
   onToggleLeft: () => void
   onToggleRight: () => void
   isMac?: boolean
@@ -38,11 +41,19 @@ const interactiveStyle = { WebkitAppRegion: 'no-drag' } as CSSProperties
 const COLLAPSED_LEFT_WIDTH = 48
 const MACOS_TRAFFIC_LIGHTS_WIDTH = 72
 const LEFT_TOGGLE_SLOT_WIDTH = 40
+const NEW_CHAT_SLOT_WIDTH = 40
+const WINDOWS_WINDOW_CONTROLS_WIDTH = 138
+const MIN_CONVERSATION_TITLE_WIDTH = 160
 
 function TabIcon({ tab }: { tab: ContextTab }) {
-  if (tab.type === 'browser') return <Globe2 className="h-3.5 w-3.5" aria-hidden="true" />
-  if (tab.type === 'changes') return <GitCompare className="h-3.5 w-3.5" aria-hidden="true" />
-  return <File className="h-3.5 w-3.5" aria-hidden="true" />
+  const className = 'h-3.5 w-3.5 text-text-tertiary/70 transition-colors group-hover:text-text-secondary'
+  if (tab.type === 'browser') {
+    return <Globe2 className={className} strokeWidth={1.5} aria-hidden="true" />
+  }
+  if (tab.type === 'changes') {
+    return <GitCompare className={className} strokeWidth={1.5} aria-hidden="true" />
+  }
+  return <File className={className} strokeWidth={1.5} aria-hidden="true" />
 }
 
 export default function CustomTitlebar({
@@ -51,6 +62,7 @@ export default function CustomTitlebar({
   leftCollapsed,
   rightCollapsed,
   contextAvailable,
+  viewportWidth,
   workspaceName,
   sessionName,
   managementTitle,
@@ -59,6 +71,7 @@ export default function CustomTitlebar({
   onSelectTab,
   onCloseTab,
   onAddTab,
+  onNewChat,
   onToggleLeft,
   onToggleRight,
   isMac = false,
@@ -67,10 +80,19 @@ export default function CustomTitlebar({
   const { t } = useTranslation('common')
   const leftSegmentWidth = leftCollapsed
     ? isMac
-      ? MACOS_TRAFFIC_LIGHTS_WIDTH + LEFT_TOGGLE_SLOT_WIDTH
-      : COLLAPSED_LEFT_WIDTH
+      ? MACOS_TRAFFIC_LIGHTS_WIDTH + LEFT_TOGGLE_SLOT_WIDTH + NEW_CHAT_SLOT_WIDTH
+      : COLLAPSED_LEFT_WIDTH + NEW_CHAT_SLOT_WIDTH
     : leftWidth
   const contextSegmentWidth = contextAvailable ? (rightCollapsed ? 44 : rightWidth) : 0
+  const titlebarContextWidth = contextSegmentWidth
+    + (isWindows ? WINDOWS_WINDOW_CONTROLS_WIDTH : 0)
+  const availableConversationWidth = viewportWidth === undefined
+    ? Number.POSITIVE_INFINITY
+    : viewportWidth - leftSegmentWidth - titlebarContextWidth
+  const hideConversationTitle = contextAvailable
+    && !managementTitle
+    && !rightCollapsed
+    && availableConversationWidth < MIN_CONVERSATION_TITLE_WIDTH
   const leftToggleRef = useRef<HTMLButtonElement>(null)
   const rightToggleRef = useRef<HTMLButtonElement>(null)
   const previousCollapse = useRef({ left: leftCollapsed, right: rightCollapsed })
@@ -104,7 +126,7 @@ export default function CustomTitlebar({
       <div
         data-testid="titlebar-command-center"
         className={cn(
-          'flex flex-shrink-0 items-center transition-[width] duration-200 ease-out motion-reduce:transition-none',
+          'flex flex-shrink-0 items-center border-b border-border transition-[width] duration-200 ease-out motion-reduce:transition-none',
           !leftCollapsed && 'border-r border-border/70',
         )}
         style={{ width: leftSegmentWidth }}
@@ -123,35 +145,56 @@ export default function CustomTitlebar({
           style={interactiveStyle}
           onClick={onToggleLeft}
           className={cn(
-            'm-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-text-tertiary',
-            'hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+            'group m-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md',
+            'hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
           )}
           aria-label={leftCollapsed ? t('shell.expandCommandCenter') : t('shell.collapseCommandCenter')}
           aria-expanded={!leftCollapsed}
         >
           {leftCollapsed
-            ? <PanelLeftOpen className="h-4 w-4" aria-hidden="true" />
-            : <PanelLeftClose className="h-4 w-4" aria-hidden="true" />}
+            ? <PanelLeftOpen className="h-4 w-4 text-text-tertiary/70 transition-colors group-hover:text-text-secondary" strokeWidth={1.5} aria-hidden="true" />
+            : <PanelLeftClose className="h-4 w-4 text-text-tertiary/70 transition-colors group-hover:text-text-secondary" strokeWidth={1.5} aria-hidden="true" />}
         </button>
+        {leftCollapsed ? (
+          <button
+            type="button"
+            data-testid="titlebar-interactive"
+            style={interactiveStyle}
+            onClick={onNewChat}
+            className={cn(
+              'group m-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md',
+              'hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+            )}
+            aria-label={t('newChat.title')}
+            title={t('newChat.title')}
+          >
+            <SquarePen className="h-4 w-4 text-text-tertiary/70 transition-colors group-hover:text-text-secondary" strokeWidth={1.5} aria-hidden="true" />
+          </button>
+        ) : null}
         <div data-electron-drag-region className="min-w-0 flex-1 self-stretch" />
       </div>
 
       <div
         data-testid="titlebar-conversation"
-        className="flex min-w-0 flex-1 items-center border-b border-border px-3"
+        className={cn(
+          'flex min-w-0 flex-1 items-center border-b border-border',
+          !hideConversationTitle && 'px-3',
+        )}
       >
         <div data-electron-drag-region className="min-w-0 flex-1 self-stretch" />
-        <div className="pointer-events-none min-w-0 max-w-[70%] text-center">
-          {managementTitle ? (
-            <div className="truncate text-xs font-medium text-text-primary">{managementTitle}</div>
-          ) : (
-            <div className="flex min-w-0 items-center justify-center gap-1.5 text-xs">
-              <span className="truncate text-text-tertiary">{workspaceName}</span>
-              {workspaceName && sessionName ? <span className="text-text-tertiary/50">/</span> : null}
-              <span className="truncate font-medium text-text-primary">{sessionName}</span>
-            </div>
-          )}
-        </div>
+        {hideConversationTitle ? null : (
+          <div className="pointer-events-none min-w-0 max-w-[70%] text-center">
+            {managementTitle ? (
+              <div className="truncate text-xs font-medium text-text-primary">{managementTitle}</div>
+            ) : (
+              <div className="flex min-w-0 items-center justify-center gap-1.5 text-xs">
+                <span className="truncate text-text-tertiary">{workspaceName}</span>
+                {workspaceName && sessionName ? <span className="text-text-tertiary/50">/</span> : null}
+                <span className="truncate font-medium text-text-primary">{sessionName}</span>
+              </div>
+            )}
+          </div>
+        )}
         <div data-electron-drag-region className="min-w-0 flex-1 self-stretch" />
       </div>
 
@@ -163,7 +206,7 @@ export default function CustomTitlebar({
           contextAvailable && !rightCollapsed && 'border-l border-border/70',
           isWindows && 'pr-[138px]',
         )}
-        style={{ width: contextSegmentWidth + (isWindows ? 138 : 0) }}
+        style={{ width: titlebarContextWidth }}
       >
         {!contextAvailable ? (
           <div data-electron-drag-region className="flex-1 self-stretch" />
@@ -177,11 +220,11 @@ export default function CustomTitlebar({
               data-testid="titlebar-interactive"
               style={interactiveStyle}
               onClick={onToggleRight}
-              className="flex h-8 w-8 items-center justify-center rounded-md text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              className="group flex h-8 w-8 items-center justify-center rounded-md hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               aria-label={t('shell.expandContext')}
               aria-expanded="false"
             >
-              <PanelRightOpen className="h-4 w-4" aria-hidden="true" />
+              <PanelRightOpen className="h-4 w-4 text-text-tertiary/70 transition-colors group-hover:text-text-secondary" strokeWidth={1.5} aria-hidden="true" />
             </button>
           </div>
         ) : (
@@ -223,7 +266,7 @@ export default function CustomTitlebar({
                       className="rounded p-0.5 opacity-0 hover:bg-surface-hover group-hover:opacity-100 focus:opacity-100"
                       aria-label={t('shell.closeTab', { name: tab.name })}
                     >
-                      <X className="h-3 w-3" aria-hidden="true" />
+                      <X className="h-3 w-3 text-text-tertiary/70 transition-colors group-hover:text-text-secondary" strokeWidth={1.5} aria-hidden="true" />
                     </button>
                   </div>
                 )
@@ -235,21 +278,21 @@ export default function CustomTitlebar({
               data-testid="titlebar-interactive"
               style={interactiveStyle}
               onClick={onAddTab}
-              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              className="group flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               aria-label={t('shell.addContextTab')}
             >
-              <Plus className="h-4 w-4" aria-hidden="true" />
+              <Plus className="h-4 w-4 text-text-tertiary/70 transition-colors group-hover:text-text-secondary" strokeWidth={1.5} aria-hidden="true" />
             </button>
             <button
               type="button"
               data-testid="titlebar-interactive"
               style={interactiveStyle}
               onClick={onToggleRight}
-              className="mr-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              className="group mr-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               aria-label={t('shell.collapseContext')}
               aria-expanded="true"
             >
-              <PanelRightClose className="h-4 w-4" aria-hidden="true" />
+              <PanelRightClose className="h-4 w-4 text-text-tertiary/70 transition-colors group-hover:text-text-secondary" strokeWidth={1.5} aria-hidden="true" />
             </button>
           </>
         )}

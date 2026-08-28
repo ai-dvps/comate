@@ -1,5 +1,5 @@
 /**
- * U4 go/no-go surface verification on the PINNED opencode binary (1.18.4).
+ * U4 go/no-go surface verification on the PINNED opencode binary (1.18.23).
  * Probes, in order:
  *   1. serve spawns and reports its version
  *   2. HTTP Basic auth gate: unset password → 401; correct → 200

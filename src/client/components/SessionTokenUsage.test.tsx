@@ -36,20 +36,23 @@ vi.mock('../stores/provider-store', () => ({
 }))
 
 describe('SessionTokenUsage', () => {
-  it('renders dashes when no usage data exists', () => {
-    renderWithI18n(<SessionTokenUsage sessionId="s1" workspaceId="ws1" />)
-    expect(screen.getByText('—')).toBeInTheDocument()
+  it('renders independent dashes when no usage data exists', () => {
+    renderWithI18n(<SessionTokenUsage sessionId="s1" />)
+    expect(screen.getByLabelText(/Session: —/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Context: —/i)).toBeInTheDocument()
   })
 
-  it('renders context estimate from sessionUsage when contextUsage is absent', () => {
+  it('renders cumulative tokens but does not infer context from them', () => {
     mockStore.sessionUsage.s1 = {
+      cumulativeTotal: 10500,
       cumulativeInput: 10000,
       cumulativeOutput: 500,
       cumulativeCacheRead: 0,
       cumulativeCacheWrite: 0,
     }
-    renderWithI18n(<SessionTokenUsage sessionId="s1" workspaceId="ws1" />)
-    expect(screen.getByText(/Context: 5%/i)).toBeInTheDocument()
+    renderWithI18n(<SessionTokenUsage sessionId="s1" />)
+    expect(screen.getByLabelText(/Session: 11k/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Context: —/i)).toBeInTheDocument()
   })
 
   it('renders contextUsage percentage when available', () => {
@@ -60,12 +63,14 @@ describe('SessionTokenUsage', () => {
       categories: [],
     }
     mockStore.sessionUsage.s1 = {
+      cumulativeTotal: 1500,
       cumulativeInput: 1000,
       cumulativeOutput: 500,
       cumulativeCacheRead: 0,
       cumulativeCacheWrite: 0,
     }
-    renderWithI18n(<SessionTokenUsage sessionId="s1" workspaceId="ws1" />)
-    expect(screen.getByText(/Context: 15%/i)).toBeInTheDocument()
+    renderWithI18n(<SessionTokenUsage sessionId="s1" />)
+    expect(screen.getByRole('button', { name: /Context: 15%/i })).toBeInTheDocument()
+    expect(document.querySelector('.status-bar-compact-icon')).toBeInTheDocument()
   })
 })

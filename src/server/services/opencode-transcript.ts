@@ -102,6 +102,16 @@ export interface OpencodeRestMessage {
     id: string;
     role: string;
     time?: { created?: number; completed?: number };
+    modelID?: string;
+    providerID?: string;
+    cost?: number;
+    tokens?: {
+      total?: number;
+      input: number;
+      output: number;
+      reasoning?: number;
+      cache: { read: number; write: number };
+    };
     /** Present on failed assistant turns: the provider/agent error that ended
      * the turn (e.g. APIError 1211 model-not-found). opencode stores it on the
      * message, so a failed turn can be made visible in history. */
@@ -161,7 +171,20 @@ export function opencodeMessagesToSessionMessages(
         type: msg.info.role === 'user' ? 'user' : 'assistant',
         parent_tool_use_id: null,
         session_id: '',
-        message: { role: msg.info.role === 'user' ? 'user' : 'assistant', content },
+        message: {
+          role: msg.info.role === 'user' ? 'user' : 'assistant',
+          content,
+          ...(msg.info.role === 'assistant' && msg.info.tokens ? { usage: {
+            ...(msg.info.tokens.total !== undefined ? { total_tokens: msg.info.tokens.total } : {}),
+            input_tokens: msg.info.tokens.input,
+            output_tokens: msg.info.tokens.output,
+            cache_read_input_tokens: msg.info.tokens.cache.read,
+            cache_creation_input_tokens: msg.info.tokens.cache.write,
+            ...(msg.info.tokens.reasoning !== undefined ? {
+              output_tokens_details: { thinking_tokens: msg.info.tokens.reasoning },
+            } : {}),
+          } } : {}),
+        },
       } as unknown as SessionMessage);
     }
     if (toolResults.length > 0) {

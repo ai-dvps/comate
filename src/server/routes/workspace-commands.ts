@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { commandsService } from '../services/commands-service.js';
 import { chatService } from '../services/chat-service.js';
+import { getAvailableSkills } from '../services/opencode-skill-discovery.js';
+import { codexAppServerManager } from '../services/codex-app-server-manager.js';
 
 const router = Router({ mergeParams: true });
 
@@ -17,19 +19,36 @@ router.get('/', async (req, res) => {
       return;
     }
 
-    // Backend-aware discovery (U7): an opencode session's commands come from
-    // its own serve; without a live serve the list is empty rather than
-    // claude-flavored (builtins differ between runtimes).
+    // Backend-aware discovery (U7): live sessions use their own runtime;
+    // new OpenCode chats use only OpenCode-compatible filesystem skills.
     const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined;
+    const requestedBackend = typeof req.query.backend === 'string' ? req.query.backend : undefined;
     if (sessionId) {
       const session = workspaceStore.getLocalSession(sessionId);
-      if (session?.backend === 'opencode' || session?.backend === 'codex') {
+      if (session?.backend === 'codex') {
+        const skills = await codexAppServerManager.listSkills(workspace.folderPath);
+        const commands = skills.map(({ name, description }) => ({ name, description }));
+        res.json({ commands, partial: false });
+        return;
+      }
+      if (session?.backend === 'opencode') {
         const commands = await chatService.getSessionBackendCommands(sessionId);
         // Same envelope as the claude path so clients never read undefined
         // for fields the other backend always sends (review P2).
         res.json({ commands, partial: false });
         return;
       }
+    }
+    if (requestedBackend === 'opencode') {
+      const commands = await getAvailableSkills(workspace.folderPath);
+      res.json({ commands, partial: false });
+      return;
+    }
+    if (requestedBackend === 'codex') {
+      const skills = await codexAppServerManager.listSkills(workspace.folderPath);
+      const commands = skills.map(({ name, description }) => ({ name, description }));
+      res.json({ commands, partial: false });
+      return;
     }
 
     const result = await commandsService.getCommands(workspace);

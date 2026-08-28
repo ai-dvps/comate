@@ -14,7 +14,6 @@ import {
   Gauge,
   GitBranch,
   Moon,
-  MessageSquarePlus,
   Pencil,
   Plus,
   Puzzle,
@@ -22,6 +21,7 @@ import {
   Search,
   Settings,
   Sparkles,
+  SquarePen,
   Sun,
   Trash2,
   X,
@@ -522,7 +522,7 @@ export default function AgentCommandCenter({
   }
 
   const navigation = [
-    { id: 'new-chat' as const, label: t('newChat.title'), icon: MessageSquarePlus, action: onNewChat },
+    { id: 'new-chat' as const, label: t('newChat.title'), icon: SquarePen, action: onNewChat },
     { id: 'todos' as const, label: t('header.todos'), icon: CheckSquare, action: onOpenTodos },
     { id: 'capabilities' as const, label: t('shell.capabilities'), icon: Puzzle, action: onOpenCapabilities },
   ]

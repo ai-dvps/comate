@@ -264,12 +264,18 @@ describe('FileExplorer', () => {
       clear: vi.fn(),
     }
 
-    global.fetch = vi.fn(() =>
-      Promise.resolve({
+    global.fetch = vi.fn((url: string) => {
+      if (url.includes('?path=src')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ nodes: [{ name: 'utils.ts', type: 'file' }] }),
+        })
+      }
+      return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ nodes: [] }),
-      }),
-    ) as unknown as typeof global.fetch
+        json: () => Promise.resolve({ nodes: [{ name: 'src', type: 'folder' }] }),
+      })
+    }) as unknown as typeof global.fetch
 
     const onSelectPath = vi.fn()
     const onFileClick = vi.fn()
@@ -302,9 +308,78 @@ describe('FileExplorer', () => {
       </I18nextProvider>,
     )
 
-    expect(screen.getByText('src/utils.ts').parentElement).toHaveClass('bg-accent/10')
+    await waitFor(() => {
+      expect(mockUseFilesResult.clear).toHaveBeenCalled()
+      expect(screen.getByPlaceholderText('Search files…')).toHaveValue('')
+      expect(screen.getByText('utils.ts')).toBeInTheDocument()
+    })
 
-    fireEvent.doubleClick(screen.getByText('src/utils.ts'))
+    expect(screen.getByText('utils.ts').parentElement).toHaveClass('bg-accent/10')
+
+    fireEvent.doubleClick(screen.getByText('utils.ts'))
     expect(onFileClick).toHaveBeenCalledWith('src/utils.ts', 'utils.ts')
+  })
+
+  it('exits search and reveals nested files when selectedPath changes', async () => {
+    global.fetch = vi.fn((url: string) => {
+      if (url.includes('?path=src')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ nodes: [{ name: 'utils.ts', type: 'file' }] }),
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ nodes: [{ name: 'src', type: 'folder' }] }),
+      })
+    }) as unknown as typeof global.fetch
+
+    mockUseFilesResult = {
+      results: [{ path: 'src/utils.ts' }],
+      loading: false,
+      error: undefined,
+      truncated: false,
+      search: vi.fn(),
+      clear: vi.fn(),
+    }
+
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    })
+
+    const { rerender } = renderWithI18n(
+      <FileExplorer selectedPath="README.md" onFileClick={vi.fn()} />,
+    )
+
+    fireEvent.change(screen.getByPlaceholderText('Search files…'), {
+      target: { value: 'util' },
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('src/utils.ts')).toBeInTheDocument()
+    })
+
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <FileExplorer selectedPath="src/utils.ts" onFileClick={vi.fn()} />
+      </I18nextProvider>,
+    )
+
+    await waitFor(() => {
+      expect(mockUseFilesResult.clear).toHaveBeenCalled()
+      expect(screen.getByPlaceholderText('Search files…')).toHaveValue('')
+      expect(screen.getByText('utils.ts')).toBeInTheDocument()
+    })
+
+    await waitFor(() => {
+      expect(scrollIntoView).toHaveBeenCalledWith(
+        expect.objectContaining({ block: 'nearest', behavior: 'smooth' }),
+      )
+    })
+
+    expect(screen.getByTestId('file-tree-item')).toHaveAttribute('data-path', 'src/utils.ts')
+    expect(screen.getByText('utils.ts').parentElement).toHaveClass('bg-accent/10')
   })
 })

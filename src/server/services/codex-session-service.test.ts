@@ -1,10 +1,81 @@
 import '../test-utils/test-env.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { CodexAppServerManager } from './codex-app-server-manager.js';
-import { CodexSessionService } from './codex-session-service.js';
+import { CodexSessionService, parseCodexRolloutTokenUsage } from './codex-session-service.js';
 
 describe('CodexSessionService history projection', () => {
+  it('resets a turn estimate to the latest snapshot when cumulative counts regress', () => {
+    const events = [
+      { payload: { type: 'task_started', turn_id: 'turn-1' } },
+      { payload: { type: 'token_count', info: {
+        total_token_usage: { total_tokens: 100, input_tokens: 70, output_tokens: 30 },
+        last_token_usage: { total_tokens: 30, input_tokens: 20, output_tokens: 10 },
+      } } },
+      { payload: { type: 'token_count', info: {
+        total_token_usage: { total_tokens: 90, input_tokens: 60, output_tokens: 30 },
+        last_token_usage: { total_tokens: 12, input_tokens: 8, output_tokens: 4 },
+      } } },
+      { payload: { type: 'task_complete', turn_id: 'turn-1' } },
+    ];
+
+    assert.deepStrictEqual(parseCodexRolloutTokenUsage(
+      events.map((event) => JSON.stringify(event)).join('\n'),
+    ).get('turn-1'), {
+      quality: 'estimated', totalTokens: 12, inputTokens: 8, outputTokens: 4,
+      cacheReadTokens: 0, cacheWriteTokens: 0, thinkingTokens: 0,
+    });
+  });
+
+  it('reconstructs per-turn usage from the rollout path returned by app-server', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'comate-codex-rollout-'));
+    const rolloutPath = join(dir, 'rollout.jsonl');
+    await writeFile(rolloutPath, [
+      { type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-1' } },
+      { type: 'event_msg', payload: { type: 'token_count', info: {
+        total_token_usage: { total_tokens: 100, input_tokens: 70, cached_input_tokens: 10,
+          cache_write_input_tokens: 2, output_tokens: 30, reasoning_output_tokens: 3 },
+        last_token_usage: { total_tokens: 30, input_tokens: 20, cached_input_tokens: 5,
+          cache_write_input_tokens: 1, output_tokens: 10, reasoning_output_tokens: 3 },
+      }}},
+      { type: 'event_msg', payload: { type: 'token_count', info: {
+        total_token_usage: { total_tokens: 125, input_tokens: 88, cached_input_tokens: 10,
+          cache_write_input_tokens: 2, output_tokens: 37, reasoning_output_tokens: 3 },
+        last_token_usage: { total_tokens: 25, input_tokens: 18, cached_input_tokens: 0,
+          cache_write_input_tokens: 0, output_tokens: 7, reasoning_output_tokens: 0 },
+        model_context_window: 1000,
+      }}},
+      { type: 'event_msg', payload: { type: 'task_complete', turn_id: 'turn-1' } },
+    ].map((entry) => JSON.stringify(entry)).join('\n'));
+    try {
+      const manager = { request: async () => ({ thread: {
+        id: 'thread-1', path: rolloutPath, turns: [{ id: 'turn-1', items: [
+          { type: 'agentMessage', id: 'agent-1', text: 'done', phase: null,
+            memoryCitation: null, delivery: null },
+        ] }],
+      } }) } as unknown as CodexAppServerManager;
+
+      const history = await new CodexSessionService(manager).loadMessagesWithContext('thread-1');
+      const terminal = history.messages[0] as unknown as { tokenUsage?: unknown };
+      assert.deepStrictEqual(terminal.tokenUsage, {
+        quality: 'estimated', totalTokens: 55, inputTokens: 38, outputTokens: 17,
+        cacheReadTokens: 5, cacheWriteTokens: 1, thinkingTokens: 3,
+      });
+      assert.deepStrictEqual(history.contextUsage, {
+        totalTokens: 25, maxTokens: 1000, rawMaxTokens: 1000, percentage: 2.5,
+        categories: [
+          { name: 'input', tokens: 18 }, { name: 'cached input', tokens: 0 },
+          { name: 'output', tokens: 7 }, { name: 'reasoning', tokens: 0 },
+        ],
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('lists only child threads of the requested Codex parent across pages', async () => {
     const requests: unknown[] = [];
     const manager = {

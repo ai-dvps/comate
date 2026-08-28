@@ -174,6 +174,26 @@ describe('mergeAssistantTurns', () => {
     ])
   })
 
+  it('keeps the terminal assistant message token settlement on a merged turn', () => {
+    const first: ChatMessage = {
+      ...cmsg('a1', 'assistant', [mTool('Edit')]),
+      tokenUsage: { quality: 'estimated', totalTokens: 10 },
+    }
+    const terminal: ChatMessage = {
+      ...cmsg('a2', 'assistant', [mText('done')]),
+      tokenUsage: {
+        quality: 'exact',
+        totalTokens: 42,
+        inputTokens: 30,
+        outputTokens: 12,
+      },
+    }
+
+    const [merged] = mergeAssistantTurns([first, terminal])
+
+    expect(merged.tokenUsage).toEqual(terminal.tokenUsage)
+  })
+
   it('preserves per-message timestamps for merged parts', () => {
     const merged = mergeAssistantTurns([
       cmsg('u1', 'user', [mText('prompt')]),

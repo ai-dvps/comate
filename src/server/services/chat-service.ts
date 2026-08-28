@@ -20,8 +20,9 @@ import type {
   WorkflowState,
   SessionActivitySnapshot,
   UserTurnContent,
+  ContextUsageSnapshot,
 } from '../types/message.js';
-import { normalizeSessionMessage, scanSdkMessagesForTasks } from './message-normalizer.js';
+import { normalizeSessionMessage, scanSdkMessagesForTasks, settleHistoricalAssistantTurns } from './message-normalizer.js';
 import type { StatusResult } from '../websocket/types.js';
 import { SdkClient } from './sdk-client.js';
 import {
@@ -808,13 +809,15 @@ export class ChatService {
           409,
         );
       }
-      workspaceStore.updateSessionBackend(id, input.backend);
       if (localSession?.backend !== input.backend) {
+        workspaceStore.switchSessionBackend(id, input.backend);
         const existing = this.getRuntimeIfExists(id);
         if (existing) {
           diagLog(`[ChatService] session ${id} backend changed to '${input.backend}' — closing runtime for rebuild`);
           await this.closeRuntime(id);
         }
+      } else {
+        workspaceStore.updateSessionBackend(id, input.backend);
       }
     }
 
@@ -1147,26 +1150,60 @@ export class ChatService {
     return subagents;
   }
 
-  /**
-   * Slash commands advertised by an opencode session's serve (U7). Empty
-   * when no serve is live for the session (rather than claude-flavored
-   * builtins, which differ between runtimes).
-   */
+  /** OpenCode runtime commands and skills advertised to the slash picker (U7). */
   async getSessionBackendCommands(sessionId: string): Promise<SlashCommandDto[]> {
-    const instance = opencodeServerManager.getInstance(sessionId);
+    let instance = opencodeServerManager.getInstance(sessionId);
     if (!instance) return [];
-    const res = await opencodeFetch(instance, '/command');
-    if (!res.ok) return [];
-    const commands = (await res.json()) as Array<{
+
+    if (await opencodeServerManager.workspaceSkillsChanged(instance)) {
+      const runtime = this.getRuntimeIfExists(sessionId);
+      const context = this.runtimeContexts.get(sessionId);
+      const rebuildInFlight = this.rebuildChains.get(sessionId);
+      if (rebuildInFlight) {
+        await rebuildInFlight;
+      } else if (runtime && context) {
+        if (runtime.isProcessingTurn()) {
+          // Preserve the active turn. The existing rebuild poller performs the
+          // refresh as soon as the runtime becomes idle.
+          if (!this.pendingRebuilds.has(sessionId)) {
+            this.scheduleRuntimeRebuild(sessionId, context);
+          }
+        } else {
+          await this.scheduleRuntimeRebuild(sessionId, context, { immediate: true });
+        }
+      }
+      instance = opencodeServerManager.getInstance(sessionId);
+      if (!instance) return [];
+    }
+
+    const fetchBackend = opencodeFetchForTesting ?? opencodeFetch;
+    const commandResponse = await fetchBackend(instance, '/command');
+    const commands = commandResponse.ok ? (await commandResponse.json()) as Array<{
       name: string;
       description?: string;
       template?: string;
-    }>;
-    return commands.map((command) => ({
+    }> : [];
+    const result: SlashCommandDto[] = commands.map((command) => ({
       name: command.name,
       description: command.description ?? '',
       argumentHint: command.template?.includes('$ARGUMENTS') ? 'arguments' : undefined,
     }));
+    const seen = new Set(result.map((command) => command.name));
+
+    try {
+      const skillResponse = await fetchBackend(instance, '/skill');
+      if (skillResponse.ok) {
+        const skills = (await skillResponse.json()) as Array<{ name: string; description?: string }>;
+        for (const skill of skills) {
+          if (seen.has(skill.name)) continue;
+          seen.add(skill.name);
+          result.push({ name: skill.name, description: skill.description ?? '' });
+        }
+      }
+    } catch {
+      // Skill discovery is best-effort; keep runtime commands available.
+    }
+    return result;
   }
 
   async loadSubagentsForSession(
@@ -1375,7 +1412,7 @@ export class ChatService {
   async loadMessages(
     sessionId: string,
     workspaceId: string,
-  ): Promise<{ messages: ChatMessage[]; tasks: TaskItem[]; subagents: SubagentState[]; workflows: WorkflowState[]; total: number }> {
+  ): Promise<{ messages: ChatMessage[]; tasks: TaskItem[]; subagents: SubagentState[]; workflows: WorkflowState[]; total: number; contextUsage?: ContextUsageSnapshot }> {
     const startedAt = Date.now();
     const workspace = await workspaceStore.get(workspaceId);
     if (!workspace) {
@@ -1393,8 +1430,11 @@ export class ChatService {
     // refresh.
     const localSession = workspaceStore.getLocalSession(sessionId);
     let sdkMessages: SessionMessage[];
+    let historicalContextUsage: ContextUsageSnapshot | undefined;
     if (localSession?.backend === 'codex' && localSession.backendSessionId) {
-      sdkMessages = await codexSessionService.loadMessages(localSession.backendSessionId);
+      const history = await codexSessionService.loadMessagesWithContext(localSession.backendSessionId);
+      sdkMessages = history.messages;
+      historicalContextUsage = history.contextUsage;
     } else if (localSession?.backend === 'opencode' && localSession.backendSessionId) {
       sdkMessages = await this.loadOpencodeSessionMessages(
         sessionId,
@@ -1434,6 +1474,7 @@ export class ChatService {
         normalized.push(chatMessage);
       }
     });
+    settleHistoricalAssistantTurns(normalized);
     const normalizeMs = Date.now() - normalizeStartedAt;
     const total = normalized.length;
     const derivedStateStartedAt = Date.now();
@@ -1450,7 +1491,10 @@ export class ChatService {
       derivedStateMs: Date.now() - derivedStateStartedAt,
       totalMs: Date.now() - startedAt,
     });
-    return { messages: normalized, tasks, subagents, workflows, total };
+    return {
+      messages: normalized, tasks, subagents, workflows, total,
+      ...(historicalContextUsage ? { contextUsage: historicalContextUsage } : {}),
+    };
   }
 
   async loadMessagesAfter(
@@ -1852,9 +1896,8 @@ export class ChatService {
               baseUrl: routedResolution.effective.baseUrl,
               credential: routedResolution.effective.credential,
               model: routedResolution.effective.model,
-              promptCacheRouting: routedResolution.provider.configuration?.codex.promptCacheRouting,
-              effortWireMapping: routedResolution.provider.configuration?.codex
-                .effortWireMappingByModel?.[routedResolution.effective.model],
+              promptCacheRouting: routedResolution.effective.codexModelProfile?.promptCacheRouting,
+              effortWireMapping: routedResolution.effective.codexModelProfile?.effortWireMapping,
               suppressSamplingParameters: routedResolution.effective.vendorId === 'kimi',
             },
           });
@@ -1889,6 +1932,7 @@ export class ChatService {
                   ? `${getSidecarBaseUrl()}/provider-route/${routeLease.routeId}`
                   : providerResolution.effective.baseUrl,
                 bearerToken: routeLease?.bearer ?? providerResolution.effective.credential,
+                modelProfile: providerResolution.effective.codexModelProfile,
                 ...(routeLease ? { disableHostedTools: true } : {}),
               },
             } : {}),

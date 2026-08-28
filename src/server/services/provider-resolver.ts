@@ -1,4 +1,4 @@
-import type { Provider, ProviderCodexEffort, ProviderEndpoint, ProviderOpenAiEndpoint } from '../models/provider.js';
+import type { Provider, ProviderCodexEffort, ProviderCodexModelProfile, ProviderEndpoint, ProviderOpenAiEndpoint, ProviderOpenCodeModelProfile } from '../models/provider.js';
 import type { BackendId } from './agent-backends.js';
 import { providerVendorFromProvenance, type ProviderVendorId } from './provider-presets.js';
 
@@ -25,6 +25,8 @@ export interface ResolvedProviderBase {
   baseUrl: string;
   vendorId?: ProviderVendorId;
   supportedEfforts: readonly ProviderCodexEffort[];
+  codexModelProfile?: ProviderCodexModelProfile;
+  openCodeModelProfile?: ProviderOpenCodeModelProfile;
   speedSupported: false;
 }
 
@@ -42,7 +44,8 @@ export type EffectiveProviderConfiguration =
       speedSupported: false;
     };
 
-export type PublicProviderAvailability = Omit<EffectiveProviderConfiguration, 'credential' | 'baseUrl'>;
+export type PublicProviderAvailability = Omit<EffectiveProviderConfiguration,
+  'credential' | 'baseUrl' | 'codexModelProfile' | 'openCodeModelProfile'>;
 
 type ResolutionSelection = {
   endpoint?: ProviderEndpoint | ProviderOpenAiEndpoint;
@@ -73,7 +76,7 @@ function selectionFor(provider: Provider, agent: BackendId): ResolutionSelection
     endpoint,
     model: config.models.openCode,
     mode: endpoint?.format === 'openai-chat-completions' ? 'direct-openai-chat' : 'direct-openai-responses',
-    // OpenCode 1.18.4's custom OpenAI-compatible provider is proven against
+    // OpenCode 1.18.23's custom OpenAI-compatible provider is proven against
     // Chat Completions.  Its Responses transport has not been characterized,
     // so fail closed instead of advertising a mode the adapter cannot select.
     unsupported: endpoint?.format === 'openai-responses',
@@ -111,9 +114,9 @@ export function resolveProviderForAgent(provider: Provider, agent: BackendId): E
   if (!selected.model?.trim()) return unavailable('model-missing');
   if (!provider.authToken.trim()) return unavailable('credential-missing', selected.model);
   if (!selected.mode) return unavailable('protocol-unsupported', selected.model);
-  const supportedEfforts = agent === 'codex'
-    ? config.codex.effortByModel?.[selected.model] ?? []
-    : [];
+  const codexModelProfile = agent === 'codex' ? config.codex.modelProfiles?.[selected.model] : undefined;
+  const openCodeModelProfile = agent === 'opencode' ? config.openCode.modelProfiles?.[selected.model] : undefined;
+  const supportedEfforts = codexModelProfile?.supportedEfforts ?? [];
   return {
     available: true,
     providerId: provider.id,
@@ -124,6 +127,8 @@ export function resolveProviderForAgent(provider: Provider, agent: BackendId): E
     baseUrl: selected.endpoint.baseUrl,
     ...(vendorId ? { vendorId } : {}),
     supportedEfforts,
+    ...(codexModelProfile ? { codexModelProfile: structuredClone(codexModelProfile) } : {}),
+    ...(openCodeModelProfile ? { openCodeModelProfile: structuredClone(openCodeModelProfile) } : {}),
     speedSupported: false,
   };
 }

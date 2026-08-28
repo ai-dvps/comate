@@ -3,8 +3,60 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import type { Options, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { BackendDriver, BackendToolRequestHandler } from './backend-driver.js';
-import { codexAppServerManager, type CodexAppServerManager } from './codex-app-server-manager.js';
+import type { ProviderCodexModelProfile } from '../models/provider.js';
+import {
+  codexAppServerManager,
+  type CodexAppServerManager,
+  type CodexSkill,
+} from './codex-app-server-manager.js';
 import { CodexEventMapper } from './codex-event-mapper.js';
+import { CodexRpcError } from './codex-rpc-client.js';
+import type { TurnTokenUsage } from '../types/message.js';
+
+interface CodexTokenCounts {
+  totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+}
+
+interface CodexThreadTokenUsage {
+  total: CodexTokenCounts;
+  last: CodexTokenCounts;
+  modelContextWindow: number | null;
+}
+
+function addTokenCounts(left: CodexTokenCounts | undefined, right: CodexTokenCounts): CodexTokenCounts {
+  return {
+    totalTokens: (left?.totalTokens ?? 0) + right.totalTokens,
+    inputTokens: (left?.inputTokens ?? 0) + right.inputTokens,
+    cachedInputTokens: (left?.cachedInputTokens ?? 0) + right.cachedInputTokens,
+    cacheWriteInputTokens: (left?.cacheWriteInputTokens ?? 0) + right.cacheWriteInputTokens,
+    outputTokens: (left?.outputTokens ?? 0) + right.outputTokens,
+    reasoningOutputTokens: (left?.reasoningOutputTokens ?? 0) + right.reasoningOutputTokens,
+  };
+}
+
+function subtractTokenCounts(next: CodexTokenCounts, previous: CodexTokenCounts): CodexTokenCounts | null {
+  const keys = Object.keys(next) as Array<keyof CodexTokenCounts>;
+  if (keys.some((key) => next[key] < previous[key])) return null;
+  return Object.fromEntries(keys.map((key) => [key, next[key] - previous[key]])) as unknown as CodexTokenCounts;
+}
+
+function estimatedCodexSettlement(usage: CodexTokenCounts | undefined): TurnTokenUsage | undefined {
+  if (!usage) return undefined;
+  return {
+    quality: 'estimated',
+    totalTokens: usage.totalTokens,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    cacheReadTokens: usage.cachedInputTokens,
+    cacheWriteTokens: usage.cacheWriteInputTokens,
+    thinkingTokens: usage.reasoningOutputTokens,
+  };
+}
 
 interface CodexAdapterDeps {
   directory: string;
@@ -24,6 +76,7 @@ export interface CodexProviderOverride {
   bearerToken: string;
   /** Chat compatibility routes cannot represent Codex-hosted tools. */
   disableHostedTools?: boolean;
+  modelProfile?: ProviderCodexModelProfile;
 }
 
 class AsyncMessageQueue {
@@ -66,16 +119,9 @@ export class CodexBackendDriver implements BackendDriver {
     string,
     { resolve(): void; reject(error: unknown): void }
   >();
-  private tokenUsage?: {
-    total: {
-      totalTokens: number;
-      inputTokens: number;
-      cachedInputTokens: number;
-      outputTokens: number;
-      reasoningOutputTokens: number;
-    };
-    modelContextWindow: number | null;
-  };
+  private tokenUsage?: CodexThreadTokenUsage;
+  private lastTokenTotal?: CodexTokenCounts;
+  private currentTurnUsage?: CodexTokenCounts;
 
   constructor(private readonly deps: CodexAdapterDeps) {
     this.manager = deps.manager ?? codexAppServerManager;
@@ -110,7 +156,7 @@ export class CodexBackendDriver implements BackendDriver {
         this.queue.end();
       },
       getContextUsage: async () => {
-        const usage = this.tokenUsage?.total;
+        const usage = this.tokenUsage?.last;
         const totalTokens = usage?.totalTokens ?? 0;
         const maxTokens = this.tokenUsage?.modelContextWindow ?? 0;
         return {
@@ -180,15 +226,19 @@ export class CodexBackendDriver implements BackendDriver {
       for await (const message of input) {
         if (this.closed) break;
         const clientTurnId = message.uuid ?? randomUUID();
+        const skills = hasSlashReference(message.message.content)
+          ? await this.manager.listSkills(this.deps.directory)
+          : [];
         const response = await this.manager.request<{ turn: { id: string } }>('turn/start', {
           threadId: this.threadId,
           clientUserMessageId: clientTurnId,
-          input: codexUserInput(message.message.content),
+          input: codexUserInput(message.message.content, skills),
           ...(this.deps.model ? { model: this.deps.model } : {}),
           ...(this.deps.effort ? { effort: this.deps.effort } : {}),
           ...(this.deps.serviceTier ? { serviceTier: this.deps.serviceTier } : {}),
         });
         this.turnId = response.turn.id;
+        this.currentTurnUsage = undefined;
         this.pendingAdmissions.get(clientTurnId)?.resolve();
         this.pendingAdmissions.delete(clientTurnId);
       }
@@ -336,17 +386,23 @@ export class CodexBackendDriver implements BackendDriver {
 
   private async ensureThread(options: Options): Promise<void> {
     if (this.threadId) {
-      await this.manager.request('thread/resume', {
-        threadId: this.threadId,
-        cwd: this.deps.directory,
-        approvalPolicy: 'on-request',
-        sandbox: 'workspace-write',
-        config: this.threadConfig(options),
-        ...(this.deps.serviceTier ? { serviceTier: this.deps.serviceTier } : {}),
-        modelProvider: this.deps.provider ? 'comate-enterprise' : null,
-        ...(this.deps.model ? { model: this.deps.model } : {}),
-      });
-      return;
+      const threadId = this.threadId;
+      try {
+        await this.manager.request('thread/resume', {
+          threadId,
+          cwd: this.deps.directory,
+          approvalPolicy: 'on-request',
+          sandbox: 'workspace-write',
+          config: this.threadConfig(options),
+          ...(this.deps.serviceTier ? { serviceTier: this.deps.serviceTier } : {}),
+          modelProvider: this.deps.provider ? 'comate-enterprise' : null,
+          ...(this.deps.model ? { model: this.deps.model } : {}),
+        });
+        return;
+      } catch (error) {
+        if (!isMissingRollout(error, threadId)) throw error;
+        this.threadId = undefined;
+      }
     }
     const response = await this.manager.request<{ thread: { id: string } }>('thread/start', {
       cwd: this.deps.directory,
@@ -372,17 +428,38 @@ export class CodexBackendDriver implements BackendDriver {
     const params = message.params;
     if (params.threadId !== this.threadId) return;
     if (message.method === 'thread/tokenUsage/updated') {
-      this.tokenUsage = params.tokenUsage as typeof this.tokenUsage;
+      const tokenUsage = params.tokenUsage as CodexThreadTokenUsage;
+      this.tokenUsage = tokenUsage;
+      if (tokenUsage?.total && tokenUsage?.last &&
+          (typeof params.turnId !== 'string' || params.turnId === this.turnId)) {
+        if (!this.lastTokenTotal) {
+          this.currentTurnUsage = addTokenCounts(this.currentTurnUsage, tokenUsage.last);
+        } else if (tokenUsage.total.totalTokens !== this.lastTokenTotal.totalTokens) {
+          const delta = subtractTokenCounts(tokenUsage.total, this.lastTokenTotal);
+          this.currentTurnUsage = delta
+            ? addTokenCounts(this.currentTurnUsage, delta)
+            : tokenUsage.last;
+        }
+        this.lastTokenTotal = tokenUsage.total;
+      }
     }
     for (const mapped of this.mapper.map(message.method, params)) this.queue.push(mapped);
     if (message.method === 'turn/completed') {
       this.queue.push(resultMessage(
         this.threadId ?? '',
         redactCodexError(codexTurnFailure(params), this.deps.provider?.bearerToken),
+        estimatedCodexSettlement(this.currentTurnUsage),
       ));
+      this.currentTurnUsage = undefined;
       this.turnId = undefined;
     }
   }
+}
+
+function isMissingRollout(error: unknown, threadId: string): boolean {
+  return error instanceof CodexRpcError
+    && error.code === -32600
+    && error.message === `no rollout found for thread id ${threadId}`;
 }
 
 function codexTurnFailure(params: Record<string, unknown>): Error | undefined {
@@ -429,6 +506,21 @@ export function codexThreadConfig(
     };
   }
   return {
+    ...(provider?.modelProfile?.contextWindow !== undefined
+      ? { model_context_window: provider.modelProfile.contextWindow }
+      : {}),
+    ...(provider?.modelProfile?.autoCompactTokenLimit !== undefined
+      ? { model_auto_compact_token_limit: provider.modelProfile.autoCompactTokenLimit }
+      : {}),
+    ...(provider?.modelProfile?.reasoningSummary !== undefined
+      ? { model_reasoning_summary: provider.modelProfile.reasoningSummary }
+      : {}),
+    ...(provider?.modelProfile?.supportsReasoningSummaries !== undefined
+      ? { model_supports_reasoning_summaries: provider.modelProfile.supportsReasoningSummaries }
+      : {}),
+    ...(provider?.modelProfile?.verbosity !== undefined
+      ? { model_verbosity: provider.modelProfile.verbosity }
+      : {}),
     ...(Object.keys(mcpServers).length > 0 ? { mcp_servers: mcpServers } : {}),
     ...(provider ? {
       ...(provider.disableHostedTools ? {
@@ -447,15 +539,44 @@ export function codexThreadConfig(
   };
 }
 
-export function codexUserInput(content: unknown): Array<Record<string, unknown>> {
-  if (typeof content === 'string') {
-    return [{ type: 'text', text: content, text_elements: [] }];
-  }
-  if (!Array.isArray(content)) {
-    return [{ type: 'text', text: String(content ?? ''), text_elements: [] }];
-  }
+const SLASH_REFERENCE_PATTERN = /(^|\s)\/(\S+)/g;
+
+function hasSlashReference(content: unknown): boolean {
+  if (typeof content === 'string') return /(^|\s)\/\S+/.test(content);
+  if (!Array.isArray(content)) return false;
+  return content.some((value) => {
+    if (!value || typeof value !== 'object') return false;
+    const block = value as { type?: unknown; text?: unknown };
+    return block.type === 'text' &&
+      typeof block.text === 'string' &&
+      /(^|\s)\/\S+/.test(block.text);
+  });
+}
+
+function codexSkillText(
+  text: string,
+  skillsByName: Map<string, CodexSkill>,
+  referencedSkills: Map<string, CodexSkill>,
+): string {
+  return text.replace(SLASH_REFERENCE_PATTERN, (match, prefix: string, name: string) => {
+    const skill = skillsByName.get(name);
+    if (!skill) return match;
+    referencedSkills.set(skill.path, skill);
+    return `${prefix}$${name}`;
+  });
+}
+
+export function codexUserInput(
+  content: unknown,
+  skills: CodexSkill[] = [],
+): Array<Record<string, unknown>> {
+  const values = Array.isArray(content)
+    ? content
+    : [{ type: 'text', text: typeof content === 'string' ? content : String(content ?? '') }];
   const input: Array<Record<string, unknown>> = [];
-  for (const value of content) {
+  const skillsByName = new Map(skills.map((skill) => [skill.name, skill]));
+  const referencedSkills = new Map<string, CodexSkill>();
+  for (const value of values) {
     if (!value || typeof value !== 'object') continue;
     const block = value as {
       type?: unknown;
@@ -463,7 +584,11 @@ export function codexUserInput(content: unknown): Array<Record<string, unknown>>
       source?: { type?: unknown; media_type?: unknown; data?: unknown };
     };
     if (block.type === 'text' && typeof block.text === 'string') {
-      input.push({ type: 'text', text: block.text, text_elements: [] });
+      input.push({
+        type: 'text',
+        text: codexSkillText(block.text, skillsByName, referencedSkills),
+        text_elements: [],
+      });
     } else if (
       block.type === 'image' &&
       block.source?.type === 'base64' &&
@@ -476,15 +601,24 @@ export function codexUserInput(content: unknown): Array<Record<string, unknown>>
       });
     }
   }
+  for (const skill of referencedSkills.values()) {
+    input.push({ type: 'skill', name: skill.name, path: skill.path });
+  }
   return input.length > 0 ? input : [{ type: 'text', text: '', text_elements: [] }];
 }
 
-function resultMessage(sessionId: string, error?: unknown): SDKMessage {
+function resultMessage(
+  sessionId: string,
+  error?: unknown,
+  tokenUsage?: TurnTokenUsage,
+): SDKMessage {
   const message = error instanceof Error ? error.message : error ? String(error) : undefined;
   return {
     type: 'result', subtype: message ? 'error_during_execution' : 'success', is_error: Boolean(message),
     duration_ms: 0, duration_api_ms: 0, num_turns: 1, total_cost_usd: 0,
-    session_id: sessionId, ...(message ? { errors: [`codex backend error: ${message}`] } : {}),
+    session_id: sessionId,
+    ...(tokenUsage ? { tokenUsage } : {}),
+    ...(message ? { errors: [`codex backend error: ${message}`] } : {}),
   } as unknown as SDKMessage;
 }
 

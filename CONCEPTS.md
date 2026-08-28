@@ -112,6 +112,9 @@ todo 同步行为按字段类别分区，而非单一全局策略：评论双向
 ### 多协议 Provider (multi-protocol Provider)
 A third-party model-service account shared across Agent backends. It owns one coding API credential plus protocol-specific endpoint configuration, while Claude Code, Codex, and OpenCode keep separate default models; OpenCode also chooses which configured protocol it uses. A Provider is selectable for an Agent only when that Agent has a complete direct or Comate-supported routed path.
 
+### 后端模型能力档案 (backend model capability profile)
+A Provider-owned declaration keyed by an exact Agent backend and model ID. It records the limits, capabilities, compatibility behavior, and backend-native reasoning controls that the selected runtime can consume. Codex and OpenCode profiles remain independent even when they name the same upstream model; known presets may seed editable values, while unknown values are omitted so the backend retains its defaults.
+
 ### Provider 本地路由 (Provider local route)
 A Comate-managed compatibility route started automatically for an Agent session when the Agent's client protocol differs from the Provider's declared upstream format along a supported conversion path. The first supported path translates Codex Responses traffic to an OpenAI Chat Completions upstream. Route failure blocks dispatch and never falls back to another Agent, Provider, or protocol.
 
@@ -142,6 +145,9 @@ Agent Command Center 侧栏 Workspace 与 Session 列表的排序契约：列表
 
 ### 会话变更文件 (session changed files)
 聊天视图右侧浮动 Task 面板下方的浮动卡片，按会话派生 agent 通过文件工具（Edit/Write/MultiEdit/NotebookEdit）触碰过的文件（新增/修改/删除），供一眼感知与一键打开。它与工作区范围的 Changes tab 是不同表面：不依赖 git 状态、不含 bash 改动、从持久化会话历史重建（重启与历史会话仍可见），且不提供 review/diff 动作。
+
+### Token 结算条 (token settlement bar)
+每个 assistant 回合完成后归属于对应回复的用量摘要，显示该轮 Token 总量及后端可提供的输入、输出、缓存和推理拆分；准确值直接展示，推导或估算值标注“约”，后续回合不得覆盖既有结算结果。
 
 ### 桥接版本 (bridge release)
 Tauri→Electron 壳迁移中，最后一个 Tauri 版本承担的特殊角色：其自动更新通道指向首个 Electron 安装包，把存量用户平滑带到 Electron 线；更新失败时用户可回滚到该版本安装包。Linux 无桥接版本——首个 Linux 版本即 Electron 版本。

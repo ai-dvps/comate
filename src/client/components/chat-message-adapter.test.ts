@@ -98,6 +98,20 @@ describe('adaptChatMessage', () => {
     expect(adapted.parts).toHaveLength(1)
     expect(adapted.parts[0].timestamp).toBe(1000)
   })
+
+  it('preserves the turn token settlement for rendering', () => {
+    const source: ChatMessage = {
+      ...msg([textPart('done')]),
+      tokenUsage: {
+        quality: 'estimated',
+        totalTokens: 120,
+        inputTokens: 100,
+        outputTokens: 20,
+      },
+    }
+
+    expect(adaptChatMessage(source).tokenUsage).toEqual(source.tokenUsage)
+  })
 })
 
 describe('buildResultMap', () => {

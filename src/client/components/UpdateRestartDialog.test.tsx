@@ -48,6 +48,24 @@ describe('UpdateRestartDialog', () => {
     expect(screen.getByText('Bug fixes')).toBeInTheDocument();
   });
 
+  it('renders sanitized HTML release notes instead of showing their tags as text', () => {
+    useUpdaterStore.setState({
+      status: 'ready',
+      update: {
+        currentVersion: '0.4.3',
+        version: '0.4.4',
+        body: '<ul><li>macOS: <strong>UNSIGNED</strong></li></ul><script>window.evil = true</script>',
+      },
+    });
+
+    const { container } = renderWithI18n(<UpdateRestartDialog />);
+
+    expect(screen.getByRole('list')).toBeInTheDocument();
+    expect(screen.getByText('UNSIGNED').tagName).toBe('STRONG');
+    expect(container.querySelector('script')).not.toBeInTheDocument();
+    expect(screen.queryByText(/<ul>/)).not.toBeInTheDocument();
+  });
+
   it('calls restartToUpdate when Restart now is clicked', async () => {
     useUpdaterStore.setState({
       status: 'ready',

@@ -20,6 +20,7 @@ export default defineProject({
       'src/client/stores/chat-store.test.ts',
       'src/client/stores/scheduled-task-store.test.ts',
       'src/client/stores/backend-store.test.ts',
+      'src/client/stores/commands-store.test.ts',
       'src/client/stores/bot-store.test.ts',
       'src/client/stores/git-changes-store.test.ts',
       'src/client/stores/context-tab-store.test.ts',
@@ -43,6 +44,7 @@ export default defineProject({
       'src/client/lib/image-input.test.ts',
       'src/client/lib/websocket-client.test.ts',
       'src/client/lib/open-file-with-notice.test.ts',
+      'src/client/lib/file-tree-path.test.ts',
     ],
     exclude: [
       'src/client/lib/keyboard.test.ts',

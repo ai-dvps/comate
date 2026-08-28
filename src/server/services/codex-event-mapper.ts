@@ -141,7 +141,17 @@ export class CodexEventMapper {
         event: {
           type: 'content_block_start',
           index: this.index(itemId),
-          content_block: { type: 'tool_use', id: itemId, name, input },
+          content_block: { type: 'tool_use', id: itemId, name, input: {} },
+        },
+      } as unknown as SDKMessage,
+      {
+        type: 'stream_event',
+        uuid: turnId,
+        parent_tool_use_id: null,
+        event: {
+          type: 'content_block_delta',
+          index: this.index(itemId),
+          delta: { type: 'input_json_delta', partial_json: JSON.stringify(input ?? {}) },
         },
       } as unknown as SDKMessage,
       {

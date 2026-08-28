@@ -169,13 +169,15 @@ vi.mock('../lib/image-input', () => {
 
 const workspaceAwareControlsMock = vi.hoisted(() => ({
   commandWorkspaceIds: [] as string[],
+  commandScopes: [] as Array<{ sessionId?: string; backendId?: string } | undefined>,
   fileWorkspaceIds: [] as string[],
   providerWorkspaceIds: [] as string[],
 }))
 
 vi.mock('../stores/commands-store', () => ({
-  useCommands: (workspaceId: string) => {
+  useCommands: (workspaceId: string, scope?: { sessionId?: string; backendId?: string }) => {
     workspaceAwareControlsMock.commandWorkspaceIds.push(workspaceId)
+    workspaceAwareControlsMock.commandScopes.push(scope)
     return {
     commands: [
       { name: 'commit', description: 'Commit changes', argumentHint: '<message>' },
@@ -278,6 +280,7 @@ describe('PromptInput browser', () => {
     filesMock.results = []
     filesMock.truncated = false
     workspaceAwareControlsMock.commandWorkspaceIds = []
+    workspaceAwareControlsMock.commandScopes = []
     workspaceAwareControlsMock.fileWorkspaceIds = []
     workspaceAwareControlsMock.providerWorkspaceIds = []
     appSettingsMock.useModifierToSubmit = false
@@ -457,7 +460,7 @@ describe('PromptInput browser', () => {
       <PromptInput
         workspaceId={DEFAULT_PROPS.workspaceId}
         mode="new-chat"
-        backendId={null}
+        backendId="opencode"
         onBackendChange={vi.fn()}
         providerId={null}
         onProviderChange={vi.fn()}
@@ -481,6 +484,10 @@ describe('PromptInput browser', () => {
     expect(screen.getByTitle('Agent')).toBeInTheDocument()
     expect(screen.getByTestId('fast-mode-toggle')).toBeInTheDocument()
     expect(screen.getByTestId('approval-mode-toggle')).toBeInTheDocument()
+    expect(workspaceAwareControlsMock.commandScopes).toContainEqual({
+      sessionId: undefined,
+      backendId: 'opencode',
+    })
     expect(screen.queryByTitle('Output style')).not.toBeInTheDocument()
     expect(inputCardElement()).not.toHaveClass('border', 'shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)]')
   })
@@ -732,6 +739,10 @@ describe('PromptInput browser', () => {
     await input.fill('/')
     await waitFor(() => expect(screen.getByText('/commit')).toBeInTheDocument(), {
       timeout: 1000,
+    })
+    expect(workspaceAwareControlsMock.commandScopes).toContainEqual({
+      sessionId: 'session-1',
+      backendId: 'claude',
     })
 
     await userEvent.click(screen.getByText('/commit'))

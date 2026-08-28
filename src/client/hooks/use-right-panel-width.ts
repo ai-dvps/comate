@@ -4,6 +4,7 @@ import { useResizableWidth } from './use-resizable-width'
 const COLLAPSED_WIDTH = 0
 const MIN_WIDTH = 360
 const DEFAULT_WIDTH = 640
+const MAX_VIEWPORT_RATIO = 2 / 3
 const WIDTH_KEY = 'right-panel-width'
 const COLLAPSED_KEY = 'right-panel-collapsed'
 const PREVIOUS_WIDTH_KEY = 'right-panel-previous-width'
@@ -53,7 +54,7 @@ function writePreviousWidth(value: number): void {
 
 export function useRightPanelWidth() {
   const maxWidth = Math.floor(
-    typeof window !== 'undefined' ? window.innerWidth * 0.9 : DEFAULT_WIDTH,
+    typeof window !== 'undefined' ? window.innerWidth * MAX_VIEWPORT_RATIO : DEFAULT_WIDTH,
   )
   const { width: expandedWidth, setWidth: setExpandedWidth } = useResizableWidth({
     storageKey: WIDTH_KEY,
@@ -61,6 +62,7 @@ export function useRightPanelWidth() {
     minWidth: MIN_WIDTH,
     maxWidth,
   })
+  const constrainedExpandedWidth = Math.min(maxWidth, expandedWidth)
 
   const [isCollapsed, setIsCollapsed] = useState<boolean>(() => readCollapsed())
   const [previousWidth, setPreviousWidth] = useState<number>(() =>
@@ -83,7 +85,7 @@ export function useRightPanelWidth() {
     setIsCollapsed((collapsed) => {
       const nextCollapsed = !collapsed
       if (nextCollapsed) {
-        const currentWidth = expandedWidth
+        const currentWidth = constrainedExpandedWidth
         setPreviousWidth(currentWidth)
         writePreviousWidth(currentWidth)
       } else {
@@ -92,13 +94,13 @@ export function useRightPanelWidth() {
       writeCollapsed(nextCollapsed)
       return nextCollapsed
     })
-  }, [expandedWidth, previousWidth, setExpandedWidth])
+  }, [constrainedExpandedWidth, previousWidth, setExpandedWidth])
 
   return {
-    width: isCollapsed ? COLLAPSED_WIDTH : expandedWidth,
+    width: isCollapsed ? COLLAPSED_WIDTH : constrainedExpandedWidth,
     setWidth,
     isCollapsed,
     toggleCollapse,
-    expandedWidth,
+    expandedWidth: constrainedExpandedWidth,
   }
 }

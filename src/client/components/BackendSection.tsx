@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   XCircle,
   Loader2,
-  Cpu,
   ChevronDown,
   ExternalLink,
   KeyRound,
@@ -23,6 +22,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collap
 import { cn } from './ui/utils'
 import OutputStyleSetting from './OutputStyleSetting'
 import { openUrlInBrowser } from '../lib/open-url'
+import { AgentIcon } from './AgentIcon'
 
 const BACKEND_LABEL_KEYS: Record<string, string> = {
   claude: 'backend.claude',
@@ -117,7 +117,7 @@ function BackendOption({
           )}
           aria-hidden="true"
         >
-          <Cpu className="h-4 w-4" />
+          <AgentIcon backendId={backend.id} className="h-4 w-4" />
         </span>
 
         <span className="min-w-0 flex-1">
