@@ -14,6 +14,11 @@ on:
   schedule:
     - cron: '17 * * * *'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing published Release tag to backfill (for example, v0.4.4)
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -21,7 +26,7 @@ permissions:
 concurrency:
   group: >-
     gitee-sync-${{ github.repository }}-${{
-      github.event_name == 'release' && github.event.release.tag_name || 'code'
+      github.event.release.tag_name || inputs.release_tag || 'code'
     }}
   cancel-in-progress: false
 
@@ -31,6 +36,7 @@ env:
   GITEE_REPOSITORY_DESCRIPTION: ${{ github.event.repository.description }}
   GITEE_REPOSITORY_HOMEPAGE: ${{ github.event.repository.html_url }}
   GITEE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
 
 jobs:
   sync-code:
@@ -43,7 +49,6 @@ jobs:
     env:
       GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_TAG: ${{ github.event.release.tag_name }}
       DELETED_REF_NAME: ${{ github.event.ref }}
       DELETED_REF_TYPE: ${{ github.event.ref_type }}
       RELEASE_ACTION: ${{ github.event.action }}
@@ -84,6 +89,10 @@ jobs:
             if git ls-remote --exit-code --refs "$target_url" "$deleted_ref" >/dev/null 2>&1; then
               git -C "$mirror_dir" push "$target_url" ":${deleted_ref}"
             fi
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && -n "$RELEASE_TAG" ]]; then
+            release_ref="refs/tags/${RELEASE_TAG}"
+            git -C "$mirror_dir" fetch "$source_url" "+${release_ref}:${release_ref}"
+            git -C "$mirror_dir" push "$target_url" "+${release_ref}:${release_ref}"
           elif [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
             release_ref="refs/tags/${RELEASE_TAG}"
             if [[ "$RELEASE_ACTION" == "published" || "$RELEASE_ACTION" == "edited" ]]; then
@@ -102,16 +111,16 @@ jobs:
   sync-release:
     name: Mirror published release
     if: >-
-      github.event_name == 'release' &&
-      (github.event.action == 'published' || github.event.action == 'edited') &&
-      github.event.release.draft == false
+      (github.event_name == 'release' &&
+        (github.event.action == 'published' || github.event.action == 'edited') &&
+        github.event.release.draft == false) ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs: sync-code
     runs-on: ubuntu-latest
     environment: gitee-mirror
     env:
       GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_TAG: ${{ github.event.release.tag_name }}
     steps:
       - name: Checkout trusted automation code
         uses: actions/checkout@v4
@@ -125,12 +134,29 @@ jobs:
         with:
           node-version: 22
 
+      - name: Resolve current release metadata
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          event_path="$RUNNER_TEMP/gitee-release-event.json"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" |
+            jq --arg default_branch "$DEFAULT_BRANCH" \
+              '{release: ., repository: {default_branch: $default_branch}}' > "$event_path"
+          if [[ "$(jq -r '.release.draft' "$event_path")" == "true" ]]; then
+            echo "Release ${RELEASE_TAG} is still a draft and cannot be mirrored" >&2
+            exit 1
+          fi
+          echo "GITEE_RELEASE_EVENT_PATH=$event_path" >> "$GITHUB_ENV"
+
       - name: Download GitHub Release assets
         shell: bash
         run: |
           set -euo pipefail
           asset_dir="$(mktemp -d "$RUNNER_TEMP/gitee-release-assets.XXXXXX")"
-          asset_count="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')"
+          release_event_path="${GITEE_RELEASE_EVENT_PATH:-$GITHUB_EVENT_PATH}"
+          asset_count="$(jq -r '.release.assets | length' "$release_event_path")"
           if [[ "$asset_count" -gt 0 ]]; then
             gh release download "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
