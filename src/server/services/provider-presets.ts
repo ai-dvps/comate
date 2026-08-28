@@ -22,11 +22,12 @@ export interface ProviderPresetDefinition {
 }
 
 const KIMI_MODEL = 'kimi-k2.5';
+const BIGMODEL_MODEL = 'glm-5.3';
 
-const PRESETS: readonly ProviderPresetDefinition[] = Object.freeze([
+const PRESETS: readonly ProviderPresetDefinition[] = [
   {
     id: 'kimi',
-    version: 1,
+    version: 2,
     name: 'Kimi For Coding',
     vendorId: 'kimi',
     configuration: {
@@ -43,12 +44,16 @@ const PRESETS: readonly ProviderPresetDefinition[] = Object.freeze([
       openCode: { protocol: 'openai' },
       claude: {},
       codex: {
-        promptCacheRouting: 'auto',
-        thinking: 'required',
-        effortByModel: { [KIMI_MODEL]: ['low', 'high', 'xhigh'] },
-        effortWireMappingByModel: { [KIMI_MODEL]: { low: 'low', high: 'high', xhigh: 'max' } },
+        modelProfiles: {
+          [KIMI_MODEL]: {
+            promptCacheRouting: 'auto',
+            thinking: 'required',
+            supportedEfforts: ['low', 'high', 'xhigh'],
+            effortWireMapping: { low: 'low', high: 'high', xhigh: 'max' },
+          },
+        },
       },
-      preset: { id: 'kimi', version: 1 },
+      preset: { id: 'kimi', version: 2 },
     },
     capabilities: {
       promptCacheRouting: 'auto',
@@ -59,7 +64,7 @@ const PRESETS: readonly ProviderPresetDefinition[] = Object.freeze([
   },
   {
     id: 'bigmodel',
-    version: 1,
+    version: 2,
     name: 'BigModel Coding Plan',
     vendorId: 'bigmodel',
     configuration: {
@@ -68,15 +73,38 @@ const PRESETS: readonly ProviderPresetDefinition[] = Object.freeze([
         anthropic: { enabled: true, baseUrl: 'https://open.bigmodel.cn/api/anthropic' },
         openai: {
           enabled: true,
-          baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
-          format: 'openai-chat-completions',
+          baseUrl: 'https://open.bigmodel.cn/api/v1',
+          format: 'openai-responses',
         },
       },
-      models: {},
-      openCode: { protocol: 'anthropic' },
+      models: { claudeCode: BIGMODEL_MODEL, codex: BIGMODEL_MODEL, openCode: BIGMODEL_MODEL },
+      openCode: {
+        protocol: 'anthropic',
+        modelProfiles: {
+          [BIGMODEL_MODEL]: {
+            contextWindow: 1_048_576,
+            reasoning: true,
+            toolCall: true,
+            inputModalities: ['text'],
+            outputModalities: ['text'],
+          },
+        },
+      },
       claude: {},
-      codex: { promptCacheRouting: 'unsupported', thinking: 'supported' },
-      preset: { id: 'bigmodel', version: 1 },
+      codex: {
+        modelProfiles: {
+          [BIGMODEL_MODEL]: {
+            contextWindow: 1_048_576,
+            promptCacheRouting: 'unsupported',
+            thinking: 'supported',
+            supportedEfforts: ['low', 'high', 'xhigh'],
+            effortWireMapping: { low: 'low', high: 'high', xhigh: 'max' },
+            reasoningSummary: 'none',
+            supportsReasoningSummaries: true,
+          },
+        },
+      },
+      preset: { id: 'bigmodel', version: 2 },
     },
     capabilities: {
       promptCacheRouting: 'unsupported',
@@ -99,7 +127,7 @@ const PRESETS: readonly ProviderPresetDefinition[] = Object.freeze([
       models: {},
       openCode: { protocol: 'anthropic' },
       claude: {},
-      codex: { promptCacheRouting: 'unsupported', thinking: 'unknown' },
+      codex: {},
       preset: { id: 'custom', version: 1 },
     },
     capabilities: {
@@ -109,7 +137,7 @@ const PRESETS: readonly ProviderPresetDefinition[] = Object.freeze([
       thirdPartySpeed: false,
     },
   },
-]);
+];
 
 export function listProviderPresets(): ProviderPresetDefinition[] {
   return PRESETS.map((preset) => structuredClone(preset));

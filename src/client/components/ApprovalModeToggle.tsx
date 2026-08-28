@@ -6,6 +6,7 @@ import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 interface ApprovalModeToggleCommonProps {
   workspaceId: string
   disabled?: boolean
+  hideNameBelowSm?: boolean
 }
 
 interface SessionApprovalModeToggleProps extends ApprovalModeToggleCommonProps {
@@ -20,6 +21,8 @@ interface NewChatApprovalModeToggleProps extends ApprovalModeToggleCommonProps {
 }
 
 type ApprovalModeToggleProps = SessionApprovalModeToggleProps | NewChatApprovalModeToggleProps
+
+const APPROVAL_MODES: ApprovalMode[] = ['auto', 'readonly', 'manual']
 
 const MODE_META: Record<
   ApprovalMode,
@@ -59,10 +62,10 @@ const MODE_META: Record<
 }
 
 export default function ApprovalModeToggle(props: ApprovalModeToggleProps) {
-  const { workspaceId, disabled = false } = props
+  const { workspaceId, disabled = false, hideNameBelowSm = false } = props
   const isNewChat = props.mode === 'new-chat'
   const sessionId = isNewChat ? null : props.sessionId
-  const { t } = useTranslation('chat')
+  const { t } = useTranslation(['chat', 'settings'])
 
   const session = useChatStore((s) =>
     sessionId ? s.sessions[workspaceId]?.find((ses) => ses.id === sessionId) : undefined,
@@ -81,8 +84,6 @@ export default function ApprovalModeToggle(props: ApprovalModeToggleProps) {
     }
   }
 
-  const modes: ApprovalMode[] = ['manual', 'readonly', 'auto']
-
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -93,23 +94,29 @@ export default function ApprovalModeToggle(props: ApprovalModeToggleProps) {
           title={t(`approvalMode.${currentMode}Desc`)}
         >
           <Icon className="w-3 h-3" />
-          <span>{t(`approvalMode.${currentMode}`)}</span>
+          <span className={hideNameBelowSm ? 'hidden sm:inline' : ''}>
+            {t(`settings:general.approvalModes.${currentMode}`)}
+          </span>
           <ChevronDown className="w-3 h-3 opacity-60" />
         </button>
       </PopoverTrigger>
       <PopoverContent
+        role="menu"
+        aria-label={t('settings:general.defaultApprovalMode')}
         side="top"
         align="end"
         sideOffset={6}
         className="bg-surface-active border border-border rounded-lg shadow-lg p-1 z-50 min-w-[160px]"
       >
-        {modes.map((mode) => {
+        {APPROVAL_MODES.map((mode) => {
           const m = MODE_META[mode]
           const ModeIcon = m.icon
           const isActive = mode === currentMode
           return (
             <button
               key={mode}
+              role="menuitem"
+              aria-label={t(`settings:general.approvalModes.${mode}`)}
               onClick={() => handleSelect(mode)}
               className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-xs rounded-md transition-colors ${
                 isActive
@@ -119,7 +126,7 @@ export default function ApprovalModeToggle(props: ApprovalModeToggleProps) {
             >
               <ModeIcon className={`w-3.5 h-3.5 flex-shrink-0 ${isActive ? '' : 'text-text-tertiary'}`} />
               <div className="min-w-0">
-                <div className="font-medium">{t(`approvalMode.${mode}`)}</div>
+                <div className="font-medium">{t(`settings:general.approvalModes.${mode}`)}</div>
                 <div className="text-[10px] text-text-tertiary">{t(`approvalMode.${mode}Desc`)}</div>
               </div>
             </button>

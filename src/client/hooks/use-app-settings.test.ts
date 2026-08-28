@@ -48,6 +48,16 @@ describe('getInitialSettings', () => {
     expect(getInitialSettings().outputStyle).toBe('concise')
   })
 
+  it('defaults the global permission mode to auto and validates stored values', () => {
+    expect(getInitialSettings().approvalMode).toBe('auto')
+
+    storage.set('app-settings', JSON.stringify({ approvalMode: 'readonly' }))
+    expect(getInitialSettings().approvalMode).toBe('readonly')
+
+    storage.set('app-settings', JSON.stringify({ approvalMode: 'unsafe' }))
+    expect(getInitialSettings().approvalMode).toBe('auto')
+  })
+
   it('loads a valid stored notificationSoundsVolume', () => {
     storage.set(
       'app-settings',
@@ -131,5 +141,18 @@ describe('useAppSettings', () => {
     expect(first.result.current.outputStyle).toBe('learning')
     expect(second.result.current.outputStyle).toBe('learning')
     expect(JSON.parse(storage.get('app-settings')!).outputStyle).toBe('learning')
+  })
+
+  it('updates the global permission mode for every hook consumer and persists it', () => {
+    const first = renderHook(() => useAppSettings())
+    const second = renderHook(() => useAppSettings())
+
+    act(() => {
+      first.result.current.setApprovalMode('manual')
+    })
+
+    expect(first.result.current.approvalMode).toBe('manual')
+    expect(second.result.current.approvalMode).toBe('manual')
+    expect(JSON.parse(storage.get('app-settings')!).approvalMode).toBe('manual')
   })
 })

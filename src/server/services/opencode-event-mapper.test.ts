@@ -6,6 +6,8 @@ import {
   mapOpencodeEvent,
   mapToolName,
 } from './opencode-event-mapper.js';
+import { SseEmitter } from './sse-emitter.js';
+import type { SseEvent } from '../types/message.js';
 
 const textPart = (over: Record<string, unknown> = {}) => ({
   id: 'p1',
@@ -28,6 +30,36 @@ describe('mapToolName', () => {
 });
 
 describe('text streaming', () => {
+  it('forwards OpenCode reasoning usage in the normalized result settlement', () => {
+    const state = createOpencodeMapperState();
+    const sdkMessages = [
+      ...mapOpencodeEvent({
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'm1', role: 'assistant',
+            tokens: { input: 20, output: 8, reasoning: 3, cache: { read: 5, write: 2 } },
+          },
+        },
+      }, state),
+      ...mapOpencodeEvent({
+        type: 'message.part.updated',
+        properties: { part: textPart({ text: 'done' }) },
+      }, state),
+      ...mapOpencodeEvent({ type: 'session.idle', properties: { sessionID: 's1' } }, state),
+    ];
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+    for (const message of sdkMessages) emitter.handle(message);
+
+    const result = events.find((event) => event.type === 'result');
+    assert.ok(result && result.type === 'result');
+    assert.deepStrictEqual(result.tokenUsage, {
+      quality: 'exact', totalTokens: 35, inputTokens: 20, outputTokens: 8,
+      cacheReadTokens: 5, cacheWriteTokens: 2, thinkingTokens: 3,
+    });
+  });
+
   it('emits message_start + content_block_start + delta on first text update', () => {
     const state = createOpencodeMapperState();
     const out = mapOpencodeEvent(
@@ -69,9 +101,27 @@ describe('text streaming', () => {
 });
 
 describe('tool parts', () => {
-  it('emits a complete tool_use block with input at running', () => {
+  it('waits for running input before emitting a tool through the browser SSE boundary', () => {
     const state = createOpencodeMapperState();
-    const out = mapOpencodeEvent(
+    const pending = mapOpencodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 't1',
+            type: 'tool',
+            messageID: 'm1',
+            callID: 'call-1',
+            tool: 'write',
+            state: { status: 'pending', input: {} },
+          },
+        },
+      },
+      state,
+    );
+    assert.deepEqual(pending, []);
+
+    const running = mapOpencodeEvent(
       {
         type: 'message.part.updated',
         properties: {
@@ -87,11 +137,13 @@ describe('tool parts', () => {
       },
       state,
     );
-    const start = out.find(
-      (m) => (m as { event?: { type: string } }).event?.type === 'content_block_start',
-    ) as { event: { content_block: { type: string; name: string; input: unknown } } };
-    assert.equal(start.event.content_block.name, 'Write');
-    assert.deepEqual(start.event.content_block.input, { filePath: '/tmp/a' });
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+    for (const message of running) emitter.handle(message);
+
+    const done = events.find((event) => event.type === 'tool_use_done');
+    assert.ok(done && done.type === 'tool_use_done');
+    assert.deepEqual(done.input, { filePath: '/tmp/a' });
   });
 
   it('emits a user tool_result on completed, is_error on error', () => {
@@ -243,17 +295,98 @@ describe('todos and lifecycle', () => {
     assert.equal(out[0].is_error, false);
     assert.equal(out[0].usage.input_tokens, 10);
     assert.equal(out[0].usage.output_tokens, 20);
+    assert.equal('cache_read_input_tokens' in out[0].usage, false);
+    assert.equal('cache_creation_input_tokens' in out[0].usage, false);
+    assert.equal('output_tokens_details' in out[0].usage, false);
+  });
+
+  it('completes an open reasoning part before session.idle finishes the turn', () => {
+    const state = createOpencodeMapperState();
+    const sdkMessages = [
+      ...mapOpencodeEvent(
+        { type: 'message.updated', properties: { info: { id: 'm1', role: 'assistant' } } },
+        state,
+      ),
+      ...mapOpencodeEvent(
+        {
+          type: 'message.part.updated',
+          properties: {
+            part: {
+              id: 'r1',
+              type: 'reasoning',
+              messageID: 'm1',
+              text: 'finished reasoning',
+              time: { start: 1 },
+            },
+          },
+        },
+        state,
+      ),
+      ...mapOpencodeEvent(
+        { type: 'session.idle', properties: { sessionID: 's1' } },
+        state,
+      ),
+    ];
+
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+    for (const message of sdkMessages) emitter.handle(message);
+
+    assert.deepEqual(
+      events.map((event) => event.type),
+      ['assistant_start', 'thinking_start', 'thinking_delta', 'thinking_done', 'assistant_done', 'result'],
+    );
+
+    for (const message of mapOpencodeEvent(
+      { type: 'session.idle', properties: { sessionID: 's1' } },
+      state,
+    )) {
+      emitter.handle(message);
+    }
+    assert.equal(
+      events.filter((event) => event.type === 'thinking_done').length,
+      1,
+      'repeated idle events must not complete the same reasoning part twice',
+    );
   });
 
   it('maps session.error to an error result', () => {
     const state = createOpencodeMapperState();
-    const out = mapOpencodeEvent(
-      { type: 'session.error', properties: { sessionID: 's1', error: { data: { message: 'boom' } } } },
-      state,
-    ) as Array<{ subtype: string; is_error: boolean; errors: string[] }>;
-    assert.equal(out[0].subtype, 'error_during_execution');
-    assert.equal(out[0].is_error, true);
-    assert.deepEqual(out[0].errors, ['boom']);
+    const sdkMessages = [
+      ...mapOpencodeEvent(
+        { type: 'message.updated', properties: { info: { id: 'm1', role: 'assistant' } } },
+        state,
+      ),
+      ...mapOpencodeEvent(
+        {
+          type: 'message.part.updated',
+          properties: {
+            part: { id: 'r1', type: 'reasoning', messageID: 'm1', text: 'partial reasoning' },
+          },
+        },
+        state,
+      ),
+      ...mapOpencodeEvent(
+        { type: 'session.error', properties: { sessionID: 's1', error: { data: { message: 'boom' } } } },
+        state,
+      ),
+    ];
+    const result = sdkMessages.find((message) => message.type === 'result') as {
+      subtype: string;
+      is_error: boolean;
+      errors: string[];
+    };
+    assert.equal(result.subtype, 'error_during_execution');
+    assert.equal(result.is_error, true);
+    assert.deepEqual(result.errors, ['boom']);
+
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+    for (const message of sdkMessages) emitter.handle(message);
+    assert.deepEqual(
+      events.map((event) => event.type),
+      ['assistant_start', 'thinking_start', 'thinking_delta', 'thinking_done', 'assistant_done', 'result', 'error_note'],
+    );
   });
 
   it('ignores non-mapped events', () => {
@@ -264,6 +397,152 @@ describe('todos and lifecycle', () => {
 });
 
 describe('error turn handling (silent-error fix)', () => {
+  it('keeps context overflow recoverable while OpenCode auto-compacts', () => {
+    const state = createOpencodeMapperState();
+    const overflow = mapOpencodeEvent(
+      {
+        type: 'session.error',
+        properties: {
+          sessionID: 's1',
+          error: {
+            name: 'ContextOverflowError',
+            data: { message: 'Requested token count exceeds the model context length' },
+          },
+        },
+      },
+      state,
+    ) as Array<{ type: string; subtype?: string; status?: string }>;
+
+    assert.deepEqual(
+      overflow.map((message) => ({ type: message.type, subtype: message.subtype, status: message.status })),
+      [{ type: 'system', subtype: 'status', status: 'compacting' }],
+      'a recoverable overflow should show compaction progress, not a fatal result',
+    );
+
+    const compacted = mapOpencodeEvent(
+      { type: 'session.compacted', properties: { sessionID: 's1' } },
+      state,
+    ) as Array<{ type: string; subtype?: string; status?: null }>;
+    assert.deepEqual(
+      compacted.map((message) => ({ type: message.type, subtype: message.subtype, status: message.status })),
+      [
+        { type: 'system', subtype: 'status', status: null },
+        { type: 'system', subtype: 'compact_boundary', status: undefined },
+      ],
+    );
+
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+    for (const message of [...overflow, ...compacted]) emitter.handle(message as never);
+    assert.deepEqual(events, [
+      { type: 'compact_status', active: true },
+      { type: 'compact_status', active: false },
+      { type: 'compact_boundary' },
+    ]);
+
+    mapOpencodeEvent(
+      { type: 'message.updated', properties: { info: { id: 'm-retry', role: 'assistant' } } },
+      state,
+    );
+    const idle = mapOpencodeEvent(
+      { type: 'session.idle', properties: { sessionID: 's1' } },
+      state,
+    ) as Array<{ type: string; subtype: string; is_error: boolean }>;
+    assert.equal(idle.at(-1)?.subtype, 'success');
+    assert.equal(idle.at(-1)?.is_error, false);
+  });
+
+  it('surfaces context overflow when compaction cannot recover', () => {
+    const state = createOpencodeMapperState();
+    mapOpencodeEvent(
+      {
+        type: 'session.error',
+        properties: {
+          sessionID: 's1',
+          error: {
+            name: 'ContextOverflowError',
+            data: { message: 'Session too large to compact' },
+          },
+        },
+      },
+      state,
+    );
+
+    const idle = mapOpencodeEvent(
+      { type: 'session.idle', properties: { sessionID: 's1' } },
+      state,
+    ) as Array<{ type: string; subtype?: string; is_error?: boolean; errors?: string[] }>;
+    const result = idle.find((message) => message.type === 'result');
+    assert.equal(result?.subtype, 'error_during_execution');
+    assert.equal(result?.is_error, true);
+    assert.deepEqual(result?.errors, ['Session too large to compact']);
+  });
+
+  it('does not emit duplicate compacting status for repeated context overflow errors', () => {
+    const state = createOpencodeMapperState();
+    const overflow = {
+      type: 'session.error',
+      properties: {
+        sessionID: 's1',
+        error: { name: 'ContextOverflowError', data: { message: 'still too large' } },
+      },
+    };
+    assert.equal(mapOpencodeEvent(overflow, state).length, 1);
+    assert.deepEqual(mapOpencodeEvent(overflow, state), []);
+
+    const idle = mapOpencodeEvent(
+      { type: 'session.idle', properties: { sessionID: 's1' } },
+      state,
+    ) as Array<{ type: string; errors?: string[] }>;
+    assert.deepEqual(idle.find((message) => message.type === 'result')?.errors, ['still too large']);
+  });
+
+  it('clears compacting status before a different fatal session error', () => {
+    const state = createOpencodeMapperState();
+    mapOpencodeEvent({
+      type: 'session.error',
+      properties: {
+        sessionID: 's1',
+        error: { name: 'ContextOverflowError', data: { message: 'too large' } },
+      },
+    }, state);
+
+    const fatal = mapOpencodeEvent(
+      { type: 'session.error', properties: { sessionID: 's1', error: { data: { message: 'provider unavailable' } } } },
+      state,
+    ) as Array<{ type: string; subtype?: string; status?: null; errors?: string[] }>;
+    assert.deepEqual(
+      fatal.map((message) => ({ type: message.type, subtype: message.subtype, status: message.status, errors: message.errors })),
+      [
+        { type: 'system', subtype: 'status', status: null, errors: undefined },
+        { type: 'result', subtype: 'error_during_execution', status: undefined, errors: ['provider unavailable'] },
+      ],
+    );
+    assert.deepEqual(mapOpencodeEvent(
+      { type: 'session.idle', properties: { sessionID: 's1' } },
+      state,
+    ), []);
+  });
+
+  it('does not let an unrelated compaction turn a fatal error into success', () => {
+    const state = createOpencodeMapperState();
+    mapOpencodeEvent(
+      { type: 'session.error', properties: { sessionID: 's1', error: { data: { message: 'boom' } } } },
+      state,
+    );
+
+    mapOpencodeEvent(
+      { type: 'session.compacted', properties: { sessionID: 's1' } },
+      state,
+    );
+
+    const idle = mapOpencodeEvent(
+      { type: 'session.idle', properties: { sessionID: 's1' } },
+      state,
+    );
+    assert.deepEqual(idle, [], 'compaction must not erase an unrelated fatal-error state');
+  });
+
   it('suppresses success results for idles that follow a session.error in the same turn', () => {
     const state = createOpencodeMapperState();
     const errorOut = mapOpencodeEvent(
@@ -293,10 +572,12 @@ describe('error turn handling (silent-error fix)', () => {
       state,
     );
     const idleOut = mapOpencodeEvent({ type: 'session.idle', properties: { sessionID: 's1' } }, state) as Array<{
+      type: string;
       subtype: string;
     }>;
-    assert.equal(idleOut.length, 1);
-    assert.equal(idleOut[0].subtype, 'success');
+    const results = idleOut.filter((message) => message.type === 'result');
+    assert.equal(results.length, 1);
+    assert.equal(results[0].subtype, 'success');
   });
 
   it('keeps idles suppressed when the failed turn’s in-flight message still updates (same messageID)', () => {

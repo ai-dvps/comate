@@ -419,6 +419,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
                 ) : (
                   <ApprovalSurface
                     workspaceId={workspaceId}
+                    sessionId={activeSessionId}
                     pendingItem={currentApproval}
                     queueDepth={approvalQueueLength - 1}
                     isResolving={resolvingRequestId === currentApproval?.requestId}

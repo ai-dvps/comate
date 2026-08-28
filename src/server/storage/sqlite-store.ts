@@ -33,6 +33,13 @@ import type {
   ProviderConfigurationV1,
   ProviderEndpoint,
   ProviderOpenAiEndpoint,
+  ProviderCodexEffort,
+  ProviderOpenCodeReasoningField,
+  ProviderOpenCodeVariant,
+  ProviderPromptCacheRouting,
+  ProviderReasoningSummary,
+  ProviderThinkingSupport,
+  ProviderVerbosity,
   CreateProviderInput,
   UpdateProviderInput,
 } from '../models/provider.js';
@@ -2473,6 +2480,13 @@ export class SqliteStore {
     const now = new Date().toISOString();
     this.db
       .prepare('UPDATE sessions SET backend = ?, updated_at = ? WHERE id = ?')
+      .run(backend, now, id);
+  }
+
+  switchSessionBackend(id: string, backend: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare('UPDATE sessions SET backend = ?, backend_session_id = NULL, updated_at = ? WHERE id = ?')
       .run(backend, now, id);
   }
 
@@ -5747,7 +5761,8 @@ function inferTrustedPresetProvenance(
     }
   }
   if (vendors.size !== 1) return undefined;
-  return { id: [...vendors][0], version: 1 };
+  const id = [...vendors][0];
+  return { id, version: id === 'custom' ? 1 : 2 };
 }
 
 function legacyInputToProviderConfiguration(input: CreateProviderInput): ProviderConfigurationV1 {
@@ -5830,17 +5845,11 @@ function normalizeProviderConfiguration(configuration: ProviderConfigurationV1):
   const claude = normalizeStringRecord(configuration.claude, [
     'defaultOpusModel', 'defaultSonnetModel', 'defaultHaikuModel', 'subagentModel', 'effortLevel',
   ]);
-  const effortByModel = normalizeEffortByModel(configuration.codex.effortByModel);
-  const effortWireMappingByModel = normalizeEffortWireMappingByModel(configuration.codex.effortWireMappingByModel);
-  const promptCacheRouting = configuration.codex.promptCacheRouting;
-  if (promptCacheRouting !== undefined && promptCacheRouting !== 'auto' && promptCacheRouting !== 'unsupported') {
-    throw new Error('Provider Codex prompt-cache capability is invalid');
-  }
-  const thinking = configuration.codex.thinking;
-  if (thinking !== undefined && thinking !== 'required' && thinking !== 'supported'
-      && thinking !== 'unsupported' && thinking !== 'unknown') {
-    throw new Error('Provider Codex thinking capability is invalid');
-  }
+  const codexModelProfiles = normalizeCodexModelProfiles(configuration.codex, models.codex);
+  const openCodeModelProfiles = normalizeOpenCodeModelProfiles(
+    configuration.openCode.modelProfiles,
+    configuration.openCode.protocol,
+  );
   const customEnvVars = normalizeClaudeEnvVars(configuration.claude.customEnvVars);
   const preset = configuration.preset;
   if (preset !== undefined && (!isPlainObject(preset) || typeof preset.id !== 'string'
@@ -5851,17 +5860,15 @@ function normalizeProviderConfiguration(configuration: ProviderConfigurationV1):
     schemaVersion: PROVIDER_CONFIGURATION_VERSION,
     endpoints: { ...(anthropic && { anthropic }), ...(openai && { openai }) },
     models,
-    openCode: { protocol: configuration.openCode.protocol },
+    openCode: {
+      protocol: configuration.openCode.protocol,
+      ...(openCodeModelProfiles && { modelProfiles: openCodeModelProfiles }),
+    },
     claude: {
       ...claude,
       ...(customEnvVars && { customEnvVars }),
     },
-    codex: {
-      ...(promptCacheRouting && { promptCacheRouting }),
-      ...(thinking && { thinking }),
-      ...(effortByModel && { effortByModel }),
-      ...(effortWireMappingByModel && { effortWireMappingByModel }),
-    },
+    codex: { ...(codexModelProfiles && { modelProfiles: codexModelProfiles }) },
     ...(preset && { preset: { id: preset.id, version: preset.version } }),
   };
 }
@@ -5909,6 +5916,7 @@ function normalizeEffortByModel(value: unknown): ProviderConfigurationV1['codex'
   if (!isPlainObject(value)) throw new Error('Provider Codex capabilities are invalid');
   const result: NonNullable<ProviderConfigurationV1['codex']['effortByModel']> = {};
   for (const [model, efforts] of Object.entries(value)) {
+    assertSafeRecordKey(model, 'Provider Codex model profile');
     if (!Array.isArray(efforts) || efforts.some((effort) => typeof effort !== 'string' || !PROVIDER_CODEX_EFFORTS.has(effort))) {
       throw new Error('Provider Codex effort capability is invalid');
     }
@@ -5924,17 +5932,185 @@ function normalizeEffortWireMappingByModel(
   if (!isPlainObject(value)) throw new Error('Provider Codex effort wire mapping is invalid');
   const result: NonNullable<ProviderConfigurationV1['codex']['effortWireMappingByModel']> = {};
   for (const [model, mapping] of Object.entries(value)) {
+    assertSafeRecordKey(model, 'Provider Codex model profile');
     if (!model || !isPlainObject(mapping)) throw new Error('Provider Codex effort wire mapping is invalid');
-    const normalized: Partial<Record<import('../models/provider.js').ProviderCodexEffort, string>> = {};
+    const normalized: Partial<Record<ProviderCodexEffort, string>> = {};
     for (const [effort, wireValue] of Object.entries(mapping)) {
       if (!PROVIDER_CODEX_EFFORTS.has(effort) || typeof wireValue !== 'string' || wireValue.trim().length === 0) {
         throw new Error('Provider Codex effort wire mapping is invalid');
       }
-      normalized[effort as import('../models/provider.js').ProviderCodexEffort] = wireValue.trim();
+      normalized[effort as ProviderCodexEffort] = wireValue.trim();
     }
     result[model] = normalized;
   }
   return result;
+}
+
+const DANGEROUS_RECORD_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+const REASONING_SUMMARIES = new Set(['auto', 'concise', 'detailed', 'none']);
+const VERBOSITIES = new Set(['low', 'medium', 'high']);
+const THINKING_SUPPORT = new Set(['required', 'supported', 'unsupported', 'unknown']);
+const REASONING_FIELDS = new Set(['reasoning', 'reasoning_content', 'reasoning_details']);
+
+function assertSafeRecordKey(key: string, label: string): void {
+  if (!key.trim() || DANGEROUS_RECORD_KEYS.has(key)) throw new Error(`${label} key is invalid`);
+}
+
+function optionalPositiveInteger(value: unknown, label: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) throw new Error(`${label} must be a positive integer`);
+  return value as number;
+}
+
+function normalizeCodexModelProfiles(
+  codex: ProviderConfigurationV1['codex'],
+  selectedModel?: string,
+): ProviderConfigurationV1['codex']['modelProfiles'] {
+  const result: NonNullable<ProviderConfigurationV1['codex']['modelProfiles']> = {};
+  const source = codex.modelProfiles;
+  if (source !== undefined && !isPlainObject(source)) throw new Error('Provider Codex model profiles are invalid');
+  for (const [model, raw] of Object.entries(source ?? {})) {
+    assertSafeRecordKey(model, 'Provider Codex model profile');
+    if (!isPlainObject(raw)) throw new Error('Provider Codex model profile is invalid');
+    const contextWindow = optionalPositiveInteger(raw.contextWindow, 'Provider Codex context window');
+    const autoCompactTokenLimit = optionalPositiveInteger(raw.autoCompactTokenLimit, 'Provider Codex auto-compact limit');
+    if (contextWindow && autoCompactTokenLimit && autoCompactTokenLimit > contextWindow) {
+      throw new Error('Provider Codex auto-compact limit cannot exceed context window');
+    }
+    const promptCacheRouting = raw.promptCacheRouting;
+    if (promptCacheRouting !== undefined && promptCacheRouting !== 'auto' && promptCacheRouting !== 'unsupported') {
+      throw new Error('Provider Codex prompt-cache capability is invalid');
+    }
+    const thinking = raw.thinking;
+    if (thinking !== undefined && !THINKING_SUPPORT.has(String(thinking))) throw new Error('Provider Codex thinking capability is invalid');
+    const supportedEfforts = normalizeEfforts(raw.supportedEfforts);
+    const effortWireMapping = normalizeEffortMapping(raw.effortWireMapping);
+    if (effortWireMapping && Object.keys(effortWireMapping).some((effort) => !supportedEfforts?.includes(effort as never))) {
+      throw new Error('Provider Codex effort wire mapping requires a supported effort');
+    }
+    const reasoningSummary = raw.reasoningSummary;
+    if (reasoningSummary !== undefined && !REASONING_SUMMARIES.has(String(reasoningSummary))) throw new Error('Provider Codex reasoning summary is invalid');
+    if (raw.supportsReasoningSummaries !== undefined && typeof raw.supportsReasoningSummaries !== 'boolean') throw new Error('Provider Codex reasoning summary support is invalid');
+    const verbosity = raw.verbosity;
+    if (verbosity !== undefined && !VERBOSITIES.has(String(verbosity))) throw new Error('Provider Codex verbosity is invalid');
+    const profile = {
+      ...(contextWindow && { contextWindow }), ...(autoCompactTokenLimit && { autoCompactTokenLimit }),
+      ...(typeof promptCacheRouting === 'string' && { promptCacheRouting: promptCacheRouting as ProviderPromptCacheRouting }),
+      ...(typeof thinking === 'string' && { thinking: thinking as ProviderThinkingSupport }),
+      ...(supportedEfforts?.length && { supportedEfforts }), ...(effortWireMapping && { effortWireMapping }),
+      ...(typeof reasoningSummary === 'string' && { reasoningSummary: reasoningSummary as ProviderReasoningSummary }),
+      ...(typeof raw.supportsReasoningSummaries === 'boolean' && { supportsReasoningSummaries: raw.supportsReasoningSummaries }),
+      ...(typeof verbosity === 'string' && { verbosity: verbosity as ProviderVerbosity }),
+    };
+    if (Object.keys(profile).length) result[model] = profile;
+  }
+
+  const legacyEfforts = normalizeEffortByModel(codex.effortByModel);
+  const legacyMappings = normalizeEffortWireMappingByModel(codex.effortWireMappingByModel);
+  if (codex.promptCacheRouting !== undefined
+      && codex.promptCacheRouting !== 'auto'
+      && codex.promptCacheRouting !== 'unsupported') {
+    throw new Error('Provider Codex prompt-cache capability is invalid');
+  }
+  if (codex.thinking !== undefined && !THINKING_SUPPORT.has(String(codex.thinking))) {
+    throw new Error('Provider Codex thinking capability is invalid');
+  }
+  const legacyModels = new Set([selectedModel, ...Object.keys(legacyEfforts ?? {}), ...Object.keys(legacyMappings ?? {})].filter(Boolean) as string[]);
+  for (const model of legacyModels) {
+    assertSafeRecordKey(model, 'Provider Codex model profile');
+    const supportedEfforts = [...new Set([
+      ...(legacyEfforts?.[model] ?? []),
+      ...Object.keys(legacyMappings?.[model] ?? {}),
+    ])] as ProviderCodexEffort[];
+    result[model] = {
+      ...(codex.promptCacheRouting && { promptCacheRouting: codex.promptCacheRouting }),
+      ...(codex.thinking && { thinking: codex.thinking }),
+      ...(supportedEfforts.length && { supportedEfforts }),
+      ...(legacyMappings?.[model] && { effortWireMapping: legacyMappings[model] }),
+      ...result[model],
+    };
+  }
+  return Object.keys(result).length ? result : undefined;
+}
+
+function normalizeEfforts(value: unknown): ProviderCodexEffort[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string' || !PROVIDER_CODEX_EFFORTS.has(entry))) {
+    throw new Error('Provider Codex effort capability is invalid');
+  }
+  return [...new Set(value)] as ProviderCodexEffort[];
+}
+
+function normalizeEffortMapping(value: unknown): Partial<Record<ProviderCodexEffort, string>> | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) throw new Error('Provider Codex effort wire mapping is invalid');
+  const result: Partial<Record<ProviderCodexEffort, string>> = {};
+  for (const [effort, wire] of Object.entries(value)) {
+    if (!PROVIDER_CODEX_EFFORTS.has(effort) || typeof wire !== 'string' || !wire.trim()) throw new Error('Provider Codex effort wire mapping is invalid');
+    result[effort as ProviderCodexEffort] = wire.trim();
+  }
+  return Object.keys(result).length ? result : undefined;
+}
+
+function normalizeOpenCodeModelProfiles(
+  value: unknown,
+  protocol: ProviderConfigurationV1['openCode']['protocol'],
+): ProviderConfigurationV1['openCode']['modelProfiles'] {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) throw new Error('Provider OpenCode model profiles are invalid');
+  const result: NonNullable<ProviderConfigurationV1['openCode']['modelProfiles']> = {};
+  for (const [model, raw] of Object.entries(value)) {
+    assertSafeRecordKey(model, 'Provider OpenCode model profile');
+    if (!isPlainObject(raw)) throw new Error('Provider OpenCode model profile is invalid');
+    const contextWindow = optionalPositiveInteger(raw.contextWindow, 'Provider OpenCode context window');
+    const maxOutputTokens = optionalPositiveInteger(raw.maxOutputTokens, 'Provider OpenCode output limit');
+    if (maxOutputTokens && !contextWindow) throw new Error('Provider OpenCode output limit requires a context window');
+    if (maxOutputTokens && contextWindow && maxOutputTokens > contextWindow) throw new Error('Provider OpenCode output limit cannot exceed context window');
+    for (const key of ['reasoning', 'toolCall'] as const) if (raw[key] !== undefined && typeof raw[key] !== 'boolean') throw new Error(`Provider OpenCode ${key} capability is invalid`);
+    const inputModalities = normalizeModalities(raw.inputModalities, ['text', 'image']);
+    const outputModalities = normalizeModalities(raw.outputModalities, ['text']) as Array<'text'> | undefined;
+    if (raw.reasoningField !== undefined && (!REASONING_FIELDS.has(String(raw.reasoningField)) || protocol !== 'openai')) throw new Error('Provider OpenCode reasoning field is invalid');
+    const variants = normalizeOpenCodeVariants(raw.variants, protocol);
+    const profile = {
+      ...(contextWindow && { contextWindow }), ...(maxOutputTokens && { maxOutputTokens }),
+      ...(typeof raw.reasoning === 'boolean' && { reasoning: raw.reasoning }),
+      ...(typeof raw.toolCall === 'boolean' && { toolCall: raw.toolCall }),
+      ...(inputModalities && { inputModalities }), ...(outputModalities && { outputModalities }),
+      ...(typeof raw.reasoningField === 'string' && { reasoningField: raw.reasoningField as ProviderOpenCodeReasoningField }),
+      ...(variants && { variants }),
+    };
+    if (Object.keys(profile).length) result[model] = profile;
+  }
+  return Object.keys(result).length ? result : undefined;
+}
+
+function normalizeModalities<T extends string>(value: unknown, allowed: readonly T[]): T[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0 || value.some((entry) => typeof entry !== 'string' || !allowed.includes(entry as T))) throw new Error('Provider OpenCode modalities are invalid');
+  return [...new Set(value)] as T[];
+}
+
+function normalizeOpenCodeVariants(value: unknown, protocol: ProviderConfigurationV1['openCode']['protocol']): Record<string, ProviderOpenCodeVariant> | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) throw new Error('Provider OpenCode variants are invalid');
+  const result: Record<string, ProviderOpenCodeVariant> = {};
+  for (const [name, raw] of Object.entries(value)) {
+    assertSafeRecordKey(name, 'Provider OpenCode variant');
+    if (!isPlainObject(raw)) throw new Error('Provider OpenCode variant is invalid');
+    if (protocol === 'anthropic' && (raw.reasoningEffort !== undefined || raw.reasoningSummary !== undefined)) throw new Error('Provider OpenCode variant is incompatible with Anthropic');
+    if (protocol === 'openai' && raw.thinkingBudgetTokens !== undefined) throw new Error('Provider OpenCode variant is incompatible with OpenAI');
+    if (raw.reasoningEffort !== undefined && (typeof raw.reasoningEffort !== 'string' || !raw.reasoningEffort.trim())) throw new Error('Provider OpenCode reasoning effort is invalid');
+    if (raw.reasoningSummary !== undefined && !REASONING_SUMMARIES.has(String(raw.reasoningSummary))) throw new Error('Provider OpenCode reasoning summary is invalid');
+    const thinkingBudgetTokens = optionalPositiveInteger(raw.thinkingBudgetTokens, 'Provider OpenCode thinking budget');
+    const variant = {
+      ...(typeof raw.reasoningEffort === 'string' && { reasoningEffort: raw.reasoningEffort.trim() }),
+      ...(typeof raw.reasoningSummary === 'string' && { reasoningSummary: raw.reasoningSummary as ProviderReasoningSummary }),
+      ...(thinkingBudgetTokens && { thinkingBudgetTokens }),
+    };
+    if (!Object.keys(variant).length) throw new Error('Provider OpenCode variant is empty');
+    result[name] = variant;
+  }
+  return Object.keys(result).length ? result : undefined;
 }
 
 function providerCompatibilityProjection(configuration: ProviderConfigurationV1): Pick<Provider,

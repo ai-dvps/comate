@@ -1116,7 +1116,7 @@ describe('SqliteStore provider fast mode capability', { concurrency: false }, ()
       model: 'kimi-for-coding',
     });
 
-    assert.deepStrictEqual(provider.configuration?.preset, { id: 'kimi', version: 1 });
+    assert.deepStrictEqual(provider.configuration?.preset, { id: 'kimi', version: 2 });
   });
 
   it('keeps legacy Provider provenance aligned when its endpoint changes', () => {
@@ -1128,7 +1128,7 @@ describe('SqliteStore provider fast mode capability', { concurrency: false }, ()
     });
 
     const kimi = store.updateProvider(provider.id, { baseUrl: 'https://api.kimi.com/coding/v1' });
-    assert.deepStrictEqual(kimi?.configuration?.preset, { id: 'kimi', version: 1 });
+    assert.deepStrictEqual(kimi?.configuration?.preset, { id: 'kimi', version: 2 });
 
     const custom = store.updateProvider(provider.id, { baseUrl: 'https://example.com/v2' });
     assert.strictEqual(custom?.configuration?.preset, undefined);
@@ -1164,9 +1164,9 @@ describe('SqliteStore provider fast mode capability', { concurrency: false }, ()
     assert.strictEqual(raw.model, null);
     assert.deepStrictEqual(JSON.parse(raw.options_json), provider.configuration);
     assert.strictEqual(provider.baseUrl, 'https://example.com/openai');
-    assert.equal(provider.configuration?.codex.promptCacheRouting, 'auto');
-    assert.equal(provider.configuration?.codex.thinking, 'required');
-    assert.equal(provider.configuration?.codex.effortWireMappingByModel?.['codex-model']?.high, 'max');
+    assert.equal(provider.configuration?.codex.modelProfiles?.['codex-model']?.promptCacheRouting, 'auto');
+    assert.equal(provider.configuration?.codex.modelProfiles?.['codex-model']?.thinking, 'required');
+    assert.equal(provider.configuration?.codex.modelProfiles?.['codex-model']?.effortWireMapping?.high, 'max');
   });
 
   it('rejects malformed Codex capability and wire-mapping metadata', () => {
@@ -1180,6 +1180,89 @@ describe('SqliteStore provider fast mode capability', { concurrency: false }, ()
       () => store.createProvider({ name: 'Invalid capability', authToken: 'secret', configuration: configuration as never }),
       /effort wire mapping is invalid/,
     );
+  });
+
+  it('round-trips canonical Codex and OpenCode model profiles', () => {
+    const provider = store.createProvider({
+      name: 'Profiled', authToken: 'secret',
+      configuration: {
+        schemaVersion: 1,
+        endpoints: { openai: { enabled: true, baseUrl: 'https://example.com/v1', format: 'openai-responses' } },
+        models: { codex: 'model', openCode: 'model' },
+        openCode: {
+          protocol: 'openai',
+          modelProfiles: {
+            model: {
+              contextWindow: 128_000, maxOutputTokens: 16_000, reasoning: true, toolCall: true,
+              inputModalities: ['text', 'image'], outputModalities: ['text'], reasoningField: 'reasoning_details',
+              variants: { high: { reasoningEffort: 'high', reasoningSummary: 'concise' } },
+            },
+          },
+        },
+        claude: {},
+        codex: {
+          modelProfiles: {
+            model: {
+              contextWindow: 128_000, autoCompactTokenLimit: 96_000, promptCacheRouting: 'auto',
+              thinking: 'supported', supportedEfforts: ['low', 'high'],
+              effortWireMapping: { low: 'minimal', high: 'max' }, reasoningSummary: 'auto',
+              supportsReasoningSummaries: true, verbosity: 'medium',
+            },
+          },
+        },
+      },
+    });
+
+    assert.deepStrictEqual(provider.configuration?.codex.modelProfiles?.model, {
+      contextWindow: 128_000, autoCompactTokenLimit: 96_000, promptCacheRouting: 'auto',
+      thinking: 'supported', supportedEfforts: ['low', 'high'],
+      effortWireMapping: { low: 'minimal', high: 'max' }, reasoningSummary: 'auto',
+      supportsReasoningSummaries: true, verbosity: 'medium',
+    });
+    assert.deepStrictEqual(provider.configuration?.openCode.modelProfiles?.model, {
+      contextWindow: 128_000, maxOutputTokens: 16_000, reasoning: true, toolCall: true,
+      inputModalities: ['text', 'image'], outputModalities: ['text'], reasoningField: 'reasoning_details',
+      variants: { high: { reasoningEffort: 'high', reasoningSummary: 'concise' } },
+    });
+  });
+
+  it('rejects unsafe model and variant profile keys', () => {
+    const unsafeCodex = JSON.parse('{"__proto__":{"contextWindow":1000}}');
+    const unsafeVariants = JSON.parse('{"constructor":{"reasoningEffort":"high"}}');
+    const base = {
+      schemaVersion: 1,
+      endpoints: { openai: { enabled: true, baseUrl: 'https://example.com/v1', format: 'openai-responses' } },
+      models: { codex: 'model', openCode: 'model' }, openCode: { protocol: 'openai' }, claude: {}, codex: {},
+    } as const;
+    assert.throws(() => store.createProvider({
+      name: 'Unsafe model', authToken: 'secret',
+      configuration: { ...base, codex: { modelProfiles: unsafeCodex } } as never,
+    }), /model profile key is invalid/);
+    assert.throws(() => store.createProvider({
+      name: 'Unsafe variant', authToken: 'secret',
+      configuration: {
+        ...base, openCode: { protocol: 'openai', modelProfiles: { model: { variants: unsafeVariants } } },
+      } as never,
+    }), /variant key is invalid/);
+  });
+
+  it('rejects invalid profile token limits and protocol-specific variants', () => {
+    const base = {
+      schemaVersion: 1,
+      endpoints: { openai: { enabled: true, baseUrl: 'https://example.com/v1', format: 'openai-responses' } },
+      models: { codex: 'model', openCode: 'model' }, openCode: { protocol: 'openai' }, claude: {}, codex: {},
+    } as const;
+    assert.throws(() => store.createProvider({
+      name: 'Invalid limit', authToken: 'secret',
+      configuration: { ...base, codex: { modelProfiles: { model: { contextWindow: 100, autoCompactTokenLimit: 101 } } } } as never,
+    }), /cannot exceed context window/);
+    assert.throws(() => store.createProvider({
+      name: 'Invalid variant', authToken: 'secret',
+      configuration: {
+        ...base,
+        openCode: { protocol: 'openai', modelProfiles: { model: { variants: { high: { thinkingBudgetTokens: 4096 } } } } },
+      } as never,
+    }), /incompatible with OpenAI/);
   });
 
   it('accepts disabled empty Custom preset endpoints as an editable unavailable draft', () => {

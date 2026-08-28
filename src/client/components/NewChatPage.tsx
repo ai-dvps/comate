@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { FolderPlus, MessageSquarePlus } from 'lucide-react'
+import { FolderPlus, SquarePen } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { BackendId } from '../stores/backend-store'
 import type { ApprovalMode, PromptTurnDraft } from '../stores/chat-store'
@@ -11,6 +11,7 @@ import { chooseDefaultNewChatWorkspace } from './new-chat-workspace'
 interface NewChatPageProps {
   workspaces: Workspace[]
   defaultWorkspaceId?: string | null
+  defaultApprovalMode?: ApprovalMode
   selectedWorkspaceId?: string | null
   onWorkspaceChange: (workspaceId: string) => void
   onCreateWorkspace: () => void
@@ -41,19 +42,19 @@ interface NewChatComposerOptions {
   approvalMode: ApprovalMode
 }
 
-const DEFAULT_COMPOSER_OPTIONS: NewChatComposerOptions = {
+const DEFAULT_COMPOSER_OPTIONS: Omit<NewChatComposerOptions, 'approvalMode'> = {
   backendId: null,
   providerId: null,
   codexModel: null,
   codexEffort: null,
   codexSpeed: null,
   fastMode: false,
-  approvalMode: 'manual',
 }
 
 export default function NewChatPage({
   workspaces,
   defaultWorkspaceId,
+  defaultApprovalMode = 'auto',
   selectedWorkspaceId,
   onWorkspaceChange,
   onCreateWorkspace,
@@ -69,13 +70,17 @@ export default function NewChatPage({
   const workspaceId = selectedWorkspaceId && workspaces.some((workspace) => workspace.id === selectedWorkspaceId)
     ? selectedWorkspaceId
     : resolvedDefault ?? ''
-  const [optionsByWorkspace, setOptionsByWorkspace] = useState<Record<string, NewChatComposerOptions>>({})
-  const composerOptions = optionsByWorkspace[workspaceId] ?? DEFAULT_COMPOSER_OPTIONS
+  const [optionsByWorkspace, setOptionsByWorkspace] = useState<Record<string, Partial<NewChatComposerOptions>>>({})
+  const composerOptions: NewChatComposerOptions = {
+    ...DEFAULT_COMPOSER_OPTIONS,
+    approvalMode: defaultApprovalMode,
+    ...optionsByWorkspace[workspaceId],
+  }
   const updateComposerOptions = (patch: Partial<NewChatComposerOptions>) => {
     setOptionsByWorkspace((current) => ({
       ...current,
       [workspaceId]: {
-        ...(current[workspaceId] ?? DEFAULT_COMPOSER_OPTIONS),
+        ...current[workspaceId],
         ...patch,
       },
     }))
@@ -108,7 +113,7 @@ export default function NewChatPage({
       <div className="flex min-h-0 flex-1 items-center justify-center">
         <div className="text-center">
           <span className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-2xl border border-border bg-surface shadow-sm">
-            <MessageSquarePlus className="h-5 w-5 text-text-secondary" aria-hidden="true" />
+            <SquarePen className="h-5 w-5 text-text-secondary" aria-hidden="true" />
           </span>
           <h1 className="text-xl font-semibold tracking-tight text-text-primary">{t('newChat.title')}</h1>
           <p className="mt-1.5 text-sm text-text-secondary">{t('newChat.description')}</p>

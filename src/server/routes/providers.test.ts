@@ -37,8 +37,8 @@ function canonicalProvider(): Provider {
       models: { codex: 'kimi-k2.5' },
       openCode: { protocol: 'openai' },
       claude: { customEnvVars: { SAFE_NAME: 'round-trip-value' } },
-      codex: { promptCacheRouting: 'auto', thinking: 'required', effortByModel: { 'kimi-k2.5': ['low'] } },
-      preset: { id: 'kimi', version: 1 },
+      codex: { modelProfiles: { 'kimi-k2.5': { promptCacheRouting: 'auto', thinking: 'required', supportedEfforts: ['low'] } } },
+      preset: { id: 'kimi', version: 2 },
     },
     baseUrl: 'legacy', authToken: 'super-secret', isDefault: true,
     createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
@@ -60,7 +60,7 @@ describe('provider API projection', () => {
     const projected = publicProvider(provider);
 
     assert.strictEqual(projected.authTokenPresent, true);
-    assert.equal(projected.configuration?.codex.thinking, 'required');
+    assert.equal(projected.configuration?.codex.modelProfiles?.['kimi-k2.5']?.thinking, 'required');
     assert.equal(projected.configuration?.claude.customEnvVars?.SAFE_NAME, 'round-trip-value');
     assert.ok(!JSON.stringify(projected).includes('future-secret'));
     assert.ok(!JSON.stringify(projected).includes('super-secret'));

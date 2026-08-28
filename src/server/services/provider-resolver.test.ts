@@ -11,9 +11,9 @@ const config: ProviderConfigurationV1 = {
     openai: { enabled: true, baseUrl: 'https://openai.example/coding/v1', format: 'openai-chat-completions' },
   },
   models: { claudeCode: 'claude-model', codex: 'codex-model', openCode: 'open-model' },
-  openCode: { protocol: 'anthropic' },
+  openCode: { protocol: 'anthropic', modelProfiles: { 'open-model': { contextWindow: 32_000 } } },
   claude: {},
-  codex: { effortByModel: { 'codex-model': ['low', 'xhigh'] } },
+  codex: { modelProfiles: { 'codex-model': { supportedEfforts: ['low', 'xhigh'], contextWindow: 64_000 } } },
   preset: { id: 'kimi', version: 1 },
 };
 
@@ -32,8 +32,10 @@ describe('provider resolver', () => {
     const codex = resolveProviderForAgent(provider(), 'codex');
     assert.equal(codex.available && codex.mode, 'codex-chat-route');
     assert.deepEqual(codex.available && codex.supportedEfforts, ['low', 'xhigh']);
+    assert.equal(codex.available && codex.codexModelProfile?.contextWindow, 64_000);
     const opencode = resolveProviderForAgent(provider(), 'opencode');
     assert.equal(opencode.available && opencode.mode, 'direct-anthropic');
+    assert.equal(opencode.available && opencode.openCodeModelProfile?.contextWindow, 32_000);
   });
 
   it('resolves OpenCode OpenAI Chat and fails closed for uncharacterized Responses', () => {
@@ -80,6 +82,7 @@ describe('provider resolver', () => {
     const availability = providerAvailability(provider());
     assert.equal(JSON.stringify(availability).includes('secret'), false);
     assert.equal(JSON.stringify(availability).includes('openai.example'), false);
+    assert.equal(JSON.stringify(availability).includes('contextWindow'), false);
     assert.equal(availability.codex.speedSupported, false);
   });
 

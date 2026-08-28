@@ -7,9 +7,9 @@
  * Mapping notes:
  * - text/reasoning stream as content_block_start + *_delta via part.delta
  *   events, with suffix-synthesis from part.updated as fallback.
- * - Tool calls emit a complete tool_use block when input is first known
- *   (opencode carries full input at 'running'), and a user tool_result on
- *   completed/error.
+ * - Tool calls translate opencode's complete input at 'running' into the
+ *   Anthropic-shaped input_json_delta stream consumed by SseEmitter, and a
+ *   user tool_result on completed/error.
  * - todo.updated maps to the task panel's task_started/task_updated system
  *   messages; opencode lowercase tool names map to their claude display names
  *   (todowrite → TodoWrite, etc.) so renderers and the task panel key off the
@@ -30,6 +30,7 @@ export interface OpencodeMapperState {
   nextIndex: number;
   startedMessages: Set<string>;
   startedParts: Set<string>;
+  openTextLikeParts: Set<string>;
   completedTools: Set<string>;
   partTypeById: Map<string, string>;
   lastTextByPartId: Map<string, string>;
@@ -49,6 +50,9 @@ export interface OpencodeMapperState {
    * fix — provider errors like 1211 model-not-found ended invisibly before).
    */
   erroredTurn: boolean;
+  /** Context overflow is recoverable while OpenCode auto-compacts. Keep it
+   * pending until compaction succeeds or the session becomes idle. */
+  pendingContextOverflow?: { message: string; sessionID: string };
   lastUsage?: {
     input?: number;
     output?: number;
@@ -63,6 +67,7 @@ export function createOpencodeMapperState(): OpencodeMapperState {
     nextIndex: 0,
     startedMessages: new Set(),
     startedParts: new Set(),
+    openTextLikeParts: new Set(),
     completedTools: new Set(),
     partTypeById: new Map(),
     lastTextByPartId: new Map(),
@@ -174,6 +179,7 @@ function mapTextLikePart(
   const index = blockIndex(state, part.id);
   if (!state.startedParts.has(part.id)) {
     state.startedParts.add(part.id);
+    state.openTextLikeParts.add(part.id);
     out.push({
       type: 'stream_event',
       event: {
@@ -202,22 +208,45 @@ function mapTextLikePart(
   return out;
 }
 
+function closeOpenTextLikeParts(state: OpencodeMapperState): SDKMessage[] {
+  const out: SDKMessage[] = [];
+  for (const partId of state.openTextLikeParts) {
+    const index = state.partIndexById.get(partId);
+    if (index === undefined) continue;
+    out.push({
+      type: 'stream_event',
+      event: { type: 'content_block_stop', index },
+    } as unknown as SDKMessage);
+  }
+  state.openTextLikeParts.clear();
+  return out;
+}
+
 function mapToolPart(part: OpencodePart, state: OpencodeMapperState): SDKMessage[] {
   const out: SDKMessage[] = [];
   const callId = part.callID ?? part.id;
   const status = part.state?.status;
   const toolName = mapToolName(part.tool ?? 'unknown');
 
-  if (!state.startedParts.has(part.id) && (status === 'running' || status === 'pending')) {
+  if (!state.startedParts.has(part.id) && status === 'running') {
     state.startedParts.add(part.id);
     const index = blockIndex(state, part.id);
+    const input = part.state?.input ?? {};
     out.push(...ensureMessageStart(state, part.messageID));
     out.push({
       type: 'stream_event',
       event: {
         type: 'content_block_start',
         index,
-        content_block: { type: 'tool_use', id: callId, name: toolName, input: part.state?.input ?? {} },
+        content_block: { type: 'tool_use', id: callId, name: toolName, input: {} },
+      },
+    } as unknown as SDKMessage);
+    out.push({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_delta',
+        index,
+        delta: { type: 'input_json_delta', partial_json: JSON.stringify(input) },
       },
     } as unknown as SDKMessage);
     out.push({
@@ -284,11 +313,32 @@ function usageToSdk(
 ): Record<string, unknown> | undefined {
   if (!usage) return undefined;
   return {
-    input_tokens: usage.input ?? 0,
-    output_tokens: usage.output ?? 0,
-    cache_read_input_tokens: usage.cache?.read ?? 0,
-    cache_creation_input_tokens: usage.cache?.write ?? 0,
+    ...(usage.input !== undefined ? { input_tokens: usage.input } : {}),
+    ...(usage.output !== undefined ? { output_tokens: usage.output } : {}),
+    ...(usage.cache?.read !== undefined
+      ? { cache_read_input_tokens: usage.cache.read }
+      : {}),
+    ...(usage.cache?.write !== undefined
+      ? { cache_creation_input_tokens: usage.cache.write }
+      : {}),
+    ...(usage.reasoning !== undefined
+      ? { output_tokens_details: { thinking_tokens: usage.reasoning } }
+      : {}),
   };
+}
+
+function errorResult(message: string, sessionID: string): SDKMessage {
+  return {
+    type: 'result',
+    subtype: 'error_during_execution',
+    is_error: true,
+    duration_ms: 0,
+    duration_api_ms: 0,
+    num_turns: 0,
+    total_cost_usd: 0,
+    session_id: sessionID,
+    errors: [message],
+  } as unknown as SDKMessage;
 }
 
 export function mapOpencodeEvent(
@@ -364,6 +414,7 @@ export function mapOpencodeEvent(
       if (messageID) out.push(...ensureMessageStart(state, messageID));
       if (!state.startedParts.has(partId)) {
         state.startedParts.add(partId);
+        state.openTextLikeParts.add(partId);
         out.push({
           type: 'stream_event',
           event: {
@@ -389,8 +440,21 @@ export function mapOpencodeEvent(
       return mapTodoUpdated(properties, state);
 
     case 'session.idle': {
+      if (state.pendingContextOverflow) {
+        const pending = state.pendingContextOverflow;
+        state.pendingContextOverflow = undefined;
+        state.erroredTurn = true;
+        return [
+          ...closeOpenTextLikeParts(state),
+          { type: 'system', subtype: 'status', status: null } as unknown as SDKMessage,
+          errorResult(pending.message, pending.sessionID),
+        ];
+      }
       if (state.erroredTurn) return [];
+      const usage = usageToSdk(state.lastUsage);
+      state.lastUsage = undefined;
       return [
+        ...closeOpenTextLikeParts(state),
         {
           type: 'result',
           subtype: 'success',
@@ -400,28 +464,44 @@ export function mapOpencodeEvent(
           num_turns: 1,
           total_cost_usd: 0,
           session_id: String(properties.sessionID ?? ''),
-          usage: usageToSdk(state.lastUsage),
+          usage,
           modelUsage: {},
         } as unknown as SDKMessage,
       ];
     }
 
+    case 'session.compacted': {
+      const recoveredContextOverflow = state.pendingContextOverflow !== undefined;
+      state.pendingContextOverflow = undefined;
+      if (recoveredContextOverflow) state.erroredTurn = false;
+      return [
+        { type: 'system', subtype: 'status', status: null } as unknown as SDKMessage,
+        { type: 'system', subtype: 'compact_boundary' } as unknown as SDKMessage,
+      ];
+    }
+
     case 'session.error': {
-      const error = (properties.error ?? {}) as { data?: { message?: string }; message?: string };
+      const error = (properties.error ?? {}) as { name?: string; data?: { message?: string }; message?: string };
       const message = error.data?.message ?? error.message ?? 'unknown error';
+      const sessionID = String(properties.sessionID ?? '');
+      if (error.name === 'ContextOverflowError') {
+        const alreadyCompacting = state.pendingContextOverflow !== undefined;
+        state.pendingContextOverflow = { message, sessionID };
+        if (alreadyCompacting) return [];
+        return [
+          ...closeOpenTextLikeParts(state),
+          { type: 'system', subtype: 'status', status: 'compacting' } as unknown as SDKMessage,
+        ];
+      }
+      const wasCompacting = state.pendingContextOverflow !== undefined;
+      state.pendingContextOverflow = undefined;
       state.erroredTurn = true;
       return [
-        {
-          type: 'result',
-          subtype: 'error_during_execution',
-          is_error: true,
-          duration_ms: 0,
-          duration_api_ms: 0,
-          num_turns: 0,
-          total_cost_usd: 0,
-          session_id: String(properties.sessionID ?? ''),
-          errors: [message],
-        } as unknown as SDKMessage,
+        ...closeOpenTextLikeParts(state),
+        ...(wasCompacting
+          ? [{ type: 'system', subtype: 'status', status: null } as unknown as SDKMessage]
+          : []),
+        errorResult(message, sessionID),
       ];
     }
 

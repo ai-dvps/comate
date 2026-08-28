@@ -9,6 +9,42 @@ function renderTitlebar(ui: React.ReactElement) {
 }
 
 describe('CustomTitlebar', () => {
+  it('renders every titlebar icon with a softer color and thinner stroke', () => {
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={0}
+        rightWidth={520}
+        leftCollapsed
+        rightCollapsed={false}
+        contextAvailable
+        tabs={[{
+          type: 'file',
+          id: 'file:App.tsx',
+          workspaceId: 'ws-1',
+          path: 'App.tsx',
+          name: 'App.tsx',
+          content: '',
+          isBinary: false,
+          preview: false,
+        }]}
+        activeTabId="file:App.tsx"
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
+        onToggleLeft={vi.fn()}
+        onToggleRight={vi.fn()}
+      />,
+    )
+
+    const icons = screen.getByTestId('custom-titlebar').querySelectorAll('svg')
+    expect(icons.length).toBeGreaterThan(0)
+    icons.forEach((icon) => {
+      expect(icon).toHaveAttribute('stroke-width', '1.5')
+      expect(icon).toHaveClass('text-text-tertiary/70')
+    })
+  })
+
   it('aligns conversation identity and typed tabs with interactive no-drag controls', () => {
     const onToggleLeft = vi.fn()
     const onToggleRight = vi.fn()
@@ -35,6 +71,7 @@ describe('CustomTitlebar', () => {
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
         onToggleLeft={onToggleLeft}
         onToggleRight={onToggleRight}
       />,
@@ -43,7 +80,7 @@ describe('CustomTitlebar', () => {
     expect(screen.getByTestId('custom-titlebar')).not.toHaveClass('border-b')
     expect(screen.getByTestId('titlebar-command-center')).toHaveStyle({ width: '288px' })
     expect(screen.getByTestId('titlebar-command-center')).toHaveClass('border-r')
-    expect(screen.getByTestId('titlebar-command-center')).not.toHaveClass('border-b')
+    expect(screen.getByTestId('titlebar-command-center')).toHaveClass('border-b')
     expect(screen.getByTestId('titlebar-conversation')).toHaveClass('border-b')
     expect(screen.getByTestId('titlebar-context')).toHaveClass('border-b')
     expect(screen.getByTestId('titlebar-context')).toHaveAttribute('data-electron-drag-region')
@@ -95,6 +132,7 @@ describe('CustomTitlebar', () => {
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
         onToggleLeft={vi.fn()}
         onToggleRight={vi.fn()}
       />,
@@ -126,6 +164,7 @@ describe('CustomTitlebar', () => {
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
         onToggleLeft={vi.fn()}
         onToggleRight={vi.fn()}
       />,
@@ -135,7 +174,8 @@ describe('CustomTitlebar', () => {
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
   })
 
-  it('keeps the macOS left toggle clear of the traffic lights when collapsed', () => {
+  it('shows a new chat shortcut beside the collapsed left toggle', () => {
+    const onNewChat = vi.fn()
     renderTitlebar(
       <CustomTitlebar
         leftWidth={0}
@@ -148,13 +188,62 @@ describe('CustomTitlebar', () => {
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onAddTab={vi.fn()}
+        onNewChat={onNewChat}
+        onToggleLeft={vi.fn()}
+        onToggleRight={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+
+    expect(onNewChat).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('titlebar-command-center')).toHaveStyle({ width: '88px' })
+  })
+
+  it('hides the new chat shortcut while the left panel is expanded', () => {
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={288}
+        rightWidth={520}
+        leftCollapsed={false}
+        rightCollapsed={false}
+        contextAvailable
+        tabs={[]}
+        activeTabId={null}
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
+        onToggleLeft={vi.fn()}
+        onToggleRight={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: 'New chat' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the macOS left controls clear of the traffic lights when collapsed', () => {
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={0}
+        rightWidth={520}
+        leftCollapsed
+        rightCollapsed={false}
+        contextAvailable
+        tabs={[]}
+        activeTabId={null}
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
         onToggleLeft={vi.fn()}
         onToggleRight={vi.fn()}
         isMac
       />,
     )
 
-    expect(screen.getByTestId('titlebar-command-center')).toHaveStyle({ width: '112px' })
+    expect(screen.getByTestId('titlebar-command-center')).toHaveStyle({ width: '152px' })
+    expect(screen.getByTestId('titlebar-command-center')).toHaveClass('border-b')
     expect(screen.getByTestId('titlebar-command-center')).not.toHaveClass('border-r')
     expect(screen.getByTestId('titlebar-macos-traffic-lights')).toHaveClass('flex-shrink-0')
   })
@@ -172,6 +261,7 @@ describe('CustomTitlebar', () => {
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
         onToggleLeft={vi.fn()}
         onToggleRight={vi.fn()}
       />,
@@ -199,6 +289,7 @@ describe('CustomTitlebar', () => {
       onSelectTab: vi.fn(),
       onCloseTab: vi.fn(),
       onAddTab: vi.fn(),
+      onNewChat: vi.fn(),
       onToggleLeft: vi.fn(),
       onToggleRight: vi.fn(),
     }
@@ -223,6 +314,7 @@ describe('CustomTitlebar', () => {
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
         onToggleLeft={vi.fn()}
         onToggleRight={onToggleRight}
       />,
@@ -249,6 +341,7 @@ describe('CustomTitlebar', () => {
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
         onToggleLeft={vi.fn()}
         onToggleRight={vi.fn()}
         isWindows
@@ -256,5 +349,87 @@ describe('CustomTitlebar', () => {
     )
 
     expect(screen.getByTestId('titlebar-context')).toHaveStyle({ width: '138px' })
+  })
+
+  it('keeps Windows window controls beside the expanded context segment', () => {
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={288}
+        rightWidth={320}
+        leftCollapsed={false}
+        rightCollapsed={false}
+        contextAvailable
+        viewportWidth={1000}
+        tabs={[]}
+        activeTabId={null}
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
+        onToggleLeft={vi.fn()}
+        onToggleRight={vi.fn()}
+        isWindows
+      />,
+    )
+
+    expect(screen.getByTestId('titlebar-context')).toHaveStyle({ width: '458px' })
+  })
+
+  it('hides the conversation identity when an expanded context leaves too little space', () => {
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={0}
+        rightWidth={320}
+        leftCollapsed
+        rightCollapsed={false}
+        contextAvailable
+        viewportWidth={480}
+        workspaceName="Comate"
+        sessionName="Narrow session"
+        tabs={[]}
+        activeTabId={null}
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
+        onToggleLeft={vi.fn()}
+        onToggleRight={vi.fn()}
+        isMac
+      />,
+    )
+
+    expect(screen.getByTestId('titlebar-context')).toHaveStyle({ width: '320px' })
+    expect(screen.getByTestId('titlebar-conversation')).not.toHaveClass('px-3')
+    expect(screen.queryByText('Comate')).not.toBeInTheDocument()
+    expect(screen.queryByText('Narrow session')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Collapse context panel' })).toBeVisible()
+  })
+
+  it('keeps the conversation identity and spacing when enough width remains', () => {
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={0}
+        rightWidth={320}
+        leftCollapsed
+        rightCollapsed={false}
+        contextAvailable
+        viewportWidth={800}
+        workspaceName="Comate"
+        sessionName="Wide session"
+        tabs={[]}
+        activeTabId={null}
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
+        onToggleLeft={vi.fn()}
+        onToggleRight={vi.fn()}
+        isMac
+      />,
+    )
+
+    expect(screen.getByTestId('titlebar-conversation')).toHaveClass('px-3')
+    expect(screen.getByText('Comate')).toBeVisible()
+    expect(screen.getByText('Wide session')).toBeVisible()
   })
 })

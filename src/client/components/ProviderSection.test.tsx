@@ -14,7 +14,7 @@ const customConfiguration: ProviderConfiguration = {
     openai: { enabled: false, baseUrl: '', format: 'openai-responses' },
   },
   models: {}, openCode: { protocol: 'anthropic' }, claude: {},
-  codex: { promptCacheRouting: 'unsupported', thinking: 'unknown' },
+  codex: {},
   preset: { id: 'custom', version: 1 },
 }
 const kimiConfiguration: ProviderConfiguration = {
@@ -25,11 +25,11 @@ const kimiConfiguration: ProviderConfiguration = {
   },
   models: { claudeCode: 'kimi-k2.5', codex: 'kimi-k2.5', openCode: 'kimi-k2.5' },
   openCode: { protocol: 'openai' }, claude: {},
-  codex: { promptCacheRouting: 'auto', thinking: 'required', effortByModel: { 'kimi-k2.5': ['low', 'high', 'xhigh'] } },
-  preset: { id: 'kimi', version: 1 },
+  codex: { modelProfiles: { 'kimi-k2.5': { promptCacheRouting: 'auto', thinking: 'required', supportedEfforts: ['low', 'high', 'xhigh'] } } },
+  preset: { id: 'kimi', version: 2 },
 }
 const presets: ProviderPreset[] = [
-  { id: 'kimi', version: 1, name: 'Kimi For Coding', vendorId: 'kimi', configuration: kimiConfiguration, capabilities: { promptCacheRouting: 'auto', thinking: 'required', codexEffortWireMapping: {}, thirdPartySpeed: false } },
+  { id: 'kimi', version: 2, name: 'Kimi For Coding', vendorId: 'kimi', configuration: kimiConfiguration, capabilities: { promptCacheRouting: 'auto', thinking: 'required', codexEffortWireMapping: {}, thirdPartySpeed: false } },
   { id: 'custom', version: 1, name: 'Custom', vendorId: 'custom', configuration: customConfiguration, capabilities: { promptCacheRouting: 'unsupported', thinking: 'unknown', codexEffortWireMapping: {}, thirdPartySpeed: false } },
 ]
 
@@ -94,6 +94,91 @@ describe('ProviderSection', () => {
     expect(screen.getByLabelText(/Name/)).toHaveValue('My Provider')
     await user.click(screen.getByRole('button', { name: 'Apply preset' }))
     expect(screen.getByLabelText(/Name/)).toHaveValue('Kimi For Coding')
+  })
+
+  it('switches exact-model capability profiles implicitly and restores prior values', async () => {
+    const user = userEvent.setup()
+    const provider = kimiProvider()
+    useProviderStore.setState({ providers: [provider] })
+    renderSection()
+    await user.click(screen.getByRole('button', { name: 'Edit Provider' }))
+    await user.click(screen.getByRole('button', { name: 'Advanced' }))
+
+    const codexContext = screen.getAllByLabelText('Context window (tokens)')[0]
+    await user.type(codexContext, '128000')
+    expect(codexContext).toHaveValue(128000)
+
+    const codexModel = screen.getByLabelText('Codex model')
+    await user.clear(codexModel)
+    await user.type(codexModel, 'another-model')
+    expect(screen.getAllByLabelText('Context window (tokens)')[0]).toHaveValue(null)
+
+    await user.clear(codexModel)
+    await user.type(codexModel, 'kimi-k2.5')
+    expect(screen.getAllByLabelText('Context window (tokens)')[0]).toHaveValue(128000)
+  })
+
+  it('renders the advanced backend panels in the documented order', async () => {
+    const user = userEvent.setup()
+    useProviderStore.setState({ providers: [kimiProvider()] })
+    const { container } = renderSection()
+    await user.click(screen.getByRole('button', { name: 'Edit Provider' }))
+    await user.click(screen.getByRole('button', { name: 'Advanced' }))
+
+    expect([...container.querySelectorAll('legend')].slice(-3).map((legend) => legend.textContent)).toEqual([
+      'Advanced Claude Code capabilities',
+      'Advanced Codex capabilities',
+      'Advanced OpenCode capabilities',
+    ])
+    expect(screen.getAllByRole('heading', { name: 'Model limits' })).toHaveLength(2)
+    expect(screen.getAllByRole('heading', { name: 'Declared capabilities' })).toHaveLength(2)
+    expect(screen.getAllByRole('heading', { name: 'Runtime behavior' })).toHaveLength(2)
+  })
+
+  it('adds and removes protocol-aware OpenCode variants', async () => {
+    const user = userEvent.setup()
+    const provider = kimiProvider()
+    const updateProvider = vi.fn().mockResolvedValue({ provider: null })
+    useProviderStore.setState({ providers: [provider], updateProvider })
+    renderSection()
+    await user.click(screen.getByRole('button', { name: 'Edit Provider' }))
+    await user.click(screen.getByRole('button', { name: 'Advanced' }))
+    await user.click(screen.getByRole('button', { name: 'Add variant' }))
+
+    expect(screen.getByLabelText('Variant name')).toHaveValue('variant-1')
+    expect(screen.getByLabelText('Reasoning effort')).toHaveValue('high')
+    await user.selectOptions(screen.getAllByLabelText('Reasoning summary').at(-1)!, 'concise')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(updateProvider).toHaveBeenCalledWith('provider-kimi', expect.objectContaining({
+      configuration: expect.objectContaining({
+        openCode: expect.objectContaining({
+          modelProfiles: expect.objectContaining({
+            'kimi-k2.5': expect.objectContaining({
+              variants: { 'variant-1': { reasoningEffort: 'high', reasoningSummary: 'concise' } },
+            }),
+          }),
+        }),
+      }),
+    }), expect.any(Object))
+
+    await user.click(screen.getByRole('button', { name: 'Remove variant' }))
+    expect(screen.queryByLabelText('Variant name')).not.toBeInTheDocument()
+  })
+
+  it('blocks save when OpenCode output exceeds the active context window', async () => {
+    const user = userEvent.setup()
+    const provider = kimiProvider()
+    const updateProvider = vi.fn()
+    useProviderStore.setState({ providers: [provider], updateProvider })
+    renderSection()
+    await user.click(screen.getByRole('button', { name: 'Edit Provider' }))
+    await user.click(screen.getByRole('button', { name: 'Advanced' }))
+    await user.type(screen.getAllByLabelText('Context window (tokens)')[1], '100')
+    await user.type(screen.getByLabelText('Maximum output (tokens)'), '101')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The OpenCode output limit cannot exceed its context window.')
+    expect(updateProvider).not.toHaveBeenCalled()
   })
 
   it('accepts internal HTTP endpoints and reports disabled endpoints without network requests', async () => {

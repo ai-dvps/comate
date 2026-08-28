@@ -1392,7 +1392,7 @@ describe('Provider configuration migration v1', { concurrency: false }, () => {
     const store = new SqliteStore(dbPath);
 
     assert.deepStrictEqual(store.getProvider(fixture.providerId)?.configuration?.preset, {
-      id: 'kimi', version: 1,
+      id: 'kimi', version: 2,
     });
     store.close();
   });
@@ -1425,10 +1425,10 @@ describe('Provider configuration migration v1', { concurrency: false }, () => {
 
     const reopened = new SqliteStore(dbPath);
     assert.deepStrictEqual(reopened.getProvider(kimi.id)?.configuration?.preset, {
-      id: 'kimi', version: 1,
+      id: 'kimi', version: 2,
     });
     assert.deepStrictEqual(reopened.getProvider(bigmodel.id)?.configuration?.preset, {
-      id: 'bigmodel', version: 1,
+      id: 'bigmodel', version: 2,
     });
     assert.strictEqual(reopened.getProvider(lookalike.id)?.configuration?.preset, undefined);
     reopened.close();

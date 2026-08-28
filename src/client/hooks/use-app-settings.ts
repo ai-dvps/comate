@@ -3,6 +3,7 @@ import i18n from '../i18n'
 import { clampFontSize, MAX_FONT_SIZE, MIN_FONT_SIZE } from '../lib/font-size'
 
 export type DisplayMode = 'result' | 'linear'
+export type ApprovalMode = 'auto' | 'readonly' | 'manual'
 
 interface AppSettings {
   defaultModel: string
@@ -18,6 +19,7 @@ interface AppSettings {
   lastUpdateCheckAt: string | null
   displayMode: DisplayMode
   outputStyle: string | null
+  approvalMode: ApprovalMode
 }
 
 const STORAGE_KEY = 'app-settings'
@@ -55,6 +57,7 @@ const defaultSettings: AppSettings = {
   // Result-focused mode is the primary experience for new sessions.
   displayMode: 'result',
   outputStyle: null,
+  approvalMode: 'auto',
 }
 
 /** Validate/migrate a parsed stored blob into a complete AppSettings object. */
@@ -90,6 +93,10 @@ function fromStored(parsed: StoredAppSettings | null | undefined): AppSettings {
       typeof parsed.lastUpdateCheckAt === 'string' && parsed.lastUpdateCheckAt ? parsed.lastUpdateCheckAt : null,
     displayMode: parsed.displayMode === 'linear' ? 'linear' : 'result',
     outputStyle: typeof parsed.outputStyle === 'string' && parsed.outputStyle.trim() ? parsed.outputStyle : null,
+    approvalMode:
+      parsed.approvalMode === 'readonly' || parsed.approvalMode === 'manual'
+        ? parsed.approvalMode
+        : 'auto',
   }
 }
 
@@ -227,6 +234,10 @@ export function useAppSettings() {
     commitSettings({ ...currentSettings, outputStyle })
   }, [])
 
+  const setApprovalMode = useCallback((approvalMode: ApprovalMode) => {
+    commitSettings({ ...currentSettings, approvalMode })
+  }, [])
+
   return {
     defaultModel: settings.defaultModel,
     reopenLastWorkspace: settings.reopenLastWorkspace,
@@ -241,6 +252,7 @@ export function useAppSettings() {
     lastUpdateCheckAt: settings.lastUpdateCheckAt,
     displayMode: settings.displayMode,
     outputStyle: settings.outputStyle,
+    approvalMode: settings.approvalMode,
     setDefaultModel,
     setReopenLastWorkspace,
     setUseModifierToSubmit,
@@ -254,5 +266,6 @@ export function useAppSettings() {
     setLastUpdateCheckAt,
     setDisplayMode,
     setOutputStyle,
+    setApprovalMode,
   }
 }

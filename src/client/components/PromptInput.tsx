@@ -206,6 +206,7 @@ export default function PromptInput(props: PromptInputProps) {
   const isNewChat = props.mode === 'new-chat'
   const workspaceId = props.workspaceId
   const sessionId = isNewChat ? newChatDraftSessionId(workspaceId) : props.sessionId
+  const commandSessionId = isNewChat ? undefined : props.sessionId
   const onSend = props.onSend
   const onStop = isNewChat ? undefined : props.onStop
   const onRefresh = isNewChat ? undefined : props.onRefresh
@@ -231,6 +232,13 @@ export default function PromptInput(props: PromptInputProps) {
   const stopBackgroundTask = useChatStore((s) => s.stopBackgroundTask)
   const isRestarting = useChatStore((s) => isNewChat ? false : s.isRestartingRuntime[sessionId] ?? false)
   const activity = useChatStore((s) => isNewChat ? undefined : s.sessionActivity[sessionId])
+  const session = useChatStore((s) => isNewChat
+    ? undefined
+    : s.sessions[workspaceId]?.find((item) => item.id === sessionId))
+  const sessionBackend = session?.backend as BackendId | undefined
+  const backends = useBackendStore((s) => s.backends)
+  const defaultBackend = useBackendStore((s) => s.defaultBackend)
+  const activeBackend = (isNewChat ? props.backendId : sessionBackend) ?? defaultBackend ?? 'claude'
   const backgroundTasks = activity?.backgroundTasks ?? []
   const backgroundTaskCount = backgroundTasks.length
   const isForegroundActive = isStreaming && activity?.phase !== 'background'
@@ -241,7 +249,10 @@ export default function PromptInput(props: PromptInputProps) {
     error: commandsError,
     fetch: fetchCommands,
     refresh: refreshCommands,
-  } = useCommands(workspaceId)
+  } = useCommands(workspaceId, {
+    sessionId: commandSessionId,
+    backendId: activeBackend,
+  })
   const { candidates, refresh: refreshReferences } =
     usePromptReferenceValidation({
       workspaceId,
@@ -313,19 +324,12 @@ export default function PromptInput(props: PromptInputProps) {
   const inputCardRef = useRef<HTMLDivElement>(null)
   const [contentWidth, setContentWidth] = useState<number | undefined>(undefined)
 
-  const session = useChatStore((s) => isNewChat
-    ? undefined
-    : s.sessions[workspaceId]?.find((item) => item.id === sessionId))
-  const sessionBackend = session?.backend
-  const backends = useBackendStore((s) => s.backends)
-  const defaultBackend = useBackendStore((s) => s.defaultBackend)
   // Mirror BackendSelector's effective-backend resolution (U5/R4): a new chat
   // or draft without a locked backend runs on the app-level default backend,
   // so capability gates must evaluate against that backend rather than the raw
   // unset value — otherwise image intake is wrongly disabled with
   // 'backend.capabilityUndeclared' even though the session will run on a
   // fully-capable backend.
-  const activeBackend = (isNewChat ? props.backendId : sessionBackend) ?? defaultBackend ?? 'claude'
   const activeProviderId = isNewChat ? props.providerId : session?.providerId ?? null
   const fetchBackends = useBackendStore((s) => s.fetchBackends)
   const providers = useProviderStore((s) => s.providers)
@@ -1760,6 +1764,8 @@ export default function PromptInput(props: PromptInputProps) {
                 <CommandPicker
                   ref={pickerHandleRef}
                   workspaceId={workspaceId}
+                  sessionId={commandSessionId}
+                  backendId={activeBackend}
                   open={pickerOpen}
                   onOpenChange={(open) => {
                     setPickerOpen(open)
@@ -1851,6 +1857,7 @@ export default function PromptInput(props: PromptInputProps) {
                         approvalMode={props.approvalMode}
                         onApprovalModeChange={props.onApprovalModeChange}
                         disabled={disabled}
+                        hideNameBelowSm
                       />
                     )}
                   </>
@@ -1859,7 +1866,7 @@ export default function PromptInput(props: PromptInputProps) {
                     <BackendSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} hideNameBelowSm />
                     {showProvider && <ProviderSelector workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} hideNameBelowSm />}
                     {showFast && <FastModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} />}
-                    {showApproval && <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} />}
+                    {showApproval && <ApprovalModeToggle workspaceId={workspaceId} sessionId={sessionId} disabled={isComposerLocked || isRestarting} hideNameBelowSm />}
                   </>
                 ) : null}
                 {canClear && showClear && (

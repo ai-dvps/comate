@@ -16,7 +16,7 @@ import { normalizeWindowsPath } from './normalize-windows-path.js';
  * startup so protocol drift (e.g. permission.asked ↔ permission.updated)
  * fails loudly instead of silently mismatching.
  */
-export const OPENCODE_EXPECTED_VERSION = '1.18.4';
+export const OPENCODE_EXPECTED_VERSION = '1.18.23';
 
 // opencode's platform packages use 'windows' for Windows (opencode-windows-x64),
 // NOT Node's 'win32' (which @anthropic-ai/claude-agent-sdk does use). Map the

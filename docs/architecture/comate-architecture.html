@@ -226,7 +226,7 @@ flowchart TB
     <div class="card">
       <h4>opencode 适配器（U4–U7）</h4>
       <ul>
-        <li>每会话一个 serve 子进程：随机 Basic auth、env 净化、Comate 自有 XDG 存储、启动版本校验（锁 1.18.4）</li>
+        <li>每会话一个 serve 子进程：随机 Basic auth、env 净化、Comate 自有 XDG 存储、启动版本校验（锁 1.18.23）</li>
         <li>事件映射：SSE → 内部消息模型（text/thinking/tool/todo/idle/error）</li>
         <li>审批桥：permission.asked → 核心 canUseTool → once/always/reject</li>
         <li>提问桥：question.asked → 问题阶梯 → /question/{id}/reply</li>
@@ -270,7 +270,7 @@ sequenceDiagram
   Core-->>UI: 完成
     </pre>
   </div>
-  <div class="note">提问（AskUserQuestion 等价流）走独立的 <code>question.asked → /question/{id}/reply</code> 通道（v2 API，1.18.4 锁定二进制实测通过 AE5）。</div>
+  <div class="note">提问（AskUserQuestion 等价流）走独立的 <code>question.asked → /question/{id}/reply</code> 通道（v2 API；AE5 上次有凭证实测使用 1.18.4）。</div>
 </section>
 
 <section>
@@ -308,7 +308,7 @@ flowchart LR
       <td>安全扫描型企业（禁二进制存在）</td>
     </tr>
   </table>
-  <div class="note">构建断言按 <b>isFile</b> 校验变体内容（修复：旧目录形残留曾令 existsSync 断言失效）；过期二进制按变体自动清理。版本锁定：opencode 二进制与 @opencode-ai/sdk 钉为同一兼容单元（1.18.4），serve 启动即校验。</div>
+  <div class="note">构建断言按 <b>isFile</b> 校验变体内容（修复：旧目录形残留曾令 existsSync 断言失效）；过期二进制按变体自动清理。版本锁定：opencode 二进制与 @opencode-ai/sdk 钉为同一兼容单元（1.18.23），serve 启动即校验。</div>
 </section>
 
 <section>

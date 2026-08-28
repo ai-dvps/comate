@@ -85,6 +85,34 @@ function isOpencodeDefaultTitle(title: string): boolean {
   return /^(?:New session|Child session) - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(title);
 }
 
+function openCodeModelMetadata(
+  provider: Extract<EffectiveProviderConfiguration, { available: true }>,
+): Record<string, unknown> {
+  const profile = provider.openCodeModelProfile;
+  if (!profile) return {};
+  const variants = profile.variants && Object.fromEntries(Object.entries(profile.variants).map(([name, variant]) => [
+    name,
+    provider.mode === 'direct-anthropic'
+      ? { thinking: { type: 'enabled', budgetTokens: variant.thinkingBudgetTokens } }
+      : {
+          ...(variant.reasoningEffort !== undefined && { reasoningEffort: variant.reasoningEffort }),
+          ...(variant.reasoningSummary !== undefined && { reasoningSummary: variant.reasoningSummary }),
+        },
+  ]));
+  return {
+    ...(profile.reasoning !== undefined && { reasoning: profile.reasoning }),
+    ...(profile.toolCall !== undefined && { tool_call: profile.toolCall }),
+    ...(profile.contextWindow !== undefined && profile.maxOutputTokens !== undefined && {
+      limit: { context: profile.contextWindow, output: profile.maxOutputTokens },
+    }),
+    ...(profile.inputModalities !== undefined && profile.outputModalities !== undefined && {
+      modalities: { input: profile.inputModalities, output: profile.outputModalities },
+    }),
+    ...(profile.reasoningField !== undefined && { interleaved: { field: profile.reasoningField } }),
+    ...(variants && Object.keys(variants).length > 0 && { variants }),
+  };
+}
+
 export function buildServeConfig(
   provider: Extract<EffectiveProviderConfiguration, { available: true }>,
   providerName: string,
@@ -104,7 +132,7 @@ export function buildServeConfig(
           baseURL: anthropic ? toAnthropicBaseUrl(provider.baseUrl) : provider.baseUrl.replace(/\/+$/, ''),
           apiKey: provider.credential,
         },
-        models: expandModelAliases(provider.model),
+        models: expandModelAliases(provider.model, openCodeModelMetadata(provider)),
       },
     },
   };
@@ -274,10 +302,11 @@ export class OpencodeBackendDriver implements BackendDriver {
       getContextUsage: async () => {
         const usage = this.mapperState.lastUsage;
         const totalTokens = (usage?.input ?? 0) + (usage?.output ?? 0);
+        const maxTokens = this.deps.provider.openCodeModelProfile?.contextWindow ?? 0;
         return {
           totalTokens,
-          maxTokens: 0,
-          percentage: 0,
+          maxTokens,
+          percentage: maxTokens > 0 ? Math.min(100, (totalTokens / maxTokens) * 100) : 0,
           categories: [
             { name: 'input', tokens: usage?.input ?? 0 },
             { name: 'output', tokens: usage?.output ?? 0 },
@@ -410,6 +439,16 @@ export class OpencodeBackendDriver implements BackendDriver {
         diagLog(`[OpencodeBackendDriver] event stream error: ${err instanceof Error ? err.message : String(err)}`);
       })
       .finally(() => {
+        if (!this.closed && this.mapperState.pendingContextOverflow) {
+          // A dropped event stream must not strand the client in a permanent
+          // compacting state. Treat the unfinished recovery as terminal before
+          // closing the iterator so the original overflow remains visible.
+          this.routeEvent(
+            { type: 'session.idle', properties: { sessionID: sessionId } },
+            options,
+            sessionId,
+          );
+        }
         this.pushEvent(null);
       });
   }

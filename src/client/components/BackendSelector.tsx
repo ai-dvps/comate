@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '../stores/chat-store'
 import { useBackendStore, backendAvailability, type BackendId } from '../stores/backend-store'
-import { ChevronDown, Check, Lock, Cpu } from 'lucide-react'
+import { ChevronDown, Check } from 'lucide-react'
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
+import { AgentIcon } from './AgentIcon'
 
 interface BackendSelectorCommonProps {
   workspaceId: string
@@ -80,7 +81,7 @@ export default function BackendSelector(props: BackendSelectorProps) {
             : t('backend.locked', { backend: label })
         }
       >
-        <Lock className="w-3 h-3" />
+        <AgentIcon backendId={effectiveBackend} locked className="h-3.5 w-3.5" />
         <span className={hideNameBelowSm ? 'hidden sm:inline' : ''}>{label}</span>
       </span>
     )
@@ -110,7 +111,7 @@ export default function BackendSelector(props: BackendSelectorProps) {
           className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer active:scale-[0.97] transition-all disabled:opacity-40 disabled:cursor-not-allowed text-text-secondary hover:bg-surface-hover hover:text-text-primary"
           title={t('backend.selectorTitle')}
         >
-          <Cpu className="w-3.5 h-3.5" />
+          <AgentIcon backendId={effectiveBackend} className="h-3.5 w-3.5" />
           <span className={`max-w-[120px] truncate ${hideNameBelowSm ? 'hidden sm:inline' : ''}`}>{label}</span>
           <ChevronDown className="w-3 h-3 opacity-60" />
         </button>
@@ -136,7 +137,7 @@ export default function BackendSelector(props: BackendSelectorProps) {
                   : 'text-text-secondary hover:bg-surface-hover'
               }`}
             >
-              <Cpu className="w-4 h-4 flex-shrink-0 opacity-70" />
+              <AgentIcon backendId={backend.id} className="h-4 w-4 opacity-70" />
               <div className="min-w-0 flex-1">
                 <div className="font-medium truncate">{t(BACKEND_LABEL_KEYS[backend.id] ?? backend.id)}</div>
               </div>

@@ -9,7 +9,7 @@ Generated from the capability declaration table (`src/server/services/agent-back
 | streaming | full | verified | Adapter E2E (`scripts/verify-opencode-adapter.ts`): text/thinking events streamed to result |
 | toolRendering | full | verified | Adapter E2E: tool_use/tool_result events; `opencode-event-mapper.test.ts` |
 | approvals | full | verified | Adapter E2E: permission.asked → core pending_approval → reply → file written; surface probes (`scripts/verify-opencode-surface.ts`) |
-| askUserQuestion | full | verified | Surface probes: question.asked → /question/{id}/reply → session continues (+85 events) on the pinned 1.18.4 binary |
+| askUserQuestion | full | verified | Surface probes: question.asked → /question/{id}/reply → session continues (+85 events); last credentialed proof used 1.18.4 |
 | todos | full | verified | `opencode-event-mapper.test.ts`: todo.updated → task_started/task_updated |
 | sessionManagement | full | verified | backend_session_id persisted + reattach (Adapter E2E); fork/children covered by driver ops |
 | modelSwitching | full | verified | Provider→opencode mapping exercised in every E2E run (Kimi endpoint); `setModel` on the query handle |
@@ -17,7 +17,7 @@ Generated from the capability declaration table (`src/server/services/agent-back
 | slashCommands | full | verified | Driver command endpoint routing + `getSessionBackendCommands`; discovery route is backend-aware |
 | imageInput | full on declared image-capable models | automated verified; live provider walkthrough remaining | Client normalization/admission suites; Claude native image-block tests; OpenCode `file` part and transcript fixture round trips; shared history renderer tests |
 | subagents | full | verified | `opencode-transcript.test.ts`: history translation + task/child pairing |
-| analytics | unavailable (declared) | verified | KTD-10: opencode sessions not counted in v1; noted in the analytics UI |
+| analytics | full | verified | OpenCode REST history supplies per-message tokens, cost, model, tools, timestamps, and duration to the shared persistent cache |
 | hooks | unavailable (both backends) | verified | Ground truth: hook scripts have no consumer on either backend; execution is its own work item |
 
 ## Capability matrix (Codex backend)
@@ -41,7 +41,7 @@ This matrix covers the bundled `@openai/codex` 0.149.0 app-server integration ad
 | browser | unavailable | verified | Built-in browser MCP requires an Authorization-bearing remote server; credentials are not copied into Codex configuration or thread metadata |
 | slashCommands | unavailable | verified | Codex skills are discoverable, but Claude slash-command syntax and execution routing are not equivalent |
 | todos | unavailable | verified | Codex plan notifications are not yet projected into Comate's Claude task/todo UI |
-| analytics | unavailable | verified | The persistent Analytics dashboard currently reads Claude JSONL only; live Codex context usage remains available |
+| analytics | degraded | verified | Codex thread history and thread-scoped usage feed the persistent dashboard with exact totals, models, available cost, tools, messages, and duration; the public persisted API has no per-turn token buckets, so daily token detail is not fabricated |
 | hooks | unavailable | verified | No cross-backend hook execution surface is wired for Codex |
 | scheduledGoalWrap | unavailable | verified | Scheduled goals use the selected default backend, but Codex-specific wrap-up/tool parity is not implemented |
 
@@ -97,7 +97,7 @@ Operational setup and recovery details are in [`docs/operations/codex-backend.md
 | Paste, drop, chooser, reorder, remove, preview, and image-only composition | verified | `PromptInput.browser.test.tsx`; `PromptImageRail.test.tsx`; `image-input.test.ts` |
 | Oversized static normalization and atomic invalid/oversized rejection | verified | client `image-input.test.ts`; server `image-input-validation.test.ts` |
 | Claude Code receives ordered native image blocks | verified with SDK boundary fixtures | `chat-service.test.ts`; `session-runtime.test.ts`; `server.test.ts` |
-| OpenCode receives ordered file parts and replays transcript images | verified with pinned 1.18.4 adapter fixtures | `opencode-adapter.test.ts`; `opencode-transcript.test.ts` |
+| OpenCode receives ordered file parts and replays transcript images | verified with pinned 1.18.23 adapter fixtures | `opencode-adapter.test.ts`; `opencode-transcript.test.ts` |
 | Failed admission restores the full draft; accepted turns release draft bytes | verified | `chat-store.test.ts`; WebSocket admission tests |
 | Reloaded history is backend-owned and optimistic replay is idempotent | verified with transcript fixtures | normalizer, chat-store, adapter, and renderer suites |
 | Unsupported or unknown model disables image intake with a reason | verified | image profile, backend-store, and PromptInput suites |

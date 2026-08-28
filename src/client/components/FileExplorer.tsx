@@ -6,6 +6,7 @@ import { revealInFileManager } from '../lib/desktop-api'
 import { ChevronRight, Folder, Loader2, RefreshCw, X } from 'lucide-react'
 import { cn } from './ui/utils'
 import { getFileIcon } from '../lib/file-helpers'
+import { isAncestorPath } from '../lib/file-tree-path'
 
 interface FileNode {
   name: string
@@ -23,6 +24,7 @@ interface TreeNodeProps {
   onFileOpen: (path: string, name: string) => void
   onContextMenu?: (e: React.MouseEvent, nodePath: string, nodeType: 'file' | 'folder') => void
   refreshToken: number
+  revealPath?: string
   level: number
 }
 
@@ -36,6 +38,7 @@ function TreeNode({
   onFileOpen,
   onContextMenu,
   refreshToken,
+  revealPath,
   level,
 }: TreeNodeProps) {
   const { t } = useTranslation('common')
@@ -44,6 +47,7 @@ function TreeNode({
   const [loading, setLoading] = useState(false)
   const requestRef = useRef<AbortController | null>(null)
   const lastRefreshTokenRef = useRef(refreshToken)
+  const rowRef = useRef<HTMLDivElement>(null)
 
   const nodePath = path ? `${path}/${node.name}` : node.name
 
@@ -87,13 +91,49 @@ function TreeNode({
   const toggleExpand = useCallback(async () => {
     if (node.type !== 'folder') return
 
-    if (!expanded && children.length === 0) {
+    if (expanded) {
+      setExpanded(false)
+      return
+    }
+
+    setExpanded(true)
+    if (children.length === 0) {
       await loadChildren()
     }
-    setExpanded(!expanded)
   }, [children.length, expanded, loadChildren, node.type])
 
+  useEffect(() => {
+    if (node.type !== 'folder' || !revealPath || !isAncestorPath(nodePath, revealPath)) return
+
+    let cancelled = false
+    void (async () => {
+      if (!cancelled) {
+        setExpanded(true)
+      }
+      if (children.length === 0) {
+        await loadChildren()
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [children.length, loadChildren, node.type, nodePath, revealPath])
+
+  useEffect(() => {
+    if (node.type !== 'file' || revealPath !== nodePath || !rowRef.current) return
+    const element = rowRef.current
+    // Start smooth scroll on the next frame so layout can commit; avoid a long
+    // post-click delay before the scrollbar moves.
+    const raf = requestAnimationFrame(() => {
+      element.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [node.type, nodePath, revealPath])
+
   if (node.type === 'folder') {
+    const showChildren = expanded || children.length > 0 || loading
+
     return (
       <div>
         <div
@@ -103,38 +143,55 @@ function TreeNode({
           style={{ paddingLeft: `${level * 12 + 8}px` }}
         >
           <ChevronRight
-            className={`w-3 h-3 text-text-tertiary flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
+            className={cn(
+              'w-3 h-3 text-text-tertiary flex-shrink-0 transition-transform duration-150 ease-out motion-reduce:transition-none',
+              expanded && 'rotate-90',
+            )}
           />
           <Folder className="w-3.5 h-3.5 text-yellow-600 flex-shrink-0" />
           <span className="truncate text-text-secondary">{node.name}</span>
         </div>
-        {expanded && (
-          <div>
-            {loading ? (
-              <div className="py-1 px-2 text-[11px] text-text-tertiary" style={{ paddingLeft: `${(level + 1) * 12 + 8}px` }}>
-                Loading...
-              </div>
-            ) : children.length === 0 ? (
-              <div className="py-1 px-2 text-[11px] text-text-tertiary" style={{ paddingLeft: `${(level + 1) * 12 + 8}px` }}>
-                {t('emptyFolder')}
-              </div>
-            ) : (
-              children.map((child) => (
-                <TreeNode
-                  key={`${workspaceId}-${child.name}`}
-                  node={child}
-                  path={nodePath}
-                  workspaceId={workspaceId}
-                  selectedPath={selectedPath}
-                  onSelectPath={onSelectPath}
-                  onFilePreview={onFilePreview}
-                  onFileOpen={onFileOpen}
-                  onContextMenu={onContextMenu}
-                  refreshToken={refreshToken}
-                  level={level + 1}
-                />
-              ))
+        {showChildren && (
+          <div
+            className={cn(
+              'grid transition-[grid-template-rows] duration-150 ease-out motion-reduce:transition-none',
+              expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
             )}
+            aria-hidden={!expanded}
+          >
+            <div
+              className={cn(
+                'min-h-0 overflow-hidden transition-opacity duration-150 ease-out motion-reduce:transition-none',
+                expanded ? 'opacity-100' : 'opacity-0',
+              )}
+            >
+              {loading ? (
+                <div className="py-1 px-2 text-[11px] text-text-tertiary" style={{ paddingLeft: `${(level + 1) * 12 + 8}px` }}>
+                  Loading...
+                </div>
+              ) : children.length === 0 ? (
+                <div className="py-1 px-2 text-[11px] text-text-tertiary" style={{ paddingLeft: `${(level + 1) * 12 + 8}px` }}>
+                  {t('emptyFolder')}
+                </div>
+              ) : (
+                children.map((child) => (
+                  <TreeNode
+                    key={`${workspaceId}-${child.name}`}
+                    node={child}
+                    path={nodePath}
+                    workspaceId={workspaceId}
+                    selectedPath={selectedPath}
+                    onSelectPath={onSelectPath}
+                    onFilePreview={onFilePreview}
+                    onFileOpen={onFileOpen}
+                    onContextMenu={onContextMenu}
+                    refreshToken={refreshToken}
+                    revealPath={revealPath}
+                    level={level + 1}
+                  />
+                ))
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -145,8 +202,11 @@ function TreeNode({
 
   return (
     <div
+      ref={rowRef}
+      data-testid="file-tree-item"
+      data-path={nodePath}
       className={cn(
-        'flex items-center gap-1.5 py-1 px-2 rounded-lg cursor-pointer text-xs',
+        'flex items-center gap-1.5 py-1 px-2 rounded-lg cursor-pointer text-xs transition-colors duration-150 ease-out motion-reduce:transition-none',
         isSelected ? 'bg-accent/10 text-text-primary' : 'hover:bg-surface-hover text-text-secondary',
       )}
       onClick={() => {
@@ -193,7 +253,9 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFilePreview
   const [treeRefreshToken, setTreeRefreshToken] = useState(0)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; itemPath: string; itemType: 'file' | 'folder' } | null>(null)
   const prevWorkspaceIdRef = useRef<string | null>(null)
+  const prevSelectedPathRef = useRef<string | undefined>(undefined)
   const rootRequestRef = useRef<AbortController | null>(null)
+  const [revealPath, setRevealPath] = useState<string | undefined>(undefined)
 
   useEffect(() => {
     setSearchQuery('')
@@ -203,6 +265,19 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFilePreview
     }
     prevWorkspaceIdRef.current = activeWorkspaceId ?? null
   }, [activeWorkspaceId, clear])
+
+  useEffect(() => {
+    if (!selectedPath || selectedPath === prevSelectedPathRef.current) return
+
+    prevSelectedPathRef.current = selectedPath
+    setSearchQuery((query) => {
+      if (query.trim()) {
+        clear()
+      }
+      return ''
+    })
+    setRevealPath(selectedPath)
+  }, [clear, selectedPath])
 
   const loadRoot = useCallback(async () => {
     if (!activeWorkspaceId) {
@@ -422,6 +497,7 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFilePreview
                 onFileOpen={onFileClick}
                 onContextMenu={handleContextMenu}
                 refreshToken={treeRefreshToken}
+                revealPath={revealPath}
                 level={0}
               />
             ))}

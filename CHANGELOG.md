@@ -5,7 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.4] - 2026-08-28
+
+### Added
+
+- **Collapsed sidebar keeps New Chat within reach** — The titlebar now shows a New Chat shortcut beside the command-center expand button while the left sidebar is collapsed.
+
+### Changed
+
+- **Titlebar icons now use a quieter visual weight** — Panel toggles, New Chat, context tabs, add, and close controls use softer semantic colors and a consistent thinner stroke while retaining clear hover and focus feedback.
+
+### Fixed
+
+- **Update release notes render as formatted content** — The restart-to-update dialog now displays lists and emphasis instead of exposing raw HTML tags, while sanitizing release-provided markup before rendering it.
+- **The conversation status bar now remains readable in narrow layouts** — Workspace, account usage, Session tokens, and Context usage switch from long labels to semantic icons and compact values as the conversation column shrinks, instead of clipping their text.
+- **The right context panel no longer crowds out conversations in narrow windows** — Its expanded width is capped at two thirds of the current window, saved widths are constrained again after the window becomes smaller, and the workspace/Session title hides when the expanded panel leaves too little titlebar space for its collapse control.
+
+## [0.4.3] - 2026-08-27
+
+### Added
+
+- **File tree syncs with the active editor tab** — Switching back to an open file tab now exits file search, expands the file's parent folders, highlights the file in the navigator, and scrolls it into view.
+
+### Changed
+
+- **Agent selectors use recognizable brand icons** — Settings and the prompt toolbar now show the Claude, OpenCode, and OpenAI marks; locked conversations keep the selected agent mark and add a small lock overlay.
+- **Comate's main window supports a narrower compact layout** — The main window can now resize down to 480px while retaining its 1280px initial width and the detached browser's 640px minimum width.
+- **File tree expand/collapse uses a short animation** — Folder chevrons rotate and children open/close over ~150ms with a light fade; selection highlight eases in.
+- **File tree scroll-to-active-tab is smooth** — Switching editor tabs scrolls the navigator to the file with `behavior: 'smooth'` instead of jumping instantly.
+
+### Fixed
+
+- **Permission mode matches the compact prompt toolbar** — At narrow window widths, the permission selector now hides its text label like the other prompt controls instead of crowding the toolbar.
+
+## [0.4.2] - 2026-08-27
+
+### Fixed
+
+- **Codex Skills appear and run from the slash-command picker** — New chats and existing Codex sessions now load the native Codex Skill catalog, and selected Skills are submitted through Codex's structured Skill input instead of an empty or text-only `/` flow.
+- **Packaged Codex turns tolerate normal startup time** — The release acceptance gate now allows healthy Codex Provider turns up to 60 seconds to start while preserving its route, authorization, payload, and credential-leak checks.
+- **Switching a draft conversation to Codex starts a fresh thread** — Changing from Claude Code or OpenCode now clears the incompatible backend session reference, while reselecting the same backend keeps its resumable session.
+- **OpenCode Skills appear in every slash-command picker** — New chats discover project and global Skills before a runtime exists, while active sessions merge the OpenCode runtime's command and Skill catalogs instead of falling back to Claude SDK initialization.
+- **OpenCode reloads workspace Skills after they change** — Opening the slash-command picker now detects added, edited, or removed project Skills and safely rebuilds an idle OpenCode runtime; active turns finish before the refresh occurs.
+- **Codex conversations recover when a saved thread has no rollout** — Comate replaces only the missing thread, persists the replacement ID, and continues the pending first turn without hiding unrelated resume failures.
+- **Codex tool calls preserve live input parameters** — Streaming tool-use events now carry their JSON arguments through the shared SSE layer instead of exposing an empty input object.
+
+## [0.4.1] - 2026-08-26
+
+### Added
+
+- **Analytics now includes OpenCode and Codex sessions** — OpenCode contributes per-message tokens, cost, models, tools, activity, and duration; Codex contributes exact thread totals and activity while clearly degrading only the unavailable per-day token breakdown.
+
+### Fixed
+
+- **OpenCode thinking indicators stop when sessions finish** — Terminal session events now complete active reasoning blocks instead of leaving the interface stuck in a thinking state.
+- **OpenCode tool calls show their parameters while streaming** — Tool input now crosses the live SSE boundary after OpenCode finishes assembling it, including the normal pending-to-running lifecycle.
+- **OpenCode auto-compaction recovers instead of ending the turn** — Recoverable context-overflow events now show compaction progress while OpenCode compacts and retries; failed recovery still surfaces the original error, including when the event stream disconnects mid-compaction.
+
+## [0.4.0] - 2026-08-25
+
+### Added
+
+- **Provider model capabilities can be configured per Agent and model** — Advanced Provider settings now expose separate Claude Code, Codex, and OpenCode panels for context limits, reasoning behavior, tool and modality support, and protocol-aware OpenCode variants; BigModel's Coding Plan preset uses its documented OpenAI Responses `/api/v1` endpoint and `glm-5.3` model.
+- **New sessions follow a global permission-mode default** — General settings now choose whether new sessions start in Auto, Read only, or Ask before actions mode; the app defaults to Auto while preserving per-session overrides.
+
+### Changed
+
+- **OpenCode upgraded to 1.18.23** — The SDK and every bundled platform binary move together from 1.18.4 to 1.18.23 as one pinned compatibility unit.
 
 ### Changed
 

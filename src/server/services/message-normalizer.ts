@@ -1,7 +1,8 @@
 import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 
-import type { ChatMessage, MessagePart, MessageRole, TaskItem } from '../types/message.js';
+import type { ChatMessage, MessagePart, MessageRole, TaskItem, TurnTokenUsage } from '../types/message.js';
 import { isImageMediaType } from '../utils/image-input-profile.js';
+import { isTurnTokenUsage, normalizeProviderTokenUsage, sumTurnTokenUsages } from './token-usage.js';
 
 /**
  * Track unknown SDK block types we've already warned about, to avoid log
@@ -241,6 +242,10 @@ export function normalizeSessionMessage(
   const toolUseResult = (sessionMessage as Record<string, unknown>).toolUseResult;
   const rawMessage = sessionMessage.message as Record<string, unknown> | undefined;
   const toolUseMeta = rawMessage?.tool_use_meta;
+  const directUsage = (sessionMessage as Record<string, unknown>).tokenUsage ?? rawMessage?.tokenUsage;
+  const tokenUsage = isTurnTokenUsage(directUsage)
+    ? directUsage
+    : normalizeProviderTokenUsage(rawMessage?.usage);
   const parts = raw ? partsFromSdkContent(raw.content, toolUseResult, toolUseMeta) : [];
 
   const subtype = typeof rawMessage?.subtype === 'string' ? rawMessage.subtype : '';
@@ -256,7 +261,40 @@ export function normalizeSessionMessage(
     parts: parts.length > 0 ? parts : [{ type: 'text', text: 'Conversation compacted' }],
     timestamp: Date.now(),
     isCompactBoundary,
+    ...(role === 'assistant' && tokenUsage ? { tokenUsage } : {}),
   };
+}
+
+function isToolResultOnly(message: ChatMessage): boolean {
+  return message.role === 'user' && message.parts.length > 0
+    && message.parts.every((part) => part.type === 'tool_result');
+}
+
+/** Move historical API-step usage to the terminal assistant of each semantic turn. */
+export function settleHistoricalAssistantTurns(messages: ChatMessage[]): void {
+  let assistantIndexes: number[] = [];
+  const flush = (): void => {
+    if (assistantIndexes.length === 0) return;
+    const usages: TurnTokenUsage[] = [];
+    for (const index of assistantIndexes) {
+      const usage = messages[index].tokenUsage;
+      if (usage) usages.push(usage);
+      delete messages[index].tokenUsage;
+    }
+    messages[assistantIndexes[assistantIndexes.length - 1]].tokenUsage = sumTurnTokenUsages(usages);
+    assistantIndexes = [];
+  };
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (message.role === 'assistant') {
+      assistantIndexes.push(index);
+    } else if (message.role === 'user' && !isToolResultOnly(message)) {
+      flush();
+    } else if (message.role === 'system') {
+      flush();
+    }
+  }
+  flush();
 }
 
 function roleFromType(type: SessionMessage['type']): MessageRole | null {

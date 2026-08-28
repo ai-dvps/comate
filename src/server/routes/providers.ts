@@ -42,7 +42,12 @@ function publicConfiguration(configuration: NonNullable<Provider['configuration'
       ...(configuration.models.codex ? { codex: configuration.models.codex } : {}),
       ...(configuration.models.openCode ? { openCode: configuration.models.openCode } : {}),
     },
-    openCode: { protocol: configuration.openCode.protocol },
+    openCode: {
+      protocol: configuration.openCode.protocol,
+      ...(configuration.openCode.modelProfiles
+        ? { modelProfiles: structuredClone(configuration.openCode.modelProfiles) }
+        : {}),
+    },
     claude: {
       ...(configuration.claude.defaultOpusModel ? { defaultOpusModel: configuration.claude.defaultOpusModel } : {}),
       ...(configuration.claude.defaultSonnetModel ? { defaultSonnetModel: configuration.claude.defaultSonnetModel } : {}),
@@ -54,11 +59,8 @@ function publicConfiguration(configuration: NonNullable<Provider['configuration'
         : {}),
     },
     codex: {
-      ...(configuration.codex.promptCacheRouting ? { promptCacheRouting: configuration.codex.promptCacheRouting } : {}),
-      ...(configuration.codex.thinking ? { thinking: configuration.codex.thinking } : {}),
-      ...(configuration.codex.effortByModel ? { effortByModel: structuredClone(configuration.codex.effortByModel) } : {}),
-      ...(configuration.codex.effortWireMappingByModel
-        ? { effortWireMappingByModel: structuredClone(configuration.codex.effortWireMappingByModel) }
+      ...(configuration.codex.modelProfiles
+        ? { modelProfiles: structuredClone(configuration.codex.modelProfiles) }
         : {}),
     },
     ...(configuration.preset ? { preset: { id: configuration.preset.id, version: configuration.preset.version } } : {}),

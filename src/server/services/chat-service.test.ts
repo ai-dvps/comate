@@ -45,6 +45,10 @@ import {
 import { browserService } from './browser-service.js';
 import { browserApiBrokerService } from './browser-api-broker-service.js';
 import { ProviderRouteRegistry } from './provider-route-registry.js';
+import {
+  opencodeServerManager,
+  type OpencodeServerInstance,
+} from './opencode-server-manager.js';
 
 function createMockWorkspace(id: string): Workspace {
   return {
@@ -5886,6 +5890,32 @@ describe('chat-service session backend update guard (R4)', { concurrency: false 
     );
   });
 
+  it('clears the previous backend session id when switching a draft to Codex', async () => {
+    const { workspace, session } = await createSession();
+    workspaceStore.updateLocalSession(session.id, { providerId: null });
+    workspaceStore.updateSessionBackend(session.id, 'opencode');
+    workspaceStore.updateSessionBackendSessionId(session.id, 'ses_opencode_1');
+
+    await service.updateSession(session.id, { backend: 'codex' }, workspace.id);
+
+    const stored = workspaceStore.getLocalSession(session.id);
+    assert.strictEqual(stored?.backend, 'codex');
+    assert.strictEqual(stored?.backendSessionId, undefined);
+  });
+
+  it('preserves the backend session id when re-selecting the same backend', async () => {
+    const { workspace, session } = await createSession();
+    workspaceStore.updateSessionBackend(session.id, 'opencode');
+    workspaceStore.updateSessionBackendSessionId(session.id, 'ses_opencode_1');
+
+    await service.updateSession(session.id, { backend: 'opencode' }, workspace.id);
+
+    assert.strictEqual(
+      workspaceStore.getLocalSession(session.id)?.backendSessionId,
+      'ses_opencode_1',
+    );
+  });
+
   it('rejects an unknown backend value with 400', async () => {
     const { workspace, session } = await createSession();
     await assert.rejects(
@@ -6051,6 +6081,142 @@ describe('chat-service backend review fixes (P1/P2)', { concurrency: false }, ()
       texts.some((t) => t.includes('hello from opencode')),
       `expected opencode history, got ${texts.join(' | ').slice(0, 120)}`,
     );
+  });
+
+  it('rebuilds an idle OpenCode runtime when workspace skills changed', async () => {
+    const oldInstance = { directory: '/workspace', baseUrl: 'http://old' } as OpencodeServerInstance;
+    const freshInstance = { directory: '/workspace', baseUrl: 'http://fresh' } as OpencodeServerInstance;
+    let currentInstance = oldInstance;
+    const originalGetInstance = opencodeServerManager.getInstance.bind(opencodeServerManager);
+    const originalSkillsChanged = opencodeServerManager.workspaceSkillsChanged.bind(opencodeServerManager);
+    const manager = opencodeServerManager as unknown as {
+      getInstance: (sessionId: string) => OpencodeServerInstance | undefined;
+      workspaceSkillsChanged: (instance: OpencodeServerInstance) => Promise<boolean>;
+    };
+    manager.getInstance = () => currentInstance;
+    manager.workspaceSkillsChanged = async (instance) => instance === oldInstance;
+
+    const internals = service as unknown as {
+      runtimes: Map<string, SessionRuntime>;
+      runtimeContexts: Map<string, { workspaceId: string }>;
+      scheduleRuntimeRebuild: (
+        sessionId: string,
+        context: { workspaceId: string },
+        options?: { immediate?: boolean },
+      ) => Promise<void> | undefined;
+    };
+    internals.runtimes.set('session-1', {
+      isClosed: () => false,
+      isProcessingTurn: () => false,
+      close: async () => undefined,
+    } as SessionRuntime);
+    internals.runtimeContexts.set('session-1', { workspaceId: 'workspace-1' });
+    internals.scheduleRuntimeRebuild = async (_sessionId, _context, options) => {
+      assert.deepStrictEqual(options, { immediate: true });
+      currentInstance = freshInstance;
+    };
+    __setOpencodeFetchForTesting((async (instance: OpencodeServerInstance, requestPath: string) => {
+      assert.strictEqual(instance, freshInstance);
+      const body = requestPath === '/skill'
+        ? [
+            { name: 'review', description: 'duplicate skill' },
+            { name: 'workspace-skill', description: 'fresh skill' },
+          ]
+        : [{ name: 'review', description: 'fresh command', template: '$ARGUMENTS' }];
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as never);
+
+    try {
+      assert.deepStrictEqual(await service.getSessionBackendCommands('session-1'), [
+        {
+          name: 'review',
+          description: 'fresh command',
+          argumentHint: 'arguments',
+        },
+        {
+          name: 'workspace-skill',
+          description: 'fresh skill',
+        },
+      ]);
+    } finally {
+      manager.getInstance = originalGetInstance;
+      manager.workspaceSkillsChanged = originalSkillsChanged;
+    }
+  });
+
+  it('keeps OpenCode runtime commands when skill discovery fails', async () => {
+    const instance = { directory: '/workspace', baseUrl: 'http://commands-only' } as OpencodeServerInstance;
+    const originalGetInstance = opencodeServerManager.getInstance.bind(opencodeServerManager);
+    const originalSkillsChanged = opencodeServerManager.workspaceSkillsChanged.bind(opencodeServerManager);
+    const manager = opencodeServerManager as unknown as {
+      getInstance: (sessionId: string) => OpencodeServerInstance | undefined;
+      workspaceSkillsChanged: (instance: OpencodeServerInstance) => Promise<boolean>;
+    };
+    manager.getInstance = () => instance;
+    manager.workspaceSkillsChanged = async () => false;
+    __setOpencodeFetchForTesting((async (_instance: OpencodeServerInstance, requestPath: string) => {
+      if (requestPath === '/skill') throw new Error('skill endpoint unavailable');
+      return Response.json([{ name: 'review', description: 'runtime command' }]);
+    }) as never);
+
+    try {
+      assert.deepStrictEqual(await service.getSessionBackendCommands('session-commands-only'), [{
+        name: 'review',
+        description: 'runtime command',
+        argumentHint: undefined,
+      }]);
+    } finally {
+      manager.getInstance = originalGetInstance;
+      manager.workspaceSkillsChanged = originalSkillsChanged;
+    }
+  });
+
+  it('defers workspace skill reload while an OpenCode turn is active', async () => {
+    const instance = { directory: '/workspace', baseUrl: 'http://active' } as OpencodeServerInstance;
+    const originalGetInstance = opencodeServerManager.getInstance.bind(opencodeServerManager);
+    const originalSkillsChanged = opencodeServerManager.workspaceSkillsChanged.bind(opencodeServerManager);
+    const manager = opencodeServerManager as unknown as {
+      getInstance: (sessionId: string) => OpencodeServerInstance | undefined;
+      workspaceSkillsChanged: (instance: OpencodeServerInstance) => Promise<boolean>;
+    };
+    manager.getInstance = () => instance;
+    manager.workspaceSkillsChanged = async () => true;
+
+    const internals = service as unknown as {
+      runtimes: Map<string, SessionRuntime>;
+      runtimeContexts: Map<string, { workspaceId: string }>;
+      scheduleRuntimeRebuild: (
+        sessionId: string,
+        context: { workspaceId: string },
+        options?: { immediate?: boolean },
+      ) => Promise<void> | undefined;
+    };
+    internals.runtimes.set('session-active', {
+      isClosed: () => false,
+      isProcessingTurn: () => true,
+      close: async () => undefined,
+    } as SessionRuntime);
+    internals.runtimeContexts.set('session-active', { workspaceId: 'workspace-1' });
+    let scheduledOptions: { immediate?: boolean } | undefined = { immediate: true };
+    internals.scheduleRuntimeRebuild = (_sessionId, _context, options) => {
+      scheduledOptions = options;
+      return undefined;
+    };
+    __setOpencodeFetchForTesting((async () => new Response(JSON.stringify([]), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as never);
+
+    try {
+      await service.getSessionBackendCommands('session-active');
+      assert.strictEqual(scheduledOptions, undefined, 'active turns must use the deferred rebuild path');
+    } finally {
+      manager.getInstance = originalGetInstance;
+      manager.workspaceSkillsChanged = originalSkillsChanged;
+    }
   });
 
   it('opencode rename PATCHes the backend serve and mirrors the title locally (P1)', async () => {

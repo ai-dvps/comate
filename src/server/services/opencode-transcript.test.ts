@@ -8,6 +8,20 @@ import {
 } from './opencode-transcript.js';
 
 describe('opencodeMessagesToSessionMessages', () => {
+  it('preserves stored OpenCode usage for historical normalization', () => {
+    const out = opencodeMessagesToSessionMessages([{
+      info: { id: 'm-usage', role: 'assistant',
+        tokens: { total: 35, input: 20, output: 8, reasoning: 3, cache: { read: 5, write: 2 } } },
+      parts: [{ id: 'p1', type: 'text', messageID: 'm-usage', text: 'done' }],
+    }]) as Array<{ message: { usage?: unknown } }>;
+
+    assert.deepStrictEqual(out[0].message.usage, {
+      total_tokens: 35, input_tokens: 20, output_tokens: 8,
+      cache_read_input_tokens: 5, cache_creation_input_tokens: 2,
+      output_tokens_details: { thinking_tokens: 3 },
+    });
+  });
+
   it('translates text/reasoning/tool parts into claude-shaped messages', () => {
     const messages: OpencodeRestMessage[] = [
       {

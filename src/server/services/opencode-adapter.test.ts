@@ -120,6 +120,50 @@ describe('toAnthropicBaseUrl (via buildServeConfig)', () => {
     assert.equal(provider.options.apiKey, 'tok');
     assert.ok(provider.models['kimi-for-coding']);
   });
+
+  it('projects active OpenCode model metadata and variants onto every model alias', async () => {
+    const { __testables } = await import('./opencode-adapter.js');
+    const config = __testables.buildServeConfig({
+      ...makeResolved('direct-openai-chat', 'https://api.example.com/v1', 'glm-5.3[1m]'),
+      openCodeModelProfile: {
+        contextWindow: 1_048_576,
+        maxOutputTokens: 65_536,
+        reasoning: true,
+        toolCall: true,
+        inputModalities: ['text', 'image'],
+        outputModalities: ['text'],
+        reasoningField: 'reasoning_details',
+        variants: { high: { reasoningEffort: 'high', reasoningSummary: 'concise' } },
+      },
+    }, 'BigModel');
+    const models = (config.provider as Record<string, { models: Record<string, unknown> }>)['comate-p1'].models;
+    const expectedMetadata = {
+      reasoning: true,
+      tool_call: true,
+      limit: { context: 1_048_576, output: 65_536 },
+      modalities: { input: ['text', 'image'], output: ['text'] },
+      interleaved: { field: 'reasoning_details' },
+      variants: { high: { reasoningEffort: 'high', reasoningSummary: 'concise' } },
+    };
+    assert.deepStrictEqual(models['glm-5.3[1m]'], { ...expectedMetadata, name: 'glm-5.3[1m]' });
+    assert.deepStrictEqual(models['glm-5.3'], { ...expectedMetadata, name: 'glm-5.3' });
+  });
+
+  it('projects Anthropic thinking-budget variants in OpenCode native shape', async () => {
+    const { __testables } = await import('./opencode-adapter.js');
+    const config = __testables.buildServeConfig({
+      ...makeResolved('direct-anthropic', 'https://api.example.com/anthropic', 'glm-5.3'),
+      openCodeModelProfile: {
+        variants: { deep: { thinkingBudgetTokens: 4096 } },
+      },
+    }, 'BigModel');
+    const models = (config.provider as Record<string, { models: Record<string, unknown> }>)['comate-p1'].models;
+
+    assert.deepStrictEqual(models['glm-5.3'], {
+      name: 'glm-5.3',
+      variants: { deep: { thinking: { type: 'enabled', budgetTokens: 4096 } } },
+    });
+  });
 });
 
 describe('toPermissionReply', () => {
@@ -490,6 +534,104 @@ describe('OpencodeBackendDriver multimodal prompt dispatch', () => {
 
     assert.deepEqual(retried, { parts, messageID });
     assert.ok(internals.lastPrompt, 'fallback keeps bytes until the retry reaches a terminal event');
+  });
+});
+
+describe('OpencodeBackendDriver event subscription recovery', () => {
+  it('surfaces a pending context overflow before an unexpected event-stream EOF', async () => {
+    const { OpencodeBackendDriver } = await import('./opencode-adapter.js');
+    const driver = new OpencodeBackendDriver({
+      directory: '/workspace',
+      comateSessionId: 's',
+      provider: makeProvider(),
+      providerName: 'Test Provider',
+      env: {},
+    });
+    const internals = driver as unknown as {
+      instance: { baseUrl: string; directory: string; authHeaders: Record<string, string> };
+      backendSessionId: string;
+      startEventSubscription: (options: Options) => void;
+      eventStream: AsyncIterable<unknown>;
+    };
+    internals.instance = { baseUrl: 'http://opencode.test', directory: '/workspace', authHeaders: {} };
+    internals.backendSessionId = 'oc-1';
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(
+      'data: {"type":"session.error","properties":{"sessionID":"oc-1","error":{"name":"ContextOverflowError","data":{"message":"session too large"}}}}\n\n',
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    )) as typeof fetch;
+
+    try {
+      internals.startEventSubscription({} as Options);
+      const iterator = internals.eventStream[Symbol.asyncIterator]();
+      const messages = [];
+      for (let index = 0; index < 4; index += 1) messages.push(await iterator.next());
+      assert.deepEqual(
+        messages.map(({ value }) => value && {
+          type: (value as { type?: string }).type,
+          subtype: (value as { subtype?: string }).subtype,
+          status: (value as { status?: string | null }).status,
+          errors: (value as { errors?: string[] }).errors,
+        }),
+        [
+          { type: 'system', subtype: 'status', status: 'compacting', errors: undefined },
+          { type: 'system', subtype: 'status', status: null, errors: undefined },
+          { type: 'result', subtype: 'error_during_execution', status: undefined, errors: ['session too large'] },
+          null,
+        ],
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('does not synthesize a compaction failure during deliberate shutdown', async () => {
+    const { OpencodeBackendDriver } = await import('./opencode-adapter.js');
+    const driver = new OpencodeBackendDriver({
+      directory: '/workspace',
+      comateSessionId: 's',
+      provider: makeProvider(),
+      providerName: 'Test Provider',
+      env: {},
+    });
+    const internals = driver as unknown as {
+      instance: { baseUrl: string; directory: string; authHeaders: Record<string, string> };
+      backendSessionId: string;
+      closed: boolean;
+      startEventSubscription: (options: Options) => void;
+      eventStream: AsyncIterable<unknown>;
+    };
+    internals.instance = { baseUrl: 'http://opencode.test', directory: '/workspace', authHeaders: {} };
+    internals.backendSessionId = 'oc-1';
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller;
+      },
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(body, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })) as typeof fetch;
+
+    try {
+      internals.startEventSubscription({} as Options);
+      const iterator = internals.eventStream[Symbol.asyncIterator]();
+      streamController.enqueue(new TextEncoder().encode(
+        'data: {"type":"session.error","properties":{"sessionID":"oc-1","error":{"name":"ContextOverflowError","data":{"message":"session too large"}}}}\n\n',
+      ));
+      const compacting = (await iterator.next()).value as { type: string; subtype: string; status: string };
+      assert.deepEqual(
+        { type: compacting.type, subtype: compacting.subtype, status: compacting.status },
+        { type: 'system', subtype: 'status', status: 'compacting' },
+      );
+      internals.closed = true;
+      streamController.close();
+      assert.equal((await iterator.next()).value, null);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

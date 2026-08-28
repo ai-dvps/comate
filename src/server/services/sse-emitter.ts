@@ -6,9 +6,11 @@ import type {
   QuestionPayload,
   WorkflowStatus,
   SessionActivitySnapshot,
+  TurnTokenUsage,
 } from '../types/message.js';
 import type { PermissionSuggestion } from '../types/message.js';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
+import { isTurnTokenUsage, normalizeProviderTokenUsage } from './token-usage.js';
 
 /**
  * Tracks the in-flight type for each SDK content-block index inside the
@@ -24,6 +26,13 @@ interface BlockState {
 }
 
 const EDE_DIAGNOSTIC_PREFIX = '[ede_diagnostic]';
+
+function normalizeTurnTokenUsage(msg: SDKMessage): TurnTokenUsage {
+  const record = msg as unknown as Record<string, unknown>;
+  const direct = record.tokenUsage;
+  if (isTurnTokenUsage(direct)) return direct;
+  return normalizeProviderTokenUsage(record.usage) ?? { quality: 'unavailable' };
+}
 
 export function containsEdeDiagnostic(value: unknown): boolean {
   return typeof value === 'string' && value.includes(EDE_DIAGNOSTIC_PREFIX);
@@ -278,7 +287,10 @@ export class SseEmitter {
         return;
       }
 
-      case 'result':
+      case 'result': {
+        const resultMessageId = this.currentMessageId && this.assistantStartEmitted
+          ? this.currentMessageId
+          : undefined;
         if (
           this.currentMessageId &&
           !this.finalizedMessageIds.has(this.currentMessageId)
@@ -291,6 +303,10 @@ export class SseEmitter {
         }
         this.send({
           type: 'result',
+          ...(resultMessageId ? {
+            messageId: resultMessageId,
+            tokenUsage: normalizeTurnTokenUsage(msg),
+          } : {}),
           subtype: msg.subtype,
           isError: msg.is_error,
           result: msg.subtype === 'success' ? msg.result : undefined,
@@ -330,7 +346,12 @@ export class SseEmitter {
             );
           }
         }
+        this.currentMessageId = null;
+        this.assistantStartEmitted = false;
+        this.blockStates.clear();
+        this.seenStreamPartIndexes.clear();
         return;
+      }
 
       default:
         // tool_progress and other internal SDK frames are dropped; the new

@@ -499,6 +499,28 @@ describe('new chat session creation', () => {
     }
   })
 
+  it('uses the global permission mode when the caller does not override it', async () => {
+    localStorage.setItem('app-settings', JSON.stringify({ approvalMode: 'readonly' }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      void url
+      void init
+      return {
+        ok: true,
+        json: async () => ({ id: 's-global', workspaceId: 'ws-1', name: 'Global', createdAt: '', updatedAt: '' }),
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      await useChatStore.getState().createSession('ws-1', { name: 'Global' })
+
+      assert.strictEqual(JSON.parse(fetchMock.mock.calls[0][1]?.body as string).approvalMode, 'readonly')
+    } finally {
+      localStorage.removeItem('app-settings')
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('returns a structured HTTP failure without retrying the POST', async () => {
     const fetchMock = vi.fn(async () => ({ ok: false }))
     vi.stubGlobal('fetch', fetchMock)
@@ -575,6 +597,33 @@ describe('complete history loading', () => {
         ['history-1', 'history-2', 'live-1'],
       )
       assert.strictEqual(useChatStore.getState().historyLoadState.s1, 'loaded')
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+
+  it('preserves newer live settlement and context when history resolves late', async () => {
+    let resolveRequest: ((value: unknown) => void) | undefined
+    const requestSpy = vi.spyOn(wsClient, 'request').mockReturnValue(new Promise((resolve) => {
+      resolveRequest = resolve
+    }) as never)
+    try {
+      const loading = useChatStore.getState().loadMessages('ws-1', 's1')
+      useChatStore.setState({
+        messages: { s1: [{ id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'live' }],
+          timestamp: 2, tokenUsage: { quality: 'exact', totalTokens: 20 } }] },
+        contextUsage: { s1: { totalTokens: 50, maxTokens: 1000, percentage: 5, categories: [] } },
+      })
+      resolveRequest?.({
+        messages: [{ id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'history' }],
+          timestamp: 1, tokenUsage: { quality: 'estimated', totalTokens: 10 } }],
+        contextUsage: { totalTokens: 30, maxTokens: 1000, percentage: 3, categories: [] },
+        tasks: [], subagents: [], workflows: [],
+      })
+      await loading
+
+      expect(useChatStore.getState().messages.s1[0].tokenUsage).toEqual({ quality: 'exact', totalTokens: 20 })
+      expect(useChatStore.getState().contextUsage.s1.percentage).toBe(5)
     } finally {
       requestSpy.mockRestore()
     }
@@ -706,6 +755,55 @@ describe('complete history loading', () => {
 
       assert.strictEqual(useChatStore.getState().messages.s1, undefined)
       assert.strictEqual(useChatStore.getState().historyLoadState.s1, undefined)
+    } finally {
+      requestSpy.mockRestore()
+    }
+  })
+})
+
+describe('token usage message ledger', () => {
+  beforeEach(() => {
+    useChatStore.setState({
+      messages: { s1: [
+        { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'one' }], timestamp: 1 },
+        { id: 'a2', role: 'assistant', parts: [{ type: 'text', text: 'two' }], timestamp: 2 },
+      ] },
+      sessionUsage: {},
+      lastTurnUsage: {},
+    })
+  })
+
+  it('sets usage by message id and remains idempotent when result is replayed', () => {
+    const set = useChatStore.setState as unknown as SseSetter
+    const result = {
+      messageId: 'a1',
+      tokenUsage: { quality: 'exact', totalTokens: 14, inputTokens: 10, outputTokens: 4 },
+    }
+    handleSseEvent(set, 'ws-1', 's1', 'result', result)
+    handleSseEvent(set, 'ws-1', 's1', 'result', result)
+
+    const state = useChatStore.getState()
+    expect(state.messages.s1[0].tokenUsage).toEqual(result.tokenUsage)
+    expect(state.messages.s1[1].tokenUsage).toBeUndefined()
+    expect(state.sessionUsage.s1.cumulativeTotal).toBe(14)
+    expect(state.sessionUsage.s1.cumulativeInput).toBe(10)
+  })
+
+  it('derives cumulative usage from all historical message settlements', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({
+      messages: [
+        { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'one' }], timestamp: 1,
+          tokenUsage: { quality: 'exact', totalTokens: 10, outputTokens: 2 } },
+        { id: 'a2', role: 'assistant', parts: [{ type: 'text', text: 'two' }], timestamp: 2,
+          tokenUsage: { quality: 'estimated', totalTokens: 7, outputTokens: 3 } },
+      ], tasks: [], subagents: [], workflows: [],
+    })
+    useChatStore.setState({ messages: {}, historyLoadState: {} })
+    try {
+      await useChatStore.getState().loadMessages('ws-1', 's1')
+      expect(useChatStore.getState().sessionUsage.s1).toMatchObject({
+        cumulativeTotal: 17, cumulativeOutput: 5, quality: 'estimated',
+      })
     } finally {
       requestSpy.mockRestore()
     }
@@ -1019,10 +1117,15 @@ describe('handleSseEvent context_usage', () => {
       contextUsage: {
         s1: { totalTokens: 100, maxTokens: 200000, percentage: 80, categories: [] },
       },
+      sessionUsage: {
+        s1: { cumulativeTotal: 20, cumulativeInput: 10, cumulativeOutput: 10,
+          cumulativeCacheRead: 0, cumulativeCacheWrite: 0, quality: 'exact' },
+      },
     })
     handleSseEvent(set, 'ws-1', 's1', 'compact_boundary', {})
     const state = useChatStore.getState()
     assert.strictEqual(state.contextUsage['s1'], undefined)
+    assert.strictEqual(state.sessionUsage['s1'].cumulativeTotal, 20)
   })
 
   it('overwrites previous contextUsage values', () => {

@@ -92,7 +92,10 @@ Download the latest release for your platform:
 - **Windows** — `.exe` installer (NSIS)
 - **Linux** — `.AppImage` (`.deb` also available)
 
-> **Note:** Prebuilt releases will be available once the repository is set up for distribution. For now, build from source (see [development.md](development.md)).
+Published installers are available from both [GitHub Releases](https://github.com/ai-dvps/comate/releases)
+and the [Gitee mirror](https://gitee.com/ai-dvps/comate/releases) for faster downloads in China.
+
+To build from source instead, see [development.md](development.md).
 
 ## Quick Start
 

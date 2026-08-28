@@ -1,6 +1,6 @@
 import '../test-utils/test-env.js';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
@@ -41,11 +41,15 @@ describe('CodexAppServerManager', () => {
     ].join('\n'));
     const manager = new CodexAppServerManager();
     try {
-      await manager.registerSkillRoots([skillsRoot]);
-      const response = await manager.request<{
-        data: Array<{ skills: Array<{ name: string }> }>;
-      }>('skills/list', { cwds: [workspace], forceReload: true });
-      assert.ok(response.data[0]?.skills.some((skill) => skill.name === 'comate-test-skill'));
+      const skills = await manager.listSkills(workspace);
+      assert.deepStrictEqual(
+        skills.find((skill) => skill.name === 'comate-test-skill'),
+        {
+          name: 'comate-test-skill',
+          description: 'Test Comate skill discovery',
+          path: realpathSync(path.join(skillDir, 'SKILL.md')),
+        },
+      );
     } finally {
       await manager.stop();
       if (previous === undefined) delete process.env.CODEX_HOME;
