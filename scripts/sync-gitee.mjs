@@ -191,7 +191,9 @@ function uploadAsset(client, releaseId, asset) {
 
 export async function syncRelease(assetDirectory, environment = process.env, dependencies = {}) {
   const client = dependencies.client || createClient(environment);
-  const eventPath = requiredEnvironment('GITHUB_EVENT_PATH', environment);
+  const eventPath =
+    environment.GITEE_RELEASE_EVENT_PATH?.trim() ||
+    requiredEnvironment('GITHUB_EVENT_PATH', environment);
   const event = JSON.parse(readFileSync(eventPath, 'utf8'));
   const { tagName, createPayload, updatePayload } = parseReleaseEvent(event);
   const repositoryPath = `/repos/${encodeURIComponent(client.owner)}/${encodeURIComponent(client.repo)}`;
