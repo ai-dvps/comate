@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Update release notes render as formatted content** — The restart-to-update dialog now displays lists and emphasis instead of exposing raw HTML tags, while sanitizing release-provided markup before rendering it.
 - **The conversation status bar now remains readable in narrow layouts** — Workspace, account usage, Session tokens, and Context usage switch from long labels to semantic icons and compact values as the conversation column shrinks, instead of clipping their text.
 - **The right context panel no longer crowds out conversations in narrow windows** — Its expanded width is capped at two thirds of the current window, saved widths are constrained again after the window becomes smaller, and the workspace/Session title hides when the expanded panel leaves too little titlebar space for its collapse control.
 
