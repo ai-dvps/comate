@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
-import { UPDATE_FEED } from '../../shared/updater-contract'
+import { GITEE_UPDATE_FEED, UPDATE_FEED } from '../../shared/updater-contract'
 
 /**
  * U2: the updater endpoint source of truth moved from the legacy Tauri config
@@ -13,6 +13,14 @@ describe('updater configuration', () => {
       provider: 'github',
       owner: 'ai-dvps',
       repo: 'comate',
+    })
+  })
+
+  it('defines the public Gitee release mirror as a generic updater feed', () => {
+    assert.deepEqual(GITEE_UPDATE_FEED, {
+      provider: 'generic',
+      url: 'https://gitee.com/ai-dvps/comate/releases/download/latest',
+      useMultipleRangeRequest: false,
     })
   })
 })
