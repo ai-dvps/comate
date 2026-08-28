@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Titlebar icons now use a quieter visual weight** — Panel toggles, New Chat, context tabs, add, and close controls use softer semantic colors and a consistent thinner stroke while retaining clear hover and focus feedback.
+- **Desktop updates choose the faster reachable release source** — Packaged builds probe GitHub and Gitee, prefer canonical GitHub when mirror versions differ, and retry failed checks or downloads through the alternate source without installing a different version.
 
 ### Fixed
 
