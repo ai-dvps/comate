@@ -1,118 +1,70 @@
 # Comate
 
-Your friendly AI workspace companion.
+Comate is a general-purpose Agent task workspace for research, analysis, writing, operations, project management, and development.
 
-<!-- BADGES -->
+It brings your Agents, project context, files, browser work, and approvals into one desktop workspace. You can give Comate an outcome, follow the work as it happens, and stay in control when an Agent needs permission to act.
 
-<!-- SCREENSHOT PLACEHOLDER -->
+![A Comate Session showing synthetic finance findings for revenue, operating cost, and regional variance, plus the internal report publishing step.](website/public/images/product/finance-report.webp)
 
-## Overview
+## Why Comate
 
-Comate is a desktop AI workspace for Claude Code, OpenCode, and an experimental Codex CLI backend. Organize multiple projects in folder-backed workspaces, chat with AI through streaming sessions, explore files, and manage tasks — all in one place. Agent choice is configured in Settings and locked per session; each agent remains the source of truth for its own account and conversation data.
+Agent work rarely stops at a chat response. Useful outcomes depend on the right local context, access to other tools, and clear decisions about what an Agent may do. Comate keeps that work together so you can move from a request to a reviewable result without hiding the steps in between.
 
-## Features
+## From request to finance report
 
-**Workspaces & Projects**
-- Folder-backed workspaces — every project keeps its own settings, sessions, skills, MCP servers, and hooks
-- Chrome-style tabbed navigation with scrollable tabs and a quick-switcher dropdown
-- Workspace status indicators on tabs and session rows (streaming, needs-me, unread)
-- Git branch and workspace-path awareness in the status bar
-- Workspace-scoped todos with status tracking and one-click "chat about this todo"
+Imagine asking Comate to consolidate monthly revenue and costs, investigate a regional variance, and publish a finance brief. The request becomes a visible task: an Agent works across approved data and Skills, reports its progress, and pauses when restricted information or an external action needs your approval. You review the decision in context, then receive the completed analysis and a published internal report.
 
-**Chat & Sessions**
-- Multiple persistent chat sessions per workspace with real-time streaming responses
-- Sessions survive workspace switches, reconnections, and app restarts
-- Session list search, activity sort, archive filter, and Work-in-Progress tags
-- Message timestamps, in-session chat search, and session fork
-- Rich message rendering with Markdown, syntax-highlighted code blocks, collapsible tool calls, and reasoning blocks
+The finance data above is synthetic, but the interface is the current Comate desktop experience. The same flow applies to research, operating reviews, writing, project coordination, and development: start with a goal, let an Agent assemble the work, and keep consequential actions visible.
 
-**AI Collaboration Surfaces**
-- Tool permission approvals with Allow / Allow always / Deny / Ask options
-- Multi-question stepper for clarifying questions with preview panes
-- Live subagent status cards and a dedicated subagent drawer
-- Async/background subagent lifecycle display
-- Workflow status cards, floating panel, and per-subagent detail view
+## What you can accomplish
 
-**Files & Context**
-- Browse the workspace folder tree and preview files with syntax highlighting
-- Workspace-wide file search powered by ripgrep with on-demand indexing
-- Persistent, resizable file panel with multiple file tabs and markdown preview
-- Pin files to the side panel for reference while chatting
-- `@` file references in the prompt input with fuzzy autocomplete
-- Clickable, workspace-relative file paths in tool inputs
-
-**Prompt Input & Discovery**
-- Auto-expanding multi-line textarea with configurable chat/UI font sizes
-- Slash-command / skill discovery triggered by `/` or the Skills button
-- Prompt history recall with fuzzy search
-- Configurable submit shortcut (Enter vs Ctrl/Cmd+Enter) with IME composition guard
-
-**Bot Integrations (WeCom & Feishu)**
-- Connect workspaces to WeChat Work (WeCom) and Feishu (Lark) bots
-- Every bot user gets their own persistent Claude session
-- Bot sessions shown as read-only history viewers in the GUI
-- Dedicated Bot Management page with role-based access (Owner/Admin/Normal)
-- Per-channel ownership, member management, and audit logging
-- Interactive template-card approvals and AskUserQuestion prompts
-- Bot commands: `/status`, `/stop`, `/new`, `/clear`, `/resume`
-- Proactive file and message sending via HTTP bridge and `wecom` CLI
-
-**Skills, MCP & Plugins**
-- Built-in plugin marketplace and Plugin Manager
-- Install, update, enable, and disable Claude Code plugins across user/project/local scopes
-- MCP server configuration per workspace
-- Skills page for discovering and installing SKILL.md bundles
-- WeCom CLI integration for document, smartsheet, and message automation
-
-**Task & Workflow Tracking**
-- Real-time task/todo panel extracted from agent `TaskCreate`/`TaskUpdate` calls
-- Floating TaskPanel and Workflow panel anchored to the chat area
-- Live task status as the model works through multi-step requests
-
-**Desktop Experience**
-- Native macOS, Windows, and Linux app built with Electron
-- macOS title-bar overlay with draggable regions
-- System tray / background mode — close to tray, keep sessions alive
-- Auto-updater checks GitHub Releases and installs in the background
-- Dark and light themes with system-preference detection
-- English and Simplified Chinese (zh-CN) localization
-- Notification sounds for pending approvals/questions and completed turns
-
-**Security & Control**
-- Per-workspace API keys and provider settings
-- Bot user isolation with file-path, transcript, Bash, and skill restrictions
-- Configurable tool-permission presets and Bash allowlists
-- Sanitized audit logs for credential changes, member changes, and file denials
+- **Bring the right Agent to each task.** Use Claude Code or OpenCode as supported backends. Codex support is experimental and remains unavailable in production unless `COMATE_ENABLE_EXPERIMENTAL_CODEX=1` is enabled.
+- **Work with real project context.** Organize tasks in folder-backed Workspaces, give Agents access to the relevant local files, and keep conversations tied to the work they support.
+- **Complete multi-step work in one place.** Follow multi-Agent activity, use browser-assisted tasks, and review files and results without losing the thread of the request.
+- **Extend the workflow.** Apply Skills, plugins, and MCP servers to repeatable work, and schedule automations when a task should run later or recur.
+- **Operate within organizational boundaries.** Connect enterprise tools such as WeCom and Feishu while retaining visible approvals, workspace permissions, and integration controls.
 
 ## Installation
 
 Download the latest release for your platform:
 
-- **macOS** — `.dmg` installer
-- **Windows** — `.exe` installer (NSIS)
-- **Linux** — `.AppImage` (`.deb` also available)
+- **macOS** — `.dmg` and `.zip` packages for Apple silicon and Intel Macs
+- **Windows** — 64-bit `.exe` installer (NSIS)
+- **Linux** — x64 `.AppImage` and `.deb` packages
 
-Published installers are available from both [GitHub Releases](https://github.com/ai-dvps/comate/releases)
-and the [Gitee mirror](https://gitee.com/ai-dvps/comate/releases) for faster downloads in China.
+Installers are published on [GitHub Releases](https://github.com/ai-dvps/comate/releases), with a [Gitee mirror](https://gitee.com/ai-dvps/comate/releases) available for faster downloads in China. See the notes for each release for current system compatibility, architecture coverage, signing status, and upgrade guidance.
 
-To build from source instead, see [development.md](development.md).
+### Agent setup
 
-## Quick Start
+You can create a Workspace and draft a chat before configuring a model service. Running an Agent requires model credentials, a configured Provider, or a supported signed-in Agent account. Comate does not include free inference.
 
-1. **Create a workspace** — Click "New Workspace" and select a local folder
-2. **Start a session** — Click "New Session" in the sidebar
-3. **Send a message** — Type your request in the prompt input and press `Cmd+Enter` (macOS) or `Ctrl+Enter` (Windows)
-4. **Approve tool calls** — When Claude requests tool access, review and allow
+Claude Code and OpenCode are supported Agent backends. Codex is experimental and subject to the production feature flag described above. Each Agent remains the authority for its own account and backend conversation data.
 
-## System Requirements
+## Start your first chat
 
-- **macOS** 13.0 or later (Ventura+)
-- **Windows** 10 or later
-- **Linux** — a recent distribution with glibc (AppImage)
+1. Open **New Chat**.
+2. Choose an existing Workspace or create one from a local folder.
+3. Choose an Agent and, when needed, a configured Provider or supported Agent account.
+4. Describe the outcome you want and send your first prompt.
+5. Follow the Agent's progress and review visible approvals before controlled actions proceed.
+
+## Trust and control
+
+Comate keeps task context organized by Workspace and makes Agent activity, requested permissions, and results visible in the desktop app. Account credentials and backend transcripts stay under the ownership rules of the selected Agent or Provider; enterprise integrations add their own scoped access and audit boundaries.
+
+Comate is an Electron desktop application. It supports light and dark themes, English and Simplified Chinese, and update delivery through the release channels supported by each package type.
+
+## System requirements
+
+- **macOS** — choose the package for your Apple silicon or Intel Mac
+- **Windows** — a supported 64-bit Windows system
+- **Linux** — an x64 desktop compatible with the current AppImage or Debian package
+
+Refer to the [latest release notes](https://github.com/ai-dvps/comate/releases) for current operating-system requirements and package-specific update guidance.
 
 ## Contributing
 
-See [development.md](development.md) for setup instructions and contribution guidelines.
+See the [development guide](development.md) for local setup, architecture, tests, and contribution guidelines.
 
 ## License
 
