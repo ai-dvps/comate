@@ -2,7 +2,7 @@ import '../test-utils/test-env.js';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert';
 import { execFile } from 'child_process';
-import { mkdtemp, rm } from 'fs/promises';
+import { mkdtemp, rm, writeFile } from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
@@ -10,7 +10,7 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 
 const execFileAsync = promisify(execFile);
 
-async function routeHandler() {
+async function routeHandler(routePath = '/') {
   const { default: router } = await import('./git-graph.js');
   const layer = (router as unknown as {
     stack: Array<{
@@ -20,7 +20,7 @@ async function routeHandler() {
         stack: Array<{ handle: (req: unknown, res: unknown) => Promise<void> }>;
       };
     }>;
-  }).stack.find((candidate) => candidate.route?.path === '/');
+  }).stack.find((candidate) => candidate.route?.path === routePath);
   assert.ok(layer?.route?.methods.get);
   return layer.route.stack[0].handle;
 }
@@ -84,6 +84,54 @@ describe('git-graph route', { concurrency: false }, () => {
     assert.equal(body.commits.length, 1);
     assert.equal(body.limit, 1);
     assert.equal(body.hasMore, true);
+  });
+
+  it('returns commit details and historical file comparisons', async () => {
+    await execFileAsync('git', ['init', '-b', 'main'], { cwd: tempDir });
+    await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: tempDir });
+    await execFileAsync('git', ['config', 'user.name', 'Test'], { cwd: tempDir });
+    await writeFile(path.join(tempDir, 'file.txt'), 'before\n');
+    await execFileAsync('git', ['add', '.'], { cwd: tempDir });
+    await execFileAsync('git', ['commit', '-m', 'root'], { cwd: tempDir });
+    await writeFile(path.join(tempDir, 'file.txt'), 'after\n');
+    await execFileAsync('git', ['commit', '-am', 'change'], { cwd: tempDir });
+    const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: tempDir, encoding: 'utf8' });
+    const hash = stdout.trim();
+    const workspace = await workspaceStore.create({ name: 'repo', folderPath: tempDir });
+
+    const detailRes = mockResponse();
+    await (await routeHandler('/:hash'))({ params: { id: workspace.id, hash }, query: {} }, detailRes);
+    assert.equal(detailRes.statusCode, 200);
+    assert.deepStrictEqual((detailRes.jsonBody as { files: Array<{ path: string }> }).files.map((file) => file.path), ['file.txt']);
+
+    const diffRes = mockResponse();
+    await (await routeHandler('/:hash/diff'))(
+      { params: { id: workspace.id, hash }, query: { path: 'file.txt' } },
+      diffRes,
+    );
+    assert.equal(diffRes.statusCode, 200);
+    assert.equal((diffRes.jsonBody as { original: string }).original, 'before\n');
+    assert.equal((diffRes.jsonBody as { modified: string }).modified, 'after\n');
+  });
+
+  it('maps invalid commit and path requests to stable 400 errors', async () => {
+    await execFileAsync('git', ['init', '-b', 'main'], { cwd: tempDir });
+    const workspace = await workspaceStore.create({ name: 'repo', folderPath: tempDir });
+    const detailRes = mockResponse();
+    await (await routeHandler('/:hash'))(
+      { params: { id: workspace.id, hash: 'HEAD' }, query: {} },
+      detailRes,
+    );
+    assert.equal(detailRes.statusCode, 400);
+    assert.equal((detailRes.jsonBody as { code: string }).code, 'INVALID_GIT_GRAPH_REQUEST');
+
+    const diffRes = mockResponse();
+    await (await routeHandler('/:hash/diff'))(
+      { params: { id: workspace.id, hash: 'a'.repeat(40) }, query: {} },
+      diffRes,
+    );
+    assert.equal(diffRes.statusCode, 400);
+    assert.equal((diffRes.jsonBody as { error: string }).error, 'path is required');
   });
 
   it('extends git-ref with capability while preserving its ref field', async () => {
