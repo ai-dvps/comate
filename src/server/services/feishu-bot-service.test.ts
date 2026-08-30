@@ -823,9 +823,16 @@ describe('FeishuBotService', () => {
     });
 
     it('select_workspace switches the active workspace and updates routing maps', async () => {
-      workspaceStore.get = async () => workspace;
+      const targetWorkspace = {
+        ...workspace,
+        id: 'ws-2',
+        name: 'Target Workspace',
+        settings: {},
+      } as import('../models/workspace.js').Workspace;
+      workspaceStore.get = async (workspaceId: string) =>
+        workspaceId === targetWorkspace.id ? targetWorkspace : workspace;
 
-      const payload = JSON.stringify({ action: 'select_workspace', workspaceId: 'ws-2', botId });
+      const payload = JSON.stringify({ action: 'select_workspace', workspaceId: targetWorkspace.id, botId });
       await (service as unknown as { handleCardAction: (event: unknown) => Promise<void> }).handleCardAction(
         makeActionEvent(payload, undefined, feishuUserId),
       );
@@ -836,9 +843,9 @@ describe('FeishuBotService', () => {
       };
       const connection = internals.connections.get(botId);
       assert.ok(connection);
-      assert.strictEqual(connection.workspaceId, 'ws-2');
-      assert.strictEqual(internals.workspaceIdToBotId.get('ws-2'), botId);
-      assert.strictEqual(botService.getBot(botId)?.activeWorkspaceId, 'ws-2');
+      assert.strictEqual(connection.workspaceId, targetWorkspace.id);
+      assert.strictEqual(internals.workspaceIdToBotId.get(targetWorkspace.id), botId);
+      assert.strictEqual(botService.getBot(botId)?.activeWorkspaceId, targetWorkspace.id);
 
       const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('工作空间已切换')));

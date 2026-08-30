@@ -462,7 +462,18 @@ export class FeishuBotService {
     actorUserId?: string,
   ): Promise<void> {
     const workspace = await workspaceStore.get(workspaceId);
-    if (!workspace || !this.isFeishuEnabled(workspace)) {
+    if (!workspace) {
+      if (botId && actorUserId) {
+        throw new Error(`Workspace ${workspaceId} not found`);
+      }
+      this.disconnect();
+      return;
+    }
+
+    // Feishu belongs to the bot, not the target workspace. During an explicit
+    // bot switch the target cannot report this channel as enabled until after
+    // the bot-to-workspace binding has been persisted.
+    if (!botId && !this.isFeishuEnabled(workspace)) {
       this.disconnect();
       return;
     }
