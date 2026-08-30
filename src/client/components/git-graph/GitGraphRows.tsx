@@ -155,7 +155,7 @@ function GitGraphRows({ commits, selectedHash, searchMatches, listRef, rowRefs, 
           >
             <div className="flex min-w-0 flex-1 items-center gap-2">
               <span className="min-w-0 flex-1 truncate text-xs text-text-primary">{commit.subject}</span>
-              <div className="hidden min-w-0 items-center gap-1 @sm/gitgraph:flex">
+              <div className="flex max-w-48 min-w-0 items-center gap-1 overflow-hidden">
                 {commit.isHead ? (
                   <span className="rounded border border-accent/60 bg-accent/15 px-1 py-0.5 text-[9px] font-semibold text-accent">HEAD</span>
                 ) : null}

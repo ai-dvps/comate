@@ -121,7 +121,7 @@ export default function GitGraphPanel({ workspaceId }: GitGraphPanelProps) {
   if (!snapshot) return null
 
   return (
-    <div data-testid="git-graph-container" className="@container/gitgraph flex h-full min-h-0 flex-col bg-work">
+    <div data-testid="git-graph-container" className="flex h-full min-h-0 flex-col bg-work">
       <GitGraphToolbar
         refs={snapshot.refs.filter((ref) => ref.type !== 'tag')}
         selectedRefs={state?.selectedRefs ?? []}
