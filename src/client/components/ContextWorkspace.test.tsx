@@ -23,6 +23,9 @@ vi.mock('./FileExplorer', () => ({
 }))
 
 vi.mock('./GitChangesPanel', () => ({ default: () => <div data-testid="git-changes-panel" /> }))
+vi.mock('./git-graph/GitGraphPanel', () => ({
+  default: () => <div data-testid="git-graph-container">Git Graph browser</div>,
+}))
 vi.mock('./CodeMirrorFileViewer', () => ({
   default: ({ tab, headerActions }: { tab: { path: string }; headerActions?: ReactNode }) => (
     <div data-testid="file-viewer">
@@ -205,7 +208,7 @@ describe('ContextWorkspace', () => {
       />,
     )
 
-    expect(screen.getByTestId('git-graph-container')).toHaveTextContent('Git Graph is ready')
+    expect(screen.getByTestId('git-graph-container')).toHaveTextContent('Git Graph browser')
     expect(screen.queryByTestId('context-navigator')).not.toBeInTheDocument()
   })
 

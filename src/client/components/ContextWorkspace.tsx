@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { File, GitBranch, GitCompare, LoaderCircle, PanelRightClose, PanelRightOpen } from 'lucide-react'
+import { File, GitCompare, LoaderCircle, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { useContextTabStore } from '../stores/context-tab-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { cn } from './ui/utils'
@@ -10,6 +10,7 @@ import GitChangesPanel from './GitChangesPanel'
 import CodeMirrorFileViewer from './CodeMirrorFileViewer'
 import CodeMirrorDiffViewer from './CodeMirrorDiffViewer'
 import BrowserPane from './browser/BrowserPane'
+import GitGraphPanel from './git-graph/GitGraphPanel'
 
 const DEFAULT_NAVIGATOR_WIDTH = 260
 const MIN_NAVIGATOR_WIDTH = 180
@@ -176,15 +177,7 @@ export default function ContextWorkspace({
       )
     }
     if (activeTab.type === 'git-graph') {
-      return (
-        <div
-          data-testid="git-graph-container"
-          className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-text-tertiary"
-        >
-          <GitBranch className="h-7 w-7" aria-hidden="true" />
-          <span className="text-xs">{t('shell.gitGraphLoading')}</span>
-        </div>
-      )
+      return <GitGraphPanel workspaceId={workspaceId} />
     }
     if (activeTab.type === 'commit-diff') {
       if (activeTab.loading) {
