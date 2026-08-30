@@ -17,7 +17,7 @@
  */
 
 import { app, BrowserWindow, Menu, Notification, Tray, WebContentsView, dialog, ipcMain, nativeImage, nativeTheme, net, protocol, session, shell } from 'electron';
-import { existsSync, mkdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { createServer as createNetServer } from 'node:net';
 import { homedir } from 'node:os';
@@ -66,6 +66,13 @@ import {
   type UpdaterController,
 } from './updater';
 import { resolvePackagedRuntime, resolveUpdaterRuntimeConfig } from './runtime-mode';
+import {
+  createFailoverUpdaterAdapter,
+  fetchManifestWithTimeout,
+  loadUpdateSources,
+  selectUpdateSources,
+  type UpdateBackend,
+} from './update-source';
 import { isTrustedUiUrl as matchesTrustedUiUrl } from './trusted-ui-url';
 import { addSidecarAuthorization } from './api-request-auth';
 import { getLinuxLaunchAtLogin, setLinuxLaunchAtLogin } from './launch-at-login';
@@ -261,7 +268,8 @@ function createElectronUpdaterAdapter(): UpdaterAdapter {
   );
   autoUpdater.forceDevUpdateConfig = updaterRuntime.forceDevUpdateConfig;
   autoUpdater.logger = logger;
-  return {
+  const backend: UpdateBackend = {
+    setFeedURL: (feed) => autoUpdater.setFeedURL(feed),
     async checkForUpdates() {
       if (!updaterRuntime.enabled) {
         if (isPackagedRuntime) {
@@ -291,6 +299,30 @@ function createElectronUpdaterAdapter(): UpdaterAdapter {
       });
     },
   };
+
+  // A developer-provided dev-app-update.yml remains authoritative in dev so
+  // local feeds keep working. Packaged builds probe both public mirrors and
+  // let the pure failover adapter own source switching and retry semantics.
+  if (!isPackagedRuntime || !updaterRuntime.enabled) return backend;
+
+  const configPath = join(process.resourcesPath, 'app-update.yml');
+  const sources = loadUpdateSources({
+    readConfig: () => readFileSync(configPath, 'utf8'),
+    platform: process.platform,
+    arch: process.arch,
+    logger,
+  });
+  if (!sources) return backend;
+  return createFailoverUpdaterAdapter({
+    backend,
+    logger,
+    selectSources: () =>
+      selectUpdateSources(
+        sources,
+        (source) =>
+          fetchManifestWithTimeout(source, (url, init) => net.fetch(url, init), 6_000),
+      ),
+  });
 }
 
 function setupUpdater(): void {
