@@ -120,6 +120,11 @@ describe('GitGraphService', { concurrency: false }, () => {
     const changed = await service.getCommitDetail(repo, changedHash);
     assert.ok(changed.files.some((file) => file.status === 'R' && file.oldPath === 'old.txt' && file.path === 'new.txt'));
     assert.ok(changed.files.some((file) => file.status === 'D' && file.path === 'binary.dat'));
+    const renamedComparison = await service.getFileComparison(repo, changedHash, 'new.txt');
+    assert.equal(renamedComparison.oldPath, 'old.txt');
+    assert.equal(renamedComparison.original, 'old\n');
+    assert.equal(renamedComparison.modified, 'old\n');
+    assert.equal((await service.getFileComparison(repo, changedHash, 'binary.dat')).isDeleted, true);
 
     const submoduleRepo = await createRepo();
     await commit(submoduleRepo, 'submodule root');

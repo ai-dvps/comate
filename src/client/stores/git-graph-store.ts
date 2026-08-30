@@ -89,7 +89,6 @@ interface GitGraphStoreState {
   setSearchText: (workspaceId: string, text: string) => void
   nextSearchMatch: (workspaceId: string) => void
   previousSearchMatch: (workspaceId: string) => void
-  setSelectedCommit: (workspaceId: string, hash: string | null) => void
   selectCommit: (workspaceId: string, hash: string | null) => Promise<void>
   setScrollAnchor: (workspaceId: string, anchor: number | null) => void
   clearWorkspace: (workspaceId: string) => void
@@ -295,18 +294,6 @@ export const useGitGraphStore = create<GitGraphStoreState>((set, get) => {
         activeSearchMatch: workspace.searchMatches.length === 0
           ? -1
           : (workspace.activeSearchMatch - 1 + workspace.searchMatches.length) % workspace.searchMatches.length,
-      }))
-    },
-
-    setSelectedCommit: (workspaceId, selectedCommitHash) => {
-      detailControllers.get(workspaceId)?.abort()
-      nextGeneration(detailGenerations, workspaceId)
-      updateWorkspace(set, workspaceId, (workspace) => ({
-        ...workspace,
-        selectedCommitHash,
-        detail: workspace.detail?.hash === selectedCommitHash ? workspace.detail : null,
-        detailError: null,
-        detailLoading: false,
       }))
     },
 

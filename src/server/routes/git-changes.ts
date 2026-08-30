@@ -7,13 +7,11 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { diagWarn } from '../utils/diag-logger.js';
 import type { GitStatusItem } from '../models/git-changes.js';
 import { runGitStatus, isNotAGitRepoError } from '../services/git-porcelain.js';
+import { capGitContent } from '../utils/git-content.js';
 
 const execFileAsync = promisify(execFile);
 
 const router = Router({ mergeParams: true });
-
-const MAX_DIFF_SIZE = 500 * 1024;
-const MAX_DIFF_LINES = 5000;
 
 async function resolveAndValidatePath(
   workspaceRoot: string,
@@ -85,21 +83,6 @@ async function resolveAndValidatePath(
 
 function containsNullByte(buffer: Buffer): boolean {
   return buffer.includes(0);
-}
-
-function capContent(buffer: Buffer): { content: string; truncated: boolean } {
-  let truncated = false;
-  let working = buffer;
-  if (working.length > MAX_DIFF_SIZE) {
-    working = working.slice(0, MAX_DIFF_SIZE);
-    truncated = true;
-  }
-  const text = working.toString('utf-8');
-  const lines = text.split('\n');
-  if (lines.length > MAX_DIFF_LINES) {
-    return { content: lines.slice(0, MAX_DIFF_LINES).join('\n'), truncated: true };
-  }
-  return { content: text, truncated };
 }
 
 async function detectBinary(
@@ -239,8 +222,8 @@ router.get('/compare', async (req, res) => {
     let modified = '';
     let truncated = false;
     if (!isBinary) {
-      const originalCapped = capContent(originalBuffer);
-      const modifiedCapped = capContent(modifiedBuffer);
+      const originalCapped = capGitContent(originalBuffer);
+      const modifiedCapped = capGitContent(modifiedBuffer);
       original = originalCapped.content;
       modified = modifiedCapped.content;
       truncated = originalCapped.truncated || modifiedCapped.truncated;

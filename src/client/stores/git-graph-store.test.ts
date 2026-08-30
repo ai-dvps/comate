@@ -141,7 +141,12 @@ describe('git-graph-store', () => {
       .mockResolvedValueOnce(response(snapshot([commit('first')], false))) as typeof fetch
 
     await useGitGraphStore.getState().open('ws')
-    useGitGraphStore.getState().setSelectedCommit('ws', 'keep')
+    useGitGraphStore.setState((state) => ({
+      workspaces: {
+        ...state.workspaces,
+        ws: { ...state.workspaces.ws, selectedCommitHash: 'keep' },
+      },
+    }))
     await useGitGraphStore.getState().refresh('ws')
     expect(useGitGraphStore.getState().workspaces.ws.selectedCommitHash).toBe('head2')
     await useGitGraphStore.getState().refresh('ws')
