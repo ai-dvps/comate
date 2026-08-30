@@ -8,7 +8,7 @@ import {
   forwardRef,
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Loader2, FileCode, FileJson, FileText, File } from 'lucide-react'
+import { Loader2, FileCode, FileJson, FileText, File, Folder } from 'lucide-react'
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'
 import { cn } from './ui/utils'
 import { useFiles } from '../stores/files-store'
@@ -52,8 +52,16 @@ function getFileIcon(name: string) {
   return <File className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0" />
 }
 
-function getIconForPath(path: string) {
-  const basename = path.split('/').pop() || path
+function getIconForEntry(entry: { path: string; type: 'file' | 'folder' }) {
+  if (entry.type === 'folder') {
+    return (
+      <Folder
+        className="w-3.5 h-3.5 text-yellow-600 flex-shrink-0"
+        aria-hidden="true"
+      />
+    )
+  }
+  const basename = entry.path.split('/').pop() || entry.path
   return getFileIcon(basename)
 }
 
@@ -273,7 +281,7 @@ const FilePicker = forwardRef<FilePickerHandle, FilePickerProps>(
                   }`}
                 >
                   <div className="flex items-center gap-2 min-w-0">
-                    {getIconForPath(entry.path)}
+                    {getIconForEntry(entry)}
                     <span
                       className="text-sm text-text-primary truncate"
                       title={entry.path}

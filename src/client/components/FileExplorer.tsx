@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useFiles } from '../stores/files-store'
@@ -246,6 +246,10 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFilePreview
   const { activeWorkspaceId, workspaces } = useWorkspaceStore()
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
   const { results, loading: searchLoading, error: searchError, search, clear } = useFiles(activeWorkspaceId ?? '')
+  const fileResults = useMemo(
+    () => results.filter((entry) => entry.type === 'file'),
+    [results],
+  )
   const [searchQuery, setSearchQuery] = useState('')
   const [rootNodes, setRootNodes] = useState<FileNode[]>([])
   const [treeLoading, setTreeLoading] = useState(false)
@@ -437,21 +441,21 @@ export default function FileExplorer({ selectedPath, onSelectPath, onFilePreview
       <div className="flex-1 overflow-y-auto py-1">
         {isSearching ? (
           <>
-            {searchLoading && results.length === 0 && (
+            {searchLoading && fileResults.length === 0 && (
               <div className="flex items-center gap-2 px-3 py-3 text-xs text-text-tertiary">
                 <Loader2 className="w-3 h-3 animate-spin" />
                 {t('loadingFiles')}
               </div>
             )}
-            {searchError && results.length === 0 && (
+            {searchError && fileResults.length === 0 && (
               <div className="px-3 py-3 text-xs text-accent">{searchError}</div>
             )}
-            {!searchLoading && !searchError && results.length === 0 && (
+            {!searchLoading && !searchError && fileResults.length === 0 && (
               <div className="px-3 py-3 text-xs text-text-tertiary">
                 {t('noFilesMatch', { filter: searchQuery ? ` \`${searchQuery}\`` : '' })}
               </div>
             )}
-            {results.map((entry) => {
+            {fileResults.map((entry) => {
               const basename = entry.path.split('/').pop() || entry.path
               const isSelected = selectedPath === entry.path
               return (
