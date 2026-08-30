@@ -42,7 +42,7 @@
     "addContextTab": "添加上下文标签页",
     "closeTab": "关闭 {{name}}",
     "previewTabHint": "预览标签页 — 在文件树中双击文件即可固定打开",
-    "emptyContext": "使用标题栏中的 + 打开文件、浏览器或变更标签页。",
+    "emptyContext": "使用标题栏中的 + 打开文件、浏览器、变更或 Git 图谱标签页。",
     "selectFile": "从文件树中选择文件",
     "selectChange": "选择要审查的变更文件",
     "expandNavigator": "展开内部导航",
@@ -52,7 +52,11 @@
     "changedFiles": "变更文件",
     "files": "文件",
     "browser": "浏览器",
-    "changes": "变更"
+    "changes": "变更",
+    "gitGraph": "Git 图谱",
+    "gitGraphLoading": "Git 图谱已准备好显示提交关系。",
+    "loadingCommitDiff": "正在加载提交差异…",
+    "gitlinkDiffUnavailable": "此变更更新了 Git 子模块指针，没有可显示的文本差异。"
   },
   "header": {
     "usage": "用量",

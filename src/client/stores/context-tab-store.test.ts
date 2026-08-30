@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WsEventMessage } from '@server/websocket/types'
-import { useContextTabStore } from './context-tab-store'
+import { commitDiffTabId, useContextTabStore } from './context-tab-store'
 import { useBrowserPaneStore } from './browser-pane-store'
 
 const wsClientMock = vi.hoisted(() => {
@@ -295,6 +295,148 @@ describe('context-tab-store', () => {
       { type: 'file', id: 'file:preview', name: 'Files', path: '' },
       { type: 'changes', id: 'changes:preview', name: 'Changes', path: '' },
     ])
+  })
+
+  it('creates one Workspace Git Graph tab and keeps it across Session changes', () => {
+    const store = useContextTabStore.getState()
+    store.setContext('ws-1', 'session-a')
+    store.openGitGraph('ws-1')
+    store.openGitGraph('ws-1')
+
+    expect(useContextTabStore.getState().openTabs).toMatchObject([
+      { type: 'git-graph', id: 'git-graph', workspaceId: 'ws-1', name: 'Git Graph' },
+    ])
+
+    store.setContext('ws-1', 'session-b')
+    expect(useContextTabStore.getState().openTabs).toMatchObject([
+      { type: 'git-graph', workspaceId: 'ws-1' },
+    ])
+    store.setContext('ws-2', 'session-c')
+    store.openGitGraph('ws-2')
+    expect(useContextTabStore.getState().openTabs).toMatchObject([
+      { type: 'git-graph', workspaceId: 'ws-2' },
+    ])
+  })
+
+  it('uses commit, base, old path and new path in historical Diff identity', () => {
+    expect(commitDiffTabId('commit-a', 'base-a', 'old/file.ts', 'src/file.ts'))
+      .not.toBe(commitDiffTabId('commit-b', 'base-a', 'old/file.ts', 'src/file.ts'))
+    expect(commitDiffTabId('commit-a', 'base-a', 'old/file.ts', 'src/file.ts'))
+      .not.toBe(commitDiffTabId('commit-a', 'base-b', 'old/file.ts', 'src/file.ts'))
+    expect(commitDiffTabId('commit-a', 'base-a', 'old/file.ts', 'src/file.ts'))
+      .not.toBe(commitDiffTabId('commit-a', 'base-a', 'older/file.ts', 'src/file.ts'))
+    expect(commitDiffTabId('commit-a', 'base-a', 'old/file.ts', 'src/file.ts'))
+      .not.toBe(commitDiffTabId('commit-a', 'base-a', 'old/file.ts', 'other/file.ts'))
+  })
+
+  it('opens commit-specific Diffs without replacing or resetting Git Graph', async () => {
+    global.fetch = vi.fn(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        commitHash: 'commit-a',
+        baseHash: 'base-a',
+        path: 'src/file.ts',
+        oldPath: 'old/file.ts',
+        status: 'R',
+        original: 'before',
+        modified: 'after',
+        isBinary: false,
+        isTextComparable: true,
+        truncated: true,
+        isDeleted: false,
+      }),
+    })) as unknown as typeof global.fetch
+    const store = useContextTabStore.getState()
+    store.setContext('ws-1', 'session-a')
+    store.openGitGraph('ws-1')
+    await store.openCommitDiff('ws-1', 'commit-a', 'base-a', {
+      path: 'src/file.ts',
+      oldPath: 'old/file.ts',
+      status: 'R',
+      additions: 1,
+      deletions: 1,
+      isBinary: false,
+      isGitlink: false,
+    })
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/workspaces/ws-1/git-graph/commit-a/diff?path=src%2Ffile.ts',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+    expect(useContextTabStore.getState().openTabs).toMatchObject([
+      { type: 'git-graph' },
+      {
+        type: 'commit-diff',
+        commitHash: 'commit-a',
+        baseHash: 'base-a',
+        oldPath: 'old/file.ts',
+        path: 'src/file.ts',
+        original: 'before',
+        modified: 'after',
+        truncated: true,
+        loading: false,
+      },
+    ])
+
+    const diff = useContextTabStore.getState().openTabs.at(-1)!
+    store.closeTab(diff.id)
+    expect(useContextTabStore.getState().openTabs).toMatchObject([{ type: 'git-graph' }])
+  })
+
+  it('keeps explicit binary and Gitlink comparison state', async () => {
+    const responses = [
+      {
+        commitHash: 'binary-commit', baseHash: 'base', path: 'image.png', status: 'M',
+        original: '', modified: '', isBinary: true, isTextComparable: false,
+        uncomparableReason: 'binary', truncated: false, isDeleted: false,
+      },
+      {
+        commitHash: 'gitlink-commit', baseHash: 'base', path: 'vendor/submodule', status: 'M',
+        original: '', modified: '', isBinary: false, isTextComparable: false,
+        uncomparableReason: 'gitlink', truncated: false, isDeleted: false,
+      },
+    ]
+    global.fetch = vi.fn(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve(responses.shift()),
+    })) as unknown as typeof global.fetch
+    const store = useContextTabStore.getState()
+    store.setContext('ws-1', null)
+    await store.openCommitDiff('ws-1', 'binary-commit', 'base', {
+      path: 'image.png', status: 'M', additions: null, deletions: null,
+      isBinary: true, isGitlink: false,
+    })
+    await store.openCommitDiff('ws-1', 'gitlink-commit', 'base', {
+      path: 'vendor/submodule', status: 'M', additions: null, deletions: null,
+      isBinary: false, isGitlink: true,
+    })
+
+    expect(useContextTabStore.getState().openTabs).toMatchObject([
+      { type: 'commit-diff', isBinary: true, isTextComparable: false, uncomparableReason: 'binary' },
+      { type: 'commit-diff', isGitlink: true, isTextComparable: false, uncomparableReason: 'gitlink' },
+    ])
+  })
+
+  it('aborts an in-flight historical Diff when its tab closes', async () => {
+    let requestSignal: AbortSignal | undefined
+    global.fetch = vi.fn((_url, init) => {
+      requestSignal = (init as RequestInit).signal as AbortSignal
+      return new Promise((_resolve, reject) => {
+        requestSignal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+      })
+    }) as unknown as typeof global.fetch
+    const store = useContextTabStore.getState()
+    store.setContext('ws-1', null)
+    const opening = store.openCommitDiff('ws-1', 'commit-a', null, {
+      path: 'root.ts', status: 'A', additions: 1, deletions: 0,
+      isBinary: false, isGitlink: false,
+    })
+    const pending = useContextTabStore.getState().openTabs[0]
+    store.closeTab(pending.id)
+    await opening
+
+    expect(requestSignal?.aborted).toBe(true)
+    expect(useContextTabStore.getState().openTabs).toEqual([])
   })
 
   it('selects the nearest projected tab after closing the active tab', async () => {

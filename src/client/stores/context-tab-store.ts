@@ -7,6 +7,24 @@ import { useBrowserPaneStore } from './browser-pane-store'
 import { getApiBase } from '../lib/desktop-api'
 import { wsClient } from '../lib/websocket-client.js'
 import type { WsEventMessage } from '@server/websocket/types'
+import type { GitGraphChangedFile } from './git-graph-store'
+
+type GitGraphUncomparableReason = 'binary' | 'gitlink'
+
+interface GitGraphFileComparison {
+  commitHash: string
+  baseHash: string | null
+  path: string
+  oldPath?: string
+  status: GitGraphChangedFile['status']
+  original: string
+  modified: string
+  isBinary: boolean
+  isTextComparable: boolean
+  uncomparableReason?: GitGraphUncomparableReason
+  truncated: boolean
+  isDeleted: boolean
+}
 
 export interface FileContextTab {
   type: 'file'
@@ -40,6 +58,35 @@ export interface ChangesContextTab {
   error?: string
 }
 
+export interface GitGraphContextTab {
+  type: 'git-graph'
+  id: 'git-graph'
+  workspaceId: string
+  name: string
+}
+
+export interface CommitDiffContextTab {
+  type: 'commit-diff'
+  id: string
+  workspaceId: string
+  commitHash: string
+  baseHash: string | null
+  path: string
+  oldPath?: string
+  name: string
+  statusCode: string
+  original: string
+  modified: string
+  isBinary: boolean
+  isGitlink: boolean
+  isTextComparable: boolean
+  uncomparableReason?: GitGraphUncomparableReason
+  truncated: boolean
+  isDeleted: boolean
+  loading: boolean
+  error?: string
+}
+
 export type DiffViewerTab = Omit<ChangesContextTab, 'type'> & { type: 'diff' }
 
 export interface BrowserContextTab {
@@ -50,7 +97,11 @@ export interface BrowserContextTab {
   name: string
 }
 
-export type WorkspaceContextTab = FileContextTab | ChangesContextTab
+export type WorkspaceContextTab =
+  | FileContextTab
+  | ChangesContextTab
+  | GitGraphContextTab
+  | CommitDiffContextTab
 export type ContextTab = WorkspaceContextTab | BrowserContextTab
 
 interface WorkspaceTabCollection {
@@ -108,6 +159,13 @@ export interface ContextTabState extends ContextTabData {
   openBrowser: (sessionId: string, workspaceId: string) => void
   openFileWorkspace: (workspaceId: string) => void
   openChangesWorkspace: (workspaceId: string) => void
+  openGitGraph: (workspaceId: string) => void
+  openCommitDiff: (
+    workspaceId: string,
+    commitHash: string,
+    baseHash: string | null,
+    file: GitGraphChangedFile,
+  ) => Promise<void>
   closeTab: (id: string) => void
   /**
    * Event-driven removal of a session's Browser tab (browser_closed) — unlike
@@ -189,6 +247,29 @@ function diffRequestKey(
   return preview
     ? `changes-preview:${workspaceId}`
     : `changes:${workspaceId}:${path}:${staged ? 's' : 'w'}`
+}
+
+function identityPart(value: string | null | undefined): string {
+  const normalized = value ?? ''
+  return `${normalized.length}:${normalized}`
+}
+
+export function commitDiffTabId(
+  commitHash: string,
+  baseHash: string | null,
+  oldPath: string | undefined,
+  path: string,
+): string {
+  return `commit-diff:${[
+    identityPart(commitHash),
+    identityPart(baseHash),
+    identityPart(oldPath),
+    identityPart(path),
+  ].join('|')}`
+}
+
+function commitDiffRequestKey(workspaceId: string, tabId: string): string {
+  return `commit-diff:${workspaceId}:${tabId}`
 }
 
 function abortRequest(key: string): void {
@@ -471,6 +552,132 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
     })
   },
 
+  openGitGraph: (workspaceId) => {
+    if (!workspaceId) return
+    set((state) => {
+      const collection = cloneWorkspaceCollection(state, workspaceId)
+      const existing = collection.tabs.find((tab) => tab.type === 'git-graph')
+      if (existing) return selectActive(state, workspaceId, existing.id)
+      const tab: GitGraphContextTab = {
+        type: 'git-graph',
+        id: 'git-graph',
+        workspaceId,
+        name: translatedName('common:shell.gitGraph', 'Git Graph'),
+      }
+      collection.tabs.push(tab)
+      return selectActive({
+        ...state,
+        workspaceTabs: { ...state.workspaceTabs, [workspaceId]: collection },
+      }, workspaceId, tab.id)
+    })
+  },
+
+  openCommitDiff: async (workspaceId, commitHash, baseHash, file) => {
+    if (!workspaceId || !commitHash || !file.path) return
+    const id = commitDiffTabId(commitHash, baseHash, file.oldPath, file.path)
+    const existing = get().workspaceTabs[workspaceId]?.tabs.find(
+      (tab): tab is CommitDiffContextTab => tab.type === 'commit-diff' && tab.id === id,
+    )
+    if (existing && !existing.loading) {
+      set((state) => selectActive(state, workspaceId, id))
+      return
+    }
+
+    const key = commitDiffRequestKey(workspaceId, id)
+    abortRequest(key)
+    const controller = new AbortController()
+    abortControllers.set(key, controller)
+    const pendingTab: CommitDiffContextTab = {
+      type: 'commit-diff',
+      id,
+      workspaceId,
+      commitHash,
+      baseHash,
+      path: file.path,
+      oldPath: file.oldPath,
+      name: basename(file.path),
+      statusCode: file.status,
+      original: '',
+      modified: '',
+      isBinary: file.isBinary,
+      isGitlink: file.isGitlink,
+      isTextComparable: !file.isBinary && !file.isGitlink,
+      uncomparableReason: file.isBinary ? 'binary' : file.isGitlink ? 'gitlink' : undefined,
+      truncated: false,
+      isDeleted: file.status === 'D',
+      loading: true,
+    }
+    set((state) => {
+      const collection = cloneWorkspaceCollection(state, workspaceId)
+      collection.tabs = [
+        ...collection.tabs.filter((tab) => tab.id !== id),
+        pendingTab,
+      ]
+      return selectActive({
+        ...state,
+        workspaceTabs: { ...state.workspaceTabs, [workspaceId]: collection },
+      }, workspaceId, id)
+    })
+
+    try {
+      const params = new URLSearchParams({ path: file.path })
+      const response = await fetch(
+        `/api/workspaces/${workspaceId}/git-graph/${encodeURIComponent(commitHash)}/diff?${params.toString()}`,
+        { signal: controller.signal },
+      )
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({
+          error: i18next.t('common:requestFailed', 'Request failed'),
+        }))
+        throw new Error(body.error || `HTTP ${response.status}`)
+      }
+      const data = await response.json() as GitGraphFileComparison
+      if (abortControllers.get(key) !== controller) return
+      set((state) => {
+        const collection = cloneWorkspaceCollection(state, workspaceId)
+        collection.tabs = collection.tabs.map((tab) => tab.id === id
+          ? {
+              ...pendingTab,
+              commitHash: data.commitHash,
+              baseHash: data.baseHash,
+              path: data.path,
+              oldPath: data.oldPath,
+              name: basename(data.path),
+              statusCode: data.status,
+              original: data.original,
+              modified: data.modified,
+              isBinary: data.isBinary,
+              isGitlink: data.uncomparableReason === 'gitlink',
+              isTextComparable: data.isTextComparable,
+              uncomparableReason: data.uncomparableReason,
+              truncated: data.truncated,
+              isDeleted: data.isDeleted,
+              loading: false,
+            }
+          : tab)
+        return synchronize({
+          ...state,
+          workspaceTabs: { ...state.workspaceTabs, [workspaceId]: collection },
+        })
+      })
+    } catch (error) {
+      if (isAbortError(error)) return
+      if (abortControllers.get(key) !== controller) return
+      set((state) => {
+        const collection = cloneWorkspaceCollection(state, workspaceId)
+        collection.tabs = collection.tabs.map((tab) => tab.id === id
+          ? { ...pendingTab, loading: false, error: error instanceof Error ? error.message : String(error) }
+          : tab)
+        return synchronize({
+          ...state,
+          workspaceTabs: { ...state.workspaceTabs, [workspaceId]: collection },
+        })
+      })
+    } finally {
+      if (abortControllers.get(key) === controller) abortControllers.delete(key)
+    }
+  },
+
   closeTab: (id) => {
     set((state) => {
       const index = state.openTabs.findIndex((tab) => tab.id === id)
@@ -491,6 +698,9 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
           },
         }
       } else {
+        if (target.type === 'commit-diff') {
+          abortRequest(commitDiffRequestKey(target.workspaceId, target.id))
+        }
         const collection = cloneWorkspaceCollection(state, target.workspaceId)
         collection.tabs = collection.tabs.filter((tab) => tab.id !== id)
         next = {

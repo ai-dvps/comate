@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { File, GitCompare, PanelRightClose, PanelRightOpen } from 'lucide-react'
+import { File, GitBranch, GitCompare, LoaderCircle, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { useContextTabStore } from '../stores/context-tab-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { cn } from './ui/utils'
@@ -172,6 +172,65 @@ export default function ContextWorkspace({
           workspacePath={workspacePath}
           width={primaryWidth}
           headerActions={navigatorToggle}
+        />
+      )
+    }
+    if (activeTab.type === 'git-graph') {
+      return (
+        <div
+          data-testid="git-graph-container"
+          className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-text-tertiary"
+        >
+          <GitBranch className="h-7 w-7" aria-hidden="true" />
+          <span className="text-xs">{t('shell.gitGraphLoading')}</span>
+        </div>
+      )
+    }
+    if (activeTab.type === 'commit-diff') {
+      if (activeTab.loading) {
+        return (
+          <div className="flex h-full items-center justify-center gap-2 text-xs text-text-tertiary">
+            <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+            {t('shell.loadingCommitDiff')}
+          </div>
+        )
+      }
+      if (activeTab.error) {
+        return (
+          <div className="flex h-full items-center justify-center px-6 text-center text-xs text-destructive">
+            {activeTab.error}
+          </div>
+        )
+      }
+      if (activeTab.isGitlink) {
+        return (
+          <div data-testid="gitlink-diff-placeholder" className="flex h-full items-center justify-center px-6 text-center text-xs text-text-tertiary">
+            {t('shell.gitlinkDiffUnavailable')}
+          </div>
+        )
+      }
+      const diffTab = {
+        type: 'diff' as const,
+        id: activeTab.id,
+        workspaceId: activeTab.workspaceId,
+        path: activeTab.path,
+        name: activeTab.name,
+        statusCode: activeTab.statusCode,
+        staged: false,
+        original: activeTab.original,
+        modified: activeTab.modified,
+        isBinary: activeTab.isBinary,
+        truncated: activeTab.truncated,
+        isDeleted: activeTab.isDeleted,
+        isUntracked: false,
+        preview: false,
+        error: activeTab.error,
+      }
+      return (
+        <CodeMirrorDiffViewer
+          tab={diffTab}
+          workspacePath={workspacePath}
+          width={primaryWidth}
         />
       )
     }

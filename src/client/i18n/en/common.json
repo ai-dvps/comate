@@ -42,7 +42,7 @@
     "addContextTab": "Add context tab",
     "closeTab": "Close {{name}}",
     "previewTabHint": "Preview tab — double-click a file in the tree to keep it open",
-    "emptyContext": "Use + in the titlebar to open a File, Browser, or Changes tab.",
+    "emptyContext": "Use + in the titlebar to open a File, Browser, Changes, or Git Graph tab.",
     "selectFile": "Select a file from the tree",
     "selectChange": "Select a changed file to review",
     "expandNavigator": "Expand internal navigator",
@@ -52,7 +52,11 @@
     "changedFiles": "Changed files",
     "files": "Files",
     "browser": "Browser",
-    "changes": "Changes"
+    "changes": "Changes",
+    "gitGraph": "Git Graph",
+    "gitGraphLoading": "Git Graph is ready for the graph view.",
+    "loadingCommitDiff": "Loading commit diff…",
+    "gitlinkDiffUnavailable": "This change updates a Git submodule pointer and has no text diff."
   },
   "header": {
     "usage": "Usage",

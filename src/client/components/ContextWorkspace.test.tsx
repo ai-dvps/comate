@@ -33,11 +33,19 @@ vi.mock('./CodeMirrorFileViewer', () => ({
 }))
 vi.mock('./CodeMirrorDiffViewer', () => ({
   default: ({ tab, width, headerActions }: {
-    tab: { path: string }
+    tab: { path: string; original?: string; modified?: string; isBinary?: boolean; truncated?: boolean; isDeleted?: boolean }
     width: number
     headerActions?: ReactNode
   }) => (
-    <div data-testid="diff-viewer" data-width={width}>
+    <div
+      data-testid="diff-viewer"
+      data-width={width}
+      data-original={tab.original}
+      data-modified={tab.modified}
+      data-binary={tab.isBinary}
+      data-truncated={tab.truncated}
+      data-deleted={tab.isDeleted}
+    >
       {tab.path}
       {headerActions}
     </div>
@@ -184,5 +192,75 @@ describe('ContextWorkspace', () => {
     )
 
     expect(screen.getByTestId('diff-viewer')).toHaveAttribute('data-width', '340')
+  })
+
+  it('renders Git Graph as primary content without a File or Changes navigator', () => {
+    useContextTabStore.getState().openGitGraph('ws-1')
+    renderWorkspace(
+      <ContextWorkspace
+        width={600}
+        isCollapsed={false}
+        onWidthChange={vi.fn()}
+        workspaceId="ws-1"
+      />,
+    )
+
+    expect(screen.getByTestId('git-graph-container')).toHaveTextContent('Git Graph is ready')
+    expect(screen.queryByTestId('context-navigator')).not.toBeInTheDocument()
+  })
+
+  it('adapts a historical text Diff to the existing viewer with explicit states', async () => {
+    global.fetch = vi.fn(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        commitHash: 'commit-a', baseHash: 'base-a', path: 'deleted.ts', status: 'D',
+        original: 'before', modified: '', isBinary: false, isTextComparable: true,
+        truncated: true, isDeleted: true,
+      }),
+    })) as unknown as typeof global.fetch
+    await useContextTabStore.getState().openCommitDiff('ws-1', 'commit-a', 'base-a', {
+      path: 'deleted.ts', status: 'D', additions: 0, deletions: 1,
+      isBinary: false, isGitlink: false,
+    })
+    renderWorkspace(
+      <ContextWorkspace
+        width={600}
+        isCollapsed={false}
+        onWidthChange={vi.fn()}
+        workspaceId="ws-1"
+      />,
+    )
+
+    expect(screen.getByTestId('diff-viewer')).toHaveAttribute('data-original', 'before')
+    expect(screen.getByTestId('diff-viewer')).toHaveAttribute('data-modified', '')
+    expect(screen.getByTestId('diff-viewer')).toHaveAttribute('data-truncated', 'true')
+    expect(screen.getByTestId('diff-viewer')).toHaveAttribute('data-deleted', 'true')
+    expect(screen.queryByTestId('context-navigator')).not.toBeInTheDocument()
+  })
+
+  it('presents Gitlink changes explicitly instead of sending them to a text Diff viewer', async () => {
+    global.fetch = vi.fn(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        commitHash: 'commit-a', baseHash: 'base-a', path: 'vendor/module', status: 'M',
+        original: '', modified: '', isBinary: false, isTextComparable: false,
+        uncomparableReason: 'gitlink', truncated: false, isDeleted: false,
+      }),
+    })) as unknown as typeof global.fetch
+    await useContextTabStore.getState().openCommitDiff('ws-1', 'commit-a', 'base-a', {
+      path: 'vendor/module', status: 'M', additions: null, deletions: null,
+      isBinary: false, isGitlink: true,
+    })
+    renderWorkspace(
+      <ContextWorkspace
+        width={600}
+        isCollapsed={false}
+        onWidthChange={vi.fn()}
+        workspaceId="ws-1"
+      />,
+    )
+
+    expect(screen.getByTestId('gitlink-diff-placeholder')).toHaveTextContent('submodule pointer')
+    expect(screen.queryByTestId('diff-viewer')).not.toBeInTheDocument()
   })
 })
