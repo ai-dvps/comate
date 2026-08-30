@@ -143,6 +143,9 @@ Agent Command Center 侧栏 Workspace 与 Session 列表的排序契约：列表
 ### Typed context tab
 桌面端右侧工作区中带有内容类型和归属范围的标签页。Browser tab 归属于 Session，File 与 Changes tab 归属于 Workspace；File 和 Changes 各自在内容右侧携带可收起的导航列表。
 
+### Git Graph
+Git Workspace 中归属于 Workspace 的只读 Typed context tab，用真实的父子关系与 refs 展示分支和 commit 拓扑。选中 commit 后的信息与变更文件保留在 Graph 内，只有具体文件 diff 会像普通文件一样打开独立 Diff Tab；它不推断主分支或已合并状态，也不执行修改仓库的 Git 动作。
+
 ### 会话变更文件 (session changed files)
 聊天视图右侧浮动 Task 面板下方的浮动卡片，按会话派生 agent 通过文件工具（Edit/Write/MultiEdit/NotebookEdit）触碰过的文件（新增/修改/删除），供一眼感知与一键打开。它与工作区范围的 Changes tab 是不同表面：不依赖 git 状态、不含 bash 改动、从持久化会话历史重建（重启与历史会话仍可见），且不提供 review/diff 动作。
 
