@@ -7,6 +7,21 @@ export default {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        mono: [
+          'JetBrains Mono',
+          'Fira Code',
+          'Cascadia Code',
+          'SF Mono',
+          'SFMono-Regular',
+          'Consolas',
+          'Liberation Mono',
+          'Menlo',
+          'Monaco',
+          'Courier New',
+          'monospace',
+        ],
+      },
       colors: {
         chrome: 'hsl(var(--color-chrome) / <alpha-value>)',
         'chrome-hover': 'hsl(var(--color-chrome-hover) / <alpha-value>)',
