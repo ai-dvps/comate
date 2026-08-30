@@ -54,6 +54,8 @@ export interface GitGraphCommitDetail {
   authorEmail: string
   authoredAt: string
   subject: string
+  message: string
+  refs: GitGraphRef[]
   baseHash: string | null
   files: GitGraphChangedFile[]
   filesTruncated: boolean
@@ -62,6 +64,7 @@ export interface GitGraphCommitDetail {
 
 export const GIT_GRAPH_INITIAL_LIMIT = 100
 export const GIT_GRAPH_PAGE_SIZE = 100
+export const GIT_GRAPH_MAX_LIMIT = 500
 
 export interface WorkspaceGitGraphState {
   snapshot: GitGraphSnapshot | null
@@ -219,6 +222,7 @@ export const useGitGraphStore = create<GitGraphStoreState>((set, get) => {
           selectedCommitHash,
           detail: selectionChanged ? null : workspace.detail,
           detailError: selectionChanged ? null : workspace.detailError,
+          detailLoading: selectionChanged ? false : workspace.detailLoading,
           searchMatches: matches,
           activeSearchMatch: matches.length > 0 ? Math.min(Math.max(workspace.activeSearchMatch, 0), matches.length - 1) : -1,
           snapshotLoading: false,
@@ -259,10 +263,17 @@ export const useGitGraphStore = create<GitGraphStoreState>((set, get) => {
 
     loadMore: async (workspaceId) => {
       const current = workspaceState(get(), workspaceId)
-      if (current.snapshotLoading || current.snapshot?.hasMore === false) return
+      if (
+        current.snapshotLoading
+        || current.snapshot?.hasMore === false
+        || current.loadedLimit >= GIT_GRAPH_MAX_LIMIT
+      ) return
       updateWorkspace(set, workspaceId, (workspace) => ({
         ...workspace,
-        loadedLimit: workspace.loadedLimit + GIT_GRAPH_PAGE_SIZE,
+        loadedLimit: Math.min(
+          workspace.loadedLimit + GIT_GRAPH_PAGE_SIZE,
+          GIT_GRAPH_MAX_LIMIT,
+        ),
       }))
       await fetchSnapshot(workspaceId)
     },

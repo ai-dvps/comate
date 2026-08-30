@@ -87,6 +87,23 @@ describe('git-graph-store', () => {
     expect(String(fetchMock.mock.calls[1][0])).toContain('ref=refs%2Fheads%2Fmain')
   })
 
+  it('does not request history beyond the server limit', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response(snapshot([commit('head')], true)))
+    global.fetch = fetchMock as typeof fetch
+    await useGitGraphStore.getState().open('ws')
+    useGitGraphStore.setState((state) => ({
+      workspaces: {
+        ...state.workspaces,
+        ws: { ...state.workspaces.ws, loadedLimit: 500 },
+      },
+    }))
+    fetchMock.mockClear()
+
+    await useGitGraphStore.getState().loadMore('ws')
+
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('matches only loaded author, subject, SHA, and refs and navigates matches', async () => {
     const tagged = commit('abcdef123', {
       authorName: 'Grace Hopper',
@@ -170,6 +187,7 @@ describe('git-graph-store', () => {
       selectedCommitHash: 'new',
       detail: null,
       detailError: null,
+      detailLoading: false,
     })
   })
 

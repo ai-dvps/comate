@@ -106,6 +106,14 @@ function parseCommits(
   return commits;
 }
 
+function sameCapability(left: GitCapability, right: GitCapability): boolean {
+  return left.isGitWorktree === right.isGitWorktree
+    && left.state === right.state
+    && left.branch === right.branch
+    && left.ref === right.ref
+    && left.headHash === right.headHash;
+}
+
 interface CommitIdentity {
   hash: string;
   parents: string[];
@@ -113,6 +121,7 @@ interface CommitIdentity {
   authorEmail: string;
   authoredAt: string;
   subject: string;
+  message: string;
   baseHash: string | null;
 }
 
@@ -120,6 +129,7 @@ interface CachedCommitData {
   identity: CommitIdentity;
   files: GitGraphChangedFile[];
   truncated: boolean;
+  stats: GitGraphCommitDetail['stats'];
 }
 
 interface RawChange {
@@ -152,7 +162,7 @@ function validateRelativePath(requestedPath: string): void {
 function parseCommitIdentity(output: string): CommitIdentity {
   const normalized = output.endsWith('\n') ? output.slice(0, -1) : output;
   const fields = normalized.split('\0');
-  if (fields.length !== 7 || !fields[0]) {
+  if (fields.length !== 8 || !fields[0]) {
     throw new Error('Git returned malformed commit metadata');
   }
   const parents = fields[1] ? fields[1].split(' ') : [];
@@ -163,6 +173,7 @@ function parseCommitIdentity(output: string): CommitIdentity {
     authorEmail: fields[3],
     authoredAt: fields[4],
     subject: fields[5],
+    message: fields[6].replace(/\n$/, ''),
     baseHash: parents[0] ?? null,
   };
 }
@@ -262,16 +273,16 @@ export class GitGraphService {
       };
     }
 
-    const [branch, headHash] = await Promise.all([
-      this.run(folderPath, ['symbolic-ref', '--quiet', '--short', 'HEAD'], {
-        allowedExitCodes: [1],
-        timeout: 5_000,
-      }).then((value) => value.trim() || null),
-      this.run(folderPath, ['rev-parse', '--verify', 'HEAD^{commit}'], {
-        allowedExitCodes: [128],
-        timeout: 5_000,
-      }).then((value) => value.trim() || null),
-    ]);
+    const status = await this.run(
+      folderPath,
+      ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=no'],
+      { timeout: 5_000 },
+    );
+    const branchFields = status.split('\0');
+    const oid = branchFields.find((field) => field.startsWith('# branch.oid '))?.slice('# branch.oid '.length) ?? '(initial)';
+    const head = branchFields.find((field) => field.startsWith('# branch.head '))?.slice('# branch.head '.length) ?? '(detached)';
+    const headHash = oid === '(initial)' ? null : oid;
+    const branch = head === '(detached)' ? null : head;
 
     if (!headHash) {
       return { isGitWorktree: true, state: 'unborn', branch, ref: branch, headHash: null };
@@ -303,21 +314,24 @@ export class GitGraphService {
       );
     }
 
-    // Capture HEAD and refs before history. Every later Git invocation uses
-    // only these immutable object IDs, so a concurrent ref move cannot mix a
-    // new branch tip into an otherwise old response.
-    const capability = await this.getCapability(folderPath);
-    if (!capability.isGitWorktree) throw new GitGraphUnavailableError();
-
-    const refOutput = await this.run(folderPath, [
-      'for-each-ref',
-      '--sort=refname',
-      '--format=%(objectname)%09%(objecttype)%09%(*objectname)%09%(*objecttype)%09%(refname)',
-      'refs/heads',
-      'refs/remotes',
-      'refs/tags',
-    ]);
-    const refs = parseRefs(refOutput);
+    // Capture HEAD around the ref read. If checkout or commit moves it between
+    // those calls, retry once rather than returning a split-brain snapshot.
+    let capability: GitCapability | null = null;
+    let refs: GitGraphRef[] = [];
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const before = await this.getCapability(folderPath);
+      if (!before.isGitWorktree) throw new GitGraphUnavailableError();
+      const capturedRefs = await this.getRefs(folderPath);
+      const after = await this.getCapability(folderPath);
+      if (sameCapability(before, after)) {
+        capability = after;
+        refs = capturedRefs;
+        break;
+      }
+    }
+    if (!capability) {
+      throw new Error('Git HEAD changed repeatedly while reading graph');
+    }
     const refsByName = new Map(refs.map((ref) => [ref.fullName, ref]));
     const requestedRefs = options.refs ?? [];
     for (const selectedRef of requestedRefs) {
@@ -368,7 +382,7 @@ export class GitGraphService {
         'show',
         '--no-patch',
         '--no-decorate',
-        `--format=%H%x00%P%x00%an%x00%ae%x00%aI%x00%s%x00`,
+        `--format=%H%x00%P%x00%an%x00%ae%x00%aI%x00%s%x00%B%x00`,
         requestedHash,
       ]);
     } catch {
@@ -381,6 +395,18 @@ export class GitGraphService {
     return identity;
   }
 
+  private async getRefs(folderPath: string): Promise<GitGraphRef[]> {
+    const output = await this.run(folderPath, [
+      'for-each-ref',
+      '--sort=refname',
+      '--format=%(objectname)%09%(objecttype)%09%(*objectname)%09%(*objecttype)%09%(refname)',
+      'refs/heads',
+      'refs/remotes',
+      'refs/tags',
+    ]);
+    return parseRefs(output);
+  }
+
   private diffArgs(identity: CommitIdentity, kind: '--raw' | '--numstat'): string[] {
     const shared = [kind, '-z', '--find-renames', '--relative'];
     return identity.baseHash
@@ -391,14 +417,14 @@ export class GitGraphService {
   private async getChangedFiles(
     folderPath: string,
     identity: CommitIdentity,
-  ): Promise<{ files: GitGraphChangedFile[]; truncated: boolean }> {
+  ): Promise<{ files: GitGraphChangedFile[]; truncated: boolean; stats: GitGraphCommitDetail['stats'] }> {
     const [rawOutput, numstatOutput] = await Promise.all([
       this.run(folderPath, this.diffArgs(identity, '--raw')),
       this.run(folderPath, this.diffArgs(identity, '--numstat')),
     ]);
     const rawChanges = parseRawChanges(rawOutput);
     const numstat = parseNumstat(numstatOutput);
-    const files = rawChanges.slice(0, MAX_DETAIL_FILES).map((change): GitGraphChangedFile => {
+    const allFiles = rawChanges.map((change): GitGraphChangedFile => {
       const counts = numstat.get(change.path) ?? { additions: 0, deletions: 0 };
       const isGitlink = change.oldMode === '160000' || change.newMode === '160000';
       return {
@@ -411,7 +437,15 @@ export class GitGraphService {
         isGitlink,
       };
     });
-    return { files, truncated: rawChanges.length > MAX_DETAIL_FILES };
+    return {
+      files: allFiles.slice(0, MAX_DETAIL_FILES),
+      truncated: allFiles.length > MAX_DETAIL_FILES,
+      stats: {
+        files: allFiles.length,
+        additions: allFiles.reduce((sum, file) => sum + (file.additions ?? 0), 0),
+        deletions: allFiles.reduce((sum, file) => sum + (file.deletions ?? 0), 0),
+      },
+    };
   }
 
   private async getCommitData(folderPath: string, hash: string): Promise<CachedCommitData> {
@@ -423,8 +457,13 @@ export class GitGraphService {
       return cached;
     }
     const identity = await this.resolveCommit(folderPath, hash);
-    const { files, truncated } = await this.getChangedFiles(folderPath, identity);
-    const data = { identity, files, truncated };
+    const { files, truncated, stats } = await this.getChangedFiles(folderPath, identity);
+    const data = {
+      identity,
+      files,
+      truncated,
+      stats,
+    };
     this.commitCache.set(cacheKey, data);
     if (this.commitCache.size > MAX_CACHED_COMMIT_DETAILS) {
       this.commitCache.delete(this.commitCache.keys().next().value!);
@@ -433,7 +472,10 @@ export class GitGraphService {
   }
 
   async getCommitDetail(folderPath: string, hash: string): Promise<GitGraphCommitDetail> {
-    const { identity, files, truncated } = await this.getCommitData(folderPath, hash);
+    const [{ identity, files, truncated, stats }, allRefs] = await Promise.all([
+      this.getCommitData(folderPath, hash),
+      this.getRefs(folderPath),
+    ]);
     return {
       hash: identity.hash,
       shortHash: identity.hash.slice(0, 7),
@@ -442,14 +484,12 @@ export class GitGraphService {
       authorEmail: identity.authorEmail,
       authoredAt: identity.authoredAt,
       subject: identity.subject,
+      message: identity.message,
+      refs: allRefs.filter((ref) => ref.hash === identity.hash),
       baseHash: identity.baseHash,
       files,
       filesTruncated: truncated,
-      stats: {
-        files: files.length,
-        additions: files.reduce((sum, file) => sum + (file.additions ?? 0), 0),
-        deletions: files.reduce((sum, file) => sum + (file.deletions ?? 0), 0),
-      },
+      stats,
     };
   }
 

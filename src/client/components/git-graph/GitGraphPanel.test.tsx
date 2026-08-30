@@ -52,6 +52,8 @@ const detail: GitGraphCommitDetail = {
   authorEmail: 'chen@example.com',
   authoredAt: '2026-08-30T12:00:00.000Z',
   subject: 'Merge graph controls',
+  message: 'Merge graph controls\n\nKeep commit inspection in the graph pane.',
+  refs: snapshot.commits[0].refs,
   baseHash: snapshot.commits[0].parents[0],
   files: [{ path: 'src/graph.tsx', status: 'M', additions: 12, deletions: 3, isBinary: false, isGitlink: false }],
   filesTruncated: false,
@@ -114,6 +116,11 @@ describe('GitGraphPanel', () => {
     expect(tagRef).toBeVisible()
 
     expect(await screen.findByText('Compared with first parent')).toBeInTheDocument()
+    const details = screen.getByRole('region', { name: 'Commit details' })
+    expect(within(details).getByText('Keep commit inspection in the graph pane.')).toBeVisible()
+    expect(within(details).getByText('feature/graph')).toBeVisible()
+    expect(within(details).getByText(snapshot.commits[0].hash)).toBeVisible()
+    expect(within(details).getAllByText('Parent:', { exact: false })).toHaveLength(2)
     fireEvent.click(screen.getByRole('button', { name: /src\/graph\.tsx/ }))
     await waitFor(() => expect(useContextTabStore.getState().activeTabId).toMatch(/^commit-diff:/))
     expect(useGitGraphStore.getState().workspaces['ws-1'].selectedCommitHash).toBe(snapshot.commits[0].hash)

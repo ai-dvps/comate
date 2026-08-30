@@ -88,6 +88,7 @@
     "commitDetails": "Commit details",
     "copySha": "Copy commit SHA",
     "shaCopied": "Commit SHA copied",
+    "parent": "Parent",
     "fileCount_one": "{{count}} file changed",
     "fileCount_other": "{{count}} files changed",
     "firstParentBaseline": "Compared with first parent",

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Git history stays inside Comate** — Git Workspaces can open a read-only Git Graph to inspect branch and tag topology, commit details, changed files, and historical file diffs in independent context tabs.
+
 ## [0.4.4] - 2026-08-28
 
 ### Added

@@ -32,16 +32,20 @@ export default function GitCommitDetails({ commit, detail, loading, error, onRet
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1200)
   }
+  const body = detail?.message.startsWith(detail.subject)
+    ? detail.message.slice(detail.subject.length).trimStart()
+    : detail?.message
 
   return (
     <section aria-label={t('gitGraph.commitDetails')} className="flex h-full min-h-0 flex-col bg-chrome/40">
       <header className="flex flex-none items-start gap-3 border-b border-border/70 px-3 py-2">
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-xs font-medium text-text-primary">{commit.subject}</h2>
+          <h2 className="whitespace-pre-wrap break-words text-xs font-medium text-text-primary">{commit.subject}</h2>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-text-tertiary">
             <span>{commit.authorName} &lt;{commit.authorEmail}&gt;</span>
             <time dateTime={commit.authoredAt}>{new Intl.DateTimeFormat(i18n.language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(commit.authoredAt))}</time>
-            <code>{commit.hash}</code>
+            <code>{commit.shortHash}</code>
+            <code className="break-all">{commit.hash}</code>
           </div>
         </div>
         <button type="button" className="flex h-7 w-7 flex-none items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" onClick={() => void copySha()} aria-label={copied ? t('gitGraph.shaCopied') : t('gitGraph.copySha')}>
@@ -64,6 +68,21 @@ export default function GitCommitDetails({ commit, detail, loading, error, onRet
         </div>
       ) : detail ? (
         <div className="min-h-0 flex-1 overflow-auto">
+          {body ? (
+            <p className="whitespace-pre-wrap break-words border-b border-border/50 px-3 py-2 text-[11px] text-text-secondary">
+              {body}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-1 border-b border-border/50 px-3 py-1.5 text-[10px] text-text-tertiary">
+            {detail.refs.map((ref) => (
+              <span key={ref.fullName} className="rounded border border-border px-1 py-0.5 text-text-secondary">
+                {ref.name}
+              </span>
+            ))}
+            {detail.parents.map((parent) => (
+              <span key={parent}>{t('gitGraph.parent')}: <code>{parent.slice(0, 7)}</code></span>
+            ))}
+          </div>
           <div className="flex flex-wrap items-center gap-2 border-b border-border/50 px-3 py-1.5 text-[10px] text-text-tertiary">
             <span>{t('gitGraph.fileCount', { count: detail.stats.files })}</span>
             <span className="text-success">+{detail.stats.additions}</span>
