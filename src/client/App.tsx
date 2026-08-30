@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import comateIconUrl from '../../build/icon.png'
 import { isWindowMaximized, onWindowMaximizedChange, showWindow } from './lib/desktop-api'
-import { AlertCircle, File, GitCompare, Globe2, X } from 'lucide-react'
+import { AlertCircle, File, GitBranch, GitCompare, Globe2, X } from 'lucide-react'
 import { useSidebarWidth } from './hooks/use-sidebar-width'
 import { useRightPanelWidth } from './hooks/use-right-panel-width'
 import { deriveResponsiveShell, useViewportWidth } from './hooks/use-responsive-shell'
@@ -47,6 +47,14 @@ import {
 } from './lib/detached-browser-api'
 
 type AppDestination = ManagementDestination | 'new-chat' | null
+
+interface GitCapability {
+  isGitWorktree: boolean
+  state: 'non-git' | 'unborn' | 'attached' | 'detached'
+  branch: string | null
+  ref: string | null
+  headHash: string | null
+}
 
 function App() {
   const { t } = useTranslation('common')
@@ -115,6 +123,10 @@ function App() {
   }, [requestDestination])
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showContextMenu, setShowContextMenu] = useState(false)
+  const [gitCapability, setGitCapability] = useState<{
+    workspaceId: string
+    value: GitCapability
+  } | null>(null)
   const [isMac, setIsMac] = useState(false)
   const [isWin, setIsWin] = useState(false)
   const [windowMaximized, setWindowMaximized] = useState(false)
@@ -310,6 +322,39 @@ function App() {
       .getState()
       .setContext(activeWorkspaceId, activeWorkspaceSessionId ?? null)
   }, [activeWorkspaceId, activeWorkspaceSessionId])
+
+  useEffect(() => {
+    setGitCapability(null)
+    if (!activeWorkspaceId) return
+    let controller: AbortController | null = null
+    let generation = 0
+    const probe = async () => {
+      setGitCapability(null)
+      controller?.abort()
+      controller = new AbortController()
+      const requestGeneration = ++generation
+      try {
+        const response = await fetch(`/api/workspaces/${encodeURIComponent(activeWorkspaceId)}/git-ref`, {
+          signal: controller.signal,
+        })
+        if (!response.ok) return
+        const value = await response.json() as GitCapability
+        if (requestGeneration !== generation || typeof value.isGitWorktree !== 'boolean') return
+        setGitCapability({ workspaceId: activeWorkspaceId, value })
+      } catch (error) {
+        if (!(error instanceof Error && error.name === 'AbortError')) {
+          setGitCapability(null)
+        }
+      }
+    }
+    void probe()
+    window.addEventListener('focus', probe)
+    return () => {
+      generation += 1
+      controller?.abort()
+      window.removeEventListener('focus', probe)
+    }
+  }, [activeWorkspaceId])
 
   useEffect(() => {
     if (!activeWorkspaceId || !activeWorkspaceSessionId) return
@@ -576,6 +621,21 @@ function App() {
             >
               <GitCompare className="h-4 w-4" aria-hidden="true" /> {t('shell.changes')}
             </button>
+            {gitCapability?.workspaceId === activeWorkspaceId
+              && gitCapability.value.isGitWorktree ? (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  useContextTabStore.getState().openGitGraph(activeWorkspaceId)
+                  ensureRightExpanded()
+                  setShowContextMenu(false)
+                }}
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover hover:text-text-primary"
+              >
+                <GitBranch className="h-4 w-4" aria-hidden="true" /> {t('shell.gitGraph')}
+              </button>
+            ) : null}
           </div>
         ) : null}
 

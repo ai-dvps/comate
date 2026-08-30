@@ -240,6 +240,9 @@ const mockContextTabStore = {
   selectTab: vi.fn(),
   closeTab: vi.fn(),
   openFileWorkspace: vi.fn(),
+  openChangesWorkspace: vi.fn(),
+  openGitGraph: vi.fn(),
+  openBrowser: vi.fn(),
 }
 
 vi.mock('../stores/context-tab-store', () => ({
@@ -283,6 +286,10 @@ describe('App layout', () => {
     vi.mocked(isWindows).mockResolvedValue(false)
     vi.mocked(isWindowMaximized).mockResolvedValue(false)
     vi.mocked(onWindowMaximizedChange).mockReturnValue(() => {})
+    vi.mocked(global.fetch).mockImplementation(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({}),
+    } as Response))
     await i18n.changeLanguage('en')
   })
 
@@ -628,6 +635,48 @@ describe('App layout', () => {
     expect(queryByTestId('context-workspace')).toBeInTheDocument()
     expect(queryByTestId('file-panel')).not.toBeInTheDocument()
     expect(queryByTestId('git-diff-panel')).not.toBeInTheDocument()
+  })
+
+  it('offers Git Graph only when the structured capability reports a Git worktree', async () => {
+    mockWorkspaceStore.activeWorkspaceId = 'ws1'
+    mockWorkspaceStore.openWorkspaceIds = ['ws1']
+    mockWorkspaceStore.workspaces = [{ id: 'ws1', name: 'Test', folderPath: '/tmp' }]
+    vi.mocked(global.fetch).mockImplementation((input) => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve(String(input).endsWith('/git-ref')
+        ? { isGitWorktree: true, state: 'unborn', branch: 'main', ref: 'main', headHash: null }
+        : {}),
+    } as Response))
+
+    renderWithI18n(<App />)
+    await screen.findByTestId('chat-panel')
+    fireEvent.click(screen.getByRole('button', { name: 'Add context tab' }))
+
+    const item = await screen.findByRole('menuitem', { name: 'Git Graph' })
+    fireEvent.click(item)
+    expect(mockContextTabStore.openGitGraph).toHaveBeenCalledWith('ws1')
+  })
+
+  it('omits Git Graph when the active Workspace is not a Git worktree', async () => {
+    mockWorkspaceStore.activeWorkspaceId = 'ws1'
+    mockWorkspaceStore.openWorkspaceIds = ['ws1']
+    mockWorkspaceStore.workspaces = [{ id: 'ws1', name: 'Test', folderPath: '/tmp' }]
+    vi.mocked(global.fetch).mockImplementation((input) => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve(String(input).endsWith('/git-ref')
+        ? { isGitWorktree: false, state: 'non-git', branch: null, ref: null, headHash: null }
+        : {}),
+    } as Response))
+
+    renderWithI18n(<App />)
+    await screen.findByTestId('chat-panel')
+    fireEvent.click(screen.getByRole('button', { name: 'Add context tab' }))
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+      '/api/workspaces/ws1/git-ref',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    ))
+
+    expect(screen.queryByRole('menuitem', { name: 'Git Graph' })).not.toBeInTheDocument()
   })
 
   it('collapses an auto-expanded right panel on the first click when no Session is open', async () => {

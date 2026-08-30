@@ -2,6 +2,7 @@ import { useEffect, useRef, type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   File,
+  GitBranch,
   GitCompare,
   Globe2,
   PanelLeftClose,
@@ -51,6 +52,12 @@ function TabIcon({ tab }: { tab: ContextTab }) {
     return <Globe2 className={className} strokeWidth={1.5} aria-hidden="true" />
   }
   if (tab.type === 'changes') {
+    return <GitCompare className={className} strokeWidth={1.5} aria-hidden="true" />
+  }
+  if (tab.type === 'git-graph') {
+    return <GitBranch className={className} strokeWidth={1.5} aria-hidden="true" />
+  }
+  if (tab.type === 'commit-diff') {
     return <GitCompare className={className} strokeWidth={1.5} aria-hidden="true" />
   }
   return <File className={className} strokeWidth={1.5} aria-hidden="true" />
@@ -236,7 +243,7 @@ export default function CustomTitlebar({
             >
               {tabs.map((tab) => {
                 const active = tab.id === activeTabId
-                const isPreview = tab.type !== 'browser' && tab.preview
+                const isPreview = 'preview' in tab && tab.preview
                 return (
                   <div
                     key={tab.id}

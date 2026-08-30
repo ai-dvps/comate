@@ -9,6 +9,38 @@ function renderTitlebar(ui: React.ReactElement) {
 }
 
 describe('CustomTitlebar', () => {
+  it('renders Git Graph and historical Diff as typed titlebar tabs', () => {
+    renderTitlebar(
+      <CustomTitlebar
+        leftWidth={0}
+        rightWidth={520}
+        leftCollapsed
+        rightCollapsed={false}
+        contextAvailable
+        tabs={[
+          { type: 'git-graph', id: 'git-graph', workspaceId: 'ws-1', name: 'Git Graph' },
+          {
+            type: 'commit-diff', id: 'commit-diff:1', workspaceId: 'ws-1',
+            commitHash: 'abc', baseHash: 'def', path: 'src/app.ts', name: 'app.ts',
+            statusCode: 'M', original: 'before', modified: 'after', isBinary: false,
+            isGitlink: false, isTextComparable: true, truncated: false, isDeleted: false,
+            loading: false,
+          },
+        ]}
+        activeTabId="git-graph"
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onAddTab={vi.fn()}
+        onNewChat={vi.fn()}
+        onToggleLeft={vi.fn()}
+        onToggleRight={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('tab', { name: /Git Graph/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: /app\.ts/ })).toHaveAttribute('aria-selected', 'false')
+  })
+
   it('renders every titlebar icon with a softer color and thinner stroke', () => {
     renderTitlebar(
       <CustomTitlebar
