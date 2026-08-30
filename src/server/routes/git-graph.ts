@@ -55,4 +55,49 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Keep the more-specific historical Diff route before the commit-detail route.
+router.get('/:hash/diff', async (req, res) => {
+  try {
+    const { id: workspaceId, hash } = req.params as { id: string; hash: string };
+    const workspace = await workspaceStore.get(workspaceId);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found', code: 'WORKSPACE_NOT_FOUND' });
+      return;
+    }
+    const requestedPath = req.query.path;
+    if (typeof requestedPath !== 'string' || requestedPath.length === 0) {
+      throw new GitGraphValidationError('path is required');
+    }
+    res.json(await gitGraphService.getFileComparison(workspace.folderPath, hash, requestedPath));
+  } catch (error) {
+    if (error instanceof GitGraphValidationError) {
+      res.status(400).json({ error: error.message, code: 'INVALID_GIT_GRAPH_REQUEST' });
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    diagWarn('[git-graph] failed to get historical diff:', message);
+    res.status(500).json({ error: 'Failed to get historical Git diff', code: 'GIT_GRAPH_DIFF_FAILED' });
+  }
+});
+
+router.get('/:hash', async (req, res) => {
+  try {
+    const { id: workspaceId, hash } = req.params as { id: string; hash: string };
+    const workspace = await workspaceStore.get(workspaceId);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found', code: 'WORKSPACE_NOT_FOUND' });
+      return;
+    }
+    res.json(await gitGraphService.getCommitDetail(workspace.folderPath, hash));
+  } catch (error) {
+    if (error instanceof GitGraphValidationError) {
+      res.status(400).json({ error: error.message, code: 'INVALID_GIT_GRAPH_REQUEST' });
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    diagWarn('[git-graph] failed to get commit detail:', message);
+    res.status(500).json({ error: 'Failed to get Git commit detail', code: 'GIT_GRAPH_DETAIL_FAILED' });
+  }
+});
+
 export default router;
