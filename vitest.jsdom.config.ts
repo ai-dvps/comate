@@ -23,6 +23,7 @@ export default defineProject({
       'src/client/stores/commands-store.test.ts',
       'src/client/stores/bot-store.test.ts',
       'src/client/stores/git-changes-store.test.ts',
+      'src/client/stores/git-graph-store.test.ts',
       'src/client/stores/context-tab-store.test.ts',
       'src/client/stores/provider-usage-store.test.ts',
       'src/client/stores/skills-store.test.ts',
@@ -45,6 +46,7 @@ export default defineProject({
       'src/client/lib/websocket-client.test.ts',
       'src/client/lib/open-file-with-notice.test.ts',
       'src/client/lib/file-tree-path.test.ts',
+      'src/client/lib/git-graph-layout.test.ts',
     ],
     exclude: [
       'src/client/lib/keyboard.test.ts',
