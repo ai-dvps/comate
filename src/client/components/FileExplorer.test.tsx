@@ -256,7 +256,7 @@ describe('FileExplorer', () => {
 
   it('supports single-click select and double-click open for search results', async () => {
     mockUseFilesResult = {
-      results: [{ path: 'src/utils.ts' }],
+      results: [{ path: 'src/utils.ts', type: 'file' }],
       loading: false,
       error: undefined,
       truncated: false,
@@ -335,7 +335,7 @@ describe('FileExplorer', () => {
     }) as unknown as typeof global.fetch
 
     mockUseFilesResult = {
-      results: [{ path: 'src/utils.ts' }],
+      results: [{ path: 'src/utils.ts', type: 'file' }],
       loading: false,
       error: undefined,
       truncated: false,

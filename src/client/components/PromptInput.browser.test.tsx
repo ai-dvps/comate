@@ -202,7 +202,7 @@ vi.mock('../stores/commands-store', () => ({
 }))
 
 const filesMock = vi.hoisted(() => ({
-  results: [] as { path: string }[],
+  results: [] as { path: string; type?: 'file' | 'folder' }[],
   loading: false,
   error: undefined as string | undefined,
   truncated: false,
@@ -797,6 +797,25 @@ describe('PromptInput browser', () => {
     await waitFor(() => {
       expect(editableElement().textContent).toBe('check @main.ts ')
       expect(extractPlainText(editableElement())).toBe('check @src/main.ts ')
+    })
+  })
+
+  it('inserts a folder path when clicking a picker item after typing @', async () => {
+    filesMock.results = [{ path: 'src/components', type: 'folder' }]
+
+    renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
+    const input = editableLocator()
+
+    await input.fill('@')
+    await userEvent.keyboard('components')
+    await waitFor(() => expect(screen.getByText('src/components')).toBeInTheDocument(), {
+      timeout: 1000,
+    })
+
+    await userEvent.click(screen.getByText('src/components'))
+    await waitFor(() => {
+      expect(editableElement().textContent).toBe('@components ')
+      expect(extractPlainText(editableElement())).toBe('@src/components ')
     })
   })
 
