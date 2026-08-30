@@ -5,6 +5,7 @@ import { useFilesStore } from './files-store';
 import { useAnalyticsStore } from './analytics-store';
 import { useCommandsStore } from './commands-store';
 import { useWeComQueueStore } from './wecom-queue-store';
+import { useGitGraphStore } from './git-graph-store';
 
 describe('useWorkspaceStore', () => {
   const ws1: Workspace = {
@@ -68,6 +69,7 @@ describe('useWorkspaceStore', () => {
       error: {},
       statusFilter: null,
     });
+    useGitGraphStore.getState().reset();
   }
 
   beforeEach(() => {
@@ -198,6 +200,12 @@ describe('useWorkspaceStore', () => {
     useWeComQueueStore.setState({
       entriesByWorkspace: { [ws1.id]: [], [ws2.id]: [] },
     });
+    useGitGraphStore.setState({
+      workspaces: {
+        [ws1.id]: {} as never,
+        [ws2.id]: {} as never,
+      },
+    });
 
     await useWorkspaceStore.getState().deleteWorkspace(ws1.id);
 
@@ -205,6 +213,7 @@ describe('useWorkspaceStore', () => {
     assert.strictEqual(useAnalyticsStore.getState().workspaceSummaries[ws1.id], undefined);
     assert.strictEqual(useCommandsStore.getState().commandsByWorkspace[ws1.id], undefined);
     assert.strictEqual(useWeComQueueStore.getState().entriesByWorkspace[ws1.id], undefined);
+    assert.strictEqual(useGitGraphStore.getState().workspaces[ws1.id], undefined);
 
     assert.deepStrictEqual(useFilesStore.getState().resultsByWorkspace[ws2.id], [
       { path: '/tmp/ws2.txt', type: 'file' },
@@ -212,6 +221,7 @@ describe('useWorkspaceStore', () => {
     assert.ok(useAnalyticsStore.getState().workspaceSummaries[ws2.id]);
     assert.ok(useCommandsStore.getState().commandsByWorkspace[ws2.id]);
     assert.deepStrictEqual(useWeComQueueStore.getState().entriesByWorkspace[ws2.id], []);
+    assert.ok(useGitGraphStore.getState().workspaces[ws2.id]);
 
     global.fetch = originalFetch;
   });

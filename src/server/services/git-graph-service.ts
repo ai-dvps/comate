@@ -11,12 +11,12 @@ import type {
   GitGraphSnapshot,
   GitGraphSnapshotOptions,
 } from '../models/git-graph.js';
+import { capGitContent, MAX_GIT_CONTENT_SIZE } from '../utils/git-content.js';
 
 const GIT_TIMEOUT_MS = 30_000;
 const GIT_MAX_BUFFER = 10 * 1024 * 1024;
 const MAX_DETAIL_FILES = 1_000;
-const MAX_DIFF_SIZE = 500 * 1024;
-const MAX_DIFF_LINES = 5_000;
+const MAX_CACHED_COMMIT_DETAILS = 50;
 export const DEFAULT_GIT_GRAPH_LIMIT = 100;
 export const MAX_GIT_GRAPH_LIMIT = 500;
 
@@ -116,6 +116,12 @@ interface CommitIdentity {
   baseHash: string | null;
 }
 
+interface CachedCommitData {
+  identity: CommitIdentity;
+  files: GitGraphChangedFile[];
+  truncated: boolean;
+}
+
 interface RawChange {
   status: GitGraphFileStatus;
   path: string;
@@ -208,18 +214,9 @@ function parseNumstat(output: string): Map<string, { additions: number | null; d
   return stats;
 }
 
-function capContent(buffer: Buffer): { content: string; truncated: boolean } {
-  let truncated = buffer.length > MAX_DIFF_SIZE;
-  const text = buffer.subarray(0, MAX_DIFF_SIZE).toString('utf8');
-  const lines = text.split('\n');
-  if (lines.length > MAX_DIFF_LINES) {
-    truncated = true;
-    return { content: lines.slice(0, MAX_DIFF_LINES).join('\n'), truncated };
-  }
-  return { content: text, truncated };
-}
-
 export class GitGraphService {
+  private readonly commitCache = new Map<string, CachedCommitData>();
+
   constructor(private readonly run: GitCommandRunner = GitGraphService.runGit) {}
 
   static runGit: GitCommandRunner = (cwd, args, options = {}) =>
@@ -417,9 +414,26 @@ export class GitGraphService {
     return { files, truncated: rawChanges.length > MAX_DETAIL_FILES };
   }
 
-  async getCommitDetail(folderPath: string, hash: string): Promise<GitGraphCommitDetail> {
+  private async getCommitData(folderPath: string, hash: string): Promise<CachedCommitData> {
+    const cacheKey = `${folderPath}\0${hash.toLowerCase()}`;
+    const cached = this.commitCache.get(cacheKey);
+    if (cached) {
+      this.commitCache.delete(cacheKey);
+      this.commitCache.set(cacheKey, cached);
+      return cached;
+    }
     const identity = await this.resolveCommit(folderPath, hash);
     const { files, truncated } = await this.getChangedFiles(folderPath, identity);
+    const data = { identity, files, truncated };
+    this.commitCache.set(cacheKey, data);
+    if (this.commitCache.size > MAX_CACHED_COMMIT_DETAILS) {
+      this.commitCache.delete(this.commitCache.keys().next().value!);
+    }
+    return data;
+  }
+
+  async getCommitDetail(folderPath: string, hash: string): Promise<GitGraphCommitDetail> {
+    const { identity, files, truncated } = await this.getCommitData(folderPath, hash);
     return {
       hash: identity.hash,
       shortHash: identity.hash.slice(0, 7),
@@ -452,8 +466,8 @@ export class GitGraphService {
       const timeout = setTimeout(() => child.kill(), GIT_TIMEOUT_MS);
       child.stdout.on('data', (chunk: Buffer) => {
         total += chunk.length;
-        if (captured < MAX_DIFF_SIZE) {
-          const slice = chunk.subarray(0, MAX_DIFF_SIZE - captured);
+        if (captured < MAX_GIT_CONTENT_SIZE) {
+          const slice = chunk.subarray(0, MAX_GIT_CONTENT_SIZE - captured);
           chunks.push(slice);
           captured += slice.length;
         }
@@ -471,7 +485,7 @@ export class GitGraphService {
           reject(new Error(signal ? `Git blob read terminated by ${signal}` : stderr.trim() || `Git exited with code ${code}`));
           return;
         }
-        resolve({ buffer: Buffer.concat(chunks), truncated: total > MAX_DIFF_SIZE });
+        resolve({ buffer: Buffer.concat(chunks), truncated: total > MAX_GIT_CONTENT_SIZE });
       });
     });
   }
@@ -482,8 +496,7 @@ export class GitGraphService {
     requestedPath: string,
   ): Promise<GitGraphFileComparison> {
     validateRelativePath(requestedPath);
-    const identity = await this.resolveCommit(folderPath, hash);
-    const { files } = await this.getChangedFiles(folderPath, identity);
+    const { identity, files } = await this.getCommitData(folderPath, hash);
     const file = files.find((candidate) => candidate.path === requestedPath);
     if (!file) throw new GitGraphValidationError('Path is not changed by this commit in this Workspace');
 
@@ -519,8 +532,8 @@ export class GitGraphService {
     const originalBuffer = originalBlob.buffer;
     const modifiedBuffer = modifiedBlob.buffer;
     const isBinary = file.isBinary || originalBuffer.includes(0) || modifiedBuffer.includes(0);
-    const original = isBinary ? { content: '', truncated: false } : capContent(originalBuffer);
-    const modified = isBinary ? { content: '', truncated: false } : capContent(modifiedBuffer);
+    const original = isBinary ? { content: '', truncated: false } : capGitContent(originalBuffer);
+    const modified = isBinary ? { content: '', truncated: false } : capGitContent(modifiedBuffer);
     return {
       commitHash: identity.hash,
       baseHash: identity.baseHash,

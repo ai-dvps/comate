@@ -5,6 +5,7 @@ import { useFilesStore } from './files-store';
 import { useAnalyticsStore } from './analytics-store';
 import { useCommandsStore } from './commands-store';
 import { useWeComQueueStore } from './wecom-queue-store';
+import { useGitGraphStore } from './git-graph-store';
 
 export interface Workspace {
   id: string;
@@ -194,6 +195,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       useAnalyticsStore.getState().clearWorkspace(id);
       useCommandsStore.getState().clearCommandsForWorkspace(id);
       useWeComQueueStore.getState().clearWorkspace(id);
+      useGitGraphStore.getState().clearWorkspace(id);
 
       set({
         workspaces: get().workspaces.filter((w) => w.id !== id),
