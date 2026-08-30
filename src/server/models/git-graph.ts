@@ -63,6 +63,8 @@ export interface GitGraphCommitDetail {
   authorEmail: string;
   authoredAt: string;
   subject: string;
+  message: string;
+  refs: GitGraphRef[];
   baseHash: string | null;
   files: GitGraphChangedFile[];
   filesTruncated: boolean;

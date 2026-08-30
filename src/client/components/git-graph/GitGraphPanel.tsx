@@ -2,7 +2,7 @@ import { GitBranch, LoaderCircle, RotateCcw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useContextTabStore } from '../../stores/context-tab-store'
-import { getGitGraphWorkspaceState, useGitGraphStore, type GitGraphChangedFile } from '../../stores/git-graph-store'
+import { GIT_GRAPH_MAX_LIMIT, getGitGraphWorkspaceState, useGitGraphStore, type GitGraphChangedFile } from '../../stores/git-graph-store'
 import GitCommitDetails from './GitCommitDetails'
 import GitGraphRows from './GitGraphRows'
 import GitGraphToolbar from './GitGraphToolbar'
@@ -129,7 +129,7 @@ export default function GitGraphPanel({ workspaceId }: GitGraphPanelProps) {
         matchCount={state?.searchMatches.length ?? 0}
         activeMatch={state?.activeSearchMatch ?? -1}
         loading={state?.snapshotLoading ?? false}
-        hasMore={snapshot.hasMore}
+        hasMore={snapshot.hasMore && (state?.loadedLimit ?? 0) < GIT_GRAPH_MAX_LIMIT}
         onFilterChange={(refs) => void useGitGraphStore.getState().setFilters(workspaceId, refs)}
         onSearchChange={(value) => useGitGraphStore.getState().setSearchText(workspaceId, value)}
         onPreviousMatch={() => useGitGraphStore.getState().previousSearchMatch(workspaceId)}

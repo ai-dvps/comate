@@ -86,6 +86,7 @@
     "commitDetails": "提交详情",
     "copySha": "复制提交 SHA",
     "shaCopied": "已复制提交 SHA",
+    "parent": "父提交",
     "fileCount": "{{count}} 个文件有修改",
     "firstParentBaseline": "与第一个父提交比较",
     "filesTruncated": "文件列表已截断",

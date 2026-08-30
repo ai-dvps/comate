@@ -50,10 +50,14 @@ describe('GitGraphService', { concurrency: false }, () => {
     await writeFile(path.join(repo, 'file.txt'), 'changed\n');
     await writeFile(path.join(repo, 'added.txt'), 'added\n');
     await git(repo, ['add', '.']);
-    const hash = await commit(repo, 'change files');
+    await git(repo, ['commit', '-m', 'change files', '-m', 'Explain the historical diff.']);
+    const hash = await git(repo, ['rev-parse', 'HEAD']);
+    await git(repo, ['tag', 'reviewed', hash]);
     const service = new GitGraphService();
 
     const detail = await service.getCommitDetail(repo, hash);
+    assert.equal(detail.message, 'change files\n\nExplain the historical diff.');
+    assert.deepStrictEqual(detail.refs.map((ref) => ref.name), ['main', 'reviewed']);
     assert.equal(detail.baseHash, rootHash);
     assert.deepStrictEqual(
       detail.files.map(({ status, path: filePath }) => ({ status, path: filePath })),
@@ -63,6 +67,12 @@ describe('GitGraphService', { concurrency: false }, () => {
       ],
     );
     assert.deepStrictEqual(detail.stats, { files: 2, additions: 2, deletions: 1 });
+
+    await git(repo, ['tag', '-d', 'reviewed']);
+    assert.deepStrictEqual(
+      (await service.getCommitDetail(repo, hash)).refs.map((ref) => ref.name),
+      ['main'],
+    );
 
     const comparison = await service.getFileComparison(repo, hash, 'file.txt');
     assert.equal(comparison.baseHash, rootHash);
@@ -171,6 +181,7 @@ describe('GitGraphService', { concurrency: false }, () => {
 
     assert.equal(detail.files.length, 1_000);
     assert.equal(detail.filesTruncated, true);
+    assert.deepStrictEqual(detail.stats, { files: 1_005, additions: 1_005, deletions: 0 });
   });
   it('returns diverged local, remote and tag refs attached to exact commits', async () => {
     const repo = await createRepo();
@@ -305,7 +316,7 @@ describe('GitGraphService', { concurrency: false }, () => {
     assert.equal(snapshot.refs.some((ref) => ref.name === '功能-α'), true);
   });
 
-  it('runs history from captured immutable IDs when a ref moves mid-request', async () => {
+  it('retries when HEAD moves during capture and returns one coherent snapshot', async () => {
     const repo = await createRepo();
     const capturedHash = await commit(repo, 'captured');
     let movedHash: string | null = null;
@@ -319,9 +330,10 @@ describe('GitGraphService', { concurrency: false }, () => {
 
     const snapshot = await new GitGraphService(runner).getSnapshot(repo);
 
-    assert.equal(snapshot.capability.headHash, capturedHash);
-    assert.equal(snapshot.refs.find((ref) => ref.fullName === 'refs/heads/main')?.hash, capturedHash);
-    assert.equal(snapshot.commits[0]?.hash, capturedHash);
-    assert.equal(snapshot.commits.some((item) => item.hash === movedHash), false);
+    assert.notEqual(movedHash, null);
+    assert.notEqual(movedHash, capturedHash);
+    assert.equal(snapshot.capability.headHash, movedHash);
+    assert.equal(snapshot.refs.find((ref) => ref.fullName === 'refs/heads/main')?.hash, movedHash);
+    assert.equal(snapshot.commits[0]?.hash, movedHash);
   });
 });
