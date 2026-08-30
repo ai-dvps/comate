@@ -145,7 +145,8 @@ router.post('/resolve', async (req, res) => {
       if (!candidate || candidate.includes('\0') || path.isAbsolute(candidate)) continue;
       try {
         const resolved = await validatePathFromResolvedBase(resolvedBase, candidate);
-        if (resolved && (await stat(resolved)).isFile()) {
+        const resolvedStat = resolved ? await stat(resolved) : null;
+        if (resolvedStat?.isFile() || resolvedStat?.isDirectory()) {
           existing.push(candidate);
         }
       } catch (error) {

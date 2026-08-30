@@ -9,6 +9,7 @@ import { normalizeWindowsPath } from '../utils/normalize-windows-path.js';
 
 export interface FileSearchResult {
   path: string;
+  type: 'file' | 'folder';
 }
 
 export interface FileSearchResponse {
@@ -124,17 +125,39 @@ function escapeGlob(input: string): string {
 
 function rankAndCap(
   query: string,
-  candidates: string[],
+  candidates: FileSearchResult[],
   limit: number,
 ): FileSearchResult[] {
   if (query === '') {
-    return candidates.slice(0, limit).map((p) => ({ path: p }));
+    return candidates.slice(0, limit);
   }
   const ranked = fuzzysort.go(query, candidates, {
+    key: 'path',
     limit,
     threshold: -10000,
   });
-  return ranked.map((r) => ({ path: r.target }));
+  return ranked.map((result) => result.obj);
+}
+
+function includeAncestorFolders(filePaths: string[]): FileSearchResult[] {
+  const results: FileSearchResult[] = [];
+  const seenFolders = new Set<string>();
+
+  for (const rawFilePath of filePaths) {
+    const filePath = rawFilePath.replace(/\\/g, '/');
+    results.push({ path: filePath, type: 'file' });
+
+    let parent = path.posix.dirname(filePath);
+    while (parent !== '.') {
+      if (!seenFolders.has(parent)) {
+        seenFolders.add(parent);
+        results.push({ path: parent, type: 'folder' });
+      }
+      parent = path.posix.dirname(parent);
+    }
+  }
+
+  return results;
 }
 
 interface RawWalkResult {
@@ -236,7 +259,7 @@ export async function searchFiles(options: SearchOptions): Promise<FileSearchRes
       const { paths, truncated } = await ripgrepWalk({ ...options, query }, candidateBudget);
       return {
         query,
-        results: rankAndCap(query, paths, limit),
+        results: rankAndCap(query, includeAncestorFolders(paths), limit),
         source: 'rg',
         truncated,
       };
@@ -252,7 +275,7 @@ export async function searchFiles(options: SearchOptions): Promise<FileSearchRes
   const { paths, truncated } = await fallbackWalk({ ...options, query }, candidateBudget);
   return {
     query,
-    results: rankAndCap(query, paths, limit),
+    results: rankAndCap(query, includeAncestorFolders(paths), limit),
     source: 'fallback',
     truncated,
   };

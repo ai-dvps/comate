@@ -4,6 +4,7 @@ import i18next from 'i18next';
 
 export interface FileEntry {
   path: string;
+  type: 'file' | 'folder';
 }
 
 interface SearchResponse {

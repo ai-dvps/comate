@@ -74,7 +74,7 @@ describe('files routes', { concurrency: false }, () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  it('POST /resolve returns only existing regular files from a mixed batch', async () => {
+  it('POST /resolve returns existing files and folders from a mixed batch', async () => {
     await writeFile(path.join(tempDir, 'alpha.ts'), 'alpha');
     await mkdir(path.join(tempDir, 'nested'));
     await writeFile(path.join(tempDir, 'nested', 'beta.ts'), 'beta');
@@ -100,7 +100,7 @@ describe('files routes', { concurrency: false }, () => {
 
     assert.strictEqual(res.statusCode, 200);
     assert.deepStrictEqual(res.jsonBody, {
-      paths: ['alpha.ts', 'nested/beta.ts'],
+      paths: ['alpha.ts', 'nested', 'nested/beta.ts'],
     });
   });
 

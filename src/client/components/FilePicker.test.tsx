@@ -10,7 +10,7 @@ function renderWithI18n(ui: React.ReactElement) {
 }
 
 const filesMock = vi.hoisted(() => ({
-  results: [] as { path: string }[],
+  results: [] as { path: string; type: 'file' | 'folder' }[],
   loading: false,
   error: undefined as string | undefined,
   truncated: false,
@@ -70,5 +70,15 @@ describe('FilePicker', () => {
     expect(popover).toHaveClass('w-[360px]')
     expect(popover).not.toHaveClass('w-full')
     expect(popover).not.toHaveStyle({ width: '480px' })
+  })
+
+  it('renders folders with a distinct icon', () => {
+    filesMock.results = [{ path: 'src/components', type: 'folder' }]
+
+    renderPicker()
+
+    expect(screen.getByText('src/components').previousElementSibling).toHaveClass(
+      'lucide-folder',
+    )
   })
 })
