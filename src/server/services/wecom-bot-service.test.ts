@@ -16,6 +16,7 @@ import {
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from './chat-service.js';
 import { botService } from './bot-service.js';
+import { feishuBotService } from './feishu-bot-service.js';
 import { botEscalationLedger } from './bot-escalation-ledger.js';
 import { encodeButtonKey, decodeButtonKey } from './wecom-template-card.js';
 
@@ -2078,12 +2079,14 @@ describe('WeComBotService /workspace command', { concurrency: false }, () => {
   let service: WeComBotService;
   let tempDirA: string;
   let tempDirB: string;
+  let originalFeishuUpdateConnectionForBot: typeof feishuBotService.updateConnectionForBot;
 
   let sentMessages: Array<{ userId: string; body: any }>;
   let updatedCards: Array<{ card: any }>;
 
   beforeEach(async () => {
     service = new WeComBotService();
+    originalFeishuUpdateConnectionForBot = feishuBotService.updateConnectionForBot;
     sentMessages = [];
     updatedCards = [];
 
@@ -2092,6 +2095,7 @@ describe('WeComBotService /workspace command', { concurrency: false }, () => {
   });
 
   afterEach(async () => {
+    feishuBotService.updateConnectionForBot = originalFeishuUpdateConnectionForBot;
     workspaceStore.resetData();
     await fsPromises.rm(tempDirA, { recursive: true, force: true }).catch(() => {});
     await fsPromises.rm(tempDirB, { recursive: true, force: true }).catch(() => {});
@@ -2256,6 +2260,10 @@ describe('WeComBotService /workspace command', { concurrency: false }, () => {
   it('select_workspace switches the active workspace, updates routing maps, and confirms', async () => {
     const { wsA, wsB, bot } = await setupWorkspaces();
     injectConnection(wsA.id, bot.id);
+    let feishuRoutingUpdate: { botId: string; workspaceId: string } | null = null;
+    feishuBotService.updateConnectionForBot = async (updatedBotId, workspaceId) => {
+      feishuRoutingUpdate = { botId: updatedBotId, workspaceId };
+    };
 
     await (service as any).handleTemplateCardEvent(wsA.id, makeWorkspaceSubmitEvent(wsB.id, bot.id));
 
@@ -2263,6 +2271,7 @@ describe('WeComBotService /workspace command', { concurrency: false }, () => {
     assert.strictEqual((service as any).botIdToWorkspaceId.get(bot.id), wsB.id);
     assert.strictEqual((service as any).workspaceIdToBotId.get(wsB.id), bot.id);
     assert.strictEqual((service as any).connections.get(bot.id).workspaceId, wsB.id);
+    assert.deepStrictEqual(feishuRoutingUpdate, { botId: bot.id, workspaceId: wsB.id });
 
     assert.strictEqual(updatedCards.length, 1);
     assert.ok(updatedCards[0].card.replace_text.includes('已切换到工作空间'));
