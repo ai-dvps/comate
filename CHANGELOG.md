@@ -7,26 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-08-31
+
 ### Added
 
 - **Git history stays inside Comate** — Git Workspaces can open a read-only Git Graph to inspect branch and tag topology, commit details, changed files, and historical file diffs in independent context tabs.
+- **Prompt references now support folders** — The file picker and `@` search can attach a directory as a first-class prompt reference while preserving file-reference behavior.
+- **Comate can launch automatically when you sign in** — General settings can enable or disable the operating system login startup entry on macOS, Windows, and Linux.
+- **Release downloads are mirrored to Gitee** — Published source, installers, updater manifests, and blockmaps are synchronized from GitHub for faster access in China.
+
+### Changed
+
+- **Desktop updates choose the fastest reachable release source** — Packaged builds probe GitHub and Gitee, keep GitHub canonical when versions differ, and retry through the alternate source without installing a different version.
+- **Deleting a session preserves its underlying transcript** — Every session can be removed from the sidebar without deleting the Agent-owned conversation history on disk.
+- **README and changed-file typography are easier to scan** — The repository overview now explains Comate's end-to-end task workflow, while changed-file paths use a higher-quality monospace font stack.
+
+### Fixed
+
+- **Bot workspace switching keeps the correct channel** — Feishu switches retain Feishu routing, WeCom switches no longer inherit stale Feishu routing, and long WeCom workspace lists paginate across cards.
+- **Update release notes render as formatted content** — The restart dialog displays sanitized lists and emphasis instead of exposing raw HTML tags.
 
 ## [0.4.4] - 2026-08-28
 
 ### Added
 
 - **Collapsed sidebar keeps New Chat within reach** — The titlebar now shows a New Chat shortcut beside the command-center expand button while the left sidebar is collapsed.
-- **Comate can launch automatically when you sign in** — General settings now let desktop users enable or disable the operating system's login startup entry on macOS, Windows, and Linux.
 
 ### Changed
 
-- **README now tells Comate's complete product story** — The repository overview now presents Comate as a general-purpose Agent task workspace, demonstrates a controlled finance-report workflow, and gives current installation and first-chat guidance.
 - **Titlebar icons now use a quieter visual weight** — Panel toggles, New Chat, context tabs, add, and close controls use softer semantic colors and a consistent thinner stroke while retaining clear hover and focus feedback.
-- **Desktop updates choose the faster reachable release source** — Packaged builds probe GitHub and Gitee, prefer canonical GitHub when mirror versions differ, and retry failed checks or downloads through the alternate source without installing a different version.
 
 ### Fixed
 
-- **Update release notes render as formatted content** — The restart-to-update dialog now displays lists and emphasis instead of exposing raw HTML tags, while sanitizing release-provided markup before rendering it.
 - **The conversation status bar now remains readable in narrow layouts** — Workspace, account usage, Session tokens, and Context usage switch from long labels to semantic icons and compact values as the conversation column shrinks, instead of clipping their text.
 - **The right context panel no longer crowds out conversations in narrow windows** — Its expanded width is capped at two thirds of the current window, saved widths are constrained again after the window becomes smaller, and the workspace/Session title hides when the expanded panel leaves too little titlebar space for its collapse control.
 
@@ -81,10 +93,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **OpenCode upgraded to 1.18.23** — The SDK and every bundled platform binary move together from 1.18.4 to 1.18.23 as one pinned compatibility unit.
-
-### Changed
-
-- **Deleting a session no longer erases its conversation transcript** — Every session is now deletable (previously only drafts offered the delete action), and removing one deletes only Comate's own record and permanently hides the conversation from the sidebar for every source (GUI, WeCom, Feishu, and scheduled sessions); the underlying `.jsonl` transcript stays on disk and remains resumable or inspectable with the Claude CLI. Previously, deleting a non-draft session destroyed the transcript file.
 
 ### Fixed
 
