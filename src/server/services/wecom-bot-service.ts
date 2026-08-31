@@ -1017,6 +1017,8 @@ export class WeComBotService {
       channelKey: 'wecom',
       channelUserId: wecomUserId,
     });
+    const { feishuBotService } = await import('./feishu-bot-service.js');
+    await feishuBotService.updateConnectionForBot(botId, workspaceId);
 
     conn.workspaceId = workspaceId;
     this.botIdToWorkspaceId.set(botId, workspaceId);
