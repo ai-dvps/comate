@@ -22,6 +22,7 @@ import {
 } from './feishu-card-builder.js';
 import { feishuCardActionHandler, type CardActionPayload } from './feishu-card-action-handler.js';
 import { feishuUserResolver } from './feishu-user-resolver.js';
+import { wecomBotService } from './wecom-bot-service.js';
 import { diagLog } from '../utils/diag-logger.js';
 import { sendPlainTextMessage } from './feishu-message-utils.js';
 import { randomUUID } from 'crypto';
@@ -497,6 +498,7 @@ export class FeishuBotService {
         channelKey: 'feishu',
         channelUserId: actorUserId,
       });
+      await wecomBotService.updateConnectionForBot(botId, workspaceId);
     }
 
     const previousWorkspaceId = this.botIdToWorkspaceId.get(bot.id);
