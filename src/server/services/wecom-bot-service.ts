@@ -161,7 +161,14 @@ export function parseWecomStatusCommand(content: string): boolean {
   return trimmed === '/status' || trimmed.startsWith('/status ');
 }
 
-const MAX_RESUME_SESSIONS = 10;
+const MAX_CARD_OPTIONS = 10;
+
+function parseWecomWorkspacePage(content: string): number {
+  const suffix = content.trim().slice('/workspace'.length).trim();
+  if (!/^\d+$/.test(suffix)) return 1;
+  const page = Number(suffix);
+  return Number.isSafeInteger(page) && page > 0 ? page : 1;
+}
 
 /** Format an ISO timestamp as a short relative-time label for the `/resume` card. */
 function formatRelativeTime(iso: string): string {
@@ -652,7 +659,11 @@ export class WeComBotService {
 
     // /workspace lets a Bot Owner switch the bot's active workspace.
     if (parseWecomWorkspaceCommand(content)) {
-      await this.handleWorkspaceCommand(workspaceId, wecomUserId);
+      await this.handleWorkspaceCommand(
+        workspaceId,
+        wecomUserId,
+        parseWecomWorkspacePage(content),
+      );
       return;
     }
 
@@ -764,7 +775,7 @@ export class WeComBotService {
 
       // Most-recent first, capped to the card's option budget.
       candidates.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
-      const capped = candidates.slice(0, MAX_RESUME_SESSIONS);
+      const capped = candidates.slice(0, MAX_CARD_OPTIONS);
 
       if (capped.length === 0) {
         await conn.client.sendMessage(wecomUserId, {
@@ -869,7 +880,11 @@ export class WeComBotService {
    * Handle `/workspace`: let a Bot Owner switch the active workspace.
    * Rejects non-Owners immediately; Owners receive a workspace-list card.
    */
-  private async handleWorkspaceCommand(workspaceId: string, wecomUserId: string): Promise<void> {
+  private async handleWorkspaceCommand(
+    workspaceId: string,
+    wecomUserId: string,
+    requestedPage = 1,
+  ): Promise<void> {
     const botId = this.getBotIdForWorkspace(workspaceId);
     if (!botId) return;
     const conn = this.connections.get(botId);
@@ -884,19 +899,43 @@ export class WeComBotService {
     }
 
     const workspaces = await workspaceStore.list();
+    const totalPages = Math.max(1, Math.ceil(workspaces.length / MAX_CARD_OPTIONS));
+    if (requestedPage > totalPages) {
+      await conn.client.sendMessage(wecomUserId, {
+        msgtype: 'markdown',
+        markdown: { content: `工作空间列表只有 ${totalPages} 页，请发送 /workspace 1 重新查看。` },
+      });
+      return;
+    }
+
+    const pageStart = (requestedPage - 1) * MAX_CARD_OPTIONS;
+    const pageWorkspaces = workspaces.slice(pageStart, pageStart + MAX_CARD_OPTIONS);
     const activeWorkspaceId = botService.resolveActiveWorkspace(botId) ?? workspaceId;
     const requestId = randomUUID();
     const card = buildWecomWorkspaceListCard({
       requestId,
       botId,
       taskId: requestId,
-      workspaces: workspaces.map((ws) => ({
+      workspaces: pageWorkspaces.map((ws) => ({
         workspaceId: ws.id,
         name: ws.name,
         isActive: ws.id === activeWorkspaceId,
       })),
     });
     await this.sendTemplateCard(workspaceId, wecomUserId, card);
+
+    if (totalPages > 1) {
+      const navigation = [
+        requestedPage > 1 ? `/workspace ${requestedPage - 1} 查看上一页` : null,
+        requestedPage < totalPages ? `/workspace ${requestedPage + 1} 查看下一页` : null,
+      ].filter((item): item is string => item !== null).join('；');
+      await conn.client.sendMessage(wecomUserId, {
+        msgtype: 'markdown',
+        markdown: {
+          content: `共 ${workspaces.length} 个工作空间，当前第 ${requestedPage}/${totalPages} 页。${navigation}`,
+        },
+      });
+    }
   }
 
   /**

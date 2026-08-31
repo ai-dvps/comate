@@ -2229,6 +2229,30 @@ describe('WeComBotService /workspace command', { concurrency: false }, () => {
     assert.ok(activeOption.text.includes('（当前）'));
   });
 
+  it('/workspace paginates cards with more than 10 workspaces', async () => {
+    const { wsA, bot } = await setupWorkspaces();
+    injectConnection(wsA.id, bot.id);
+
+    for (let i = 3; i <= 21; i++) {
+      const folderPath = path.join(tempDirA, `workspace-${i}`);
+      await fsPromises.mkdir(folderPath);
+      await workspaceStore.create({ name: `Workspace ${i}`, folderPath });
+    }
+
+    await (service as any).handleTextMessage(wsA.id, makeTextFrame('/workspace'));
+
+    assert.strictEqual(sentMessages[0].body.template_card.checkbox.option_list.length, 10);
+    assert.ok(sentMessages[1].body.markdown.content.includes('第 1/3 页'));
+    assert.ok(sentMessages[1].body.markdown.content.includes('/workspace 2'));
+
+    sentMessages = [];
+    await (service as any).handleTextMessage(wsA.id, makeTextFrame('/workspace 3'));
+
+    assert.strictEqual(sentMessages[0].body.template_card.checkbox.option_list.length, 1);
+    assert.ok(sentMessages[1].body.markdown.content.includes('第 3/3 页'));
+    assert.ok(sentMessages[1].body.markdown.content.includes('/workspace 2'));
+  });
+
   it('select_workspace switches the active workspace, updates routing maps, and confirms', async () => {
     const { wsA, wsB, bot } = await setupWorkspaces();
     injectConnection(wsA.id, bot.id);
