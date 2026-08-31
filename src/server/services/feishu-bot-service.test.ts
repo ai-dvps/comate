@@ -10,6 +10,7 @@ import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { botService } from './bot-service.js';
 import { chatService } from './chat-service.js';
 import { feishuUserResolver } from './feishu-user-resolver.js';
+import { wecomBotService } from './wecom-bot-service.js';
 import type { SseEvent } from '../types/message.js';
 
 function sleep(ms: number): Promise<void> {
@@ -89,6 +90,7 @@ describe('FeishuBotService', () => {
   let originalChatServicePushMessage: typeof chatService.pushMessage;
   let originalChatServiceGetRuntimeIfExists: typeof chatService.getRuntimeIfExists;
   let originalFeishuUserResolverResolveOnMessage: typeof feishuUserResolver.resolveOnMessage;
+  let originalWecomUpdateConnectionForBot: typeof wecomBotService.updateConnectionForBot;
   let createdSessions: Array<{ workspaceId: string; name: string; source?: string }>;
   let activeSessions: Map<string, string>;
   let userSessions: Array<{ workspaceId: string; userId: string; sessionId: string }>;
@@ -166,6 +168,7 @@ describe('FeishuBotService', () => {
     originalChatServicePushMessage = chatService.pushMessage.bind(chatService);
     originalChatServiceGetRuntimeIfExists = chatService.getRuntimeIfExists.bind(chatService);
     originalFeishuUserResolverResolveOnMessage = feishuUserResolver.resolveOnMessage.bind(feishuUserResolver);
+    originalWecomUpdateConnectionForBot = wecomBotService.updateConnectionForBot.bind(wecomBotService);
 
     workspaceStore.resetData();
 
@@ -322,6 +325,7 @@ describe('FeishuBotService', () => {
     chatService.pushMessage = originalChatServicePushMessage;
     chatService.getRuntimeIfExists = originalChatServiceGetRuntimeIfExists;
     feishuUserResolver.resolveOnMessage = originalFeishuUserResolverResolveOnMessage;
+    wecomBotService.updateConnectionForBot = originalWecomUpdateConnectionForBot;
   });
 
   describe('auto-create session on first chat message', () => {
@@ -831,6 +835,10 @@ describe('FeishuBotService', () => {
       } as import('../models/workspace.js').Workspace;
       workspaceStore.get = async (workspaceId: string) =>
         workspaceId === targetWorkspace.id ? targetWorkspace : workspace;
+      let wecomRoutingUpdate: { botId: string; workspaceId: string } | null = null;
+      wecomBotService.updateConnectionForBot = async (updatedBotId, workspaceId) => {
+        wecomRoutingUpdate = { botId: updatedBotId, workspaceId };
+      };
 
       const payload = JSON.stringify({ action: 'select_workspace', workspaceId: targetWorkspace.id, botId });
       await (service as unknown as { handleCardAction: (event: unknown) => Promise<void> }).handleCardAction(
@@ -846,6 +854,7 @@ describe('FeishuBotService', () => {
       assert.strictEqual(connection.workspaceId, targetWorkspace.id);
       assert.strictEqual(internals.workspaceIdToBotId.get(targetWorkspace.id), botId);
       assert.strictEqual(botService.getBot(botId)?.activeWorkspaceId, targetWorkspace.id);
+      assert.deepStrictEqual(wecomRoutingUpdate, { botId, workspaceId: targetWorkspace.id });
 
       const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('工作空间已切换')));
