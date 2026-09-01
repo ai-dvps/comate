@@ -167,6 +167,7 @@ export default function DetailDrawer({
             type="button"
             onClick={onPop}
             aria-label={t('back')}
+            title={t('back')}
             className="rounded-md p-1 text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-secondary"
           >
             <ChevronLeft className="size-4" />
@@ -183,6 +184,7 @@ export default function DetailDrawer({
           type="button"
           onClick={handleClose}
           aria-label={t('close')}
+          title={t('close')}
           className="rounded-md p-1.5 text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-secondary"
         >
           <X className="size-4" />

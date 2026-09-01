@@ -66,6 +66,7 @@ export default function UpdateNotification() {
             onClick={dismissUpdate}
             className="p-1 rounded text-text-tertiary hover:text-text-primary transition-colors"
             aria-label={t('close')}
+            title={t('close')}
           >
             <X className="w-3.5 h-3.5" />
           </button>

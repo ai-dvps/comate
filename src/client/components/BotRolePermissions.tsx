@@ -445,6 +445,7 @@ const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissio
                         type="button"
                         onClick={() => handleRemoveRule(index)}
                         aria-label={t('bots.rolePermissions.passlistRemove')}
+                        title={t('bots.rolePermissions.passlistRemove')}
                         className="p-1 text-text-tertiary hover:text-destructive flex-shrink-0"
                       >
                         <X className="w-3.5 h-3.5" />
@@ -654,6 +655,7 @@ const BotRolePermissions = forwardRef<BotRolePermissionsHandle, BotRolePermissio
                       type="button"
                       onClick={() => handleRemoveDisabled(name)}
                       aria-label={t('bots.rolePermissions.skillsEnable')}
+                      title={t('bots.rolePermissions.skillsEnable')}
                       className="p-1 text-text-tertiary hover:text-destructive flex-shrink-0"
                     >
                       <X className="w-3.5 h-3.5" />

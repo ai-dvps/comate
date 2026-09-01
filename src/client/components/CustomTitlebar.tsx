@@ -156,6 +156,7 @@ export default function CustomTitlebar({
             'hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
           )}
           aria-label={leftCollapsed ? t('shell.expandCommandCenter') : t('shell.collapseCommandCenter')}
+          title={leftCollapsed ? t('shell.expandCommandCenter') : t('shell.collapseCommandCenter')}
           aria-expanded={!leftCollapsed}
         >
           {leftCollapsed
@@ -229,6 +230,7 @@ export default function CustomTitlebar({
               onClick={onToggleRight}
               className="group flex h-8 w-8 items-center justify-center rounded-md hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               aria-label={t('shell.expandContext')}
+              title={t('shell.expandContext')}
               aria-expanded="false"
             >
               <PanelRightOpen className="h-4 w-4 text-text-tertiary/70 transition-colors group-hover:text-text-secondary" strokeWidth={1.5} aria-hidden="true" />
@@ -272,6 +274,7 @@ export default function CustomTitlebar({
                       }}
                       className="rounded p-0.5 opacity-0 hover:bg-surface-hover group-hover:opacity-100 focus:opacity-100"
                       aria-label={t('shell.closeTab', { name: tab.name })}
+                      title={t('shell.closeTab', { name: tab.name })}
                     >
                       <X className="h-3 w-3 text-text-tertiary/70 transition-colors group-hover:text-text-secondary" strokeWidth={1.5} aria-hidden="true" />
                     </button>
@@ -287,6 +290,7 @@ export default function CustomTitlebar({
               onClick={onAddTab}
               className="group flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               aria-label={t('shell.addContextTab')}
+              title={t('shell.addContextTab')}
             >
               <Plus className="h-4 w-4 text-text-tertiary/70 transition-colors group-hover:text-text-secondary" strokeWidth={1.5} aria-hidden="true" />
             </button>
@@ -297,6 +301,7 @@ export default function CustomTitlebar({
               onClick={onToggleRight}
               className="group mr-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               aria-label={t('shell.collapseContext')}
+              title={t('shell.collapseContext')}
               aria-expanded="true"
             >
               <PanelRightClose className="h-4 w-4 text-text-tertiary/70 transition-colors group-hover:text-text-secondary" strokeWidth={1.5} aria-hidden="true" />

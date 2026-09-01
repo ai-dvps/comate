@@ -87,6 +87,7 @@ export default function EnterpriseList({
                 type="button"
                 onClick={() => onKeywordChange('')}
                 aria-label={t('skills.enterpriseZone.clearEnterpriseSearch')}
+                title={t('skills.enterpriseZone.clearEnterpriseSearch')}
                 className="absolute right-0 top-0 flex h-10 w-10 items-center justify-center text-text-tertiary hover:text-text-primary"
               >
                 <X className="h-3.5 w-3.5" />
@@ -111,6 +112,7 @@ export default function EnterpriseList({
               onClick={() => onViewModeChange('cards')}
               aria-pressed={viewMode === 'cards'}
               aria-label={t('skills.enterpriseZone.cardView')}
+              title={t('skills.enterpriseZone.cardView')}
               className={`flex w-9 items-center justify-center rounded-lg ${viewMode === 'cards' ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary'}`}
             ><Grid2X2 className="h-3.5 w-3.5" /></button>
             <button
@@ -118,6 +120,7 @@ export default function EnterpriseList({
               onClick={() => onViewModeChange('list')}
               aria-pressed={viewMode === 'list'}
               aria-label={t('skills.enterpriseZone.listView')}
+              title={t('skills.enterpriseZone.listView')}
               className={`flex w-9 items-center justify-center rounded-lg ${viewMode === 'list' ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary'}`}
             ><List className="h-3.5 w-3.5" /></button>
           </div>
@@ -130,7 +133,7 @@ export default function EnterpriseList({
             className="mt-3 flex flex-col gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 sm:flex-row sm:items-center sm:justify-between dark:text-amber-300"
           >
             <span>{t('skills.enterpriseZone.industryErrorHint', { error: industriesError })}</span>
-            <button type="button" onClick={onRetryIndustries} aria-label={t('skills.enterpriseZone.retryIndustryFilters')} className="font-medium underline underline-offset-2">
+            <button type="button" onClick={onRetryIndustries} aria-label={t('skills.enterpriseZone.retryIndustryFilters')} title={t('skills.enterpriseZone.retryIndustryFilters')} className="font-medium underline underline-offset-2">
               {t('skills.enterpriseZone.retryFilters')}
             </button>
           </div>
@@ -163,7 +166,7 @@ export default function EnterpriseList({
             {t(filtered ? 'skills.enterpriseZone.adjustEnterpriseFilters' : 'skills.enterpriseZone.enterpriseComeBack')}
           </p>
           {filtered ? (
-            <button type="button" onClick={onClearFilters} aria-label={t('skills.enterpriseZone.clearEnterpriseFilters')} className="mt-4 rounded-lg border border-border px-3 py-2 text-xs text-text-secondary hover:border-accent/40">
+            <button type="button" onClick={onClearFilters} aria-label={t('skills.enterpriseZone.clearEnterpriseFilters')} title={t('skills.enterpriseZone.clearEnterpriseFilters')} className="mt-4 rounded-lg border border-border px-3 py-2 text-xs text-text-secondary hover:border-accent/40">
               {t('skills.enterpriseZone.clearFilters')}
             </button>
           ) : null}
@@ -220,6 +223,7 @@ export default function EnterpriseList({
               onClick={() => onPageChange(Math.max(1, visiblePage - 1))}
               disabled={visiblePage <= 1 || loading}
               aria-label={t('skills.enterpriseZone.previousEnterprisePage')}
+              title={t('skills.enterpriseZone.previousEnterprisePage')}
               className="inline-flex h-9 items-center gap-1 rounded-lg border border-border px-3 text-xs text-text-secondary disabled:opacity-50"
             ><ChevronLeft className="h-3.5 w-3.5" /> {t('skills.enterpriseZone.previous')}</button>
             <span className="min-w-24 text-center text-xs text-text-tertiary">{t('skills.enterpriseZone.pageOf', { page: visiblePage, totalPages })}</span>
@@ -228,6 +232,7 @@ export default function EnterpriseList({
               onClick={() => onPageChange(Math.min(totalPages, visiblePage + 1))}
               disabled={visiblePage >= totalPages || loading}
               aria-label={t('skills.enterpriseZone.nextEnterprisePage')}
+              title={t('skills.enterpriseZone.nextEnterprisePage')}
               className="inline-flex h-9 items-center gap-1 rounded-lg border border-border px-3 text-xs text-text-secondary disabled:opacity-50"
             >{t('skills.enterpriseZone.next')} <ChevronRight className="h-3.5 w-3.5" /></button>
           </nav>

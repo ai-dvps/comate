@@ -107,6 +107,7 @@ export default function UsageLoginModal() {
             type="button"
             onClick={cancel}
             aria-label={t('providers.usageLogin.cancel', 'Cancel')}
+            title={t('providers.usageLogin.cancel', 'Cancel')}
             className="rounded-md p-1 text-text-tertiary hover:bg-surface-hover hover:text-text-secondary"
           >
             <X className="h-4 w-4" aria-hidden="true" />

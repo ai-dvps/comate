@@ -95,6 +95,7 @@ function Calendar({ value, onSelect, minDate }: CalendarProps) {
           className="rounded-md p-1 text-text-tertiary hover:bg-surface-hover hover:text-text-secondary"
           onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}
           aria-label="previous month"
+          title="previous month"
         >
           <ChevronLeft className="h-4 w-4" />
         </button>
@@ -104,6 +105,7 @@ function Calendar({ value, onSelect, minDate }: CalendarProps) {
           className="rounded-md p-1 text-text-tertiary hover:bg-surface-hover hover:text-text-secondary"
           onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}
           aria-label="next month"
+          title="next month"
         >
           <ChevronRight className="h-4 w-4" />
         </button>
