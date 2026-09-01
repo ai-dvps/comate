@@ -9,6 +9,7 @@ import {
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { botService } from './bot-service.js';
 import { chatService } from './chat-service.js';
+import { feishuCardActionHandler } from './feishu-card-action-handler.js';
 import { feishuUserResolver } from './feishu-user-resolver.js';
 import { wecomBotService } from './wecom-bot-service.js';
 import type { SseEvent } from '../types/message.js';
@@ -646,8 +647,10 @@ describe('FeishuBotService', () => {
       value: string,
       formValue: Record<string, unknown>,
       userId: string = feishuUserId,
+      actionId: string = 'button',
     ): unknown {
       const event = makeActionEvent(value, undefined, userId);
+      (event as Record<string, unknown>).actionId = actionId;
       (event as Record<string, unknown>).raw = {
         raw: {
           action: {
@@ -842,7 +845,7 @@ describe('FeishuBotService', () => {
 
       const payload = JSON.stringify({ action: 'select_workspace', workspaceId: workspace.id, botId });
       await (service as unknown as { handleCardAction: (event: unknown) => Promise<void> }).handleCardAction(
-        makeFormEvent(payload, { workspaceId: targetWorkspace.id }, feishuUserId),
+        makeFormEvent(payload, { workspaceId: targetWorkspace.id }, feishuUserId, 'submit_workspace'),
       );
 
       const internals = service as unknown as {
@@ -860,11 +863,31 @@ describe('FeishuBotService', () => {
       assert.ok(textPosts.some((text) => String(text).includes('工作空间已切换')));
     });
 
+    it('keeps pre-upgrade workspace button callbacks working after deployment', async () => {
+      (feishuCardActionHandler as unknown as { rateLimit: Map<string, number> }).rateLimit.delete(feishuUserId);
+      const targetWorkspace = {
+        ...workspace,
+        id: 'ws-legacy',
+        name: 'Legacy Card Target',
+        settings: {},
+      } as import('../models/workspace.js').Workspace;
+      workspaceStore.get = async (workspaceId: string) =>
+        workspaceId === targetWorkspace.id ? targetWorkspace : workspace;
+
+      const payload = JSON.stringify({ action: 'select_workspace', workspaceId: targetWorkspace.id, botId });
+      await (service as unknown as { handleCardAction: (event: unknown) => Promise<void> }).handleCardAction(
+        makeActionEvent(payload, undefined, feishuUserId),
+      );
+
+      assert.strictEqual(botService.getBot(botId)?.activeWorkspaceId, targetWorkspace.id);
+      assert.ok(getTextPosts().some((text) => String(text).includes('工作空间已切换')));
+    });
+
     it('rejects workspace form submit when workspaceId is missing from form_value', async () => {
       const payload = JSON.stringify({ action: 'select_workspace', workspaceId: workspace.id, botId });
 
       await (service as unknown as { handleCardAction: (event: unknown) => Promise<void> }).handleCardAction(
-        makeFormEvent(payload, {}, feishuUserId),
+        makeFormEvent(payload, {}, feishuUserId, 'submit_workspace'),
       );
 
       const textPosts = getTextPosts();

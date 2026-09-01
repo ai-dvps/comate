@@ -719,7 +719,7 @@ export class FeishuBotService {
       return;
     }
 
-    if (payload.action === 'select_workspace') {
+    if (payload.action === 'select_workspace' && event.actionId === 'submit_workspace') {
       const selectedWorkspaceId = this.resolveWorkspaceId(event);
       if (!selectedWorkspaceId) {
         diagLog('[FeishuBotService] select_workspace missing workspaceId in form_value');
