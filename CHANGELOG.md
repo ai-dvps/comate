@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-09-01
+
+### Changed
+
+- **Feishu workspace switching stays compact at scale** — `/workspace` now uses a single dropdown and confirmation action instead of rendering one button for every workspace, while keeping folder paths visible for disambiguation.
+
 ## [0.4.5] - 2026-08-31
 
 ### Added

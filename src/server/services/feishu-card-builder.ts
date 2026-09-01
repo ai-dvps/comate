@@ -139,26 +139,49 @@ export function buildWorkspaceListCard(
   workspaces: Workspace[],
   activeWorkspaceId?: string,
 ): FeishuCardV2 {
-  const elements: unknown[] = [
-    markdownText('请选择一个工作空间作为当前 Feishu 机器人的绑定目标。'),
-  ];
+  const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
+  const elements: unknown[] = [markdownText(
+    activeWorkspace
+      ? `当前工作空间：**${activeWorkspace.name}**\n\n选择要切换到的工作空间。`
+      : '选择一个工作空间作为当前 Feishu 机器人的绑定目标。',
+  )];
 
   if (workspaces.length === 0) {
     elements.push(plainText('暂无可用的工作空间。'));
     return cardV2(elements);
   }
 
-  for (const workspace of workspaces) {
-    const isActive = workspace.id === activeWorkspaceId;
-    elements.push(
-      plainText(`${workspace.name}  (${workspace.folderPath})${isActive ? ' （当前）' : ''}`),
-      actionButton('选择', isActive ? 'default' : 'primary', {
+  const activeIndex = activeWorkspaceId
+    ? workspaces.findIndex((workspace) => workspace.id === activeWorkspaceId)
+    : -1;
+  const fallbackWorkspaceId = activeWorkspaceId ?? workspaces[0].id;
+  elements.push(formContainer('workspace_form', [
+    selectStatic(
+      'workspaceId',
+      workspaces.map((workspace) => ({
+        text: `${workspace.name}  (${workspace.folderPath})`,
+        value: workspace.id,
+      })),
+      activeIndex >= 0 ? activeIndex : undefined,
+      '请选择工作空间',
+      false,
+      'workspace_select',
+    ),
+    submitButton(
+      '确认切换',
+      'primary',
+      {
         action: 'select_workspace',
         botId,
-        workspaceId: workspace.id,
-      }),
-    );
-  }
+        // Card callbacks require a workspaceId in their static value. The
+        // selected form value replaces this fallback before the action runs.
+        workspaceId: fallbackWorkspaceId,
+      },
+      'submit_workspace',
+      false,
+      'workspace_submit',
+    ),
+  ], 'workspace_form'));
 
   return cardV2(elements);
 }
