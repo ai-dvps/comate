@@ -161,6 +161,7 @@ function LaunchAtLoginToggle() {
           type="button"
           role="switch"
           aria-label={t('general.launchAtLogin')}
+          title={t('general.launchAtLogin')}
           aria-checked={enabled}
           onClick={() => void toggle()}
           disabled={!loaded || pending}

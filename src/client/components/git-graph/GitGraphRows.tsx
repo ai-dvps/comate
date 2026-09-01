@@ -122,6 +122,7 @@ function GitGraphRows({ commits, selectedHash, searchMatches, listRef, rowRefs, 
             role="option"
             aria-selected={selected}
             aria-label={`${commit.subject}, ${commit.authorName}, ${commit.shortHash}${commit.isHead ? ', HEAD' : ''}`}
+            title={`${commit.subject}, ${commit.authorName}, ${commit.shortHash}${commit.isHead ? ', HEAD' : ''}`}
             tabIndex={commit.hash === focusedHash ? 0 : -1}
             data-commit-hash={commit.hash}
             data-lane={lane}

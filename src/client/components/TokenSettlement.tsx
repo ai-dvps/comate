@@ -31,7 +31,7 @@ export default function TokenSettlement({ usage }: { usage: TurnTokenUsage }) {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button type="button" aria-label={label}
+        <button type="button" aria-label={label} title={label}
           className="mt-1.5 inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-[11px] text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent">
           <Coins className="size-3" aria-hidden="true" />
           <span>{t('tokenUsage.turn')} · {prefix}{formatTokenCount(usage.totalTokens)} tokens</span>

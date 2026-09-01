@@ -812,14 +812,14 @@ describe('AgentCommandCenter workspace context menu', () => {
     useToastStore.setState({ toasts: [] })
   })
 
-  it('opens a three-action menu on workspace row right-click and closes on Escape', () => {
+  it('opens a two-action menu on workspace row right-click and closes on Escape', () => {
     renderCenter()
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Comate' }))
 
     expect(screen.getByRole('menu')).toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: 'Edit Workspace' })).toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: 'Open Folder' })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: 'Reload Sessions' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Reload Sessions' })).not.toBeInTheDocument()
 
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
@@ -837,7 +837,7 @@ describe('AgentCommandCenter workspace context menu', () => {
   it('closes the menu after an action fires', () => {
     renderCenter()
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Comate' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Reload Sessions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit Workspace' }))
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 
@@ -876,10 +876,15 @@ describe('AgentCommandCenter workspace context menu', () => {
     })
   })
 
-  it('refetches sessions for the reloaded workspace only', () => {
+  it('places Reload Sessions beside New session and refetches only that workspace', () => {
     renderCenter()
-    fireEvent.contextMenu(screen.getByRole('button', { name: 'Hidden tools' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Reload Sessions' }))
+    const reloadButton = screen.getByRole('button', { name: 'Reload Sessions in Hidden tools' })
+    const newSessionButton = screen.getByRole('button', { name: 'New session in Hidden tools' })
+
+    expect(reloadButton.nextElementSibling).toBe(newSessionButton)
+    expect(reloadButton).toHaveAttribute('title', 'Reload Sessions in Hidden tools')
+    expect(newSessionButton).toHaveAttribute('title', 'New session in Hidden tools')
+    fireEvent.click(reloadButton)
 
     expect(chatState.fetchSessions).toHaveBeenCalledWith('ws-2')
     expect(chatState.fetchSessions).not.toHaveBeenCalledWith('ws-1')

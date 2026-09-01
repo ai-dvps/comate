@@ -259,6 +259,7 @@ export default function TodosPanel({ isOpen, onClose, presentation }: TodosPanel
                     type="button"
                     onClick={clearSearch}
                     aria-label={t('searchClear')}
+                    title={t('searchClear')}
                     className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-text-tertiary hover:text-text-primary transition-colors"
                   >
                     <X className="w-3.5 h-3.5" />
@@ -311,6 +312,7 @@ export default function TodosPanel({ isOpen, onClose, presentation }: TodosPanel
                 onClick={onClose}
                 className="p-1.5 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover"
                 aria-label={t('close')}
+                title={t('close')}
               >
                 <X className="w-4 h-4" />
               </button>
@@ -328,6 +330,7 @@ export default function TodosPanel({ isOpen, onClose, presentation }: TodosPanel
                 onClick={() => useTodoStore.setState({ lastSyncErrors: null })}
                 className="text-text-tertiary hover:text-text-primary text-xs"
                 aria-label={t('close')}
+                title={t('close')}
               >
                 ×
               </button>
@@ -345,6 +348,7 @@ export default function TodosPanel({ isOpen, onClose, presentation }: TodosPanel
                     onClick={handleAdd}
                     className="p-1.5 rounded-md bg-accent text-accent-foreground hover:bg-accent-hover"
                     aria-label={t('add')}
+                    title={t('add')}
                   >
                     <Plus className="w-4 h-4" />
                   </button>

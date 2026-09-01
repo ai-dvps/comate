@@ -76,6 +76,7 @@ export default function PromptImageRail({
                 type="button"
                 className="h-full w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset"
                 aria-label={t('imageInput.preview', { name: image.name })}
+                title={t('imageInput.preview', { name: image.name })}
                 onClick={(event) => {
                   previewTriggerRef.current = event.currentTarget
                   setPreview(image)
@@ -92,6 +93,7 @@ export default function PromptImageRail({
                 type="button"
                 disabled={disabled}
                 aria-label={t('imageInput.remove', { name: image.name })}
+                title={t('imageInput.remove', { name: image.name })}
                 onClick={() => onRemove(image.id)}
                 className="absolute right-1 top-1 rounded-full bg-black/65 p-0.5 text-white opacity-90 hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
               >
@@ -102,6 +104,7 @@ export default function PromptImageRail({
                   type="button"
                   disabled={disabled || index === 0}
                   aria-label={t('imageInput.moveLeft', { name: image.name })}
+                  title={t('imageInput.moveLeft', { name: image.name })}
                   onClick={() => onMove(index, index - 1)}
                   className="rounded bg-black/65 p-0.5 text-white disabled:cursor-not-allowed disabled:opacity-40"
                 >
@@ -111,6 +114,7 @@ export default function PromptImageRail({
                   type="button"
                   disabled={disabled || index === images.length - 1}
                   aria-label={t('imageInput.moveRight', { name: image.name })}
+                  title={t('imageInput.moveRight', { name: image.name })}
                   onClick={() => onMove(index, index + 1)}
                   className="rounded bg-black/65 p-0.5 text-white disabled:cursor-not-allowed disabled:opacity-40"
                 >
@@ -156,6 +160,7 @@ export default function PromptImageRail({
             type="button"
             onClick={closePreview}
             aria-label={t('imageInput.closePreview')}
+            title={t('imageInput.closePreview')}
             className="absolute right-5 top-5 rounded-full bg-black/70 p-2 text-white"
           >
             <X className="h-5 w-5" />

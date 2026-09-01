@@ -44,6 +44,7 @@ export default function SandboxDegradedBanner() {
         type="button"
         onClick={() => setDismissed(true)}
         aria-label={t('sandboxDegraded.dismiss')}
+        title={t('sandboxDegraded.dismiss')}
         className="p-1 text-text-secondary hover:text-text-primary rounded-md transition-colors flex-shrink-0"
       >
         <X className="w-4 h-4" />

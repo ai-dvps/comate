@@ -81,6 +81,7 @@ export default function MessageSearchBar({
             onClick={() => onQueryChange('')}
             className="absolute right-1.5 rounded p-0.5 text-text-tertiary hover:bg-surface-hover hover:text-text-secondary"
             aria-label={t('messageSearchClear')}
+            title={t('messageSearchClear')}
             tabIndex={-1}
           >
             <X className="h-3.5 w-3.5" />
@@ -103,6 +104,7 @@ export default function MessageSearchBar({
           disabled={!canNavigate}
           className="rounded p-1 text-text-secondary hover:bg-surface-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
           aria-label={t('messageSearchPrevious')}
+          title={t('messageSearchPrevious')}
         >
           <ChevronUp className="h-4 w-4" />
         </button>
@@ -112,6 +114,7 @@ export default function MessageSearchBar({
           disabled={!canNavigate}
           className="rounded p-1 text-text-secondary hover:bg-surface-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
           aria-label={t('messageSearchNext')}
+          title={t('messageSearchNext')}
         >
           <ChevronDown className="h-4 w-4" />
         </button>
@@ -120,6 +123,7 @@ export default function MessageSearchBar({
           onClick={onClose}
           className="rounded p-1 text-text-secondary hover:bg-surface-hover hover:text-text-primary"
           aria-label={t('messageSearchClose')}
+          title={t('messageSearchClose')}
         >
           <X className="h-4 w-4" />
         </button>
