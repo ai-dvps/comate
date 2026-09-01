@@ -137,6 +137,7 @@ function ProcessRegionGhost({ region, hasError, onOpen }: ProcessRegionGhostProp
         type="button"
         onClick={onOpen}
         aria-label={ariaLabel}
+        title={ariaLabel}
         className="-mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded text-text-tertiary transition-colors motion-reduce:transition-none hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
       >
         <ChevronDown

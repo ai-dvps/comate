@@ -52,6 +52,9 @@ function AgentSettingsGroup({ backendLabel, children }: { backendLabel: string; 
             aria-label={t(isOpen ? 'backend.collapseSettings' : 'backend.expandSettings', {
               backend: backendLabel,
             })}
+            title={t(isOpen ? 'backend.collapseSettings' : 'backend.expandSettings', {
+              backend: backendLabel,
+            })}
             aria-expanded={isOpen}
             className="flex min-h-9 w-full items-center justify-between gap-3 px-4 py-2 text-xs font-medium text-text-secondary transition-colors hover:bg-surface-hover/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 sm:pl-16 sm:pr-5"
           >
@@ -284,6 +287,7 @@ function CodexAccountSetting() {
           type="button"
           className="rounded-md p-1.5 text-text-tertiary hover:bg-surface-hover hover:text-text-primary disabled:opacity-50"
           aria-label={t('backend.codexRefreshAccount')}
+          title={t('backend.codexRefreshAccount')}
           disabled={loading}
           onClick={() => void fetchAccount()}
         >

@@ -240,6 +240,7 @@ export default function SkillInstallModal({
               onClick={handleCancel}
               className="p-1 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
               aria-label={t('common.cancel', 'Close')}
+              title={t('common.cancel', 'Close')}
             >
               <X className="w-4 h-4" />
             </button>

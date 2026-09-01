@@ -126,6 +126,11 @@ export function StructuredReport({
               ? t('structuredReport.collapse')
               : t('structuredReport.expand')
           }
+          title={
+            expanded
+              ? t('structuredReport.collapse')
+              : t('structuredReport.expand')
+          }
           className={cn(
             'flex min-w-0 items-center gap-2 rounded-sm text-left',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
@@ -145,6 +150,9 @@ export function StructuredReport({
             type="button"
             onClick={onCopy}
             aria-label={
+              copied ? t('structuredReport.copied') : t('structuredReport.copy')
+            }
+            title={
               copied ? t('structuredReport.copied') : t('structuredReport.copy')
             }
             className={cn(

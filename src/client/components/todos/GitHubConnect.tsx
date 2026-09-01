@@ -125,7 +125,7 @@ export default function GitHubConnect({ onClose }: GitHubConnectProps) {
         <header className="flex items-center gap-2 px-4 h-12 border-b border-border sticky top-0 bg-bg">
           <Github className="w-4 h-4 text-text-primary" />
           <h2 className="text-sm font-semibold text-text-primary flex-1">{t('ghTitle')}</h2>
-          <button onClick={onClose} className="p-1 rounded text-text-tertiary hover:text-text-primary hover:bg-surface-hover" aria-label={t('close')}>
+          <button onClick={onClose} className="p-1 rounded text-text-tertiary hover:text-text-primary hover:bg-surface-hover" aria-label={t('close')} title={t('close')}>
             <X className="w-4 h-4" />
           </button>
         </header>
@@ -177,6 +177,7 @@ export default function GitHubConnect({ onClose }: GitHubConnectProps) {
                           onClick={copyUserCode}
                           className="p-2 rounded-md border border-border text-text-secondary hover:bg-surface-hover"
                           aria-label={t('ghCopy')}
+                          title={t('ghCopy')}
                         >
                           {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                         </button>

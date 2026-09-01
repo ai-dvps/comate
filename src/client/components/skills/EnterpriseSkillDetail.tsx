@@ -37,7 +37,7 @@ export default function EnterpriseSkillDetail({
         <button type="button" onClick={onBack} className="hover:text-text-primary">{enterpriseName}</button><span>/</span>
         <span className="truncate text-text-secondary">{detail?.displayName || skillSlug}</span>
       </nav>
-      <button type="button" onClick={onBack} aria-label={t('skills.enterpriseZone.backToEnterpriseSkills')} className="inline-flex items-center gap-1 text-xs text-text-tertiary hover:text-text-primary"><ArrowLeft className="h-3.5 w-3.5" /> {t('skills.enterpriseZone.backToEnterpriseSkills')}</button>
+      <button type="button" onClick={onBack} aria-label={t('skills.enterpriseZone.backToEnterpriseSkills')} title={t('skills.enterpriseZone.backToEnterpriseSkills')} className="inline-flex items-center gap-1 text-xs text-text-tertiary hover:text-text-primary"><ArrowLeft className="h-3.5 w-3.5" /> {t('skills.enterpriseZone.backToEnterpriseSkills')}</button>
       <SkillHubSkillDetail
         detail={detail}
         loading={loading}

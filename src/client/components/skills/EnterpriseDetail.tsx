@@ -77,7 +77,7 @@ export default function EnterpriseDetail({
         <p className="text-sm font-medium text-text-primary">{t('skills.enterpriseZone.profileLoadFailed')}</p>
         <p className="mt-1 text-xs text-text-secondary">{detailError}</p>
         <div className="mt-4 flex justify-center gap-2">
-          <button type="button" onClick={onBack} aria-label={t('skills.enterpriseZone.backToEnterprises')} className="rounded-lg border border-border px-3 py-2 text-xs text-text-secondary">{t('skills.enterpriseZone.back')}</button>
+          <button type="button" onClick={onBack} aria-label={t('skills.enterpriseZone.backToEnterprises')} title={t('skills.enterpriseZone.backToEnterprises')} className="rounded-lg border border-border px-3 py-2 text-xs text-text-secondary">{t('skills.enterpriseZone.back')}</button>
           <button type="button" onClick={onRetryDetail} className="rounded-lg bg-accent px-3 py-2 text-xs text-accent-foreground">{t('skills.enterpriseZone.retryProfile')}</button>
         </div>
       </section>
@@ -95,7 +95,7 @@ export default function EnterpriseDetail({
   return (
     <div className="mx-auto max-w-5xl space-y-4">
       <nav className="flex items-center gap-1.5 text-xs text-text-tertiary" aria-label={t('skills.enterpriseZone.enterpriseBreadcrumb')}>
-        <button type="button" onClick={onBack} aria-label={t('skills.enterpriseZone.backToEnterprises')} className="inline-flex items-center gap-1 hover:text-text-primary">
+        <button type="button" onClick={onBack} aria-label={t('skills.enterpriseZone.backToEnterprises')} title={t('skills.enterpriseZone.backToEnterprises')} className="inline-flex items-center gap-1 hover:text-text-primary">
           <ArrowLeft className="h-3.5 w-3.5" /> {t('skills.enterpriseZone.enterprises')}
         </button>
         <span>/</span>
@@ -145,7 +145,7 @@ export default function EnterpriseDetail({
                 className="h-10 w-full rounded-xl border border-border bg-bg pl-9 pr-9 text-xs text-text-primary outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
               />
               {skillKeyword ? (
-                <button type="button" onClick={() => onSkillKeywordChange('')} aria-label={t('skills.enterpriseZone.clearSkillSearch')} className="absolute right-0 top-0 flex h-10 w-10 items-center justify-center text-text-tertiary hover:text-text-primary">
+                <button type="button" onClick={() => onSkillKeywordChange('')} aria-label={t('skills.enterpriseZone.clearSkillSearch')} title={t('skills.enterpriseZone.clearSkillSearch')} className="absolute right-0 top-0 flex h-10 w-10 items-center justify-center text-text-tertiary hover:text-text-primary">
                   <X className="h-3.5 w-3.5" />
                 </button>
               ) : null}
@@ -184,7 +184,7 @@ export default function EnterpriseDetail({
               {t(filtered ? 'skills.enterpriseZone.adjustSkillSearch' : 'skills.enterpriseZone.skillsComeBack')}
             </p>
             {filtered ? (
-              <button type="button" onClick={() => onSkillKeywordChange('')} aria-label={t('skills.enterpriseZone.clearSkillFilters')} className="mt-4 rounded-lg border border-border px-3 py-2 text-xs text-text-secondary">{t('skills.enterpriseZone.clearSearch')}</button>
+              <button type="button" onClick={() => onSkillKeywordChange('')} aria-label={t('skills.enterpriseZone.clearSkillFilters')} title={t('skills.enterpriseZone.clearSkillFilters')} className="mt-4 rounded-lg border border-border px-3 py-2 text-xs text-text-secondary">{t('skills.enterpriseZone.clearSearch')}</button>
             ) : null}
           </div>
         ) : (
@@ -227,6 +227,7 @@ export default function EnterpriseDetail({
                 onClick={() => onSkillPageChange(Math.max(1, visiblePage - 1))}
                 disabled={visiblePage <= 1 || skillsLoading}
                 aria-label={t('skills.enterpriseZone.previousSkillPage')}
+                title={t('skills.enterpriseZone.previousSkillPage')}
                 className="inline-flex h-9 items-center gap-1 rounded-lg border border-border px-3 text-xs text-text-secondary disabled:opacity-50"
               ><ChevronLeft className="h-3.5 w-3.5" /> {t('skills.enterpriseZone.previous')}</button>
               <span className="min-w-24 text-center text-xs text-text-tertiary">{t('skills.enterpriseZone.pageOf', { page: visiblePage, totalPages })}</span>
@@ -235,6 +236,7 @@ export default function EnterpriseDetail({
                 onClick={() => onSkillPageChange(Math.min(totalPages, visiblePage + 1))}
                 disabled={visiblePage >= totalPages || skillsLoading}
                 aria-label={t('skills.enterpriseZone.nextSkillPage')}
+                title={t('skills.enterpriseZone.nextSkillPage')}
                 className="inline-flex h-9 items-center gap-1 rounded-lg border border-border px-3 text-xs text-text-secondary disabled:opacity-50"
               >{t('skills.enterpriseZone.next')} <ChevronRight className="h-3.5 w-3.5" /></button>
             </nav>

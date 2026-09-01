@@ -134,6 +134,7 @@ export default function TodoRow({ todo, selected, onSelect, onToggle, onDelete, 
           done ? 'bg-accent border-accent text-accent-foreground' : 'border-border hover:border-accent',
         )}
         aria-label={t('toggleDone')}
+        title={t('toggleDone')}
       >
         {done && <Check className="w-2.5 h-2.5" />}
       </button>
@@ -232,6 +233,7 @@ export default function TodoRow({ todo, selected, onSelect, onToggle, onDelete, 
         }}
         className="opacity-0 group-hover:opacity-100 p-1 rounded text-text-tertiary hover:text-destructive transition-opacity flex-shrink-0"
         aria-label={t('delete')}
+        title={t('delete')}
       >
         <X className="w-3.5 h-3.5" />
       </button>

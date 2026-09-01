@@ -82,6 +82,7 @@ function Toggle({ checked, onChange, label }: ToggleProps) {
         type="button"
         onClick={() => onChange(!checked)}
         aria-label={label}
+        title={label}
         className={`relative w-9 h-5 rounded-full transition-colors ${
           checked ? 'bg-accent' : 'bg-border'
         }`}

@@ -292,6 +292,7 @@ export default function BrowserStateBar({ sessionId, onDetach }: BrowserStateBar
               data-testid="browser-detach-button"
               onClick={onDetach}
               aria-label={t('action.openIndependentWindow')}
+              title={t('action.openIndependentWindow')}
               className={cn(
                 'p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors',
                 FOCUS_CLASSES,

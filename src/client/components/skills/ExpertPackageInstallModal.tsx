@@ -64,7 +64,7 @@ export default function ExpertPackageInstallModal({
             <h3 className="text-sm font-semibold text-text-primary">{t('skills.expertPackages.installTitle', { name: detail.displayName })}</h3>
             <p className="mt-0.5 text-[10px] text-text-tertiary">{t('skills.expertPackages.inAppOnly')}</p>
           </div>
-          <button onClick={onClose} disabled={isInstalling} className="rounded-lg p-2 text-text-tertiary hover:bg-surface-hover disabled:opacity-50" aria-label={t('common.cancel')}><X className="h-4 w-4" /></button>
+          <button onClick={onClose} disabled={isInstalling} className="rounded-lg p-2 text-text-tertiary hover:bg-surface-hover disabled:opacity-50" aria-label={t('common.cancel')} title={t('common.cancel')}><X className="h-4 w-4" /></button>
         </header>
 
         <div className="space-y-4 overflow-y-auto p-5">

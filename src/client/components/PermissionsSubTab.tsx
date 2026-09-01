@@ -272,6 +272,7 @@ function CategoryCard({
               type="button"
               onClick={onToggleExpanded}
               aria-label={expanded ? 'collapse' : 'expand'}
+              title={expanded ? 'collapse' : 'expand'}
               className="text-text-tertiary hover:text-text-primary"
             >
               {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}

@@ -141,7 +141,7 @@ export default function ProviderAdvancedCapabilities({ configuration, onChange }
           {configuration.openCode.protocol === 'anthropic'
             ? <input type="number" min={1} value={variant.thinkingBudgetTokens ?? ''} aria-label={t('providers.thinkingBudgetTokens')} onChange={(event) => updateVariant(name, { thinkingBudgetTokens: numberValue(event.target.value) })} className="rounded-md border border-border bg-bg px-2 py-1.5 text-xs sm:col-span-2" />
             : <><input value={variant.reasoningEffort ?? ''} aria-label={t('providers.reasoningEffort')} onChange={(event) => updateVariant(name, { reasoningEffort: event.target.value || undefined })} className="rounded-md border border-border bg-bg px-2 py-1.5 text-xs" /><select value={variant.reasoningSummary ?? ''} aria-label={t('providers.reasoningSummary')} onChange={(event) => updateVariant(name, { reasoningSummary: event.target.value as ProviderOpenCodeVariant['reasoningSummary'] || undefined })} className="rounded-md border border-border bg-bg px-2 py-1.5 text-xs"><option value="">{t('providers.noReasoningSummary')}</option>{['auto', 'concise', 'detailed', 'none'].map((value) => <option key={value}>{value}</option>)}</select></>}
-          <button type="button" onClick={() => updateVariant(name)} aria-label={t('providers.removeVariant')} className="rounded-md p-1.5 text-text-tertiary hover:text-destructive"><Trash2 className="h-4 w-4" /></button>
+          <button type="button" onClick={() => updateVariant(name)} aria-label={t('providers.removeVariant')} title={t('providers.removeVariant')} className="rounded-md p-1.5 text-text-tertiary hover:text-destructive"><Trash2 className="h-4 w-4" /></button>
         </div>)}</div>
       </div>
     </fieldset>

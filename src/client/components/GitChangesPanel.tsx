@@ -655,6 +655,7 @@ function TreeNodeView({
             }}
             className="flex-shrink-0 p-0.5 rounded hover:bg-surface-hover transition-colors"
             aria-label={isExpanded ? t('gitChanges.collapseFolder') : t('gitChanges.expandFolder')}
+            title={isExpanded ? t('gitChanges.collapseFolder') : t('gitChanges.expandFolder')}
           >
             <ChevronRight
               className={cn(

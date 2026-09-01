@@ -58,6 +58,7 @@ export default function GitGraphToolbar({
           className="flex h-7 max-w-44 items-center gap-1 rounded border border-border/80 bg-work px-2 text-[11px] text-text-secondary hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           onClick={() => setFilterOpen((open) => !open)}
           aria-label={t('gitGraph.filterBranches')}
+          title={t('gitGraph.filterBranches')}
           aria-expanded={filterOpen}
         >
           <span className="truncate">{filterLabel}</span>
@@ -106,6 +107,7 @@ export default function GitGraphToolbar({
             onClick={() => onSearchChange('')}
             className="flex h-6 w-6 items-center justify-center text-text-tertiary hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             aria-label={t('gitGraph.clearSearch')}
+            title={t('gitGraph.clearSearch')}
           >
             <X className="h-3 w-3" aria-hidden="true" />
           </button>
@@ -119,19 +121,19 @@ export default function GitGraphToolbar({
               ? t('gitGraph.matchPosition', { current: activeMatch + 1, count: matchCount })
               : t('gitGraph.noLoadedMatches')}
           </span>
-          <button type="button" className="flex h-7 w-7 items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text-primary disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" onClick={onPreviousMatch} disabled={matchCount === 0} aria-label={t('gitGraph.previousMatch')}>
+          <button type="button" className="flex h-7 w-7 items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text-primary disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" onClick={onPreviousMatch} disabled={matchCount === 0} aria-label={t('gitGraph.previousMatch')} title={t('gitGraph.previousMatch')}>
             <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
-          <button type="button" className="flex h-7 w-7 items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text-primary disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" onClick={onNextMatch} disabled={matchCount === 0} aria-label={t('gitGraph.nextMatch')}>
+          <button type="button" className="flex h-7 w-7 items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text-primary disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" onClick={onNextMatch} disabled={matchCount === 0} aria-label={t('gitGraph.nextMatch')} title={t('gitGraph.nextMatch')}>
             <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
         </div>
       ) : null}
 
-      <button type="button" className="flex h-7 w-7 items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" onClick={onLocateHead} aria-label={t('gitGraph.locateHead')}>
+      <button type="button" className="flex h-7 w-7 items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" onClick={onLocateHead} aria-label={t('gitGraph.locateHead')} title={t('gitGraph.locateHead')}>
         <LocateFixed className="h-3.5 w-3.5" aria-hidden="true" />
       </button>
-      <button type="button" className="flex h-7 w-7 items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text-primary disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" onClick={onRefresh} disabled={loading} aria-label={t('gitGraph.refresh')}>
+      <button type="button" className="flex h-7 w-7 items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text-primary disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" onClick={onRefresh} disabled={loading} aria-label={t('gitGraph.refresh')} title={t('gitGraph.refresh')}>
         <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} aria-hidden="true" />
       </button>
       <button
@@ -140,6 +142,7 @@ export default function GitGraphToolbar({
         disabled={loading || !hasMore}
         className="h-7 rounded px-2 text-[11px] text-text-secondary hover:bg-surface-hover disabled:cursor-default disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         aria-label={t('gitGraph.loadMore')}
+        title={t('gitGraph.loadMore')}
       >
         {hasMore ? t('gitGraph.loadMoreShort') : t('gitGraph.allLoaded')}
       </button>

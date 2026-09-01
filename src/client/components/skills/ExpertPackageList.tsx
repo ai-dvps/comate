@@ -49,6 +49,7 @@ export default function ExpertPackageList({
                 onClick={() => onKeywordChange('')}
                 className="absolute right-0 top-0 flex h-10 w-10 items-center justify-center text-text-tertiary hover:text-text-primary"
                 aria-label={t('skills.expertPackages.clearSearch')}
+                title={t('skills.expertPackages.clearSearch')}
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -68,12 +69,14 @@ export default function ExpertPackageList({
               onClick={() => onViewModeChange('cards')}
               aria-pressed={viewMode === 'cards'}
               aria-label={t('skills.expertPackages.cardView')}
+              title={t('skills.expertPackages.cardView')}
               className={`flex w-9 items-center justify-center rounded-lg ${viewMode === 'cards' ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary'}`}
             ><Grid2X2 className="h-3.5 w-3.5" /></button>
             <button
               onClick={() => onViewModeChange('list')}
               aria-pressed={viewMode === 'list'}
               aria-label={t('skills.expertPackages.listView')}
+              title={t('skills.expertPackages.listView')}
               className={`flex w-9 items-center justify-center rounded-lg ${viewMode === 'list' ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary'}`}
             ><List className="h-3.5 w-3.5" /></button>
           </div>

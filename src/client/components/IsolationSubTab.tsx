@@ -64,6 +64,7 @@ export function IsolationSubTab({ isolation, onUpdate }: IsolationSubTabProps) {
                   onClick={() => removeAdminId(id)}
                   className="text-text-tertiary hover:text-destructive"
                   aria-label={t('wecom.isolation.remove')}
+                  title={t('wecom.isolation.remove')}
                 >
                   <Trash2 size={12} />
                 </button>
@@ -111,6 +112,7 @@ export function IsolationSubTab({ isolation, onUpdate }: IsolationSubTabProps) {
                   onClick={() => removeSkill('defaultAllowedSkills', skill)}
                   className="text-text-tertiary hover:text-destructive"
                   aria-label={t('wecom.isolation.remove')}
+                  title={t('wecom.isolation.remove')}
                 >
                   <Trash2 size={12} />
                 </button>
@@ -159,6 +161,7 @@ export function IsolationSubTab({ isolation, onUpdate }: IsolationSubTabProps) {
                   onClick={() => removeSkill('adminAllowedSkills', skill)}
                   className="text-text-tertiary hover:text-destructive"
                   aria-label={t('wecom.isolation.remove')}
+                  title={t('wecom.isolation.remove')}
                 >
                   <Trash2 size={12} />
                 </button>

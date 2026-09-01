@@ -107,6 +107,7 @@ export default function SessionStatusFilterControl({
           type="button"
           disabled={disabled}
           aria-label={ariaLabel}
+          title={ariaLabel}
           aria-expanded={open}
           aria-haspopup="listbox"
           onKeyDown={handleTriggerKeyDown}

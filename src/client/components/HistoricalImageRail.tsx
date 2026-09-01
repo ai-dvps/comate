@@ -58,6 +58,7 @@ export default function HistoricalImageRail({ images }: { images: HistoricalImag
               key={key}
               type="button"
               aria-label={t('imageInput.preview', { name })}
+              title={t('imageInput.preview', { name })}
               onClick={(event) => {
                 previewTriggerRef.current = event.currentTarget
                 setPreview({ image, src })
@@ -93,6 +94,7 @@ export default function HistoricalImageRail({ images }: { images: HistoricalImag
             type="button"
             onClick={closePreview}
             aria-label={t('imageInput.closePreview')}
+            title={t('imageInput.closePreview')}
             className="absolute right-5 top-5 rounded-full bg-black/70 p-2 text-white"
           >
             <X className="h-5 w-5" />

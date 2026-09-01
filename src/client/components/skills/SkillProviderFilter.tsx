@@ -52,6 +52,7 @@ export default function SkillProviderFilter({ onSelectionChange }: SkillProvider
         <button
           type="button"
           aria-label={triggerLabel}
+          title={triggerLabel}
           aria-expanded={open}
           className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border bg-bg px-2.5 text-[11px] font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-accent/20 ${
             unavailableSelected
@@ -113,6 +114,7 @@ export default function SkillProviderFilter({ onSelectionChange }: SkillProvider
                     onClick={() => void retrySearchProvider(provider.id)}
                     disabled={checking}
                     aria-label={t('skills.retryProvider', { provider: provider.label })}
+                    title={t('skills.retryProvider', { provider: provider.label })}
                     className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-bg px-2 text-[10px] font-medium text-text-secondary transition-colors hover:border-text-tertiary hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:opacity-50"
                   >
                     {checking ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}

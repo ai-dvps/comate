@@ -656,6 +656,7 @@ function App() {
               onClick={() => setProviderToastDismissed(true)}
               className="p-0.5 rounded text-text-tertiary hover:text-text-primary transition-colors flex-shrink-0"
               aria-label={t('close')}
+              title={t('close')}
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -679,6 +680,7 @@ function App() {
               onClick={dismissMigrationNotice}
               className="p-0.5 rounded text-text-tertiary hover:text-text-primary transition-colors flex-shrink-0"
               aria-label={t('close')}
+              title={t('close')}
             >
               <X className="w-3.5 h-3.5" />
             </button>

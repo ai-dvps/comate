@@ -41,6 +41,7 @@ function ToastCard({ toast }: { toast: Toast }) {
         size="icon-sm"
         onClick={() => dismissToast(toast.id)}
         aria-label={t('close')}
+        title={t('close')}
         className="flex-shrink-0 -mr-1"
       >
         <X className="w-3.5 h-3.5" />

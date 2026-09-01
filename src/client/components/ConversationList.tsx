@@ -217,6 +217,7 @@ export default function ConversationList({
           type="button"
           variant="outline"
           aria-label={t('scrollToBottom', 'Scroll to bottom')}
+          title={t('scrollToBottom', 'Scroll to bottom')}
         >
           <ArrowDown className="size-4" />
         </Button>

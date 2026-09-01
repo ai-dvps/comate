@@ -1465,6 +1465,7 @@ export default function PromptInput(props: PromptInputProps) {
         <button
           disabled={isInterrupting}
           aria-label={isInterrupting ? t('stopPopover.stopping') : t('stop')}
+          title={isInterrupting ? t('stopPopover.stopping') : t('stop')}
           className="p-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive/80 transition-colors flex items-center gap-1.5 border border-destructive/20"
         >
           {isInterrupting ? (

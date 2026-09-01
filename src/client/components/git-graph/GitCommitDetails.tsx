@@ -48,7 +48,7 @@ export default function GitCommitDetails({ commit, detail, loading, error, onRet
             <code className="break-all">{commit.hash}</code>
           </div>
         </div>
-        <button type="button" className="flex h-7 w-7 flex-none items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" onClick={() => void copySha()} aria-label={copied ? t('gitGraph.shaCopied') : t('gitGraph.copySha')}>
+        <button type="button" className="flex h-7 w-7 flex-none items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" onClick={() => void copySha()} aria-label={copied ? t('gitGraph.shaCopied') : t('gitGraph.copySha')} title={copied ? t('gitGraph.shaCopied') : t('gitGraph.copySha')}>
           <Copy className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
       </header>
@@ -61,7 +61,7 @@ export default function GitCommitDetails({ commit, detail, loading, error, onRet
       ) : error ? (
         <div className="flex min-h-24 flex-1 flex-col items-center justify-center gap-2 px-4 text-center text-xs">
           <p className="text-destructive">{error}</p>
-          <button type="button" className="flex h-7 items-center gap-1 rounded border border-border px-2 text-text-secondary hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" onClick={onRetry} aria-label={t('gitGraph.retryDetails')}>
+          <button type="button" className="flex h-7 items-center gap-1 rounded border border-border px-2 text-text-secondary hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" onClick={onRetry} aria-label={t('gitGraph.retryDetails')} title={t('gitGraph.retryDetails')}>
             <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
             {t('gitGraph.retry')}
           </button>
@@ -100,6 +100,7 @@ export default function GitCommitDetails({ commit, detail, loading, error, onRet
                   onClick={() => onOpenFile(file)}
                   className="flex min-h-8 w-full items-center gap-2 border-b border-border/35 px-3 py-1 text-left hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
                   aria-label={`${file.path}, ${statusLabel(file)}`}
+                  title={`${file.path}, ${statusLabel(file)}`}
                 >
                   <FileCode2 className="h-3.5 w-3.5 flex-none text-text-tertiary" aria-hidden="true" />
                   <span className="min-w-0 flex-1 truncate text-[11px] text-text-primary">

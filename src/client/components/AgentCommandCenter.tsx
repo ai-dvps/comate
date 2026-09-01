@@ -325,8 +325,8 @@ export default function AgentCommandCenter({
     }
   }, [fetchSessions, sessions, workspaces])
 
-  // Single refetch path for the workspace menu's Reload Sessions and U4's
-  // focus refresh: guards against duplicate concurrent fetches per workspace.
+  // Single refetch path for Reload Sessions and the focus refresh: guards
+  // against duplicate concurrent fetches per workspace.
   const refreshWorkspaceSessions = useCallback(async (workspaceId: string) => {
     if (refreshingWorkspacesRef.current.has(workspaceId)) return
     refreshingWorkspacesRef.current.add(workspaceId)
@@ -545,6 +545,7 @@ export default function AgentCommandCenter({
               type="button"
               onClick={action}
               aria-label={label}
+              title={label}
               aria-current={activeDestination === id ? 'page' : undefined}
               className={cn(
                 'flex h-8 w-full items-center justify-start gap-2 rounded-md px-2 text-text-tertiary transition-colors',
@@ -573,6 +574,7 @@ export default function AgentCommandCenter({
               searchOpen && 'bg-surface-active text-text-primary',
             )}
             aria-label={t('shell.search')}
+            title={t('shell.search')}
             aria-expanded={searchOpen}
             aria-controls="command-center-search"
           >
@@ -583,6 +585,7 @@ export default function AgentCommandCenter({
             onClick={onCreateWorkspace}
             className="flex h-6 w-6 items-center justify-center rounded text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             aria-label={t('shell.newWorkspace')}
+            title={t('shell.newWorkspace')}
           >
             <Plus className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
@@ -618,6 +621,7 @@ export default function AgentCommandCenter({
                   onClick={closeSearch}
                   disabled={!searchOpen}
                   aria-label={t('shell.closeSearch')}
+                  title={t('shell.closeSearch')}
                   className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 >
                   <X className="h-3.5 w-3.5" aria-hidden="true" />
@@ -674,6 +678,7 @@ export default function AgentCommandCenter({
                     onClick={() => toggleWorkspace(workspace.id)}
                     className="flex h-7 w-6 items-center justify-center rounded text-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                     aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${workspace.name}`}
+                    title={`${isExpanded ? 'Collapse' : 'Expand'} ${workspace.name}`}
                     aria-expanded={isExpanded}
                   >
                     <ChevronRight
@@ -702,6 +707,15 @@ export default function AgentCommandCenter({
                   {running > 0 ? <span className="text-[9px] tabular-nums text-agent" title="Running">{running}</span> : null}
                   {unread > 0 ? <span className="text-[9px] tabular-nums text-text-secondary" title="Completed unread">{unread}</span> : null}
                   <button
+                    type="button"
+                    onClick={() => void refreshWorkspaceSessions(workspace.id)}
+                    className="flex h-6 w-6 items-center justify-center rounded text-text-tertiary opacity-0 hover:bg-surface-hover hover:text-text-primary group-hover:opacity-100 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-accent"
+                    aria-label={`${tc('workspaceMenu.reloadSessions')} in ${workspace.name}`}
+                    title={`${tc('workspaceMenu.reloadSessions')} in ${workspace.name}`}
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                  <button
                     ref={(button) => {
                       newSessionTriggerRefs.current[workspace.id] = button
                     }}
@@ -713,6 +727,7 @@ export default function AgentCommandCenter({
                     }}
                     className="flex h-6 w-6 items-center justify-center rounded text-text-tertiary opacity-0 hover:bg-surface-hover hover:text-text-primary group-hover:opacity-100 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-accent"
                     aria-label={`New session in ${workspace.name}`}
+                    title={`New session in ${workspace.name}`}
                   >
                     <Plus className="h-3.5 w-3.5" aria-hidden="true" />
                   </button>
@@ -901,6 +916,7 @@ export default function AgentCommandCenter({
                         }))}
                         className="flex h-8 w-full items-center justify-start rounded-md px-2 text-[10px] font-medium text-text-secondary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                         aria-label={t('shell.showMoreSessionsInWorkspace', { workspace: workspace.name })}
+                        title={t('shell.showMoreSessionsInWorkspace', { workspace: workspace.name })}
                       >
                         {t('shell.showMore')}
                       </button>
@@ -923,6 +939,7 @@ export default function AgentCommandCenter({
           onClick={toggleTheme}
           className="flex h-8 w-8 items-center justify-center rounded-md text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           aria-label={t('shell.toggleTheme')}
+          title={t('shell.toggleTheme')}
         >
           {theme === 'dark'
             ? <Sun className="h-4 w-4" aria-hidden="true" />
@@ -938,6 +955,7 @@ export default function AgentCommandCenter({
             userDestinationActive && 'bg-surface-active text-text-primary',
           )}
           aria-label={t('shell.userAccount')}
+          title={t('shell.userAccount')}
           aria-haspopup="menu"
           aria-expanded={userMenuOpen}
         >
@@ -1026,17 +1044,6 @@ export default function AgentCommandCenter({
                 }}
               >
                 <FolderOpen className="h-3.5 w-3.5" aria-hidden="true" />{tc('workspaceMenu.openFolder')}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className={menuItemClass}
-                onClick={() => {
-                  setContextMenu(null)
-                  void refreshWorkspaceSessions(workspace.id)
-                }}
-              >
-                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />{tc('workspaceMenu.reloadSessions')}
               </button>
             </div>
           )

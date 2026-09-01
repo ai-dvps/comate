@@ -100,6 +100,7 @@ export default function BotTabShell({
                 type="button"
                 onClick={handleClear}
                 aria-label={t('bots.clearSearch')}
+                title={t('bots.clearSearch')}
                 className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded text-text-tertiary hover:text-text-primary transition-colors"
               >
                 <X className="w-3.5 h-3.5" />

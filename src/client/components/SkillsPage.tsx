@@ -381,6 +381,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose, presentation 
               onClick={onClose}
               className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
               aria-label={t('common.cancel', 'Close')}
+              title={t('common.cancel', 'Close')}
             >
               <X className="w-4 h-4" />
             </button>
@@ -517,6 +518,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose, presentation 
                               onClick={() => setInstalledSearchInput('')}
                               className="absolute right-0 top-0 flex h-10 w-10 items-center justify-center rounded-lg text-text-tertiary transition-colors hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
                               aria-label={t('skills.clearSearch')}
+                              title={t('skills.clearSearch')}
                             >
                               <X className="h-3.5 w-3.5" />
                             </button>
@@ -527,6 +529,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose, presentation 
                             onClick={() => setInstalledViewMode('cards')}
                             aria-pressed={installedViewMode === 'cards'}
                             aria-label={t('skills.cardView')}
+                            title={t('skills.cardView')}
                             className={`flex w-7 items-center justify-center rounded ${installedViewMode === 'cards' ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary hover:text-text-primary'}`}
                           >
                             <Grid2X2 className="h-3.5 w-3.5" />
@@ -535,6 +538,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose, presentation 
                             onClick={() => setInstalledViewMode('list')}
                             aria-pressed={installedViewMode === 'list'}
                             aria-label={t('skills.listView')}
+                            title={t('skills.listView')}
                             className={`flex w-7 items-center justify-center rounded ${installedViewMode === 'list' ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary hover:text-text-primary'}`}
                           >
                             <List className="h-3.5 w-3.5" />
@@ -660,6 +664,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose, presentation 
                           onClick={clearSearch}
                           className="absolute right-0 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-xl text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
                           aria-label={t('skills.clearSearch')}
+                          title={t('skills.clearSearch')}
                         >
                           <X className="h-4 w-4" />
                         </button>
@@ -670,6 +675,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose, presentation 
                         onClick={() => updateSearchViewMode('cards')}
                         aria-pressed={searchViewMode === 'cards'}
                         aria-label={t('skills.cardView')}
+                        title={t('skills.cardView')}
                         className={`flex w-7 items-center justify-center rounded ${searchViewMode === 'cards' ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary hover:text-text-primary'}`}
                       >
                         <Grid2X2 className="h-3.5 w-3.5" />
@@ -678,6 +684,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose, presentation 
                         onClick={() => updateSearchViewMode('list')}
                         aria-pressed={searchViewMode === 'list'}
                         aria-label={t('skills.listView')}
+                        title={t('skills.listView')}
                         className={`flex w-7 items-center justify-center rounded ${searchViewMode === 'list' ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary hover:text-text-primary'}`}
                       >
                         <List className="h-3.5 w-3.5" />
@@ -755,6 +762,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose, presentation 
                           onClick={clearSearchFilters}
                           className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-2 text-xs text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
                           aria-label={t('skills.clearFilters')}
+                          title={t('skills.clearFilters')}
                         >
                           <RotateCcw className="h-3.5 w-3.5" />
                         </button>
@@ -1032,6 +1040,7 @@ function InstalledSkillCard({
               aria-expanded={childrenExpanded}
               aria-controls={childrenId}
               aria-label={t('skills.expertPackages.includedSkills', { count: childCount })}
+              title={t('skills.expertPackages.includedSkills', { count: childCount })}
               className="flex h-8 w-8 items-center justify-center rounded-md text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-primary"
             >
               <ChevronDown className={`h-3.5 w-3.5 transition-transform ${childrenExpanded ? '' : '-rotate-90'}`} />
@@ -1081,6 +1090,7 @@ function InstalledSkillCard({
             disabled={isSaving || updating}
             className="flex h-8 w-8 items-center justify-center rounded-md text-text-tertiary transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
             aria-label={t('skills.uninstall')}
+            title={t('skills.uninstall')}
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>

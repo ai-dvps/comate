@@ -130,6 +130,7 @@ export default function TaskPanel({ sessionId }: TaskPanelProps) {
         onClick={toggle}
         className="w-full flex items-center gap-2 hover:bg-surface-hover transition-colors rounded-md p-1 -m-1"
         aria-label={t('taskPanelTitle')}
+        title={t('taskPanelTitle')}
       >
         <ListTodo className="size-4 text-text-tertiary shrink-0" />
         <span className="text-xs font-medium text-text-secondary shrink-0">

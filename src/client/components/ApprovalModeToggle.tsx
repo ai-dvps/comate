@@ -117,6 +117,7 @@ export default function ApprovalModeToggle(props: ApprovalModeToggleProps) {
               key={mode}
               role="menuitem"
               aria-label={t(`settings:general.approvalModes.${mode}`)}
+              title={t(`settings:general.approvalModes.${mode}`)}
               onClick={() => handleSelect(mode)}
               className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-xs rounded-md transition-colors ${
                 isActive
