@@ -840,9 +840,9 @@ describe('FeishuBotService', () => {
         wecomRoutingUpdate = { botId: updatedBotId, workspaceId };
       };
 
-      const payload = JSON.stringify({ action: 'select_workspace', workspaceId: targetWorkspace.id, botId });
+      const payload = JSON.stringify({ action: 'select_workspace', workspaceId: workspace.id, botId });
       await (service as unknown as { handleCardAction: (event: unknown) => Promise<void> }).handleCardAction(
-        makeActionEvent(payload, undefined, feishuUserId),
+        makeFormEvent(payload, { workspaceId: targetWorkspace.id }, feishuUserId),
       );
 
       const internals = service as unknown as {
@@ -858,6 +858,18 @@ describe('FeishuBotService', () => {
 
       const textPosts = getTextPosts();
       assert.ok(textPosts.some((text) => String(text).includes('工作空间已切换')));
+    });
+
+    it('rejects workspace form submit when workspaceId is missing from form_value', async () => {
+      const payload = JSON.stringify({ action: 'select_workspace', workspaceId: workspace.id, botId });
+
+      await (service as unknown as { handleCardAction: (event: unknown) => Promise<void> }).handleCardAction(
+        makeFormEvent(payload, {}, feishuUserId),
+      );
+
+      const textPosts = getTextPosts();
+      assert.ok(textPosts.some((text) => String(text).includes('无法解析工作空间选择')));
+      assert.strictEqual(botService.getBot(botId)?.activeWorkspaceId, workspace.id);
     });
 
     it('wraps dispatcher card.action.trigger to return the disabled card response', async () => {

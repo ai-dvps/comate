@@ -719,6 +719,16 @@ export class FeishuBotService {
       return;
     }
 
+    if (payload.action === 'select_workspace') {
+      const selectedWorkspaceId = this.resolveWorkspaceId(event);
+      if (!selectedWorkspaceId) {
+        diagLog('[FeishuBotService] select_workspace missing workspaceId in form_value');
+        await this.safePostActionResponse(event, '无法解析工作空间选择。');
+        return;
+      }
+      payload.workspaceId = selectedWorkspaceId;
+    }
+
     let resolvedSessionId: string | undefined;
     if (payload.action === 'select_session') {
       resolvedSessionId = this.resolveSessionId(payload, event);
@@ -776,6 +786,12 @@ export class FeishuBotService {
     const formValue = this.extractFormValue(event);
     const sessionId = formValue?.sessionId;
     return typeof sessionId === 'string' ? sessionId : undefined;
+  }
+
+  private resolveWorkspaceId(event: ActionEvent): string | undefined {
+    const formValue = this.extractFormValue(event);
+    const workspaceId = formValue?.workspaceId;
+    return typeof workspaceId === 'string' ? workspaceId : undefined;
   }
 
   private extractFormValue(event: ActionEvent): Record<string, unknown> | undefined {
