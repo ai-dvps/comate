@@ -27,7 +27,7 @@ export async function verifyCodexRouteContexts(options: CodexRouteVerificationOp
     const client = new CodexRpcClient(child.stdout, child.stdin);
     try {
       await client.request('initialize', {
-        clientInfo: { name: 'comate-route-verifier', title: 'Comate route verifier', version: '0.4.5' },
+        clientInfo: { name: 'comate-route-verifier', title: 'Comate route verifier', version: '0.4.6' },
         capabilities: null,
       }, 10_000);
       const started = await client.request<{ thread: { id: string } }>('thread/start', {
@@ -143,7 +143,7 @@ async function verifyBasicAppServer(): Promise<void> {
   const client = new CodexRpcClient(child.stdout, child.stdin);
   try {
     await client.request('initialize', {
-      clientInfo: { name: 'comate', title: 'Comate', version: '0.4.5' },
+      clientInfo: { name: 'comate', title: 'Comate', version: '0.4.6' },
       capabilities: null,
     }, 10_000);
     const listed = await client.request<{ data?: unknown[] }>('thread/list', { limit: 1, useStateDbOnly: true });

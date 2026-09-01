@@ -106,22 +106,33 @@ describe('feishu-card-builder v2 helpers', () => {
 });
 
 describe('buildWorkspaceListCard', () => {
-  it('renders a v2 card with one button per workspace', () => {
+  it('renders a compact dropdown form and preselects the active workspace', () => {
     const workspaces: Workspace[] = [
       { id: 'ws-1', name: 'A', folderPath: '/a' } as Workspace,
       { id: 'ws-2', name: 'B', folderPath: '/b' } as Workspace,
     ];
     const card = buildWorkspaceListCard('bot-1', workspaces, 'ws-1');
     assert.strictEqual(card.schema, '2.0');
-    assert.strictEqual(card.body.elements.length, 5);
+    assert.strictEqual(card.body.elements.length, 2);
 
-    const buttons = findAllByTag(card.body.elements, 'button');
-    assert.strictEqual(buttons.length, 2);
+    const form = findByTag(card.body.elements, 'form');
+    assert.ok(form);
+    assert.strictEqual(form.element_id, 'workspace_form');
+    const formElements = form.elements as Array<Record<string, unknown>>;
+    const select = findByTag(formElements, 'select_static');
+    assert.ok(select);
+    assert.strictEqual(select.name, 'workspaceId');
+    assert.strictEqual(select.initial_index, 0);
+    assert.deepStrictEqual(select.options, [
+      { text: { tag: 'plain_text', content: 'A  (/a)' }, value: 'ws-1' },
+      { text: { tag: 'plain_text', content: 'B  (/b)' }, value: 'ws-2' },
+    ]);
+
+    const buttons = findAllByTag(formElements, 'button');
+    assert.strictEqual(buttons.length, 1);
+    assert.strictEqual(buttons[0].form_action_type, 'submit');
     assert.deepStrictEqual(buttons[0].behaviors, [
       { type: 'callback', value: { action: 'select_workspace', botId: 'bot-1', workspaceId: 'ws-1' } },
-    ]);
-    assert.deepStrictEqual(buttons[1].behaviors, [
-      { type: 'callback', value: { action: 'select_workspace', botId: 'bot-1', workspaceId: 'ws-2' } },
     ]);
   });
 
