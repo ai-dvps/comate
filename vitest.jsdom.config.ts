@@ -24,6 +24,7 @@ export default defineProject({
       'src/client/stores/bot-store.test.ts',
       'src/client/stores/git-changes-store.test.ts',
       'src/client/stores/git-graph-store.test.ts',
+      'src/client/stores/git-repository-store.test.ts',
       'src/client/stores/context-tab-store.test.ts',
       'src/client/stores/provider-usage-store.test.ts',
       'src/client/stores/skills-store.test.ts',

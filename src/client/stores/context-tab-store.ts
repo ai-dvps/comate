@@ -8,23 +8,7 @@ import { getApiBase } from '../lib/desktop-api'
 import { wsClient } from '../lib/websocket-client.js'
 import type { WsEventMessage } from '@server/websocket/types'
 import type { GitGraphChangedFile } from './git-graph-store'
-
-type GitGraphUncomparableReason = 'binary' | 'gitlink'
-
-interface GitGraphFileComparison {
-  commitHash: string
-  baseHash: string | null
-  path: string
-  oldPath?: string
-  status: GitGraphChangedFile['status']
-  original: string
-  modified: string
-  isBinary: boolean
-  isTextComparable: boolean
-  uncomparableReason?: GitGraphUncomparableReason
-  truncated: boolean
-  isDeleted: boolean
-}
+import type { GitRepository, GitGraphFileComparison, GitGraphUncomparableReason } from '../../server/models/git-graph'
 
 export interface FileContextTab {
   type: 'file'
@@ -69,6 +53,7 @@ export interface CommitDiffContextTab {
   type: 'commit-diff'
   id: string
   workspaceId: string
+  repository?: GitRepository
   commitHash: string
   baseHash: string | null
   path: string
@@ -165,6 +150,7 @@ export interface ContextTabState extends ContextTabData {
     commitHash: string,
     baseHash: string | null,
     file: GitGraphChangedFile,
+    repository?: GitRepository,
   ) => Promise<void>
   closeTab: (id: string) => void
   /**
@@ -259,8 +245,10 @@ export function commitDiffTabId(
   baseHash: string | null,
   oldPath: string | undefined,
   path: string,
+  repositoryId?: string,
 ): string {
   return `commit-diff:${[
+    ...(repositoryId ? [identityPart(repositoryId)] : []),
     identityPart(commitHash),
     identityPart(baseHash),
     identityPart(oldPath),
@@ -572,9 +560,9 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
     })
   },
 
-  openCommitDiff: async (workspaceId, commitHash, baseHash, file) => {
+  openCommitDiff: async (workspaceId, commitHash, baseHash, file, repository) => {
     if (!workspaceId || !commitHash || !file.path) return
-    const id = commitDiffTabId(commitHash, baseHash, file.oldPath, file.path)
+    const id = commitDiffTabId(commitHash, baseHash, file.oldPath, file.path, repository?.id)
     const existing = get().workspaceTabs[workspaceId]?.tabs.find(
       (tab): tab is CommitDiffContextTab => tab.type === 'commit-diff' && tab.id === id,
     )
@@ -591,6 +579,7 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
       type: 'commit-diff',
       id,
       workspaceId,
+      repository,
       commitHash,
       baseHash,
       path: file.path,
@@ -621,6 +610,7 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
 
     try {
       const params = new URLSearchParams({ path: file.path })
+      if (repository) params.set('repositoryId', repository.id)
       const response = await fetch(
         `/api/workspaces/${workspaceId}/git-graph/${encodeURIComponent(commitHash)}/diff?${params.toString()}`,
         { signal: controller.signal },
@@ -631,8 +621,9 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
         }))
         throw new Error(body.error || `HTTP ${response.status}`)
       }
-      const data = await response.json() as GitGraphFileComparison
+      const data = await response.json() as GitGraphFileComparison & { repositoryId?: string }
       if (abortControllers.get(key) !== controller) return
+      if (repository && data.repositoryId !== repository.id) throw new Error('Repository response mismatch')
       set((state) => {
         const collection = cloneWorkspaceCollection(state, workspaceId)
         collection.tabs = collection.tabs.map((tab) => tab.id === id

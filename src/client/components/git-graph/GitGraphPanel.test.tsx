@@ -4,7 +4,8 @@ import { I18nextProvider } from 'react-i18next'
 import i18n from '../../i18n'
 import { useContextTabStore } from '../../stores/context-tab-store'
 import { useGitGraphStore, type GitGraphCommitDetail, type GitGraphSnapshot } from '../../stores/git-graph-store'
-import GitGraphPanel from './GitGraphPanel'
+import GitGraphPanel, { RepositoryGraph } from './GitGraphPanel'
+import { useGitRepositoryStore } from '../../stores/git-repository-store'
 
 const snapshot: GitGraphSnapshot = {
   capability: {
@@ -67,12 +68,33 @@ function jsonResponse(body: unknown, ok = true): Response {
 function renderPanel() {
   return render(
     <I18nextProvider i18n={i18n}>
-      <GitGraphPanel workspaceId="ws-1" />
+      <RepositoryGraph workspaceId="ws-1" />
     </I18nextProvider>,
   )
 }
 
 describe('GitGraphPanel', () => {
+  it('switches repositories inside one Graph and restores the repository search', async () => {
+    useGitRepositoryStore.getState().reset()
+    global.fetch = vi.fn(async (input) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname.endsWith('/repositories')) return jsonResponse({ repositories: [
+        { id: 'a', name: 'App', relativePath: 'apps/a' }, { id: 'b', name: 'App', relativePath: 'apps/b' },
+      ], done: true, generation: '1', errors: [] })
+      const repositoryId = url.searchParams.get('repositoryId')
+      if (url.pathname.endsWith(snapshot.commits[0].hash)) return jsonResponse({ ...detail, repositoryId })
+      return jsonResponse({ ...snapshot, repositoryId })
+    }) as typeof fetch
+    render(<I18nextProvider i18n={i18n}><GitGraphPanel workspaceId="multi" /></I18nextProvider>)
+    const selector = await screen.findByRole('combobox', { name: 'Repository' })
+    await waitFor(() => expect(selector).toHaveValue('a'))
+    const search = await screen.findByRole('searchbox')
+    fireEvent.change(search, { target: { value: 'Chen' } })
+    fireEvent.change(selector, { target: { value: 'b' } })
+    await waitFor(() => expect(screen.getByRole('searchbox')).toHaveValue(''))
+    fireEvent.change(selector, { target: { value: 'a' } })
+    await waitFor(() => expect(screen.getByRole('searchbox')).toHaveValue('Chen'))
+  })
   beforeEach(() => {
     useGitGraphStore.getState().reset()
     useContextTabStore.getState().reset()
@@ -131,6 +153,24 @@ describe('GitGraphPanel', () => {
     const restoredList = await screen.findByRole('listbox', { name: 'Commit history' })
     await waitFor(() => expect(restoredList.scrollTop).toBe(54))
     expect(screen.getByRole('option', { name: /Merge graph controls/ })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('does not recreate cleared Workspace state during unmount', async () => {
+    const view = renderPanel()
+    await screen.findByRole('listbox', { name: 'Commit history' })
+    useGitGraphStore.getState().clearWorkspace('ws-1')
+    view.unmount()
+    expect(useGitGraphStore.getState().workspaces).toEqual({})
+  })
+
+  it('revalidates cached history on reopen and removes it when the repository is unavailable', async () => {
+    const view = renderPanel()
+    await screen.findByRole('listbox', { name: 'Commit history' })
+    view.unmount()
+    global.fetch = vi.fn(async () => jsonResponse({ error: 'Repository unavailable' }, false)) as typeof fetch
+    renderPanel()
+    await screen.findByText('Repository unavailable')
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
   })
 
   it('supports loaded-window search, branch filters, HEAD location, load more and keyboard selection', async () => {

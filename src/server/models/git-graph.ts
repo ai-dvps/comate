@@ -91,3 +91,15 @@ export interface GitGraphFileComparison {
   truncated: boolean;
   isDeleted: boolean;
 }
+export interface GitRepository {
+  id: string;
+  name: string;
+  relativePath: string;
+}
+
+export interface GitRepositoryCatalog {
+  repositories: GitRepository[];
+  generation: string;
+  done: boolean;
+  errors: { relativePath: string; message: string }[];
+}

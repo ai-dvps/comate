@@ -48,13 +48,7 @@ import {
 
 type AppDestination = ManagementDestination | 'new-chat' | null
 
-interface GitCapability {
-  isGitWorktree: boolean
-  state: 'non-git' | 'unborn' | 'attached' | 'detached'
-  branch: string | null
-  ref: string | null
-  headHash: string | null
-}
+import { observeGitRepositories, useGitRepositoryStore } from './stores/git-repository-store'
 
 function App() {
   const { t } = useTranslation('common')
@@ -123,10 +117,7 @@ function App() {
   }, [requestDestination])
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showContextMenu, setShowContextMenu] = useState(false)
-  const [gitCapability, setGitCapability] = useState<{
-    workspaceId: string
-    value: GitCapability
-  } | null>(null)
+  const gitCatalog = useGitRepositoryStore((state) => activeWorkspaceId ? state.workspaces[activeWorkspaceId] : undefined)
   const [isMac, setIsMac] = useState(false)
   const [isWin, setIsWin] = useState(false)
   const [windowMaximized, setWindowMaximized] = useState(false)
@@ -324,36 +315,8 @@ function App() {
   }, [activeWorkspaceId, activeWorkspaceSessionId])
 
   useEffect(() => {
-    setGitCapability(null)
     if (!activeWorkspaceId) return
-    let controller: AbortController | null = null
-    let generation = 0
-    const probe = async () => {
-      setGitCapability(null)
-      controller?.abort()
-      controller = new AbortController()
-      const requestGeneration = ++generation
-      try {
-        const response = await fetch(`/api/workspaces/${encodeURIComponent(activeWorkspaceId)}/git-ref`, {
-          signal: controller.signal,
-        })
-        if (!response.ok) return
-        const value = await response.json() as GitCapability
-        if (requestGeneration !== generation || typeof value.isGitWorktree !== 'boolean') return
-        setGitCapability({ workspaceId: activeWorkspaceId, value })
-      } catch (error) {
-        if (!(error instanceof Error && error.name === 'AbortError')) {
-          setGitCapability(null)
-        }
-      }
-    }
-    void probe()
-    window.addEventListener('focus', probe)
-    return () => {
-      generation += 1
-      controller?.abort()
-      window.removeEventListener('focus', probe)
-    }
+    return observeGitRepositories(activeWorkspaceId)
   }, [activeWorkspaceId])
 
   useEffect(() => {
@@ -621,8 +584,7 @@ function App() {
             >
               <GitCompare className="h-4 w-4" aria-hidden="true" /> {t('shell.changes')}
             </button>
-            {gitCapability?.workspaceId === activeWorkspaceId
-              && gitCapability.value.isGitWorktree ? (
+            {gitCatalog?.repositories.length ? (
               <button
                 type="button"
                 role="menuitem"
@@ -635,7 +597,13 @@ function App() {
               >
                 <GitBranch className="h-4 w-4" aria-hidden="true" /> {t('shell.gitGraph')}
               </button>
-            ) : null}
+            ) : gitCatalog?.loading ? (
+              <div role="status" className="px-2.5 py-2 text-xs text-text-tertiary">{t('gitGraph.scanningRepositories')}</div>
+            ) : (
+              <button type="button" role="menuitem" className="w-full rounded-md px-2.5 py-2 text-left text-xs text-text-secondary hover:bg-surface-hover" onClick={() => void useGitRepositoryStore.getState().refresh(activeWorkspaceId, true)}>
+                {t('gitGraph.rescanRepositories')}
+              </button>
+            )}
           </div>
         ) : null}
 

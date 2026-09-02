@@ -11,6 +11,7 @@ import CodeMirrorFileViewer from './CodeMirrorFileViewer'
 import CodeMirrorDiffViewer from './CodeMirrorDiffViewer'
 import BrowserPane from './browser/BrowserPane'
 import GitGraphPanel from './git-graph/GitGraphPanel'
+import { useGitRepositoryStore } from '../stores/git-repository-store'
 
 const DEFAULT_NAVIGATOR_WIDTH = 260
 const MIN_NAVIGATOR_WIDTH = 180
@@ -37,6 +38,7 @@ export default function ContextWorkspace({
   const activeTabId = useContextTabStore((state) => state.activeTabId)
   const openWorkspaceIds = useWorkspaceStore((state) => state.openWorkspaceIds)
   const activeTab = openTabs.find((tab) => tab.id === activeTabId) ?? null
+  const gitCatalog = useGitRepositoryStore((state) => state.workspaces[workspaceId])
   const [navigatorWidth, setNavigatorWidth] = useState(DEFAULT_NAVIGATOR_WIDTH)
   const [navigatorCollapsedByTab, setNavigatorCollapsedByTab] = useState<Record<string, boolean>>({})
   const dragRef = useRef<{ move: (event: MouseEvent) => void; up: () => void } | null>(null)
@@ -180,23 +182,39 @@ export default function ContextWorkspace({
       return <GitGraphPanel workspaceId={workspaceId} />
     }
     if (activeTab.type === 'commit-diff') {
+      const repository = activeTab.repository
+      const sourceErrors = repository ? gitCatalog?.errors.filter((error) => error.relativePath === '.'
+        || error.relativePath === repository.relativePath || repository.relativePath.startsWith(`${error.relativePath}/`)) ?? [] : []
+      const unavailable = repository && gitCatalog?.done && !gitCatalog.loading
+        && (sourceErrors.some((error) => error.relativePath === repository.relativePath)
+          || (!sourceErrors.length && !gitCatalog.repositories.some((repo) => repo.id === repository.id)))
+      const withSource = (content: React.ReactNode) => (
+        <div className="flex h-full min-h-0 flex-col">
+          {repository ? <div className="shrink-0 border-b border-border px-3 py-1 text-xs text-text-secondary" title={`${repository.name} — ${repository.relativePath}`}>
+            <p className="truncate">{repository.name} — {repository.relativePath}</p>
+            {unavailable ? <p role="status" className="text-destructive">{t('gitGraph.repositoryUnavailable')}</p> : null}
+            {!unavailable && (sourceErrors.length || gitCatalog?.error) ? <p role="status" className="text-destructive">{gitCatalog?.error || t('gitGraph.partialScan')}</p> : null}
+          </div> : null}
+          <div className="min-h-0 flex-1">{content}</div>
+        </div>
+      )
       if (activeTab.loading) {
-        return (
+        return withSource(
           <div className="flex h-full items-center justify-center gap-2 text-xs text-text-tertiary">
             <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
-            {t('shell.loadingCommitDiff')}
+            {t(unavailable ? 'gitGraph.repositoryUnavailable' : 'shell.loadingCommitDiff')}
           </div>
         )
       }
       if (activeTab.error) {
-        return (
+        return withSource(
           <div className="flex h-full items-center justify-center px-6 text-center text-xs text-destructive">
             {activeTab.error}
           </div>
         )
       }
       if (activeTab.isGitlink) {
-        return (
+        return withSource(
           <div data-testid="gitlink-diff-placeholder" className="flex h-full items-center justify-center px-6 text-center text-xs text-text-tertiary">
             {t('shell.gitlinkDiffUnavailable')}
           </div>
@@ -219,10 +237,10 @@ export default function ContextWorkspace({
         preview: false,
         error: activeTab.error,
       }
-      return (
+      return withSource(
         <CodeMirrorDiffViewer
           tab={diffTab}
-          workspacePath={workspacePath}
+          workspacePath={repository && repository.relativePath !== '.' && workspacePath ? `${workspacePath.replace(/[\\/]$/, '')}/${repository.relativePath}` : workspacePath}
           width={primaryWidth}
         />
       )

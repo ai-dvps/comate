@@ -5,7 +5,7 @@ import { useFilesStore } from './files-store';
 import { useAnalyticsStore } from './analytics-store';
 import { useCommandsStore } from './commands-store';
 import { useWeComQueueStore } from './wecom-queue-store';
-import { useGitGraphStore } from './git-graph-store';
+import { useGitRepositoryStore } from './git-repository-store';
 import { useContextTabStore } from './context-tab-store';
 
 export interface Workspace {
@@ -196,7 +196,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       useAnalyticsStore.getState().clearWorkspace(id);
       useCommandsStore.getState().clearCommandsForWorkspace(id);
       useWeComQueueStore.getState().clearWorkspace(id);
-      useGitGraphStore.getState().clearWorkspace(id);
+      useGitRepositoryStore.getState().clearWorkspace(id);
       useContextTabStore.getState().clearWorkspace(id);
 
       set({

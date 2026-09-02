@@ -5,6 +5,7 @@ import type { ReactNode } from 'react'
 import i18n from '../i18n'
 import ContextWorkspace from './ContextWorkspace'
 import { useContextTabStore } from '../stores/context-tab-store'
+import { useGitRepositoryStore } from '../stores/git-repository-store'
 
 function renderWorkspace(ui: React.ReactElement) {
   return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>)
@@ -35,14 +36,16 @@ vi.mock('./CodeMirrorFileViewer', () => ({
   ),
 }))
 vi.mock('./CodeMirrorDiffViewer', () => ({
-  default: ({ tab, width, headerActions }: {
+  default: ({ tab, width, headerActions, workspacePath }: {
     tab: { path: string; original?: string; modified?: string; isBinary?: boolean; truncated?: boolean; isDeleted?: boolean }
     width: number
+    workspacePath?: string
     headerActions?: ReactNode
   }) => (
     <div
       data-testid="diff-viewer"
       data-width={width}
+      data-workspace-path={workspacePath}
       data-original={tab.original}
       data-modified={tab.modified}
       data-binary={tab.isBinary}
@@ -68,6 +71,7 @@ vi.mock('../stores/workspace-store', () => ({
 
 describe('ContextWorkspace', () => {
   beforeEach(() => {
+    useGitRepositoryStore.getState().reset()
     useContextTabStore.getState().reset()
     useContextTabStore.getState().setContext('ws-1', 'session-a')
     global.fetch = vi.fn(() => Promise.resolve({
@@ -239,6 +243,26 @@ describe('ContextWorkspace', () => {
     expect(screen.getByTestId('diff-viewer')).toHaveAttribute('data-truncated', 'true')
     expect(screen.getByTestId('diff-viewer')).toHaveAttribute('data-deleted', 'true')
     expect(screen.queryByTestId('context-navigator')).not.toBeInTheDocument()
+  })
+
+  it.each(['removed', 'unreadable'])('preserves a %s repository Diff and shows its source status', async (condition) => {
+    const repository = { id: 'repo-a', name: 'App', relativePath: 'apps/a' }
+    global.fetch = vi.fn(async () => new Response(JSON.stringify({
+      repositoryId: repository.id, commitHash: 'commit-a', baseHash: 'base-a', path: 'src/index.ts', status: 'M',
+      original: 'before', modified: 'after', isBinary: false, isTextComparable: true, truncated: false, isDeleted: false,
+    }), { status: 200 }))
+    await useContextTabStore.getState().openCommitDiff('ws-1', 'commit-a', 'base-a', {
+      path: 'src/index.ts', status: 'M', additions: 1, deletions: 1, isBinary: false, isGitlink: false,
+    }, repository)
+    useGitRepositoryStore.setState({ workspaces: { 'ws-1': {
+      repositories: condition === 'removed' ? [] : [repository], selectedId: null, loading: false, done: true, error: null,
+      errors: [{ relativePath: condition === 'removed' ? 'unrelated' : 'apps/a', message: 'Repository is unreadable' }],
+    } } })
+    renderWorkspace(<ContextWorkspace width={600} isCollapsed={false} onWidthChange={vi.fn()} workspaceId="ws-1" workspacePath="/workspace" />)
+    expect(screen.getByText('App — apps/a')).toBeVisible()
+    expect(screen.getByRole('status')).toHaveTextContent(i18n.t('common:gitGraph.repositoryUnavailable'))
+    expect(screen.getByTestId('diff-viewer')).toHaveAttribute('data-workspace-path', '/workspace/apps/a')
+    expect(screen.getByTestId('diff-viewer')).toHaveAttribute('data-modified', 'after')
   })
 
   it('presents Gitlink changes explicitly instead of sending them to a text Diff viewer', async () => {

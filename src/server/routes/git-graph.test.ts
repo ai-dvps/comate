@@ -2,7 +2,7 @@ import '../test-utils/test-env.js';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert';
 import { execFile } from 'child_process';
-import { mkdtemp, rm, writeFile } from 'fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
@@ -84,6 +84,41 @@ describe('git-graph route', { concurrency: false }, () => {
     assert.equal(body.commits.length, 1);
     assert.equal(body.limit, 1);
     assert.equal(body.hasMore, true);
+  });
+
+  it('discovers clean child repositories and binds all reads to a repository ID', async () => {
+    const child = path.join(tempDir, 'child');
+    await mkdir(child);
+    await execFileAsync('git', ['init', '-b', 'main'], { cwd: child });
+    await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: child });
+    await execFileAsync('git', ['config', 'user.name', 'Test'], { cwd: child });
+    await writeFile(path.join(child, 'file.txt'), 'child content\n');
+    await execFileAsync('git', ['add', '.'], { cwd: child });
+    await execFileAsync('git', ['commit', '-m', 'child'], { cwd: child });
+    const workspace = await workspaceStore.create({ name: 'container', folderPath: tempDir });
+    const catalogRes = mockResponse();
+    await (await routeHandler('/repositories'))({ params: { id: workspace.id }, query: {} }, catalogRes);
+    const { repositories } = catalogRes.jsonBody as { repositories: { id: string }[] };
+    assert.equal(repositories.length, 1);
+    const repositoryId = repositories[0].id;
+    const res = mockResponse();
+    await (await routeHandler())({ params: { id: workspace.id }, query: { repositoryId } }, res);
+    assert.equal(res.statusCode, 200);
+    const snapshot = res.jsonBody as { repositoryId: string; commits: { hash: string }[] };
+    assert.equal(snapshot.repositoryId, repositoryId);
+    const hash = snapshot.commits[0].hash;
+    const diff = mockResponse();
+    await (await routeHandler('/:hash/diff'))({ params: { id: workspace.id, hash }, query: { repositoryId, path: 'file.txt' } }, diff);
+    assert.equal((diff.jsonBody as { modified: string }).modified, 'child content\n');
+    const legacy = mockResponse();
+    await (await routeHandler())({ params: { id: workspace.id }, query: {} }, legacy);
+    assert.equal(legacy.statusCode, 409);
+    await rm(path.join(child, '.git'), { recursive: true });
+    for (const route of ['/', '/:hash', '/:hash/diff']) {
+      const unavailable = mockResponse();
+      await (await routeHandler(route))({ params: { id: workspace.id, hash }, query: { repositoryId, path: 'file.txt' } }, unavailable);
+      assert.equal(unavailable.statusCode, 409);
+    }
   });
 
   it('returns commit details and historical file comparisons', async () => {

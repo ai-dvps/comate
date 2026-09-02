@@ -59,6 +59,12 @@
     "gitlinkDiffUnavailable": "This change updates a Git submodule pointer and has no text diff."
   },
   "gitGraph": {
+    "repository": "Repository",
+    "scanningRepositories": "Scanning repositories…",
+    "rescanRepositories": "Rescan repositories",
+    "noRepositories": "No available Git repositories",
+    "partialScan": "Some folders could not be scanned. Available repositories are shown; retry to scan again.",
+    "repositoryUnavailable": "Source repository is unavailable",
     "allBranches": "All branches",
     "selectedBranches_one": "{{count}} branch",
     "selectedBranches_other": "{{count}} branches",

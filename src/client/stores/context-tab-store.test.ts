@@ -319,6 +319,8 @@ describe('context-tab-store', () => {
   })
 
   it('uses commit, base, old path and new path in historical Diff identity', () => {
+    expect(commitDiffTabId('same', null, undefined, 'src/file.ts', 'repo-a'))
+      .not.toBe(commitDiffTabId('same', null, undefined, 'src/file.ts', 'repo-b'))
     expect(commitDiffTabId('commit-a', 'base-a', 'old/file.ts', 'src/file.ts'))
       .not.toBe(commitDiffTabId('commit-b', 'base-a', 'old/file.ts', 'src/file.ts'))
     expect(commitDiffTabId('commit-a', 'base-a', 'old/file.ts', 'src/file.ts'))
@@ -327,6 +329,21 @@ describe('context-tab-store', () => {
       .not.toBe(commitDiffTabId('commit-a', 'base-a', 'older/file.ts', 'src/file.ts'))
     expect(commitDiffTabId('commit-a', 'base-a', 'old/file.ts', 'src/file.ts'))
       .not.toBe(commitDiffTabId('commit-a', 'base-a', 'old/file.ts', 'other/file.ts'))
+  })
+
+  it('keeps identical commit paths in different repositories in separate Diff tabs', async () => {
+    global.fetch = vi.fn(async (input) => {
+      const repositoryId = new URL(String(input), 'http://localhost').searchParams.get('repositoryId')
+      return { ok: true, json: async () => ({ repositoryId, commitHash: 'same', baseHash: null, path: 'src/file.ts', status: 'A', original: '', modified: repositoryId, isTextComparable: true, isBinary: false, truncated: false, isDeleted: false }) } as Response
+    }) as typeof fetch
+    const store = useContextTabStore.getState()
+    store.setContext('ws-1', null)
+    const file = { path: 'src/file.ts', status: 'A' as const, additions: 1, deletions: 0, isBinary: false, isGitlink: false }
+    await store.openCommitDiff('ws-1', 'same', null, file, { id: 'a', name: 'A', relativePath: 'apps/a' })
+    await store.openCommitDiff('ws-1', 'same', null, file, { id: 'b', name: 'B', relativePath: 'apps/b' })
+    expect(useContextTabStore.getState().openTabs).toMatchObject([
+      { repository: { id: 'a' }, modified: 'a' }, { repository: { id: 'b' }, modified: 'b' },
+    ])
   })
 
   it('opens commit-specific Diffs without replacing or resetting Git Graph', async () => {

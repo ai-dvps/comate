@@ -59,6 +59,12 @@
     "gitlinkDiffUnavailable": "此变更更新了 Git 子模块指针，没有可显示的文本差异。"
   },
   "gitGraph": {
+    "repository": "仓库",
+    "scanningRepositories": "正在扫描仓库…",
+    "rescanRepositories": "重新扫描仓库",
+    "noRepositories": "没有可用的 Git 仓库",
+    "partialScan": "部分目录扫描失败，已显示可用仓库，可重试扫描。",
+    "repositoryUnavailable": "来源仓库不可用",
     "allBranches": "所有分支",
     "selectedBranches": "已选 {{count}} 个分支",
     "filterBranches": "筛选分支",

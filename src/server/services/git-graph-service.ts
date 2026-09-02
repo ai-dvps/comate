@@ -448,8 +448,8 @@ export class GitGraphService {
     };
   }
 
-  private async getCommitData(folderPath: string, hash: string): Promise<CachedCommitData> {
-    const cacheKey = `${folderPath}\0${hash.toLowerCase()}`;
+  private async getCommitData(folderPath: string, hash: string, repositoryId = ''): Promise<CachedCommitData> {
+    const cacheKey = `${repositoryId}\0${folderPath}\0${hash.toLowerCase()}`;
     const cached = this.commitCache.get(cacheKey);
     if (cached) {
       this.commitCache.delete(cacheKey);
@@ -471,9 +471,9 @@ export class GitGraphService {
     return data;
   }
 
-  async getCommitDetail(folderPath: string, hash: string): Promise<GitGraphCommitDetail> {
+  async getCommitDetail(folderPath: string, hash: string, repositoryId = ''): Promise<GitGraphCommitDetail> {
     const [{ identity, files, truncated, stats }, allRefs] = await Promise.all([
-      this.getCommitData(folderPath, hash),
+      this.getCommitData(folderPath, hash, repositoryId),
       this.getRefs(folderPath),
     ]);
     return {
@@ -534,9 +534,10 @@ export class GitGraphService {
     folderPath: string,
     hash: string,
     requestedPath: string,
+    repositoryId = '',
   ): Promise<GitGraphFileComparison> {
     validateRelativePath(requestedPath);
-    const { identity, files } = await this.getCommitData(folderPath, hash);
+    const { identity, files } = await this.getCommitData(folderPath, hash, repositoryId);
     const file = files.find((candidate) => candidate.path === requestedPath);
     if (!file) throw new GitGraphValidationError('Path is not changed by this commit in this Workspace');
 

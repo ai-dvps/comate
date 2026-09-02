@@ -1,65 +1,30 @@
 import { create } from 'zustand'
+import type { GitGraphCommit, GitGraphSnapshot, GitGraphCommitDetail } from '../../server/models/git-graph'
+export type { GitGraphCommit, GitGraphSnapshot, GitGraphCommitDetail, GitGraphChangedFile, GitGraphRef, GitGraphRefType, GitRepositoryState } from '../../server/models/git-graph'
 
-export type GitRepositoryState = 'non-git' | 'unborn' | 'attached' | 'detached'
-export type GitGraphRefType = 'local' | 'remote' | 'tag'
-
-export interface GitGraphRef {
-  fullName: string
-  name: string
-  type: GitGraphRefType
-  hash: string
+/** A browser context is scoped to both Workspace and repository, never selection. */
+export function gitGraphKey(workspaceId: string, repositoryId: string): string {
+  return JSON.stringify([workspaceId, repositoryId])
 }
 
-export interface GitGraphCommit {
-  hash: string
-  shortHash: string
-  parents: string[]
-  authorName: string
-  authorEmail: string
-  authoredAt: string
-  subject: string
-  refs: GitGraphRef[]
-  isHead: boolean
-}
-
-export interface GitGraphSnapshot {
-  capability: {
-    isGitWorktree: boolean
-    state: GitRepositoryState
-    branch: string | null
-    ref: string | null
-    headHash: string | null
+function graphTarget(key: string): { workspaceId: string; repositoryId?: string } {
+  if (key.startsWith('[')) {
+    const [workspaceId, repositoryId] = JSON.parse(key) as [string, string]
+    return { workspaceId, repositoryId }
   }
-  refs: GitGraphRef[]
-  commits: GitGraphCommit[]
-  limit: number
-  hasMore: boolean
+  return { workspaceId: key } // Existing root-only callers remain supported.
 }
 
-export interface GitGraphChangedFile {
-  path: string
-  oldPath?: string
-  status: 'A' | 'C' | 'D' | 'M' | 'R' | 'T' | 'U' | 'X'
-  additions: number | null
-  deletions: number | null
-  isBinary: boolean
-  isGitlink: boolean
+function graphUrl(key: string, suffix = '', params = new URLSearchParams()): string {
+  const { workspaceId, repositoryId } = graphTarget(key)
+  if (repositoryId) params.set('repositoryId', repositoryId)
+  const query = params.toString()
+  return `/api/workspaces/${encodeURIComponent(workspaceId)}/git-graph${suffix}${query ? `?${query}` : ''}`
 }
 
-export interface GitGraphCommitDetail {
-  hash: string
-  shortHash: string
-  parents: string[]
-  authorName: string
-  authorEmail: string
-  authoredAt: string
-  subject: string
-  message: string
-  refs: GitGraphRef[]
-  baseHash: string | null
-  files: GitGraphChangedFile[]
-  filesTruncated: boolean
-  stats: { files: number; additions: number; deletions: number }
+function verifyRepository(key: string, body: { repositoryId?: string }): void {
+  const { repositoryId } = graphTarget(key)
+  if (repositoryId && body.repositoryId !== repositoryId) throw new Error('Repository response mismatch')
 }
 
 export const GIT_GRAPH_INITIAL_LIMIT = 100
@@ -95,6 +60,7 @@ interface GitGraphStoreState {
   selectCommit: (workspaceId: string, hash: string | null) => Promise<void>
   setScrollAnchor: (workspaceId: string, anchor: number | null) => void
   clearWorkspace: (workspaceId: string) => void
+  cancel: (key: string) => void
   reset: () => void
 }
 
@@ -198,11 +164,12 @@ export const useGitGraphStore = create<GitGraphStoreState>((set, get) => {
     }))
 
     try {
-      const response = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/git-graph?${params}`, {
+      const response = await fetch(graphUrl(workspaceId, '', params), {
         signal: controller.signal,
       })
-      const snapshot = await responseJson<GitGraphSnapshot>(response)
-      if (snapshotGenerations.get(workspaceId) !== generation) return
+      const snapshot = await responseJson<GitGraphSnapshot & { repositoryId?: string }>(response)
+      if (snapshotControllers.get(workspaceId) !== controller || snapshotGenerations.get(workspaceId) !== generation) return
+      verifyRepository(workspaceId, snapshot)
 
       const beforeUpdate = workspaceState(get(), workspaceId)
       const nextSelection = reconciledSelection(snapshot, beforeUpdate.selectedCommitHash)
@@ -230,11 +197,13 @@ export const useGitGraphStore = create<GitGraphStoreState>((set, get) => {
         }
       })
     } catch (error) {
-      if (snapshotGenerations.get(workspaceId) !== generation) return
+      if (snapshotControllers.get(workspaceId) !== controller || snapshotGenerations.get(workspaceId) !== generation) return
       if (error instanceof Error && error.name === 'AbortError') return
       updateWorkspace(set, workspaceId, (workspace) => ({
         ...workspace,
         snapshotLoading: false,
+        snapshot: null,
+        detail: null,
         snapshotError: errorMessage(error, 'Failed to load Git graph'),
       }))
     } finally {
@@ -334,11 +303,12 @@ export const useGitGraphStore = create<GitGraphStoreState>((set, get) => {
 
       try {
         const response = await fetch(
-          `/api/workspaces/${encodeURIComponent(workspaceId)}/git-graph/${encodeURIComponent(hash)}`,
+          graphUrl(workspaceId, `/${encodeURIComponent(hash)}`),
           { signal: controller.signal },
         )
-        const detail = await responseJson<GitGraphCommitDetail>(response)
-        if (detailGenerations.get(workspaceId) !== generation) return
+        const detail = await responseJson<GitGraphCommitDetail & { repositoryId?: string }>(response)
+        if (detailControllers.get(workspaceId) !== controller || detailGenerations.get(workspaceId) !== generation) return
+        verifyRepository(workspaceId, detail)
         updateWorkspace(set, workspaceId, (workspace) => ({
           ...workspace,
           detail,
@@ -346,7 +316,7 @@ export const useGitGraphStore = create<GitGraphStoreState>((set, get) => {
           detailError: null,
         }))
       } catch (error) {
-        if (detailGenerations.get(workspaceId) !== generation) return
+        if (detailControllers.get(workspaceId) !== controller || detailGenerations.get(workspaceId) !== generation) return
         if (error instanceof Error && error.name === 'AbortError') return
         updateWorkspace(set, workspaceId, (workspace) => ({
           ...workspace,
@@ -364,16 +334,26 @@ export const useGitGraphStore = create<GitGraphStoreState>((set, get) => {
       updateWorkspace(set, workspaceId, (workspace) => ({ ...workspace, scrollAnchor }))
     },
 
-    clearWorkspace: (workspaceId) => {
+    cancel: (workspaceId) => {
       snapshotControllers.get(workspaceId)?.abort()
       detailControllers.get(workspaceId)?.abort()
       snapshotControllers.delete(workspaceId)
       detailControllers.delete(workspaceId)
+      if (get().workspaces[workspaceId]) updateWorkspace(set, workspaceId, (state) => ({ ...state, snapshotLoading: false, detailLoading: false }))
+    },
+
+    clearWorkspace: (workspaceId) => {
+      const keys = Object.keys(get().workspaces).filter((key) => key === workspaceId || graphTarget(key).workspaceId === workspaceId)
+      for (const key of keys) get().cancel(key)
+      for (const key of keys) {
+        snapshotGenerations.delete(key)
+        detailGenerations.delete(key)
+      }
       snapshotGenerations.delete(workspaceId)
       detailGenerations.delete(workspaceId)
       set((state) => {
         const workspaces = { ...state.workspaces }
-        delete workspaces[workspaceId]
+        for (const key of keys) delete workspaces[key]
         return { workspaces }
       })
     },

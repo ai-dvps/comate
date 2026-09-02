@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useGitGraphStore } from './git-graph-store'
+import { gitGraphKey, useGitGraphStore } from './git-graph-store'
 import type { GitGraphCommit, GitGraphCommitDetail, GitGraphSnapshot } from './git-graph-store'
 
 function commit(hash: string, options: Partial<GitGraphCommit> = {}): GitGraphCommit {
@@ -47,6 +47,32 @@ describe('git-graph-store', () => {
   beforeEach(() => {
     useGitGraphStore.getState().reset()
     vi.restoreAllMocks()
+  })
+
+  it('binds requests and browsing state to repositories within one workspace', async () => {
+    global.fetch = vi.fn((input) => {
+      const id = new URL(String(input), 'http://localhost').searchParams.get('repositoryId')
+      return Promise.resolve(response({ ...snapshot([commit(id!)]), repositoryId: id }))
+    }) as typeof fetch
+    const a = gitGraphKey('ws', 'a')
+    const b = gitGraphKey('ws', 'b')
+    await useGitGraphStore.getState().open(a)
+    await useGitGraphStore.getState().open(b)
+    useGitGraphStore.getState().setSearchText(a, 'Ada')
+    useGitGraphStore.getState().setScrollAnchor(a, 42)
+    expect(useGitGraphStore.getState().workspaces[a].selectedCommitHash).toBe('a')
+    expect(useGitGraphStore.getState().workspaces[b].searchText).toBe('')
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('/workspaces/ws/git-graph?')
+    useGitGraphStore.getState().clearWorkspace('ws')
+    expect(useGitGraphStore.getState().workspaces).toEqual({})
+  })
+
+  it('rejects a response from a different repository', async () => {
+    global.fetch = vi.fn().mockResolvedValue(response({ ...snapshot([commit('wrong')]), repositoryId: 'b' }))
+    const a = gitGraphKey('ws', 'a')
+    await useGitGraphStore.getState().open(a)
+    expect(useGitGraphStore.getState().workspaces[a].snapshot).toBeNull()
+    expect(useGitGraphStore.getState().workspaces[a].snapshotError).toBeTruthy()
   })
 
   it('isolates workspace filters, selections, anchors, and results', async () => {
