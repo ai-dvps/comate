@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { useGitRepositoryStore } from '../stores/git-repository-store'
 import { act, fireEvent, render, cleanup, screen, waitFor } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import App from '../App'
@@ -275,6 +276,7 @@ function renderWithI18n(ui: React.ReactElement) {
 describe('App layout', () => {
   beforeEach(async () => {
     cleanup()
+    useGitRepositoryStore.getState().reset()
     vi.clearAllMocks()
     mockWorkspaceStore.openWorkspace.mockReset()
     mockWorkspaceStore.activeWorkspaceId = null
@@ -637,14 +639,14 @@ describe('App layout', () => {
     expect(queryByTestId('git-diff-panel')).not.toBeInTheDocument()
   })
 
-  it('offers Git Graph only when the structured capability reports a Git worktree', async () => {
+  it('offers Git Graph for a clean child repository in a container Workspace', async () => {
     mockWorkspaceStore.activeWorkspaceId = 'ws1'
     mockWorkspaceStore.openWorkspaceIds = ['ws1']
     mockWorkspaceStore.workspaces = [{ id: 'ws1', name: 'Test', folderPath: '/tmp' }]
     vi.mocked(global.fetch).mockImplementation((input) => Promise.resolve({
       ok: true,
-      json: () => Promise.resolve(String(input).endsWith('/git-ref')
-        ? { isGitWorktree: true, state: 'unborn', branch: 'main', ref: 'main', headHash: null }
+      json: () => Promise.resolve(String(input).endsWith('/git-graph/repositories')
+        ? { repositories: [{ id: 'child', name: 'Child', relativePath: 'apps/child' }], done: true, generation: '1', errors: [] }
         : {}),
     } as Response))
 
@@ -657,14 +659,14 @@ describe('App layout', () => {
     expect(mockContextTabStore.openGitGraph).toHaveBeenCalledWith('ws1')
   })
 
-  it('omits Git Graph when the active Workspace is not a Git worktree', async () => {
+  it('omits Git Graph and offers a rescan when no repositories are available', async () => {
     mockWorkspaceStore.activeWorkspaceId = 'ws1'
     mockWorkspaceStore.openWorkspaceIds = ['ws1']
     mockWorkspaceStore.workspaces = [{ id: 'ws1', name: 'Test', folderPath: '/tmp' }]
     vi.mocked(global.fetch).mockImplementation((input) => Promise.resolve({
       ok: true,
-      json: () => Promise.resolve(String(input).endsWith('/git-ref')
-        ? { isGitWorktree: false, state: 'non-git', branch: null, ref: null, headHash: null }
+      json: () => Promise.resolve(String(input).endsWith('/git-graph/repositories')
+        ? { repositories: [], done: true, generation: '1', errors: [] }
         : {}),
     } as Response))
 
@@ -672,11 +674,12 @@ describe('App layout', () => {
     await screen.findByTestId('chat-panel')
     fireEvent.click(screen.getByRole('button', { name: 'Add context tab' }))
     await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
-      '/api/workspaces/ws1/git-ref',
+      '/api/workspaces/ws1/git-graph/repositories',
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     ))
 
     expect(screen.queryByRole('menuitem', { name: 'Git Graph' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('menuitem', { name: 'Rescan repositories' })).toBeVisible()
   })
 
   it('collapses an auto-expanded right panel on the first click when no Session is open', async () => {

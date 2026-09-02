@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Browse multiple repositories in one Git Graph** — Workspaces discover nested repositories, initialized submodules and linked worktrees. Switch repositories without losing filters, search or scroll position; historical Diff tabs retain their original repository and show its location.
+
 ## [0.4.6] - 2026-09-01
 
 ### Changed
