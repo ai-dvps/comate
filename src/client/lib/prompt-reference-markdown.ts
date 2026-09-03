@@ -9,6 +9,41 @@ import { scanPromptReferences } from './prompt-references'
 const REFERENCE_EXCLUDED_TAGS = new Set(['a', 'code', 'kbd', 'pre', 'samp'])
 const HIGHLIGHT_EXCLUDED_TAGS = new Set(['code', 'kbd', 'pre', 'samp'])
 
+type SourcePoint = NonNullable<Text['position']>['start']
+
+function advancePoint(point: SourcePoint, value: string): SourcePoint {
+  let line = point.line
+  let column = point.column
+  for (const character of value) {
+    if (character === '\n') {
+      line += 1
+      column = 1
+    } else {
+      column += 1
+    }
+  }
+  return {
+    line,
+    column,
+    offset: point.offset === undefined ? undefined : point.offset + value.length,
+  }
+}
+
+function sliceText(text: Text, start: number, end = text.value.length): Text {
+  const value = text.value.slice(start, end)
+  if (!text.position) return { type: 'text', value }
+
+  const startPoint = advancePoint(text.position.start, text.value.slice(0, start))
+  return {
+    type: 'text',
+    value,
+    position: {
+      start: startPoint,
+      end: advancePoint(startPoint, value),
+    },
+  }
+}
+
 function createReferenceChip(
   reference: ReturnType<typeof scanPromptReferences>[number],
   sourceOffset: number | undefined,
@@ -49,13 +84,13 @@ function projectTextReferences(text: Text): RootContent[] {
   let cursor = 0
   for (const reference of references) {
     if (reference.start > cursor) {
-      children.push({ type: 'text', value: text.value.slice(cursor, reference.start) })
+      children.push(sliceText(text, cursor, reference.start))
     }
     children.push(createReferenceChip(reference, text.position?.start.offset))
     cursor = reference.end
   }
   if (cursor < text.value.length) {
-    children.push({ type: 'text', value: text.value.slice(cursor) })
+    children.push(sliceText(text, cursor))
   }
   return children
 }

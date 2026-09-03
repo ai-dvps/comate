@@ -7,6 +7,9 @@ import MessageList from './MessageList'
 import i18n from '../i18n'
 import type { ChatMessage } from '../types/message'
 import type { ChatSession } from '../stores/chat-store'
+import { rehypePromptSearchHighlights } from '../lib/prompt-reference-markdown'
+
+let streamdownProps: { rehypePlugins?: unknown[] } | undefined
 
 function renderWithI18n(ui: React.ReactElement) {
   return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>)
@@ -72,7 +75,11 @@ vi.mock('../hooks/use-app-settings', () => ({
 }))
 
 vi.mock('streamdown', () => ({
-  Streamdown: ({ children }: { children: string }) => <div>{children}</div>,
+  defaultRehypePlugins: {},
+  Streamdown: ({ children, rehypePlugins }: { children: string; rehypePlugins?: unknown[] }) => {
+    streamdownProps = { rehypePlugins }
+    return <div>{children}</div>
+  },
 }))
 
 const noop = () => {}
@@ -84,6 +91,7 @@ describe('MessageList search integration', () => {
     mockStore.messages = {}
     mockStore.domCache = {}
     mockStore.autoApprovedTools = {}
+    streamdownProps = undefined
     cleanup()
   })
 
@@ -104,8 +112,12 @@ describe('MessageList search integration', () => {
       />,
     )
 
-    const active = document.querySelector('[data-search-active="true"]')
-    expect(active).toHaveTextContent('world')
+    const searchPlugin = (streamdownProps?.rehypePlugins as unknown[][] | undefined)
+      ?.find((plugin) => Array.isArray(plugin) && plugin[0] === rehypePromptSearchHighlights)
+    expect(searchPlugin?.[0]).toBe(rehypePromptSearchHighlights)
+    expect(searchPlugin?.[1]).toEqual({
+      ranges: [{ start: 6, end: 11, isActive: true }],
+    })
   })
 
   it('renders slash-command meta message with timestamp', () => {

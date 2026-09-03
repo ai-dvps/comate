@@ -13,6 +13,13 @@ function transform(tree: Root) {
   return tree
 }
 
+function highlight(tree: Root, ranges: Array<{ start: number; end: number; isActive: boolean }>) {
+  const transformer = rehypePromptSearchHighlights.call({} as never, { ranges })
+  if (typeof transformer !== 'function') throw new Error('Expected transformer')
+  transformer(tree, {} as never, () => {})
+  return tree
+}
+
 describe('rehypePromptReferenceChips', () => {
   it('projects prompt skills and files into the same chip shape as the composer', () => {
     const tree = transform({
@@ -96,11 +103,7 @@ describe('rehypePromptReferenceChips', () => {
       }],
     }
 
-    const transformer = rehypePromptSearchHighlights.call({} as never, {
-      ranges: [{ start: 3, end: 9, isActive: true }],
-    })
-    if (typeof transformer !== 'function') throw new Error('Expected transformer')
-    transformer(tree, {} as never, () => {})
+    highlight(tree, [{ start: 3, end: 9, isActive: true }])
 
     const heading = tree.children[0]
     if (!heading || heading.type !== 'element') throw new Error('Expected heading')
@@ -111,5 +114,41 @@ describe('rehypePromptReferenceChips', () => {
       properties: { dataSearchActive: 'true' },
       children: [{ type: 'text', value: 'Review' }],
     }])
+  })
+
+  it('preserves source positions for search matches beside a reference chip', () => {
+    const tree = highlight(transform({
+      type: 'root',
+      children: [{
+        type: 'element',
+        tagName: 'p',
+        properties: {},
+        children: [{
+          type: 'text',
+          value: 'Run /review after',
+          position: {
+            start: { line: 1, column: 1, offset: 0 },
+            end: { line: 1, column: 18, offset: 17 },
+          },
+        }],
+      }],
+    }), [{ start: 12, end: 17, isActive: true }])
+
+    const paragraph = tree.children[0]
+    if (!paragraph || paragraph.type !== 'element') throw new Error('Expected paragraph')
+    expect(paragraph.children).toMatchObject([
+      { type: 'text', value: 'Run ' },
+      { type: 'element', properties: { dataPromptReferenceChip: 'true' } },
+      {
+        type: 'text',
+        value: ' ',
+      },
+      {
+        type: 'element',
+        tagName: 'mark',
+        properties: { dataSearchActive: 'true' },
+        children: [{ type: 'text', value: 'after' }],
+      },
+    ])
   })
 })
