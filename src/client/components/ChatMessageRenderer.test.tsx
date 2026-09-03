@@ -7,8 +7,13 @@ import ChatMessageRenderer, {
 } from './ChatMessageRenderer'
 import type { MessageSearchMatch } from '../hooks/useMessageSearch'
 import type { WorkflowState } from '../types/message'
+import {
+  rehypePromptReferenceChips,
+  rehypePromptSearchHighlights,
+} from '../lib/prompt-reference-markdown'
 
 const openUrlMock = vi.fn()
+let streamdownProps: Record<string, unknown> | undefined
 
 vi.mock('../lib/open-url', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/open-url')>()
@@ -19,7 +24,9 @@ vi.mock('../lib/open-url', async (importOriginal) => {
 })
 
 vi.mock('streamdown', () => ({
-  Streamdown: ({ children, components }: { children: string; components?: Record<string, unknown> }) => {
+  defaultRehypePlugins: {},
+  Streamdown: ({ children, components, rehypePlugins }: { children: string; components?: Record<string, unknown>; rehypePlugins?: unknown[] }) => {
+    streamdownProps = { children, components, rehypePlugins }
     const Anchor = components?.a as React.ComponentType<{ href?: string; children?: React.ReactNode }> | undefined
     if (Anchor && /https?:\/\//.test(children)) {
       return (
@@ -153,8 +160,21 @@ describe('ChatMessageRenderer search highlights', () => {
     ]
     render(<ChatMessageRenderer {...baseProps} message={message} searchMatches={matches} currentMatch={matches[0]} />)
 
-    const active = document.querySelector('[data-search-active="true"]')
-    expect(active).toHaveTextContent('world')
+    const searchPlugin = (streamdownProps?.rehypePlugins as unknown[][] | undefined)
+      ?.find((plugin) => Array.isArray(plugin) && plugin[0] === rehypePromptSearchHighlights)
+    expect(searchPlugin?.[0]).toBe(rehypePromptSearchHighlights)
+    expect(searchPlugin?.[1]).toEqual({
+      ranges: [{ start: 6, end: 11, isActive: true }],
+    })
+  })
+
+  it('renders user messages through the Markdown path with prompt-reference chips', () => {
+    const message = makeTextMessage('## Review\n\n/review @src/client/App.tsx', 'user')
+    render(<ChatMessageRenderer {...baseProps} message={message} />)
+
+    expect(document.body).toHaveTextContent('/review @src/client/App.tsx')
+    expect(streamdownProps?.rehypePlugins).toContain(rehypePromptReferenceChips)
+    expect(streamdownProps?.components).toHaveProperty('a')
   })
 
   it('renders inline highlights for system text', () => {
@@ -295,8 +315,9 @@ describe('ChatMessageRenderer URL modifier-click', () => {
     ]
     render(<ChatMessageRenderer {...baseProps} message={message} searchMatches={matches} currentMatch={matches[0]} />)
 
-    const active = document.querySelector('[data-search-active="true"]')
-    expect(active).toHaveTextContent('https://example.com')
+    const searchPlugin = (streamdownProps?.rehypePlugins as unknown[][] | undefined)
+      ?.find((plugin) => Array.isArray(plugin) && plugin[0] === rehypePromptSearchHighlights)
+    expect(searchPlugin?.[0]).toBe(rehypePromptSearchHighlights)
   })
 })
 

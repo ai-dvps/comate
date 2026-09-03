@@ -58,6 +58,7 @@ vi.mock('../stores/chat-store', () => ({
 }))
 
 vi.mock('streamdown', () => ({
+  defaultRehypePlugins: {},
   Streamdown: ({ children }: { children: string }) => <div>{children}</div>,
 }))
 

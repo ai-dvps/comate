@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { ComponentProps } from 'react'
 
 import { cn } from '../ui/utils'
@@ -8,6 +8,7 @@ const COMPACTABLE_MAX_HEIGHT_PX = 192
 
 export type CompactableContainerProps = ComponentProps<'div'> & {
   compactHeight?: number
+  fadeWhenCollapsed?: boolean
   alwaysShowToggle?: boolean
   alwaysExpanded?: boolean
   forceExpanded?: boolean
@@ -21,6 +22,7 @@ export const CompactableContainer = ({
   className,
   children,
   compactHeight = COMPACTABLE_MAX_HEIGHT_PX,
+  fadeWhenCollapsed = false,
   alwaysShowToggle = false,
   alwaysExpanded = false,
   forceExpanded = false,
@@ -33,6 +35,8 @@ export const CompactableContainer = ({
   const [expanded, setExpanded] = useState(false)
   const [overflows, setOverflows] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
+  const contentId = useId()
+  const isExpanded = alwaysExpanded || expanded
 
   useEffect(() => {
     if (forceExpanded) {
@@ -68,9 +72,14 @@ export const CompactableContainer = ({
       {...props}
     >
       <div
+        id={contentId}
         className="overflow-hidden"
+        onFocusCapture={fadeWhenCollapsed ? () => setExpanded(true) : undefined}
         style={{
-          maxHeight: alwaysExpanded || expanded ? undefined : `${compactHeight}px`,
+          maxHeight: isExpanded ? undefined : `${compactHeight}px`,
+          maskImage: fadeWhenCollapsed && overflows && !isExpanded
+            ? 'linear-gradient(to bottom, black calc(100% - 40px), transparent)'
+            : undefined,
         }}
       >
         <div ref={contentRef}>{children}</div>
@@ -81,6 +90,7 @@ export const CompactableContainer = ({
           onClick={() => setExpanded((v) => !v)}
           className="w-full flex items-center justify-start gap-1 px-3 py-1.5 text-[11px] text-text-tertiary hover:text-text-secondary hover:bg-surface-hover/30 transition-colors"
           aria-expanded={expanded}
+          aria-controls={contentId}
         >
           {expanded ? (
             <>

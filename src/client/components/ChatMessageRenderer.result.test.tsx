@@ -8,6 +8,7 @@ import type { RenderableMessage, RenderablePart } from './chat-message-adapter'
 import i18n from '../i18n'
 
 vi.mock('streamdown', () => ({
+  defaultRehypePlugins: {},
   Streamdown: ({ children }: { children: string }) => <div>{children}</div>,
 }))
 

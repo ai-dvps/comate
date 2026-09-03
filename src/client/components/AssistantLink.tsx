@@ -5,6 +5,7 @@ import { openUrlInBrowser } from '../lib/open-url'
 interface AnchorProps extends React.AnchorHTMLAttributes<HTMLAnchorElement> {
   href?: string
   children?: React.ReactNode
+  modifierOnly?: boolean
 }
 
 /**
@@ -14,15 +15,25 @@ interface AnchorProps extends React.AnchorHTMLAttributes<HTMLAnchorElement> {
  * modifier-click (Ctrl/Cmd) to open the URL in the system default browser via
  * the Tauri `open_url` command.
  */
-function AssistantLink({ href, children, className, ...props }: AnchorProps) {
+function AssistantLink({
+  href,
+  children,
+  className,
+  modifierOnly = false,
+  ...props
+}: AnchorProps) {
   const handleClick = useCallback(
     (event: React.MouseEvent<HTMLAnchorElement>) => {
-      if (!href || (!event.ctrlKey && !event.metaKey)) return
-      event.preventDefault()
-      event.stopPropagation()
-      void openUrlInBrowser(href)
+      if (!href) return
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault()
+        event.stopPropagation()
+        void openUrlInBrowser(href)
+        return
+      }
+      if (modifierOnly) event.preventDefault()
     },
-    [href],
+    [href, modifierOnly],
   )
 
   return (
