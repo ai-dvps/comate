@@ -15,7 +15,7 @@ export default class Send extends BaseCommand {
       required: true,
     }),
     'session-id': Flags.string({
-      description: 'Claude session ID (defaults to CLAUDE_SESSION_ID env var)',
+      description: 'Comate session ID (COMATE_SESSION_ID, with CLAUDE_SESSION_ID fallback)',
       required: false,
     }),
     'msg-type': Flags.string({
@@ -37,10 +37,10 @@ export default class Send extends BaseCommand {
       );
     }
 
-    const sessionId = flags['session-id'] || process.env.CLAUDE_SESSION_ID;
+    const sessionId = flags['session-id'] || process.env.COMATE_SESSION_ID || process.env.CLAUDE_SESSION_ID;
     if (!sessionId) {
       this.error(
-        'Missing session ID. Provide --session-id or set the CLAUDE_SESSION_ID environment variable.',
+        'Missing session ID. Provide --session-id or set the COMATE_SESSION_ID environment variable.',
         { exit: 1 }
       );
     }

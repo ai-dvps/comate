@@ -1,3 +1,4 @@
+import { buildSkillsCli } from './build-skills-cli.js';
 import { execFileSync, execSync } from 'child_process';
 import {
   chmodSync,
@@ -415,6 +416,21 @@ async function build() {
     }
   }
 
+  // Skills CLI uses the pinned upstream implementation with no ambient Node dependency.
+  const skillsCliDir = join(resourcesDir, 'skills-cli');
+  mkdirSync(skillsCliDir, { recursive: true });
+  const skillsBundle = join(skillsCliDir, 'bundle.cjs');
+  await buildSkillsCli(skillsBundle);
+  cpSync(join(rootDir, 'src/server/vendor/vercel-skills/ThirdPartyNoticeText.txt'), join(skillsCliDir, 'ThirdPartyNoticeText.txt'));
+  for (const triple of cliTriples) {
+    const commandDir = join(skillsCliDir, triple);
+    mkdirSync(commandDir, { recursive: true });
+    const command = join(commandDir, triple.includes('windows') ? 'comate-skills.exe' : 'comate-skills');
+    run(`npx pkg ${skillsBundle} --targets ${getSidecarPkgTarget(triple)} --output ${command} --no-bytecode --public`);
+  }
+  const skillsVersion = execFileSync(comateCommand, ['skills', '--version'], { env: { PATH: '' }, encoding: 'utf8' }).trim();
+  if (skillsVersion !== 'comate-skills/1.5.11') throw new Error(`Skills CLI smoke failed: ${skillsVersion}`);
+
   // 7. Copy ripgrep binary to resources/
   console.log('\n--- Copying ripgrep binary ---');
   const rgBinaryName = platform === 'win32' ? 'rg.exe' : 'rg';
@@ -485,19 +501,12 @@ async function build() {
     );
   }
 
-  // 9. Copy built-in Claude Code marketplace to resources/
-  console.log('\n--- Copying built-in Claude Code marketplace ---');
-  const marketplaceSource = join(rootDir, 'claude-code-plugin');
-  const marketplaceDest = join(resourcesDir, 'claude-code-plugin');
-  if (existsSync(marketplaceSource)) {
-    if (existsSync(marketplaceDest)) {
-      rmSync(marketplaceDest, { recursive: true, force: true });
-    }
-    cpSync(marketplaceSource, marketplaceDest, { recursive: true, force: true });
-    console.log(`Copied to ${marketplaceDest}`);
-  } else {
-    console.warn(`Warning: Built-in marketplace not found at ${marketplaceSource}`);
-  }
+  // Standard Skills are app-owned resources; never install into user plugin caches.
+  const skillsDest = join(resourcesDir, 'skills');
+  if (existsSync(skillsDest)) rmSync(skillsDest, { recursive: true, force: true });
+  cpSync(join(rootDir, 'skills'), skillsDest, { recursive: true, dereference: true });
+  const legacyMarketplace = join(resourcesDir, 'claude-code-plugin');
+  if (existsSync(legacyMarketplace)) rmSync(legacyMarketplace, { recursive: true, force: true });
 
   // 10. Whole-tree resource audit (KTD-13): the dangling-symlink and
   // non-ASCII-path gates run once here, at the end of resource staging, over

@@ -1,3 +1,7 @@
+import { sessionSkillOptions } from './session-skills.js';
+import { permittedSkills } from './skill-input.js';
+import { resolveSkillsCliPath } from '../utils/resolve-skills-cli.js';
+import { appendSystemPrompt, getBuiltinSkills, skillCatalogPrompt, resolveBuiltinSkillsRoot, builtinSkillRoots } from './builtin-skills.js';
 import { spawn } from 'child_process';
 import { createHash, randomUUID, type UUID } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
@@ -1923,6 +1927,7 @@ export class ChatService {
       const driver = backend === 'codex'
         ? new CodexBackendDriver({
             directory: normalizeWindowsPath(workspace.folderPath),
+            env: options.env,
             backendSessionId: session.backendSessionId,
             ...codexSettings,
             ...(providerResolution.source !== 'native' ? {
@@ -2661,7 +2666,7 @@ export class ChatService {
       const seenPlugins = new Set<string>();
 
       for (const plugin of enabledPlugins) {
-        if (seenPlugins.has(plugin.id)) continue;
+        if ((plugin.id === 'wecom' && plugin.source === 'comate-built-in') || plugin.id === 'wecom@comate-built-in' || seenPlugins.has(plugin.id)) continue;
         seenPlugins.add(plugin.id);
 
         const cachePath = pluginSettingsService.resolvePluginCachePath(plugin.id);
@@ -2769,6 +2774,7 @@ export class ChatService {
   ): Promise<import('@anthropic-ai/claude-agent-sdk').Options> {
     const claudeSettings = loadClaudeSettings();
     let { env } = buildClaudeEnv(claudeSettings);
+    env.COMATE_SESSION_ID = session.id;
 
     // One scheduling system (KTD-3): Claude Code's built-in session-scoped
     // cron (CronCreate/CronList/CronDelete and /loop) lives in the project's
@@ -2795,6 +2801,7 @@ export class ChatService {
     // never carry a broker token or the Comate CLI trio, and eligible sessions
     // mint their own token below.
     delete env[SESSION_TOKEN_ENV];
+    delete env[WECOM_CONTEXT_FILE_ENV];
     if (!browserEligible) {
       delete env.COMATE_CLI_PATH;
       delete env.COMATE_SERVER_URL;
@@ -2970,6 +2977,7 @@ export class ChatService {
       settings: {
         env: settingsEnv,
         fastMode,
+        enabledPlugins: { 'wecom@comate-built-in': false },
         ...(outputStyle !== undefined && { outputStyle }),
       },
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
@@ -3325,6 +3333,8 @@ export class ChatService {
                 settingsEnv,
                 providerEnv: claudeConfig.customEnvVars,
                 childEnv: env,
+                builtinSkillsRoot: resolveBuiltinSkillsRoot(),
+                builtinSkillsCliPath: resolveSkillsCliPath(),
                 wecomEnabled: channel === 'wecom' && (channelSettings.wecom?.enabled ?? false),
               },
             );
@@ -4197,6 +4207,20 @@ export class ChatService {
       options.resume = session.id;
     }
 
+    const builtinNames = sessionSkillOptions(session).env?.COMATE_BUILTIN_SKILLS?.split(',') ?? [];
+    const skillBackend: BackendId = session.backend === 'codex' || session.backend === 'opencode' ? session.backend : 'claude';
+    const builtinSkills = permittedSkills(getBuiltinSkills().filter(skill => builtinNames.includes(skill.name))
+      .map(skill => ({ ...skill, scope: 'builtin' as const, backends: [skillBackend] as BackendId[] })), skillBackend, options);
+    if (options.env) {
+      options.env.COMATE_BUILTIN_SKILLS = builtinSkills.map((skill) => skill.name).join(',');
+      options.env.COMATE_SKILLS_CLI_PATH = resolveSkillsCliPath();
+      options.env.COMATE_SKILL_ISOLATED = isBotSession ? '1' : '0';
+    }
+    if (!isBotSession) {
+      const hosts = builtinSkillRoots(builtinSkills.map(skill => skill.name)).map(root => path.dirname(path.dirname(root)));
+      options.additionalDirectories = [...new Set([...(options.additionalDirectories ?? []), ...hosts])];
+    }
+    options.systemPrompt = appendSystemPrompt(options.systemPrompt, skillCatalogPrompt(builtinSkills));
     return options;
   }
 

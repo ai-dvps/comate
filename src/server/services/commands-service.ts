@@ -1,3 +1,4 @@
+import { skillRoots } from './skill-inventory.js';
 import os from 'node:os';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
@@ -48,6 +49,13 @@ export class CommandsService {
   private inflight = new Map<string, Promise<CachedCommandList>>();
   private watchers = new Map<string, FSWatcher>();
   private providerGeneration = 0;
+  private skillVersions = new Map<string, number>();
+  private invalidationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  watchSkills(folderPath: string): number {
+    this.attachWatcher(folderPath, [path.join(folderPath, '.claude/commands'), ...skillRoots(folderPath).map(root => root.path)]);
+    return this.skillVersions.get(folderPath) ?? 0;
+  }
 
   constructor(sdkClient: SdkClient = new SdkClient()) {
     this.sdkClient = sdkClient;
@@ -63,9 +71,10 @@ export class CommandsService {
     if (pending) return pending;
 
     const generation = this.providerGeneration;
+    const skillVersion = this.skillVersions.get(key) ?? 0;
     const promise = (async () => {
       const state = await this.populate(workspace);
-      if (generation === this.providerGeneration) this.cache.set(key, state);
+      if (generation === this.providerGeneration && skillVersion === (this.skillVersions.get(key) ?? 0)) this.cache.set(key, state);
       return this.deriveList(state);
     })();
 
@@ -89,6 +98,9 @@ export class CommandsService {
       closing.push(watcher.close());
     }
     this.watchers.clear();
+    for (const timer of this.invalidationTimers.values()) clearTimeout(timer);
+    this.invalidationTimers.clear();
+    this.skillVersions.clear();
     this.cache.clear();
     this.inflight.clear();
     await Promise.all(closing);
@@ -171,13 +183,23 @@ export class CommandsService {
   private attachWatcher(folderPath: string, paths: string[]): void {
     if (this.watchers.has(folderPath)) return;
 
-    const watcher = watch(paths, {
+    const watcher = watch([...paths, ...skillRoots(folderPath).map(root => root.path)], {
       ignoreInitial: true,
-      persistent: true,
-      depth: 4,
+      persistent: false,
+      depth: 12,
       awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
     });
 
+    watcher.on('all', () => {
+      const pending = this.invalidationTimers.get(folderPath);
+      if (pending) clearTimeout(pending);
+      this.invalidationTimers.set(folderPath, setTimeout(() => {
+        this.cache.delete(folderPath);
+        this.inflight.delete(folderPath);
+        this.skillVersions.set(folderPath, (this.skillVersions.get(folderPath) ?? 0) + 1);
+        this.invalidationTimers.delete(folderPath);
+      }, 100));
+    });
     watcher.on('add', (filePath) => {
       this.handleFsUpsert(folderPath, filePath).catch((err) => {
         console.error(`[commands] watcher add failed for ${filePath}:`, err);
@@ -247,7 +269,7 @@ export class CommandsService {
       ];
 
       for (const plugin of enabledPlugins) {
-        if (seenPlugins.has(plugin.id)) continue;
+        if ((plugin.id === 'wecom' && plugin.source === 'comate-built-in') || seenPlugins.has(plugin.id)) continue;
         seenPlugins.add(plugin.id);
 
         const cachePath = pluginSettingsService.resolvePluginCachePath(plugin.id);
@@ -350,6 +372,7 @@ export class CommandsService {
     return {
       cwd: workspace.folderPath,
       env,
+      settings: { enabledPlugins: { 'wecom@comate-built-in': false } },
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
       model: resolved.model,
       pathToClaudeCodeExecutable: claudePath,

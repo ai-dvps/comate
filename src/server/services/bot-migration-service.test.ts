@@ -7,7 +7,6 @@ import { join } from 'path';
 import { SqliteStore } from '../storage/sqlite-store.js';
 import { BotMigrationService } from './bot-migration-service.js';
 import { PluginSettingsService } from './plugin-settings-service.js';
-import { BuiltinPluginService } from './builtin-plugin-service.js';
 import type { CreateWorkspaceInput } from '../models/workspace.js';
 
 function createWorkspaceInput(overrides: Partial<CreateWorkspaceInput> = {}): CreateWorkspaceInput {
@@ -51,7 +50,7 @@ describe('BotMigrationService', { concurrency: false }, () => {
   beforeEach(() => {
     store = new SqliteStore(':memory:');
     store.resetData();
-    service = new BotMigrationService(store, new BuiltinPluginService(store));
+    service = new BotMigrationService(store);
   });
 
   it('reports that migration has not run initially', () => {
@@ -183,7 +182,7 @@ describe('BotMigrationService', { concurrency: false }, () => {
     assert.strictEqual(unchanged?.settings.wecomBotId, 'wecom-bot-1');
   });
 
-  it('backfills the wecom plugin for migrated WeCom workspaces', async () => {
+  it('migrates WeCom workspaces without installing a plugin', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'comate-migration-plugin-test-'));
     const originalHome = process.env.HOME;
     const originalTauriResourceDir = process.env.TAURI_RESOURCE_DIR;
@@ -210,9 +209,7 @@ describe('BotMigrationService', { concurrency: false }, () => {
 
       const settingsService = new PluginSettingsService();
       const plugin = settingsService.getInstalledPlugin('project', 'wecom', workspacePath);
-      assert.ok(plugin);
-      assert.strictEqual(plugin!.id, 'wecom');
-      assert.strictEqual(plugin!.enabled, true);
+      assert.strictEqual(plugin, null);
 
       const migratedWorkspace = await store.get(workspace.id);
       assert.ok(migratedWorkspace);

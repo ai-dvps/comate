@@ -4,7 +4,6 @@ import { chatService } from '../services/chat-service.js';
 import { wecomBotService } from '../services/wecom-bot-service.js';
 import { feishuBotService } from '../services/feishu-bot-service.js';
 import { BotMigrationService } from '../services/bot-migration-service.js';
-import { builtinPluginService } from '../services/builtin-plugin-service.js';
 import { createDefaultBotRolePolicy } from '../services/bot-access-policy.js';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { ENCRYPTED_CHANNEL_KEYS } from '../models/bot.js';
@@ -604,7 +603,6 @@ router.post('/migrate', async (req, res) => {
 
 async function connectEnabledChannels(bot: import('../models/bot.js').Bot): Promise<void> {
   const channelSettings = botService.getChannelSettings(bot.id);
-  await ensureWecomPluginForBot(bot.id, channelSettings);
   if (channelSettings.wecom?.enabled) {
     await wecomBotService.connectBot({ ...bot, channelSettings } as import('../models/bot.js').Bot & { channelSettings: import('../models/bot.js').BotChannelSettings }).catch((err) => {
       console.error(`[BotsRoute] WeCom connect failed for bot ${bot.id}:`, err);
@@ -661,7 +659,6 @@ async function reconcileChannelConnections(
   preUpdateActiveWorkspaceId?: string | null,
 ): Promise<void> {
   const channelSettings = botService.getChannelSettings(bot.id);
-  await ensureWecomPluginForBot(bot.id, channelSettings);
 
   for (const channelKey of ['wecom', 'feishu'] as BotChannelKey[]) {
     const service = channelKey === 'wecom' ? wecomBotService : feishuBotService;
@@ -690,24 +687,6 @@ async function reconcileChannelConnections(
     } else {
       service.disconnectChannel(bot.id, channelKey);
     }
-  }
-}
-
-async function ensureWecomPluginForBot(botId: string, channelSettings: import('../models/bot.js').BotChannelSettings): Promise<void> {
-  if (!channelSettings.wecom?.enabled) {
-    return;
-  }
-  const bot = botService.getBot(botId);
-  if (!bot?.activeWorkspaceId) {
-    return;
-  }
-  try {
-    await builtinPluginService.ensureWecomPluginInstalled(bot.activeWorkspaceId);
-  } catch (err) {
-    console.error(
-      `[BotsRoute] Failed to ensure wecom plugin for bot ${botId} / workspace ${bot.activeWorkspaceId}:`,
-      err,
-    );
   }
 }
 

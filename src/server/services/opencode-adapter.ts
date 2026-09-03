@@ -1,3 +1,5 @@
+import { withSkillReferences } from './skill-input.js';
+import { builtinSkillRoots, systemPromptText } from './builtin-skills.js';
 /**
  * OpencodeBackendDriver — the opencode agent runtime behind the session
  * core's BackendDriver seam (KTD-1, U4).
@@ -368,6 +370,7 @@ export class OpencodeBackendDriver implements BackendDriver {
       {
         config: {
           ...buildServeConfig({ ...this.deps.provider, model: this.modelID }, this.deps.providerName),
+          skills: { paths: builtinSkillRoots(options.env?.COMATE_BUILTIN_SKILLS?.split(',')) },
           mcp: browserEnabled
             ? buildSessionMcpConfig(this.deps.comateSessionId, taskToken!)
             : {},
@@ -676,7 +679,7 @@ export class OpencodeBackendDriver implements BackendDriver {
 
   private consumeInput(input: AsyncIterable<SDKUserMessage>, options: Options): void {
     void (async () => {
-      for await (const message of input) {
+      for await (const message of withSkillReferences(input, { ...options, cwd: this.deps.directory }, 'opencode')) {
         if (this.closed) return;
         const parts = extractPromptParts(message);
         if (parts.length === 0) continue;
@@ -726,7 +729,7 @@ export class OpencodeBackendDriver implements BackendDriver {
     }
 
     const system =
-      typeof options.systemPrompt === 'string' ? options.systemPrompt : undefined;
+      systemPromptText(options.systemPrompt);
     const response = await opencodeFetch(this.instance, `/session/${this.backendSessionId}/prompt_async`, {
       method: 'POST',
       body: JSON.stringify({

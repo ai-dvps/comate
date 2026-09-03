@@ -5,6 +5,7 @@ import type { BackendId } from './backend-store';
 
 export interface SlashCommandDto {
   name: string;
+  displayName?: string;
   description: string;
   argumentHint?: string;
   aliases?: string[];
@@ -32,6 +33,7 @@ interface CommandsState {
 // concurrent fetch calls from independent components mounting on the
 // same tick. Mirrors the chat-store pattern.
 const inflight = new Map<string, Promise<void>>();
+const generations = new Map<string, number>();
 
 const API_BASE = '/api';
 const COMMAND_REFRESH_TIMEOUT_MS = 10_000;
@@ -62,6 +64,7 @@ async function doFetch(
   scope?: CommandScope,
 ): Promise<void> {
   const scopeKey = commandScopeKey(workspaceId, scope);
+  const generation = generations.get(scopeKey) ?? 0;
   set((state) => ({
     loadingByWorkspace: { ...state.loadingByWorkspace, [scopeKey]: true },
     errorByWorkspace: { ...state.errorByWorkspace, [scopeKey]: undefined },
@@ -75,6 +78,7 @@ async function doFetch(
       throw new Error(body.error || `HTTP ${res.status}`);
     }
     const data = (await res.json()) as CachedCommandList;
+    if ((generations.get(scopeKey) ?? 0) !== generation) return;
     set((state) => ({
       commandsByWorkspace: {
         ...state.commandsByWorkspace,
@@ -90,6 +94,7 @@ async function doFetch(
       loadingByWorkspace: { ...state.loadingByWorkspace, [scopeKey]: false },
     }));
   } catch (err) {
+    if ((generations.get(scopeKey) ?? 0) !== generation) return;
     const message = err instanceof Error ? err.message : i18next.t('common:failedToFetchCommands', 'Failed to fetch commands');
     set((state) => ({
       errorByWorkspace: { ...state.errorByWorkspace, [scopeKey]: message },
@@ -112,7 +117,7 @@ export const useCommandsStore = create<CommandsState>((set, get) => ({
     if (existing) return existing;
 
     const promise = doFetch(set, workspaceId, scope).finally(() => {
-      inflight.delete(scopeKey);
+      if (inflight.get(scopeKey) === promise) inflight.delete(scopeKey);
     });
     inflight.set(scopeKey, promise);
     return promise;
@@ -131,7 +136,7 @@ export const useCommandsStore = create<CommandsState>((set, get) => ({
       return { commandsByWorkspace: next };
     });
     const promise = doFetch(set, workspaceId, scope).finally(() => {
-      inflight.delete(scopeKey);
+      if (inflight.get(scopeKey) === promise) inflight.delete(scopeKey);
     });
     inflight.set(scopeKey, promise);
     return promise;
@@ -150,6 +155,8 @@ export const useCommandsStore = create<CommandsState>((set, get) => ({
         ...Object.keys(nextError),
       ])) {
         if (key !== workspaceId && !key.startsWith(scopedPrefix)) continue;
+        generations.set(key, (generations.get(key) ?? 0) + 1);
+        inflight.delete(key);
         delete nextCommands[key];
         delete nextLoading[key];
         delete nextError[key];

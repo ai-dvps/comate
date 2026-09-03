@@ -3250,12 +3250,10 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
     assert.ok(settings.permissions, 'inline permissions must be set');
     assert.ok(settings.permissions.allow.some((r) => r.startsWith('Read(')));
     assert.ok(settings.permissions.deny.includes('mcp__comate-browser__*'));
-    // plugins re-attachment: bundled wecom plugin via Options.plugins
-    assert.ok(options.plugins, 'plugins must be injected');
-    assert.ok(
-      options.plugins.some((p) => p.type === 'local' && p.path.endsWith(path.join('claude-code-plugin', 'plugins', 'wecom'))),
-      `expected wecom plugin in ${JSON.stringify(options.plugins)}`,
-    );
+    assert.ok(!options.plugins?.some(p => p.path.endsWith(path.join('claude-code-plugin', 'plugins', 'wecom'))));
+    assert.match(JSON.stringify(options.systemPrompt), /Comate skills/);
+    assert.match(JSON.stringify(options.systemPrompt), /send-wecom-msg/);
+
   });
 
   it('owner sessions get an unrestricted filesystem sandbox and allowUnsandboxedCommands', async () => {
@@ -4533,6 +4531,14 @@ describe('chat-service bot sandbox permission model (U3)', { concurrency: false 
   });
 });
 
+function personaOnly(prompt: Options['systemPrompt']): Options['systemPrompt'] {
+  if (typeof prompt === 'string') return prompt.split('\n\n## Comate skills')[0] || undefined;
+  if (Array.isArray(prompt)) return prompt;
+  if (!prompt) return undefined;
+  const append = (prompt.append ?? '').split(/(?:\n\n)?## Comate skills/)[0];
+  return append ? { ...prompt, append } : undefined;
+}
+
 describe('chat-service buildSdkOptions persona injection', { concurrency: false }, () => {
   let service: ChatService;
   const originalOpen = SessionRuntime.open;
@@ -4673,6 +4679,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
 
     await service.getOrCreateRuntime(session.id, workspace.id, true, undefined, channelUserId);
     assert.ok(capturedOptions, 'options must be captured');
+    assert.match(JSON.stringify(capturedOptions.systemPrompt), /Comate skills/);
     return { options: capturedOptions, bot, session, workspace, provider };
   }
 
@@ -4680,7 +4687,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
     const { options } = await setupBotSession({
       persona: { prompt: 'You are an operations assistant.', mode: 'append' },
     });
-    assert.deepStrictEqual(options.systemPrompt, {
+    assert.deepStrictEqual(personaOnly(options.systemPrompt), {
       type: 'preset',
       preset: 'claude_code',
       append: 'You are an operations assistant.',
@@ -4691,12 +4698,12 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
     const { options } = await setupBotSession({
       persona: { prompt: 'You are a replacement persona.', mode: 'replace' },
     });
-    assert.strictEqual(options.systemPrompt, 'You are a replacement persona.');
+    assert.strictEqual(personaOnly(options.systemPrompt), 'You are a replacement persona.');
   });
 
-  it('bot session with no persona leaves systemPrompt unset', async () => {
+  it('bot session with no persona contains only the skill catalog', async () => {
     const { options } = await setupBotSession();
-    assert.strictEqual(options.systemPrompt, undefined);
+    assert.strictEqual(personaOnly(options.systemPrompt), undefined);
   });
 
   it('GUI session does not inherit bot persona', async () => {
@@ -4723,7 +4730,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
 
     await service.getOrCreateRuntime(guiSession.id, workspace.id);
     assert.ok(capturedOptions, 'options must be captured');
-    assert.strictEqual(capturedOptions.systemPrompt, undefined);
+    assert.strictEqual(personaOnly(capturedOptions.systemPrompt), undefined);
   });
 
   it('persona changes take effect on the next newly created bot session', async () => {
@@ -4751,7 +4758,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
 
     await service.getOrCreateRuntime(nextSession.id, workspace.id, true);
     assert.ok(capturedOptions, 'options must be captured');
-    assert.strictEqual(capturedOptions.systemPrompt, 'Updated persona.');
+    assert.strictEqual(personaOnly(capturedOptions.systemPrompt), 'Updated persona.');
   });
 
   it('owner member receives the owner role persona', async () => {
@@ -4762,7 +4769,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
       },
       memberRole: 'owner',
     });
-    assert.strictEqual(options.systemPrompt, 'Owner persona.');
+    assert.strictEqual(personaOnly(options.systemPrompt), 'Owner persona.');
   });
 
   it('normal member receives the normal role persona', async () => {
@@ -4773,7 +4780,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
       },
       memberRole: 'normal',
     });
-    assert.strictEqual(options.systemPrompt, 'Normal persona.');
+    assert.strictEqual(personaOnly(options.systemPrompt), 'Normal persona.');
   });
 
   it('non-member is treated as normal and receives the normal persona', async () => {
@@ -4783,7 +4790,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
         normal: { prompt: 'Normal fallback persona.', mode: 'replace' },
       },
     });
-    assert.strictEqual(options.systemPrompt, 'Normal fallback persona.');
+    assert.strictEqual(personaOnly(options.systemPrompt), 'Normal fallback persona.');
   });
 
   it('falls back to default persona when role persona is unset', async () => {
@@ -4794,7 +4801,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
       },
       memberRole: 'owner',
     });
-    assert.strictEqual(options.systemPrompt, 'Default persona.');
+    assert.strictEqual(personaOnly(options.systemPrompt), 'Default persona.');
   });
 
   it('uses role persona when default is unset', async () => {
@@ -4804,7 +4811,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
       },
       memberRole: 'admin',
     });
-    assert.strictEqual(options.systemPrompt, 'Admin-only persona.');
+    assert.strictEqual(personaOnly(options.systemPrompt), 'Admin-only persona.');
   });
 
   it('owner role persona can use append mode', async () => {
@@ -4814,7 +4821,7 @@ describe('chat-service buildSdkOptions persona injection', { concurrency: false 
       },
       memberRole: 'owner',
     });
-    assert.deepStrictEqual(options.systemPrompt, {
+    assert.deepStrictEqual(personaOnly(options.systemPrompt), {
       type: 'preset',
       preset: 'claude_code',
       append: 'Owner append.',

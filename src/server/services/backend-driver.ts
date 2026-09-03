@@ -1,3 +1,4 @@
+import { withSkillReferences } from './skill-input.js';
 /**
  * BackendDriver — the seam between the backend-agnostic session core
  * (SessionRuntime) and a concrete agent runtime (KTD-1).
@@ -105,6 +106,6 @@ export class ClaudeBackendDriver implements BackendDriver {
     input: AsyncIterable<SDKUserMessage>,
     options: Options,
   ): { query: Query; messages: AsyncGenerator<SDKMessage> } {
-    return this.sdkClient.createStreamingQuery(input, options);
+    return this.sdkClient.createStreamingQuery(withSkillReferences(input, options, 'claude'), options);
   }
 }

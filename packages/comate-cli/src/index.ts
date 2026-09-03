@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { runSkills } from './commands/skills.js';
 import { runApiRequest } from './commands/api/request.js';
 
 function parseArgs(argv: string[]): { recipePath?: string; stdin: boolean; json: boolean } {
@@ -23,6 +24,7 @@ function parseArgs(argv: string[]): { recipePath?: string; stdin: boolean; json:
 
 async function main(): Promise<void> {
   try {
+    if (process.argv[2] === 'skills') { process.exitCode = await runSkills(process.argv.slice(3)); return; }
     process.exitCode = await runApiRequest(parseArgs(process.argv.slice(2)));
   } catch (error) {
     const message = error instanceof Error ? error.message : 'The request failed.';

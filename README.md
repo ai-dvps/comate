@@ -21,7 +21,7 @@ The finance data above is synthetic, but the interface is the current Comate des
 - **Bring the right Agent to each task.** Use Claude Code or OpenCode as supported backends. Codex support is experimental and remains unavailable in production unless `COMATE_ENABLE_EXPERIMENTAL_CODEX=1` is enabled.
 - **Work with real project context.** Organize tasks in folder-backed Workspaces, give Agents access to the relevant local files, and keep conversations tied to the work they support.
 - **Complete multi-step work in one place.** Follow multi-Agent activity, use browser-assisted tasks, and review files and results without losing the thread of the request.
-- **Extend the workflow.** Apply Skills, plugins, and MCP servers to repeatable work, and schedule automations when a task should run later or recur.
+- **Extend the workflow.** Use the built-in skill-manager to find, install, remove and update Skills through conversation across Claude Code, Codex and OpenCode. Apply Skills and MCP servers to repeatable work, and schedule automations when a task should run later or recur.
 - **Operate within organizational boundaries.** Connect enterprise tools such as WeCom and Feishu while retaining visible approvals, workspace permissions, and integration controls.
 
 ## Installation
