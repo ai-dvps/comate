@@ -2,6 +2,7 @@ import {
   getPlainTextRangeForNode,
   PROMPT_REFERENCE_CHIP_ATTRIBUTE,
 } from './contenteditable'
+import { basename } from './path-utils'
 
 export type PromptReferenceChipKind = 'skill' | 'file'
 export type PromptReferenceChipStatus = 'valid' | 'invalid'
@@ -45,16 +46,11 @@ function isProjectableChip(
  * The plain-text model keeps the full path via `dataset.referenceText`, which
  * `extractPlainText` prefers over the shortened DOM text.
  */
-function fileChipDisplayLabel(text: string): string {
+export function fileChipDisplayLabel(text: string): string {
   const trigger = text.startsWith('@') ? '@' : ''
   const path = trigger ? text.slice(1) : text
-  const lastSeparator = Math.max(
-    path.lastIndexOf('/'),
-    path.lastIndexOf('\\'),
-  )
-  if (lastSeparator === -1) return text
-  const basename = path.slice(lastSeparator + 1)
-  return basename ? `${trigger}${basename}` : text
+  const name = basename(path)
+  return name ? `${trigger}${name}` : text
 }
 
 function createChipElement(

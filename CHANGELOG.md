@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Browse multiple repositories in one Git Graph** — Workspaces discover nested repositories, initialized submodules and linked worktrees. Switch repositories without losing filters, search or scroll position; historical Diff tabs retain their original repository and show its location.
 
+### Changed
+
+- **Sent prompts retain their rich structure** — User messages now render Markdown visually after sending, while selected file and Skill references remain compact chips with their original labels and full-path detail.
+- **Long prompts stay compact in conversations** — Sent prompts taller than 300px show a faded preview with expand/collapse controls; search matches automatically reveal the full prompt.
+
 ## [0.4.6] - 2026-09-01
 
 ### Changed

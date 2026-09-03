@@ -1,20 +1,24 @@
-import { memo, useCallback, useMemo, useRef } from 'react'
+import { memo, useCallback, useMemo, useRef, type ComponentProps } from 'react'
 import { AlertCircle } from 'lucide-react'
+import type { PluggableList } from 'unified'
+import { defaultRehypePlugins } from 'streamdown'
+import { useTranslation } from 'react-i18next'
 
 import { summarizeToolInput } from '../lib/summarize-tool-input'
 import { detectStructuredReport } from '../lib/structured-report'
-import type { MessageSearchMatch } from '../hooks/useMessageSearch'
+import type { MessageSearchMatch, SearchHighlightRange } from '../hooks/useMessageSearch'
 
-import { Message, MessageContent } from './ai-elements/message'
+import { Message, MessageContent, MessageResponse } from './ai-elements/message'
 import {
   Reasoning,
   ReasoningContent,
   ReasoningTrigger,
 } from './ai-elements/reasoning'
 import CompactableText from './ai-elements/compactable-text'
+import { CompactableContainer } from './ai-elements/compactable-container'
 import { StructuredReport } from './ai-elements/structured-report'
 import HighlightText from './HighlightText'
-import LinkifiedText from './LinkifiedText'
+import AssistantLink from './AssistantLink'
 import {
   Tool,
   ToolContent,
@@ -43,6 +47,35 @@ import ProcessRegionGhost from './ProcessRegionGhost'
 import type { DisplayMode } from '../hooks/use-app-settings'
 import type { ResultFocusRegion } from '../lib/result-focus-view'
 import TokenSettlement from './TokenSettlement'
+import {
+  rehypePromptReferenceChips,
+  rehypePromptSearchHighlights,
+} from '../lib/prompt-reference-markdown'
+
+function UserPromptLink(props: ComponentProps<typeof AssistantLink>) {
+  return <AssistantLink {...props} modifierOnly />
+}
+
+const USER_PROMPT_MARKDOWN_COMPONENTS = { a: UserPromptLink }
+const USER_PROMPT_DEFAULT_REHYPE_PLUGINS = Object.values(defaultRehypePlugins)
+
+function userPromptRehypePlugins(
+  text: string,
+  ranges: readonly SearchHighlightRange[],
+) {
+  const plugins: PluggableList = [...USER_PROMPT_DEFAULT_REHYPE_PLUGINS]
+  if (text.includes('@') || text.includes('/')) {
+    plugins.push(rehypePromptReferenceChips)
+  }
+  if (ranges.length > 0) {
+    plugins.push([rehypePromptSearchHighlights, { ranges }])
+  }
+  return plugins
+}
+
+function userPromptRenderKey(ranges: readonly SearchHighlightRange[]) {
+  return ranges.map((range) => `${range.start}:${range.end}:${range.isActive}`).join(',')
+}
 
 /* ------------------------------------------------------------------ */
 /*  Component props                                                     */
@@ -219,6 +252,7 @@ function ChatMessageRenderer({
   animateCollapsibleItems = false,
   lightweightToolHeaders = false,
 }: ChatMessageRendererProps) {
+  const { t } = useTranslation('chat')
   const messageIdRef = useRef(message.id)
   messageIdRef.current = message.id
   const hasAnyMatch = searchMatches.some((m) => m.messageId === message.id)
@@ -374,9 +408,22 @@ function ChatMessageRenderer({
             if (part.type === 'text') {
               if (message.role === 'user') {
                 return (
-                  <p key={partKey} className="whitespace-pre-wrap">
-                    <LinkifiedText text={part.text} ranges={ranges} />
-                  </p>
+                  <CompactableContainer
+                    key={partKey}
+                    compactHeight={300}
+                    fadeWhenCollapsed
+                    alwaysExpanded={hasMatchInPart}
+                    showMoreLabel={t('expandUserPrompt')}
+                    showLessLabel={t('collapseUserPrompt')}
+                  >
+                    <MessageResponse
+                      components={USER_PROMPT_MARKDOWN_COMPONENTS}
+                      rehypePlugins={userPromptRehypePlugins(part.text, ranges)}
+                      renderKey={userPromptRenderKey(ranges)}
+                    >
+                      {part.text}
+                    </MessageResponse>
+                  </CompactableContainer>
                 )
               }
               return renderAssistantText(part, idx)
