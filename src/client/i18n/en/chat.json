@@ -18,6 +18,8 @@
   "collapseToolDetails": "Collapse tool details",
   "expandThoughts": "Expand thoughts",
   "collapseThoughts": "Collapse thoughts",
+  "expandUserPrompt": "Expand full prompt",
+  "collapseUserPrompt": "Collapse",
   "neverRefreshed": "Never refreshed",
   "noNewMessages": "No new messages",
   "refreshFailed": "Refresh failed",

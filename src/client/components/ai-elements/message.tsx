@@ -67,11 +67,15 @@ export const MessageActions = ({
   </div>
 )
 
-export type MessageResponseProps = ComponentProps<typeof Streamdown>
+export type MessageResponseProps = ComponentProps<typeof Streamdown> & {
+  /** Forces a Markdown rerender when external render state changes. */
+  renderKey?: string
+}
 
 export const MessageResponse = memo(
-  ({ className, ...props }: MessageResponseProps) => (
+  ({ className, renderKey, ...props }: MessageResponseProps) => (
     <Streamdown
+      key={renderKey}
       className={cn(
         'size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0',
         '[&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5',
@@ -85,7 +89,8 @@ export const MessageResponse = memo(
   ),
   (prevProps, nextProps) =>
     prevProps.children === nextProps.children &&
-    nextProps.isAnimating === prevProps.isAnimating,
+    nextProps.isAnimating === prevProps.isAnimating &&
+    nextProps.renderKey === prevProps.renderKey,
 )
 
 MessageResponse.displayName = 'MessageResponse'

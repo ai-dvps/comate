@@ -18,6 +18,8 @@
   "collapseToolDetails": "收起工具详情",
   "expandThoughts": "展开思考过程",
   "collapseThoughts": "收起思考过程",
+  "expandUserPrompt": "展开全文",
+  "collapseUserPrompt": "收起",
   "neverRefreshed": "从未刷新",
   "noNewMessages": "无新消息",
   "refreshFailed": "刷新失败",
