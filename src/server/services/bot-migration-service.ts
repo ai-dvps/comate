@@ -3,7 +3,6 @@ import type { Workspace } from '../models/workspace.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
 import { ALLOW_ALL_PRESET } from './tool-permission-policy.js';
 import { createDefaultBotRolePolicy } from './bot-access-policy.js';
-import { BuiltinPluginService, builtinPluginService as defaultBuiltinPluginService } from './builtin-plugin-service.js';
 
 export interface MigrationResult {
   success: boolean;
@@ -32,11 +31,9 @@ interface MigrationItem {
 
 export class BotMigrationService {
   private store: SqliteStore;
-  private builtinPluginService: BuiltinPluginService;
 
-  constructor(store: SqliteStore, builtinPluginService?: BuiltinPluginService) {
+  constructor(store: SqliteStore) {
     this.store = store;
-    this.builtinPluginService = builtinPluginService ?? defaultBuiltinPluginService;
   }
 
   hasMigrationRun(): boolean {
@@ -119,16 +116,6 @@ export class BotMigrationService {
     result.success = true;
     result.createdBots = items.length;
     result.migratedWorkspaces = items.length;
-
-    // Backfill the built-in wecom plugin for any migrated workspace that has
-    // WeCom enabled. This is best-effort and must not fail the migration.
-    for (const item of items) {
-      if (item.channelSettings.wecom) {
-        await this.builtinPluginService.ensureWecomPluginInstalled(item.workspace.id).catch((err) => {
-          console.error(`[BotMigration] failed to install wecom plugin for ${item.workspace.id}:`, err);
-        });
-      }
-    }
 
     return result;
   }

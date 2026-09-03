@@ -857,9 +857,20 @@
       "retryFailed": "Retry failed items",
       "confirmInstall": "Confirm install",
       "scenes": {
-        "tech": "Technology", "content-creation": "Content creation", "design": "Design", "marketing": "Marketing",
-        "finance": "Finance", "education": "Education", "ecommerce": "E-commerce", "media": "Media", "academic": "Academic",
-        "healthcare": "Healthcare", "hr": "Human resources", "legal": "Legal", "lifestyle": "Lifestyle", "mysticism": "Mysticism"
+        "tech": "Technology",
+        "content-creation": "Content creation",
+        "design": "Design",
+        "marketing": "Marketing",
+        "finance": "Finance",
+        "education": "Education",
+        "ecommerce": "E-commerce",
+        "media": "Media",
+        "academic": "Academic",
+        "healthcare": "Healthcare",
+        "hr": "Human resources",
+        "legal": "Legal",
+        "lifestyle": "Lifestyle",
+        "mysticism": "Mysticism"
       }
     },
     "toolbarButton": "Skills",
@@ -958,7 +969,40 @@
     "selectSkills": "Select skills ({{count}} found)",
     "selectScope": "Select scope",
     "reinstall": "Reinstall",
-    "openFromSettings": "Open Skills page"
+    "openFromSettings": "Open Skills page",
+    "manager": {
+      "pageTitle": "Installed Skills",
+      "close": "Close",
+      "title": "Manage your Skills through conversation",
+      "description": "Tell skill-manager what you want to do, or share a Skill repository URL. It helps you find, install, remove and update Skills, and clarifies the scope and specific choices when needed.",
+      "action": "Use skill-manager",
+      "defaultPrompt": "Help me manage my installed Skills.",
+      "draftHint": "Opens an editable draft. Review and send it when ready; your existing draft is preserved.",
+      "examplesTitle": "Try asking",
+      "examples": {
+        "find": "Find a Skill that helps me make presentations.",
+        "install": "Install a Skill from this repository: [paste HTTPS / Git URL].",
+        "remove": "Help me remove a Skill I no longer use.",
+        "update": "Check whether my installed Skills have updates."
+      },
+      "unavailable": "skill-manager is unavailable. Refresh this list or restart Comate to reload its bundled Skills.",
+      "openFailed": "Could not open the conversation. Please try again.",
+      "inventoryTitle": "Installed Skills ({{count}})",
+      "filter": "Filter installed Skills",
+      "refresh": "Refresh Skills",
+      "empty": "You have no user-installed Skills yet. Start with skill-manager above.",
+      "scope": {
+        "project": "This project",
+        "global": "User",
+        "builtin": "Maintained by Comate"
+      },
+      "expertPackage": "Expert Package orchestration",
+      "source": "Source",
+      "unknownSource": "Unknown",
+      "sharedPaths": "Also available through these paths",
+      "noMatches": "No installed Skills match this filter.",
+      "activationHint": "This list reflects files on disk. Open the input box Skill picker to see what your current Agent can use. If an Agent has not reloaded a newly installed or updated Skill, start a new conversation."
+    }
   },
   "common": {
     "unknownError": "Unknown error",

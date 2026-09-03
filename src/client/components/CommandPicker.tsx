@@ -50,7 +50,7 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
       side = 'top',
       align = 'start',
       initialFilter = '',
-      refetchOnOpen = false,
+      refetchOnOpen = true,
       hideFilterInput = false,
       contentWidth,
     },
@@ -251,7 +251,7 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
                   }`}
                 >
                   <div className="flex items-baseline gap-2">
-                    <span className="text-sm text-text-primary">/{cmd.name}</span>
+                    <span className="text-sm text-text-primary">/{cmd.displayName ?? cmd.name}</span>
                     {cmd.aliases?.length ? (
                       <span className="text-[11px] text-text-tertiary truncate">
                         {cmd.aliases.map((a) => `/${a}`).join(' ')}

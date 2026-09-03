@@ -1,3 +1,4 @@
+import { isBuiltinSkillFile } from './builtin-skills.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import picomatch from 'picomatch';
@@ -189,6 +190,7 @@ function checkWorkspaceEscape(ctx: PathPolicyContext, resolved: string): PathVal
 }
 
 function checkReadPath(ctx: PathPolicyContext, resolved: string): PathValidationResult {
+  if (isBuiltinSkillFile(resolved)) return { allowed: true };
   const escape = checkWorkspaceEscape(ctx, resolved);
   if (!escape.allowed) return escape;
 
@@ -368,6 +370,7 @@ export function validateToolInput(
  * knownUserDirNames enumeration (KTD-6) — and denylisted files.
  */
 function checkVerifiedRead(ctx: PathPolicyContext, canonical: string, privileged: boolean): PathValidationResult {
+  if (isBuiltinSkillFile(canonical)) return { allowed: true };
   if (!startsWithDir(canonical, ctx.workspaceFolder)) {
     return { allowed: false, reason: 'outside-workspace' };
   }

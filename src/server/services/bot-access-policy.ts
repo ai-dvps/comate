@@ -41,7 +41,6 @@ import { sanitizeMcpClassificationOverrides } from './mcp-tool-classification.js
 import { BROWSER_TOOL_PREFIX } from './browser-tool-names.js';
 import { DEFAULT_DENY_GLOBS } from './bot-path-policy.js';
 import { getStorageDir } from '../storage/data-dir.js';
-import { resolveBuiltInMarketplacePath } from '../utils/resolve-builtin-marketplace-path.js';
 import { resolveWecomCliPath } from '../utils/resolve-wecom-cli.js';
 import { isPlainObject } from '../utils/plain-object.js';
 import { diagLog } from '../utils/diag-logger.js';
@@ -366,6 +365,8 @@ export interface DeriveBotAccessOptions {
   wecomCliPath?: string | null;
   /** Built-in marketplace path; undefined resolves dynamically, null omits. */
   marketplacePath?: string | null;
+  builtinSkillsRoot?: string;
+  builtinSkillsCliPath?: string;
 }
 
 function resolveCliDir(input: string | null | undefined): string | undefined {
@@ -373,9 +374,6 @@ function resolveCliDir(input: string | null | undefined): string | undefined {
   return resolved ? path.dirname(resolved) : undefined;
 }
 
-function resolveMarketplace(input: string | null | undefined): string | undefined {
-  return input === undefined ? resolveBuiltInMarketplacePath() : (input ?? undefined);
-}
 
 /**
  * KTD-8 computed env-deny set: ⊇ settings env keys ∪ provider customEnvVars
@@ -567,6 +565,8 @@ export function deriveBotAccess(
       claudeProjects,
       pluginCache,
       cliDir,
+      builtinSkillsRoot: options.builtinSkillsRoot,
+      builtinSkillsCliPath: options.builtinSkillsCliPath,
       envVars,
       network,
       plugins,
@@ -582,6 +582,8 @@ export function deriveBotAccess(
       claudeProjects,
       pluginCache,
       cliDir,
+      builtinSkillsRoot: options.builtinSkillsRoot,
+      builtinSkillsCliPath: options.builtinSkillsCliPath,
       envVars,
       network,
       plugins,
@@ -610,6 +612,8 @@ interface RoleDerivationContext {
   claudeProjects: string;
   pluginCache?: string;
   cliDir?: string;
+  builtinSkillsRoot?: string;
+  builtinSkillsCliPath?: string;
   envVars: Array<{ name: string; mode: 'deny' }>;
   network: NonNullable<SandboxSettings['network']>;
   plugins: SdkPluginConfig[];
@@ -667,7 +671,7 @@ function adminDerivation(ctx: RoleDerivationContext): BotAccessDerivation {
   const sensitive = ctx.sensitiveFileDenylist;
   const passlist = passlistRuleStrings(ctx.policy);
   const capabilityDirs = PUBLIC_CAPABILITY_DIRS.map((dir) => path.join(ws, '.claude', dir));
-  const allowRead = [ws, ctx.pluginCache, ctx.cliDir].filter((p): p is string => typeof p === 'string');
+  const allowRead = [ws, ctx.pluginCache, ctx.cliDir, ctx.builtinSkillsRoot, ctx.builtinSkillsCliPath].filter((p): p is string => typeof p === 'string');
 
   const sandbox: SandboxSettings = {
     ...baseSandbox(),
@@ -716,7 +720,7 @@ function normalDerivation(userDirName: string, ctx: RoleDerivationContext): BotA
   const passlist = passlistRuleStrings(ctx.policy);
   const userDir = path.join(ws, 'data', userDirName);
   const runtimeDir = path.join(userDir, '.runtime');
-  const allowRead = [ws, userDir, ctx.pluginCache, ctx.cliDir].filter(
+  const allowRead = [ws, userDir, ctx.pluginCache, ctx.cliDir, ctx.builtinSkillsRoot, ctx.builtinSkillsCliPath].filter(
     (p): p is string => typeof p === 'string',
   );
 
@@ -802,17 +806,5 @@ function derivePlugins(options: DeriveBotAccessOptions): SdkPluginConfig[] {
     paths.push(resolved);
   };
   for (const p of options.enabledPluginPaths ?? []) push(p);
-  if (options.wecomEnabled) {
-    // Re-attach the bundled wecom plugin explicitly (KTD-3): setting sources
-    // are pinned to [] for bot sessions, so the plugin set must come through
-    // Options.plugins, not any settings file. Mirrors WECOM_PLUGIN_ID in
-    // builtin-plugin-service (importing that module would pull the store).
-    const marketplace = resolveMarketplace(options.marketplacePath);
-    if (marketplace) {
-      push(path.join(marketplace, 'plugins', 'wecom'));
-    } else {
-      diagLog('[BotAccessPolicy] wecom-enabled bot but built-in marketplace not resolvable; plugin omitted');
-    }
-  }
   return paths.map((p) => ({ type: 'local' as const, path: p }));
 }

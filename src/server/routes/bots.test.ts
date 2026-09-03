@@ -159,7 +159,7 @@ describe('bots routes', { concurrency: false }, () => {
     assert.strictEqual(body.bot.id, connectedBotId);
   });
 
-  it('POST / installs the built-in wecom plugin when creating a WeCom-enabled bot bound to a workspace', async () => {
+  it('POST / preserves workspace plugin settings when creating a WeCom-enabled bot', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'comate-bots-plugin-test-'));
     const originalHome = process.env.HOME;
     const originalTauriResourceDir = process.env.TAURI_RESOURCE_DIR;
@@ -200,9 +200,7 @@ describe('bots routes', { concurrency: false }, () => {
 
       const settingsService = new PluginSettingsService();
       const plugin = settingsService.getInstalledPlugin('project', 'wecom', workspacePath);
-      assert.ok(plugin);
-      assert.strictEqual(plugin!.id, 'wecom');
-      assert.strictEqual(plugin!.enabled, true);
+      assert.strictEqual(plugin, null);
     } finally {
       if (originalHome !== undefined) {
         process.env.HOME = originalHome;

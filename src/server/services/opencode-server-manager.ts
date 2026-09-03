@@ -131,6 +131,7 @@ export class OpencodeServerManager {
     const password = randomBytes(16).toString('hex');
     const env: NodeJS.ProcessEnv = {
       ...sanitizeSubprocessEnv(options.env as Record<string, string | undefined>),
+      ...(options.env.WECOM_CLI_PATH ? { WECOM_CLI_PATH: options.env.WECOM_CLI_PATH } : {}),
       OPENCODE_SERVER_PASSWORD: password,
       XDG_DATA_HOME: `${getStorageDir()}/opencode`,
       OPENCODE_CONFIG_CONTENT: JSON.stringify(options.config),

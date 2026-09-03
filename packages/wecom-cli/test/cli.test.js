@@ -422,6 +422,22 @@ describe('wecom cli', () => {
       }
     });
 
+    it('prefers the Comate session identity across agent backends', async () => {
+      const server = await startMockServer({
+        MOCK_STATUS: '200',
+        MOCK_BODY: JSON.stringify({ userId: 'comate-user', lastSeenAt: null }),
+        MOCK_EXPECTED_URL: '/api/workspaces/w/sessions/comate-session/wecom-user',
+        MOCK_EXPECTED_AUTH: `Bearer ${TEST_TOKEN}`,
+      });
+      const tmpDir = mkdtempSync(join(tmpdir(), 'wecom-test-'));
+      const env = { ...writeContext(tmpDir, server.url), COMATE_SESSION_ID: 'comate-session', CLAUDE_SESSION_ID: 'stale-claude-session' };
+      try {
+        const result = run(['current-user'], tmpDir, env);
+        assert.strictEqual(result.status, 0, result.stderr);
+        assert.strictEqual(result.stdout.trim(), 'comate-user');
+      } finally { await server.close(); }
+    });
+
     it('exits 2 when the server returns 404', async () => {
       const server = await startMockServer({
         MOCK_STATUS: '404',

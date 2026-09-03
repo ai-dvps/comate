@@ -718,10 +718,9 @@ describe('credentials.envVars computation', () => {
 // ---------------------------------------------------------------------------
 
 describe('derived plugins', () => {
-  it('includes the bundled wecom plugin when the bot is wecom-enabled', () => {
+  it('uses standard Skills without mounting the old bundled plugin', () => {
     const out = derive(makeMember('normal'), undefined, { wecomEnabled: true });
     assert.deepStrictEqual(out.plugins, [
-      { type: 'local', path: path.join(MARKETPLACE, 'plugins', 'wecom') },
     ]);
   });
 
@@ -738,20 +737,17 @@ describe('derived plugins', () => {
     assert.deepStrictEqual(out.plugins, [
       { type: 'local', path: '/p/a' },
       { type: 'local', path: '/p/b' },
-      { type: 'local', path: path.join(MARKETPLACE, 'plugins', 'wecom') },
     ]);
   });
 
-  it('resolves the real bundled marketplace in this repo', () => {
+  it('does not auto-mount a bundled marketplace from the repository', () => {
     const out = deriveBotAccess(makeBot(), makeMember('normal'), createDefaultBotRolePolicy('normal'), WS, {
       homeDir: HOME,
       comateDataDir: COMATE_DATA,
       wecomCliPath: null,
       wecomEnabled: true,
     });
-    assert.strictEqual(out.plugins.length, 1);
-    assert.ok(out.plugins[0].path.endsWith(path.join('plugins', 'wecom')));
-    assert.ok(fs.existsSync(out.plugins[0].path), 'bundled wecom plugin dir exists');
+    assert.deepStrictEqual(out.plugins, []);
   });
 });
 

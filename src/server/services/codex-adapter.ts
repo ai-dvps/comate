@@ -1,3 +1,6 @@
+import { permittedSkills } from './skill-input.js';
+import { discoverInstalledSkills } from './skill-inventory.js';
+import { builtinSkillRoots, systemPromptText } from './builtin-skills.js';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -5,8 +8,7 @@ import type { Options, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/c
 import type { BackendDriver, BackendToolRequestHandler } from './backend-driver.js';
 import type { ProviderCodexModelProfile } from '../models/provider.js';
 import {
-  codexAppServerManager,
-  type CodexAppServerManager,
+  CodexAppServerManager,
   type CodexSkill,
 } from './codex-app-server-manager.js';
 import { CodexEventMapper } from './codex-event-mapper.js';
@@ -68,6 +70,7 @@ interface CodexAdapterDeps {
   onBackendSessionId(id: string): void;
   onFatal?(error: unknown): void;
   manager?: CodexAppServerManager;
+  env?: Record<string, string | undefined>;
 }
 
 export interface CodexProviderOverride {
@@ -124,7 +127,7 @@ export class CodexBackendDriver implements BackendDriver {
   private currentTurnUsage?: CodexTokenCounts;
 
   constructor(private readonly deps: CodexAdapterDeps) {
-    this.manager = deps.manager ?? codexAppServerManager;
+    this.manager = deps.manager ?? new CodexAppServerManager(deps.env);
     this.threadId = deps.backendSessionId;
     this.mapper = new CodexEventMapper(deps.model ?? 'codex');
   }
@@ -152,6 +155,7 @@ export class CodexBackendDriver implements BackendDriver {
       },
       close: () => {
         this.closed = true;
+        if (!this.deps.manager) void this.manager.stop();
         this.rejectPendingAdmissions(new Error('Codex session closed before turn admission'));
         this.queue.end();
       },
@@ -221,14 +225,25 @@ export class CodexBackendDriver implements BackendDriver {
       await this.manager.registerSkillRoots?.([
         path.join(this.deps.directory, '.claude', 'skills'),
         path.join(homedir(), '.claude', 'skills'),
+        ...builtinSkillRoots(options.env?.COMATE_BUILTIN_SKILLS?.split(',')),
       ]);
       await this.ensureThread(options);
       for await (const message of input) {
         if (this.closed) break;
         const clientTurnId = message.uuid ?? randomUUID();
-        const skills = hasSlashReference(message.message.content)
+        const nativeSkills = hasSlashReference(message.message.content)
           ? await this.manager.listSkills(this.deps.directory)
           : [];
+        const discovered = hasSlashReference(message.message.content) ? await discoverInstalledSkills(this.deps.directory) : [];
+        const inventory = permittedSkills(discovered, 'codex', options);
+        const byPath = new Map(nativeSkills.map(skill => [skill.path, skill]));
+        const skills = inventory.flatMap(skill => {
+          const native = byPath.get(path.join(skill.realPath, 'SKILL.md')) ?? byPath.get(path.join(skill.installPath, 'SKILL.md'));
+          return native ? [{ ...native, name: skill.invocationName }] : [];
+        });
+        // Native-only plugins remain available; filesystem installations use stable aliases.
+        const diskNames = new Set(discovered.map(skill => skill.name));
+        skills.push(...nativeSkills.filter(skill => !diskNames.has(skill.name)));
         const response = await this.manager.request<{ turn: { id: string } }>('turn/start', {
           threadId: this.threadId,
           clientUserMessageId: clientTurnId,
@@ -394,6 +409,7 @@ export class CodexBackendDriver implements BackendDriver {
           approvalPolicy: 'on-request',
           sandbox: 'workspace-write',
           config: this.threadConfig(options),
+          ...(systemPromptText(options.systemPrompt) ? { developerInstructions: systemPromptText(options.systemPrompt) } : {}),
           ...(this.deps.serviceTier ? { serviceTier: this.deps.serviceTier } : {}),
           modelProvider: this.deps.provider ? 'comate-enterprise' : null,
           ...(this.deps.model ? { model: this.deps.model } : {}),
@@ -409,6 +425,7 @@ export class CodexBackendDriver implements BackendDriver {
       approvalPolicy: 'on-request',
       sandbox: 'workspace-write',
       config: this.threadConfig(options),
+      ...(systemPromptText(options.systemPrompt) ? { developerInstructions: systemPromptText(options.systemPrompt) } : {}),
       ...(this.deps.serviceTier ? { serviceTier: this.deps.serviceTier } : {}),
       ...(this.deps.provider ? { modelProvider: 'comate-enterprise' } : {}),
       ...(this.deps.model ? { model: this.deps.model } : {}),

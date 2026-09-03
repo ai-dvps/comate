@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Manage Skills through conversation** — The installed Skills page guides you into an editable `skill-manager` draft, with examples for discovery, installation, removal and updates. Existing text and attachments are preserved.
+- **Standard Skills across Agents** — Comate ships skill-manager and its WeCom Skills for Claude Code, Codex and OpenCode, with a bundled Skills CLI. The picker distinguishes installations by path and refreshes after filesystem changes.
+- **Retire plugin management and Skill catalogs** — Plugin Manager, Skill Search, Expert Packages and Enterprise Zone no longer have dedicated management screens. Existing user files and third-party plugin settings remain intact; built-in WeCom plugin auto-installation is retired.
+
 ## [0.4.7] - 2026-09-03
 
 ### Added

@@ -856,9 +856,20 @@
       "retryFailed": "仅重试失败项",
       "confirmInstall": "确认安装",
       "scenes": {
-        "tech": "技术研发", "content-creation": "内容创作", "design": "设计", "marketing": "市场营销",
-        "finance": "金融", "education": "教育", "ecommerce": "电商", "media": "媒体", "academic": "学术",
-        "healthcare": "医疗", "hr": "人力资源", "legal": "法律", "lifestyle": "生活方式", "mysticism": "玄学"
+        "tech": "技术研发",
+        "content-creation": "内容创作",
+        "design": "设计",
+        "marketing": "市场营销",
+        "finance": "金融",
+        "education": "教育",
+        "ecommerce": "电商",
+        "media": "媒体",
+        "academic": "学术",
+        "healthcare": "医疗",
+        "hr": "人力资源",
+        "legal": "法律",
+        "lifestyle": "生活方式",
+        "mysticism": "玄学"
       }
     },
     "toolbarButton": "技能",
@@ -957,7 +968,40 @@
     "selectSkills": "选择技能（找到 {{count}} 个）",
     "selectScope": "选择范围",
     "reinstall": "重新安装",
-    "openFromSettings": "打开技能页面"
+    "openFromSettings": "打开技能页面",
+    "manager": {
+      "pageTitle": "已安装的 Skills",
+      "close": "关闭",
+      "title": "用对话管理你的 Skills",
+      "description": "告诉 skill-manager 你想完成什么，或直接提供 Skill 的仓库地址。它会帮你查找、安装、删除和更新 Skills，并在需要时和你确认安装范围与具体选择。",
+      "action": "使用 skill-manager",
+      "defaultPrompt": "帮我管理已安装的 Skills。",
+      "draftHint": "进入可编辑的对话草稿，确认后再发送；已有草稿会保留。",
+      "examplesTitle": "你可以这样说",
+      "examples": {
+        "find": "帮我找一个适合做演示文稿的 Skill。",
+        "install": "帮我安装这个仓库里的 Skill：[粘贴 HTTPS / Git 地址]。",
+        "remove": "帮我删除不再使用的 Skill。",
+        "update": "检查我安装的 Skills 是否有更新。"
+      },
+      "unavailable": "skill-manager 暂时不可用，请刷新列表或重启 Comate 以重新加载内置 Skills。",
+      "openFailed": "无法打开对话，请重试。",
+      "inventoryTitle": "已安装的 Skills（{{count}}）",
+      "filter": "筛选已安装的 Skills",
+      "refresh": "刷新 Skills",
+      "empty": "还没有安装用户 Skills，从上方的 skill-manager 开始。",
+      "scope": {
+        "project": "当前项目",
+        "global": "用户级",
+        "builtin": "由 Comate 维护"
+      },
+      "expertPackage": "专家包编排",
+      "source": "来源",
+      "unknownSource": "未知",
+      "sharedPaths": "也可通过这些路径访问",
+      "noMatches": "没有符合筛选条件的已安装 Skill。",
+      "activationHint": "此列表展示磁盘上的实际安装。打开输入框的 Skill 选择器，查看当前 Agent 可用的 Skills。如果 Agent 尚未重新加载新安装或更新的 Skill，请新建对话。"
+    }
   },
   "common": {
     "unknownError": "未知错误",

@@ -1319,6 +1319,14 @@ export default function PromptInput(props: PromptInputProps) {
     }
   }
 
+  useEffect(() => {
+    const focus = (event: Event) => {
+      if ((event as CustomEvent<{ sessionId: string }>).detail?.sessionId === sessionId) editableRef.current?.focus()
+    }
+    window.addEventListener('comate:focus-prompt', focus)
+    return () => window.removeEventListener('comate:focus-prompt', focus)
+  }, [sessionId])
+
   const handleCommandSelect = (command: SlashCommandDto) => {
     const el = editableRef.current
     if (!el) return

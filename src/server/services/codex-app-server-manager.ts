@@ -1,3 +1,4 @@
+import { builtinSkillRoots } from './builtin-skills.js';
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { homedir } from 'node:os';
@@ -17,6 +18,8 @@ export class CodexAppServerManager extends EventEmitter {
   private generation = 0;
   private readonly skillRoots = new Set<string>();
   private skillRootsUpdate: Promise<void> = Promise.resolve();
+
+  constructor(private readonly sessionEnv?: Record<string, string | undefined>) { super(); }
 
   async ensureClient(): Promise<CodexRpcClient> {
     if (this.client && this.process?.exitCode === null) return this.client;
@@ -52,9 +55,18 @@ export class CodexAppServerManager extends EventEmitter {
   }
 
   async listSkills(cwd: string): Promise<CodexSkill[]> {
+    if (!this.sessionEnv) {
+      // Discovery has its own process: project roots must never accumulate in
+      // the shared history/account manager or another workspace's catalog.
+      const scoped = new CodexAppServerManager({ ...process.env, COMATE_BUILTIN_SKILLS: 'skill-manager' });
+      try {
+        await scoped.registerSkillRoots([path.join(cwd, '.claude', 'skills')]);
+        return await scoped.listSkills(cwd);
+      } finally { await scoped.stop(); }
+    }
     await this.registerSkillRoots([
-      path.join(cwd, '.claude', 'skills'),
       path.join(homedir(), '.claude', 'skills'),
+      ...builtinSkillRoots(this.sessionEnv?.COMATE_BUILTIN_SKILLS?.split(',') ?? ['skill-manager']),
     ]);
     const response = await this.request<SkillsListResponse>('skills/list', {
       cwds: [cwd],
@@ -77,7 +89,9 @@ export class CodexAppServerManager extends EventEmitter {
     if (!version.endsWith(CODEX_EXPECTED_VERSION)) {
       throw new Error(`Codex version mismatch: expected ${CODEX_EXPECTED_VERSION}, got ${version}`);
     }
-    const env = sanitizeSubprocessEnv(process.env as Record<string, string | undefined>);
+    const env = sanitizeSubprocessEnv(this.sessionEnv ?? process.env as Record<string, string | undefined>);
+    // Preserve the app's executable path, not ambient WECOM channel secrets.
+    if (this.sessionEnv?.WECOM_CLI_PATH) env.WECOM_CLI_PATH = this.sessionEnv.WECOM_CLI_PATH;
     // CODEX_HOME deliberately survives sanitization: native CLI and Comate share identity/history.
     if (process.env.CODEX_HOME) env.CODEX_HOME = process.env.CODEX_HOME;
     const child = spawn(binary, ['app-server'], { env, stdio: ['pipe', 'pipe', 'pipe'] });

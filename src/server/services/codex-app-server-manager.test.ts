@@ -57,3 +57,21 @@ describe('CodexAppServerManager', () => {
     }
   });
 });
+
+// No model request or external business operation: prove the native executor
+// receives this session's authority, independently of another manager.
+it('passes per-session Comate identity into the native Codex command executor', async () => {
+  const previous = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = mkdtempSync(path.join(tmpdir(), 'comate-codex-identity-'));
+  const manager = new CodexAppServerManager({ PATH: process.env.PATH, HOME: process.env.HOME, COMATE_SESSION_ID: 'session-fixture', COMATE_SESSION_TOKEN: 'fixture-token' });
+  try {
+    const result = await manager.request<{ exitCode: number; stdout: string; stderr: string }>('command/exec', {
+      command: [process.execPath, '-e', 'process.exit(process.env.COMATE_SESSION_ID === "session-fixture" && process.env.COMATE_SESSION_TOKEN === "fixture-token" ? 0 : 1)'],
+      cwd: tmpdir(), timeoutMs: 5000,
+    });
+    assert.equal(result.exitCode, 0, result.stderr);
+  } finally {
+    await manager.stop();
+    if (previous === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = previous;
+  }
+});

@@ -19,7 +19,7 @@
     "build:contracts": "npm run build -w packages/comate-api-contracts",
     "build:server": "npm run build:contracts && tsc -p tsconfig.server.json",
     "build:cli": "npm run build:contracts && npm run build:cli:packages",
-    "build:cli:packages": "npm run build:cli:wecom && npm run build:cli:comate",
+    "build:cli:packages": "npm run build:cli:wecom && npm run build:cli:comate && npm run build:cli:skills",
     "build:cli:wecom": "npm run build -w packages/wecom-cli",
     "build:cli:comate": "npm run build -w packages/comate-cli",
     "build:sidecar": "tsx scripts/build-sidecar.ts && npm run test:sidecar-new-chat",
@@ -38,7 +38,7 @@
     "test:electron-cdp:required": "tsx scripts/test-electron-cdp.ts --required",
     "test:browser-acceptance:deterministic": "tsx --test src/server/services/__tests__/browser-task-trace.test.ts src/server/services/browser-mcp-http.test.ts scripts/evaluate-browser-task.test.ts scripts/fixtures/dynamic-publishing-task-fixture.test.ts scripts/browser-production-neutrality.test.ts",
     "test:server": "npm run build:contracts && tsx scripts/test-server.ts",
-    "test:scripts": "tsx --test scripts/electron-build-contract.test.ts scripts/icon-button-tooltips.test.ts scripts/readme-contract.test.ts scripts/patch-electron-dev-name.test.ts scripts/verify-packaged-renderer.test.ts scripts/test-server.test.ts scripts/lib/process-cleanup.test.ts scripts/lib/sidecar-node-version.test.ts scripts/evaluate-browser-task.test.ts scripts/fixtures/dynamic-publishing-task-fixture.test.ts scripts/browser-production-neutrality.test.ts scripts/codex-protocol-drift.test.ts scripts/sync-gitee.test.ts",
+    "test:scripts": "tsx --test scripts/electron-build-contract.test.ts scripts/icon-button-tooltips.test.ts scripts/readme-contract.test.ts scripts/patch-electron-dev-name.test.ts scripts/verify-packaged-renderer.test.ts scripts/test-server.test.ts scripts/lib/process-cleanup.test.ts scripts/lib/sidecar-node-version.test.ts scripts/evaluate-browser-task.test.ts scripts/fixtures/dynamic-publishing-task-fixture.test.ts scripts/browser-production-neutrality.test.ts scripts/codex-protocol-drift.test.ts scripts/sync-gitee.test.ts && npm run test:skills-cli",
     "test:packages": "npm run build:cli && npm test -w packages/comate-api-contracts -w packages/comate-cli -w packages/wecom-cli",
     "typecheck": "npm run build:contracts && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "check": "npm run lint && npm run typecheck && npm test",
@@ -57,7 +57,9 @@
     "verify:electron:package": "tsx scripts/verify-packaged-renderer.ts",
     "verify:electron-package": "npm run verify:electron:package",
     "verify:electron:mac-signature": "tsx scripts/verify-packaged-macos-signature.ts",
-    "release": "npm run typecheck && npm run test:browser-acceptance:deterministic && npm run build:sidecar && npm run test:shell-cdp:required && npm run test:electron-cdp:required && npm run dist:electron && npm run verify:electron:mac-signature"
+    "release": "npm run typecheck && npm run test:browser-acceptance:deterministic && npm run build:sidecar && npm run test:shell-cdp:required && npm run test:electron-cdp:required && npm run dist:electron && npm run verify:electron:mac-signature",
+    "build:cli:skills": "tsx scripts/build-skills-cli.ts",
+    "test:skills-cli": "npm run build:cli:skills && tsx --test scripts/skills-cli.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.237",
@@ -134,6 +136,7 @@
     "zustand": "^4.5.2"
   },
   "devDependencies": {
+    "@clack/prompts": "0.11.0",
     "@electron/asar": "^3.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -152,6 +155,7 @@
     "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^7.12.0",
     "@typescript-eslint/parser": "^7.12.0",
+    "@vercel/detect-agent": "1.2.1",
     "@vitejs/plugin-react": "^5.0.4",
     "@vitest/browser": "^4.1.9",
     "@vitest/browser-playwright": "^4.1.9",
@@ -167,13 +171,16 @@
     "eslint-plugin-react-hooks": "^4.6.2",
     "eslint-plugin-react-refresh": "^0.4.7",
     "jsdom": "^25.0.1",
+    "picocolors": "1.1.1",
     "playwright": "^1.55.1",
     "postcss": "^8.4.38",
+    "simple-git": "3.27.0",
     "tailwindcss": "^3.4.4",
     "tsx": "^4.11.2",
     "typescript": "^5.4.5",
     "vite": "^6.4.3",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.9",
+    "xdg-basedir": "5.1.0"
   },
   "overrides": {
     "@babel/core": "^7.29.6",

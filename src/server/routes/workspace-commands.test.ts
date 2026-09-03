@@ -1,166 +1,40 @@
 import '../test-utils/test-env.js';
-import { afterEach, describe, it } from 'node:test';
+import { afterEach, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import commandRouter from './workspace-commands.js';
-import { store as workspaceStore } from '../storage/sqlite-store.js';
+import path from 'node:path';
+import router from './workspace-commands.js';
+import { store } from '../storage/sqlite-store.js';
 import { commandsService } from '../services/commands-service.js';
-import { chatService } from '../services/chat-service.js';
 import { codexAppServerManager } from '../services/codex-app-server-manager.js';
-
-function routeHandler() {
-  const layer = (commandRouter as unknown as {
-    stack: Array<{
-      route?: {
-        path: string;
-        methods: Record<string, boolean>;
-        stack: Array<{ handle: (req: unknown, res: unknown) => Promise<void> }>;
-      };
-    }>;
-  }).stack.find((entry) => entry.route?.path === '/' && entry.route.methods.get);
-  return layer?.route?.stack[0].handle;
-}
-
-function mockResponse() {
-  return {
-    statusCode: 200,
-    jsonBody: undefined as unknown,
-    status(code: number) { this.statusCode = code; return this; },
-    json(body: unknown) { this.jsonBody = body; },
-  };
-}
-
-const originalWorkspaceGet = workspaceStore.get.bind(workspaceStore);
-const originalLocalSessionGet = workspaceStore.getLocalSession.bind(workspaceStore);
-const originalGetCommands = commandsService.getCommands.bind(commandsService);
-const originalGetSessionBackendCommands = chatService.getSessionBackendCommands.bind(chatService);
-const originalListSkills = codexAppServerManager.listSkills.bind(codexAppServerManager);
-const tempDirs: string[] = [];
-
-afterEach(async () => {
-  workspaceStore.get = originalWorkspaceGet;
-  workspaceStore.getLocalSession = originalLocalSessionGet;
-  commandsService.getCommands = originalGetCommands;
-  chatService.getSessionBackendCommands = originalGetSessionBackendCommands;
-  codexAppServerManager.listSkills = originalListSkills;
-  await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+const originals = { get: store.get, session: store.getLocalSession, commands: commandsService.getCommands, skills: codexAppServerManager.listSkills };
+afterEach(() => { store.get = originals.get; store.getLocalSession = originals.session; commandsService.getCommands = originals.commands; codexAppServerManager.listSkills = originals.skills; });
+const handler = (router as unknown as { stack: Array<{ route: { stack: Array<{ handle: (req: unknown, res: unknown) => Promise<void> }> } }> }).stack[0].route.stack[0].handle;
+function response() { return { statusCode: 200, body: undefined as unknown, status(code: number) { this.statusCode = code; return this; }, json(body: unknown) { this.body = body; } }; }
+it('validates the session belongs to the requested workspace', async () => {
+  store.get = async () => ({ id: 'a', folderPath: '/a' }) as never;
+  store.getLocalSession = () => ({ workspaceId: 'b', backend: 'opencode' }) as never;
+  const res = response(); await handler({ params: { id: 'a' }, query: { sessionId: 'foreign' } }, res);
+  assert.equal(res.statusCode, 404);
 });
-
-describe('workspace command discovery', () => {
-  it('loads project skills without initializing Claude discovery for a new OpenCode chat', async () => {
-    const handler = routeHandler();
-    assert.ok(handler);
-    const workspace = await mkdtemp(join(tmpdir(), 'comate-opencode-new-chat-'));
-    tempDirs.push(workspace);
-    const skillDirectory = join(workspace, '.agents/skills/project-review');
-    await mkdir(skillDirectory, { recursive: true });
-    await writeFile(join(skillDirectory, 'SKILL.md'), [
-      '---',
-      'name: project-review',
-      'description: Review this project',
-      'argument-hint: "[path]"',
-      '---',
-      '',
-    ].join('\n'));
-    workspaceStore.get = async () => ({ id: 'workspace-1', folderPath: workspace }) as never;
-    commandsService.getCommands = async () => {
-      throw new Error('Claude discovery should not run');
-    };
-    const res = mockResponse();
-
-    await handler({
-      params: { id: 'workspace-1' },
-      query: { backend: 'opencode' },
-    }, res);
-
-    assert.equal((res.jsonBody as { partial: boolean }).partial, false);
-    assert.deepEqual(
-      (res.jsonBody as { commands: Array<{ name: string; description: string; argumentHint?: string }> })
-        .commands.find((command) => command.name === 'project-review'),
-      {
-        name: 'project-review',
-        description: 'Review this project',
-        argumentHint: '[path]',
-        aliases: undefined,
-      },
-    );
-  });
-
-  it('loads commands from the active OpenCode session runtime', async () => {
-    const handler = routeHandler();
-    assert.ok(handler);
-    workspaceStore.get = async () => ({ id: 'workspace-1' }) as never;
-    workspaceStore.getLocalSession = () => ({ backend: 'opencode' }) as never;
-    chatService.getSessionBackendCommands = async (sessionId) => [{
-      name: sessionId,
-      description: 'runtime command',
-    }];
-    const res = mockResponse();
-
-    await handler({
-      params: { id: 'workspace-1' },
-      query: { sessionId: 'session-1', backend: 'opencode' },
-    }, res);
-
-    assert.deepEqual(res.jsonBody, {
-      commands: [{ name: 'session-1', description: 'runtime command' }],
-      partial: false,
-    });
-  });
-
-  it('loads skills from Codex before a new chat has a session', async () => {
-    const handler = routeHandler();
-    assert.ok(handler);
-    workspaceStore.get = async () => ({
-      id: 'workspace-1',
-      folderPath: '/workspace',
-    }) as never;
-    codexAppServerManager.listSkills = async (cwd) => [{
-      name: `skill-for-${cwd}`,
-      description: 'Codex skill',
-      path: '/workspace/.codex/skills/new-chat/SKILL.md',
-    }];
-    const res = mockResponse();
-
-    await handler({
-      params: { id: 'workspace-1' },
-      query: { backend: 'codex' },
-    }, res);
-
-    assert.deepEqual(res.jsonBody, {
-      commands: [{ name: 'skill-for-/workspace', description: 'Codex skill' }],
-      partial: false,
-    });
-  });
-
-  it('loads skills from Codex rather than the OpenCode runtime for an existing session', async () => {
-    const handler = routeHandler();
-    assert.ok(handler);
-    workspaceStore.get = async () => ({
-      id: 'workspace-1',
-      folderPath: '/workspace',
-    }) as never;
-    workspaceStore.getLocalSession = () => ({ backend: 'codex' }) as never;
-    chatService.getSessionBackendCommands = async () => {
-      throw new Error('Codex discovery should not query the OpenCode runtime');
-    };
-    codexAppServerManager.listSkills = async () => [{
-      name: 'existing-session-skill',
-      description: 'Codex skill',
-      path: '/workspace/.codex/skills/existing/SKILL.md',
-    }];
-    const res = mockResponse();
-
-    await handler({
-      params: { id: 'workspace-1' },
-      query: { sessionId: 'session-1', backend: 'codex' },
-    }, res);
-
-    assert.deepEqual(res.jsonBody, {
-      commands: [{ name: 'existing-session-skill', description: 'Codex skill' }],
-      partial: false,
-    });
-  });
+it('discovers current files and binds duplicate names to distinct paths on each backend', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'comate-picker-'));
+  try {
+    const paths = ['.claude/skills/one', '.claude/skills/two'].map(relative => path.join(root, relative));
+    for (const directory of paths) { await mkdir(directory, { recursive: true }); await writeFile(path.join(directory, 'SKILL.md'), '---\nname: same\ndescription: Example\n---\nUse me'); }
+    store.get = async () => ({ id: 'workspace', folderPath: root }) as never;
+    commandsService.getCommands = async () => ({ commands: [{ name: 'ordinary-command', description: 'Command' }], partial: false });
+    codexAppServerManager.listSkills = async () => paths.map(directory => ({ name: 'same', description: 'Example', path: realpathSync(path.join(directory, 'SKILL.md')) }));
+    for (const backend of ['claude', 'codex', 'opencode']) {
+      const res = response(); await handler({ params: { id: 'workspace' }, query: { backend } }, res);
+      assert.equal(res.statusCode, 200);
+      const same = (res.body as { commands: Array<{ name: string; skillPath: string }> }).commands.filter(command => command.name.startsWith('same~'));
+      assert.equal(same.length, 2); assert.notEqual(same[0].name, same[1].name); assert.notEqual(same[0].skillPath, same[1].skillPath);
+    }
+    await rm(paths[0], { recursive: true });
+    const refreshed = response(); await handler({ params: { id: 'workspace' }, query: { backend: 'opencode' } }, refreshed);
+    assert.equal((refreshed.body as { commands: Array<{ name: string }> }).commands.filter(command => command.name.startsWith('same~')).length, 1);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

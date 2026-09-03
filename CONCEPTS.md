@@ -123,14 +123,17 @@ Each Provider can carry a second credential alongside its coding API key (`authT
 
 ## Skills
 
+### skill-manager
+Comate 内置的 Skills 管理 Skill，负责通过对话发现、安装、删除和更新用户 Skills，并补齐 scope、目标 Agent 与具体 Skill 选择等必要信息。它随应用提供，以标准 Skills 机制供各 Agent 后端加载；已安装页提供使用引导，清单与 Prompt skill picker 展示实际安装和当前会话可用状态。由 `docs/plans/2026-09-03-2124-refactor-conversational-skill-management-plan.md` 定义。
+
 ### Skill search provider
-A remote Skill catalog that contributes normalized results to federated Skill Search. Provider availability means the catalog returned a valid search response; network errors, timeouts, non-success responses, and malformed responses make it temporarily unavailable, while a valid empty result does not.
+A remote Skill catalog used by conversational Skill discovery. Provider availability means the catalog returned a valid search response; network errors, timeouts, non-success responses, and malformed responses make it temporarily unavailable, while a valid empty result does not.
 
 ### 企业专区 (Enterprise Zone)
-SkillHub 中以企业为发现入口的标准 Skill 目录。用户先浏览企业，再查看该企业发布的 Skills；安装时仍按普通 `skillhub-cn:` Skill 逐个安装，不产生企业级编排项、批量安装语义或独立的 installed kind。
+历史 Skills 目录入口，现已从管理界面移除。原有安装仍按实际文件列出，后续管理通过 skill-manager 对话完成。
 
 ### 专家包 (Expert Package)
-由一个专家包专用编排项和多个标准子 Skills 组成的完整工作流能力。编排项不是业界标准 Skill，但会以运行时可加载的 `SKILL.md` 写入共享作用域，并通过 `skillhub-package:` 来源识别为 `expert-package-orchestrator`，在 Installed 中专门标记。安装专家包会在同一作用域安装编排项与全部子 Skills；从包内 Skill 详情安装时只安装当前 Skill。
+由一个专家包专用编排项和多个标准子 Skills 组成的完整工作流能力。编排项不是业界标准 Skill，但会以运行时可加载的 `SKILL.md` 写入共享作用域，并通过 `skillhub-package:` 来源识别为 `expert-package-orchestrator`，在 Installed 中专门标记。旧专家包的编排项、子 Skills 与来源记录继续保留；新界面不再提供专家包目录和安装表单。
 
 ## Desktop shell
 

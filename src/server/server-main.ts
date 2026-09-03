@@ -31,7 +31,6 @@ import todoRoutes from './routes/todos.js';
 import githubRoutes from './routes/github.js';
 import scheduledTasksRoutes from './routes/scheduled-tasks.js';
 import providerRoutes from './routes/providers.js';
-import pluginRoutes from './routes/plugins.js';
 import skillRoutes from './routes/skills.js';
 import analyticsRoutes from './routes/analytics.js';
 import botRoutes from './routes/bots.js';
@@ -49,15 +48,11 @@ import { wecomSessionRenamer } from './services/wecom-session-renamer.js';
 import { feishuBotService } from './services/feishu-bot-service.js';
 import { BotMigrationService } from './services/bot-migration-service.js';
 import { store as workspaceStore } from './storage/sqlite-store.js';
-import { botService } from './services/bot-service.js';
-import { builtinPluginService } from './services/builtin-plugin-service.js';
 import { diagLog } from './utils/diag-logger.js';
 import { getLogsDir, runLogCleanup } from './utils/log-cleanup.js';
 import { getStorageDir } from './storage/data-dir.js';
 import { resolveSdkBinary } from './utils/resolve-sdk-binary.js';
 import { initializeResolvedShellEnv } from './utils/resolve-shell-env.js';
-import { resolveBuiltInMarketplacePath } from './utils/resolve-builtin-marketplace-path.js';
-import { addExtraKnownMarketplace } from './utils/claude-settings.js';
 import { ComateWebSocketServer } from './websocket/server.js';
 import { teardownServices } from './service-teardown.js';
 import { sessionCapabilityService } from './services/session-capability-service.js';
@@ -125,28 +120,6 @@ function pruneBotEscalationLedger(): void {
   }
 }
 
-function ensureComateBuiltInMarketplace(): void {
-  const marketplacePath = resolveBuiltInMarketplacePath();
-  if (!marketplacePath) {
-    diagLog('[Marketplace] Built-in marketplace folder not found; skipping registration');
-    return;
-  }
-
-  try {
-    addExtraKnownMarketplace('comate-built-in', {
-      source: {
-        source: 'directory',
-        path: marketplacePath,
-      },
-    });
-    diagLog(`[Marketplace] Registered comate-built-in marketplace in ~/.claude/settings.json from ${marketplacePath}`);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    diagLog(`[Marketplace] Failed to register comate-built-in marketplace: ${message}`);
-  }
-}
-
-ensureComateBuiltInMarketplace();
 void browserUploadStagingService.cleanupOrphans().catch((error) => {
   diagLog(`[browser-upload] startup staging cleanup failed: ${error instanceof Error ? error.name : 'unknown'}`);
 });
@@ -242,7 +215,6 @@ app.use('/api/workspaces/:workspaceId/wecom/smartsheet-export', wecomSmartsheetE
 app.use('/api/wecom', wecomBridgeRoutes);
 app.use('/api/system', systemRoutes);
 app.use('/api/providers', providerRoutes);
-app.use('/api/plugins', pluginRoutes);
 app.use('/api/skills', skillRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/bots', botRoutes);
@@ -386,23 +358,7 @@ const server = app.listen(Number(PORT), '127.0.0.1', () => {
       console.error('[Startup] escalation ledger boot recovery failed:', err);
     }
 
-    // Backfill the built-in wecom plugin for any existing WeCom-enabled bots.
-    // This repairs workspaces that were created after the skill-to-plugin refactor
-    // but before auto-install was added.
-    try {
-      for (const bot of botService.listBots()) {
-        if (botService.getChannelSettings(bot.id).wecom?.enabled && bot.activeWorkspaceId) {
-          await builtinPluginService.ensureWecomPluginInstalled(bot.activeWorkspaceId).catch((err) => {
-            console.error(
-              `[Startup] failed to backfill wecom plugin for workspace ${bot.activeWorkspaceId}:`,
-              err,
-            );
-          });
-        }
-      }
-    } catch (err) {
-      console.error('[Startup] unexpected error during wecom plugin backfill:', err);
-    }
+
 
     // Initialize WeCom bot connections for enabled bots/workspaces.
     // (U12: setServerUrl is gone — per-session CLI context files derive the
