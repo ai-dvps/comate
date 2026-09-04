@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useChatStore, promptImageDraftKey } from '../stores/chat-store'
-import { prepareSkillManagerDraft } from './skill-manager-draft'
+import { useChatStore, promptImageDraftKey, newChatDraftSessionId } from '../stores/chat-store'
+import { prepareSkillManagerDraft, prepareSkillInstallDraft } from './skill-manager-draft'
 
 const createSession = vi.fn<(workspaceId: string, options: unknown) => Promise<never>>().mockResolvedValue({ ok: true, session: { id: 'management', backend: 'codex' } } as never)
 beforeEach(() => {
@@ -12,8 +12,8 @@ beforeEach(() => {
 })
 describe('skill-manager draft handoff', () => {
   it('fills an empty current session without creating or sending a turn', async () => {
-    expect(await prepareSkillManagerDraft('ws', 'Find a design Skill', 'skill-manager~stable')).toBe('existing')
-    expect(useChatStore.getState().drafts.existing).toBe('/skill-manager~stable Find a design Skill')
+    expect(await prepareSkillManagerDraft('ws', 'Find a design Skill', 'skill-manager')).toBe('existing')
+    expect(useChatStore.getState().drafts.existing).toBe('/skill-manager Find a design Skill')
     expect(createSession).not.toHaveBeenCalled()
   })
   it.each(['text', 'attachment', 'streaming', 'submitting'])('preserves %s and opens a separate draft on the same backend', async (kind) => {
@@ -41,5 +41,25 @@ describe('skill-manager draft handoff', () => {
     await pending
     expect(useChatStore.getState().drafts['other-session']).toBe('other draft')
     expect(createSession.mock.calls[0]?.[0]).toBe('ws')
+  })
+})
+
+describe('install through New Chat', () => {
+  it('targets the selected workspace composer without reusing a session or creating one', () => {
+    const id = prepareSkillInstallDraft('ws', 'Install URL', 'skill-manager')
+    expect(id).toBe(newChatDraftSessionId('ws'))
+    expect(useChatStore.getState().drafts[id]).toBe('/skill-manager Install URL')
+    expect(useChatStore.getState().drafts.existing).toBeUndefined()
+    expect(createSession).not.toHaveBeenCalled()
+  })
+  it('preserves existing New Chat text and attachments', () => {
+    const id = newChatDraftSessionId('ws')
+    const images = { [promptImageDraftKey('ws', id)]: [{ id: 'image' }] as never }
+    useChatStore.setState({ drafts: { [id]: 'Existing draft', existing: 'Session draft' }, imageDrafts: images })
+    prepareSkillInstallDraft('ws', 'Install URL', 'skill-manager')
+    expect(useChatStore.getState().drafts[id]).toBe('Existing draft\n\n/skill-manager Install URL')
+    expect(useChatStore.getState().drafts.existing).toBe('Session draft')
+    expect(useChatStore.getState().imageDrafts).toEqual(images)
+    expect(createSession).not.toHaveBeenCalled()
   })
 })

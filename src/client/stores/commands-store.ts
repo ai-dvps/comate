@@ -209,7 +209,9 @@ export function useCommands(workspaceId: string, scope?: CommandScope): UseComma
 
   return {
     commands: cached?.commands ?? [],
-    loading,
+    // Before the first fetch effect, an absent cache is still unresolved.
+    // Reporting it as loaded would invalidate references in restored drafts.
+    loading: loading || Boolean(workspaceId && !cached && !error),
     error,
     partial: Boolean(cached?.partial),
     partialReason: cached?.partialReason,

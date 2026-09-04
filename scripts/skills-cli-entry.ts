@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 // Entry bundled separately: upstream's .ts imports must not enter the server tsc graph.
-import { lstat, readFile, realpath, rm } from 'node:fs/promises';
+import { lstat, readFile, realpath, rm, mkdtemp, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { tmpdir } from 'node:os';
+import { parseRegistrySource, materializeRegistrySource, validateMaterializedRegistryTree } from '../src/server/services/skills/registry-source.js';
 import { runAdd, parseAddOptions } from '../src/server/vendor/vercel-skills/src/add.ts';
 import { getInstallPath } from '../src/server/vendor/vercel-skills/src/installer.ts';
 import { getSkillLockPath } from '../src/server/vendor/vercel-skills/src/skill-lock.ts';
 import type { AgentType } from '../src/server/vendor/vercel-skills/src/types.ts';
 import { discoverInstalledSkills } from '../src/server/services/skill-inventory.js';
-import { searchSkillsAPI } from '../src/server/services/skills/search.js';
+import { searchFederatedSkills, isSkillSearchProviderId } from '../src/server/services/skills/search.js';
 import { getPrimaryHomeDir } from '../src/server/utils/home-dir.js';
 
 const print = (data: unknown) => process.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
@@ -38,7 +40,7 @@ async function installationPath(target: string): Promise<string> {
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (!command || command === '--help') {
-    console.log('comate skills: inventory | find <query> | add <source> --project|--global --skill <names...> --agent <claude-code|codex|opencode...> | remove --path <path> --real-path <path> [--allow-shared]\nUse add --list to inspect a source. Updates use add with --replace --expected-path <path>, one installation at a time. Bundled Skills CLI 1.5.11; Git must be available for Git sources.'); return;
+    console.log('comate skills: inventory | find <query> [--providers <comma-separated IDs>] | add <source> --project|--global --skill <names...> --agent <claude-code|codex|opencode...> | remove --path <path> --real-path <path> [--allow-shared]\nUse add --list to inspect a source. Updates use add with --replace --expected-path <path>, one installation at a time. Bundled Skills CLI 1.5.11; Git must be available for Git sources.'); return;
   }
   if (command === '--version') { console.log('comate-skills/1.5.11'); return; }
   if (command === 'inventory') {
@@ -48,8 +50,16 @@ async function main() {
     print({ skills: skills.filter(s => (process.env.COMATE_SKILL_ISOLATED !== '1' || s.scope !== 'global') && (s.scope !== 'builtin' || !allowed || allowed.includes(s.name))) }); return;
   }
   if (command === 'find') {
+    const providerList = take(args, '--providers');
+    const providers = providerList?.split(',');
+    if (providers?.some(id => !isSkillSearchProviderId(id))) throw new Error('Unknown provider; use skills.sh,skillshub,xfyun,skillhub-cn');
     if (!args.join(' ').trim()) throw new Error('find requires a search query');
-    print({ skills: await searchSkillsAPI(args.join(' ')), provider: 'skills.sh', status: 'available' }); return;
+    const result = await searchFederatedSkills({ keyword: args.join(' '), providers: providers?.filter(isSkillSearchProviderId) });
+    const failures = result.providers.filter(provider => provider.status === 'unavailable').length;
+    const status = failures === result.providers.length ? 'unavailable' : failures ? 'partial' : 'available';
+    print({ ...result, status });
+    if (status === 'unavailable') process.exitCode = 1;
+    return;
   }
   if (command === 'remove') {
     const selected = take(args, '--path');
@@ -73,6 +83,18 @@ async function main() {
   const parsed = parseAddOptions(args);
   const { options, source } = parsed;
   if (source.length !== 1) throw new Error('Provide one source');
+  const registry = parseRegistrySource(source[0]);
+  if (registry?.kind === 'expert-package-orchestrator') throw new Error('Expert package orchestration requires its dedicated repository workflow; select an individual Skill');
+  const installSource = source[0];
+  const runSource = async () => {
+    if (!registry) return runAdd(source, { ...options, yes: true, copy: !options.list });
+    const directory = await mkdtemp(path.join(tmpdir(), 'comate-hub-skill-'));
+    try {
+      await materializeRegistrySource(registry, directory);
+      await validateMaterializedRegistryTree(directory);
+      await runAdd([directory], { ...options, yes: true, copy: !options.list });
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  };
   if (!options.list) {
     if (project === Boolean(options.global) || !options.skill?.length || !options.agent?.length || options.all || options.skill.includes('*')) throw new Error('Specify exactly one scope (--project or --global), selected --skill names and --agent targets');
     if (process.env.COMATE_SKILL_ISOLATED === '1' && options.global) throw new Error('This isolated session cannot manage user-level Skills');
@@ -101,14 +123,21 @@ async function main() {
       const data = JSON.parse(await readFile(lock, 'utf8'));
       if (data.version !== (options.global ? 3 : 1) || !data.skills || Array.isArray(data.skills)) throw new Error(`Unsupported lock format; preserving ${lock}. Use the repository installation instructions.`);
     }
-    await runAdd(source, { ...options, yes: true, copy: true });
+    await runSource();
     const installed = await discoverInstalledSkills(process.cwd());
     const results = await Promise.all(targets.map(async target => {
       const canonical = await installationPath(target);
-      return { path: target, status: !process.exitCode && installed.some(s => s.realPath === canonical) ? 'installed' : 'failed' };
+      const succeeded = !process.exitCode && installed.some(s => s.realPath === canonical);
+      // Persist the original Hub/repository coordinate, never the temporary download directory.
+      if (succeeded) {
+        const provenancePath = path.join(target, '.comate-skill-source.json');
+        await rm(provenancePath, { force: true });
+        await writeFile(provenancePath, JSON.stringify({ source: installSource }, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
+      }
+      return { path: target, status: succeeded ? 'installed' : 'failed' };
     }));
     print({ results });
     if (results.some(r => r.status === 'failed')) process.exitCode = 1;
-  } else await runAdd(source, { ...options, yes: true });
+  } else await runSource();
 }
 void main().catch(error => { process.stderr.write(`comate skills: ${error instanceof Error ? error.message : String(error)}\n`); process.exitCode = 1; });

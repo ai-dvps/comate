@@ -468,10 +468,14 @@ export default function PromptInput(props: PromptInputProps) {
   const placeholderVisible = !input && !isFocused
 
   useEffect(() => {
-    let next = reconcileCommittedReferenceStatuses(
-      committedReferencesRef.current,
-      candidates,
-    )
+    // Presets can update the draft store without passing through the editor.
+    // Rebase existing chips and validate new references just like restoration.
+    const externalDraftChange = prevInputRef.current !== input
+    const references = externalDraftChange
+      ? rebaseCommittedReferences(prevInputRef.current, input, committedReferencesRef.current)
+      : committedReferencesRef.current
+    if (externalDraftChange) pendingReferenceCommitRef.current = { source: 'restore' }
+    let next = reconcileCommittedReferenceStatuses(references, candidates)
     const pendingCommit = pendingReferenceCommitRef.current
     if (pendingCommit) {
       next = commitValidatedReferences(input, next, candidates, pendingCommit)

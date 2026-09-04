@@ -72,12 +72,12 @@ Skills 页面另行维护搜索、安装弹窗、专家包和企业专区，但�
 
 **Product surfaces and guidance**
 
-- R10. 移除独立 Plugin 管理与市场入口，以及 Skills 的 Search、Expert Packages、Enterprise Zone 和直接安装、删除、更新表单或动作。
-- R11. 已安装页在空列表和非空列表下都说明 `skill-manager` 的作用，并提供可发现的“使用 skill-manager”对话入口。
-- R12. 页面提供发现、按地址安装、删除和更新的自然语言示例，用户无需先知道命令名或安装目录。
+- R10. 移除独立 Plugin 管理与市场入口，以及 Skills 的 Search、Expert Packages、Enterprise Zone 和直接执行安装、删除、更新的表单；保留仅准备对话草稿的安装按钮与行内更新、移除入口。
+- R11. 已安装页优先展示清单，工具栏提供“安装 Skill”，帮助按需展开；不常驻大块教程。空状态提供简短说明。
+- R12. 帮助按需展示自然语言示例；每个用户安装行提供“更新…”和“移除…”，自动携带安装对象，用户无需记忆名称或复制路径。
 - R13. 引导入口和示例将用户带到当前工作区的可编辑对话输入，携带 `skill-manager` 引用而不自动发送或丢失原有草稿。
 - R14. 已安装页展示实际发现的 Skills、scope、安装位置及可获得的来源信息，覆盖 Comate 之外安装的 Skills。
-- R15. Prompt skill picker 只把当前会话后端可发现且获准使用的 Skills 作为可选项，名称相同的不同安装不得混淆。
+- R15. Prompt skill picker 只把当前会话后端可发现且获准使用的 Skills 作为可选项，同名安装通过路径说明区分，保持原始调用名称，不追加内部标识；同名调用冲突由用户处理。
 - R16. 文件或管理操作产生变化后，清单和 picker 能刷新到实际状态，后端尚未加载的安装明确呈现生效条件。
 
 **Migration and ownership**
@@ -86,9 +86,16 @@ Skills 页面另行维护搜索、安装弹窗、专家包和企业专区，但�
 - R18. 内置 Skills 标记为由 Comate 维护，应用更新负责其版本；用户安装的 Skills 不被应用更新覆盖。
 - R19. 旧专家包安装中的编排项和子 Skills 在新清单中继续可见，撤掉目录入口不等同于撤销既有安装。
 
+**Contextual management and installation boundaries**
+
+- R20. 默认仅展示当前项目与用户级安装，不扫描其他项目。scope 筛选提供全部、当前项目、用户级；Agent 筛选按可用集合匹配，包含共享安装。内置分组独立于 scope 筛选，仍受搜索及 Agent 筛选影响。
+- R21. 每个真实安装目标独立一行，同目标软链接合并；展示 scope、可用 Agent、路径、来源及可靠版本。仅使用实际 SKILL.md 的 metadata.version，缺失时显示“版本未知”，不以仓库最新版或目录名猜测。
+- R22. 更新、移除草稿携带名称、scope、安装路径、真实目标、别名、全部受影响 Agent 和已知版本。Agent 筛选不缩小操作影响范围。一次默认只处理所选安装，不能自动更新其他项目或用户级同名项。
+- R23. 跨项目批量操作只响应用户在对话中的明确要求；skill-manager 列出可访问项目、路径、当前与目标版本并确认选择，不宣称覆盖不可访问项目。用户级与共享目标的影响范围必须说明。
+
 ### Key Flows
 
-- F1. **从已安装页开始。** 用户打开 Skills 页面，阅读引导或点击示例，在当前工作区的会话输入中编辑请求后发送；无现有会话时沿用工作区的新会话流程。Covers R11–R13.
+- F1. **从已安装页开始。** 用户打开 Skills 页面，点击安装、行操作或按需展开的帮助示例，在当前工作区的会话输入中编辑请求后发送；无现有会话时沿用工作区的新会话流程。Covers R11–R13.
 - F2. **按需求发现。** Agent 解释搜索结果或搜索失败；用户选择候选来源后进入安装流程，未找到合适 Skill 时仍可继续普通任务。Covers R4, R9.
 - F3. **按链接安装。** Agent 检查来源、列出候选，补齐 R5 所需选择，按 R6–R7 执行，按 R9 报告并触发 R16 的展示更新。
 - F4. **删除或更新。** Agent 基于实际安装清单识别对象，消除 scope 和同名歧义后执行；用户修改选择或取消时停止尚未执行的变更。Covers R6, R8–R9, R14, R16.
@@ -106,26 +113,13 @@ flowchart TB
   Verify --> Picker[Current-session skill picker]
 ```
 
-页面的信息顺序为：解释管理方式与主入口、可点击的自然语言示例、已有 Skills 清单。
-空状态保留前两部分，并把空列表说明指向同一对话入口；非空状态不把引导藏到帮助菜单。
+页面的信息顺序为：标题与“安装 Skill”、搜索和独立 scope / Agent 筛选、用户安装清单、Comate 内置分组。帮助按需展开，展示说明与示例；关闭后不占用列表空间。
 
-**引导文案草案（落实 R11–R13）：**
 
-> 用对话管理你的 Skills
->
-> 告诉 skill-manager 你想完成什么，或直接提供 Skill 的仓库地址。它会帮你查找、安装、删除和更新 Skills，并在需要时和你确认安装范围与具体选择。
->
-> **使用 skill-manager**
 
-可点击的示例：
+每行优先展示名称和最多两行用途说明；scope 与适用 Agent 为第二层信息：当前项目用浅蓝 Tag，用户级用浅紫 Tag，内置项保留维护说明。摘要仅显示 Agent 选择器中当前可用且适用于该 Skill 的 Agent；全部 Agent 都可用且适用时简写“全部 Agent”。完整适用 Agent 在安装详情中列出，操作草稿不因展示过滤缩小影响范围。版本、来源、完整路径、完整描述和共享关系放入按需展开的“安装详情”，路径支持复制。安装路径仅在安装详情内展示，同名且同 scope 的安装也不在摘要中展示路径；窄窗口将 scope 与 Agent 自然换行。
 
-- “帮我找一个适合做演示文稿的 Skill。”
-- “帮我安装这个仓库里的 Skill：[粘贴 HTTPS / Git 地址]。”
-- “帮我删除不再使用的 Skill。”
-- “检查我安装的 Skills 是否有更新。”
-
-空列表说明使用“还没有安装用户 Skills，从上方的 skill-manager 开始”，避免把已随应用提供的内置 Skills 描述为不存在。
-示例只准备可编辑的请求；具体管理对象和范围仍由 F3、F4 的对话确定。
+行操作处说明“由 skill-manager 协助完成，执行前确认”。内置 Skills 标记“由 Comate 维护”，不提供更新或移除入口。搜索无匹配时提供“查找更多 Skills”，带入搜索词。安装、帮助示例、行操作都只准备可编辑草稿，不自动发送，保留已有文字、附件与运行中对话。
 
 ### Acceptance Examples
 
@@ -182,10 +176,10 @@ Product Contract preservation: 保留 R1–R19、A1–A3、F1–F5、AE1–AE10 
 
 - KTD1. **内置资源由应用持有，通过后端适配层加载。** 新建应用资源中的 `skills/`，迁入 `skill-manager` 和三个企业微信 Skill，保留各自脚本与引用文件。运行时解析开发、sidecar、打包后的资源路径，不写入用户的 plugin 缓存或项目配置。此机制落实 R1–R3、R18 的用户已确定方向；保留原有业务 CLI。（session-settled: user-directed — chosen over plugin-based first-party delivery: 用户要求 Comate 能力跨 Agent 且不依赖 plugin。）
 - KTD2. **后端原生发现优先，隔离会话使用按需读取标准 Skill 的桥接。** 普通 Claude 会话使用受控附加目录，OpenCode 通过会话配置提供 Skills 路径，Codex 使用其 Skills 根目录与路径引用机制。Claude Bot 保持 `settingSources: []`；向其提供经既有策略筛选的名称、说明和文件路径，由获准的读取工具按需加载 `SKILL.md`。显式选择时可由 Comate 附带所选 Skill 内容及基准路径，不注入所有 Skill 正文。该桥接不模拟 plugin、hooks 或自定义 Skill 格式。原生路径与桥接路径都必须由 U1 证明可执行，不能把文件存在当成已加载。落实 R2–R3、R15。
-- KTD3. **安装清单与会话可用性分别建模。** 复用现有 frontmatter 解析和 OpenCode realpath 扫描，增加统一发现服务。安装身份绑定 scope、逻辑安装路径和实际目标路径；同目标的软链接登记为别名，同名不同目标保留独立记录。后端原生发现结果、当前策略与桥接结果决定可用性，lock 文件仅补充来源、版本及旧专家包关系。磁盘已不存在的 lock 项不计为已安装。落实 R6、R14–R19。
+- KTD3. **安装清单与会话可用性分别建模。** 复用现有 frontmatter 解析和 OpenCode realpath 扫描，增加统一发现服务。安装身份绑定 scope、逻辑安装路径和实际目标路径；同目标的软链接登记为别名，同名不同目标保留独立记录。后端原生发现结果、当前策略与桥接结果决定可用性，lock 文件仅补充来源及旧专家包关系；版本来自实际文件 metadata.version。磁盘已不存在的 lock 项不计为已安装。落实 R6、R14–R19。
 - KTD4. **管理 Skill 使用随应用提供的工具入口。** 从已 vendored 的 Skills CLI 1.5.11 构建独立可执行资源，增加 `comate skills` 转发入口，参数以该版本实际支持项为准。CLI 负责标准仓库操作，`skill-manager` 负责理解仓库、沟通选择及生成器例外；不把现有 HTTP 安装表单原封不动变成新 API。发现阶段复用搜索工具，但必须让网络失败成为失败结果。另提供会话范围内的只读 inventory 查询，让 Agent 和页面使用同一组安装身份；查询继承 R3 的鉴权和工作区边界，只返回该调用者获准查看的安装信息。落实 R4–R9。
 - KTD5. **安装工具不替代权限控制。** CLI 继承当前会话工作目录和执行权限；用户确认管理意图不授予额外文件或网络权限。工具调用前后对选定路径核对真实目标，shared-root 安装说明其实际可见范围；不能用目标 Agent 标签承诺底层目录无法实现的隔离。移除软链接时只移除被选中的链接，删除共享实体需要明确影响范围。内置资源交由应用升级维护。落实 R3、R5–R9、R18。
-- KTD6. **页面通过草稿交接进入对话。** 主按钮准备通用管理请求，示例准备对应请求；携带稳定 Skill 身份而非仅插入同名 slash 文本。输入为空时填入，有文字、附件或正在提交时创建独立的新会话草稿，保留原草稿与附件；连新会话草稿也非空时先保存为可恢复的草稿，再准备管理草稿。按 R13，暂存不能放入会自动发送的队列。工作区在交接时固定，禁止异步回调写入后来切换到的工作区。落实 R11–R13。
+- KTD6. **页面通过草稿交接进入对话。** 安装入口（包括帮助中的安装示例与空状态入口）复用 New Chat 页面，预选当前 workspace，沿用 New Chat 的 Agent/模型默认设置；只填入该工作区的新对话草稿，发送时才创建会话。已有 New Chat 文字与附件保留，安装请求追加供编辑。其他示例准备对应请求，行操作携带 R22 的完整安装上下文；使用原始 `/skill-manager` 名称，不追加内部调用标识。输入为空时填入，有文字、附件或正在提交时创建独立的新会话草稿，保留原草稿与附件；连新会话草稿也非空时先保存为可恢复的草稿，再准备管理草稿。按 R13，暂存不能放入会自动发送的队列。工作区在交接时固定，禁止异步回调写入后来切换到的工作区。落实 R11–R13。
 - KTD7. **刷新以磁盘和运行时证据为准。** 为有效 Skills 根目录建立可释放的 watcher，变化合并后更新目录版本；页面进入、窗口重新聚焦和手动刷新均补做发现。缓存按工作区、后端、会话策略和目录版本区分；旧请求结果不能覆盖新上下文。原生后端未确认刷新时记录“需新会话生效”，不要显示已加载。落实 R9、R15–R16。
 - KTD8. **先建立替代通路，再移除旧管理写入面。** 删除旧安装表单、目录页及其专用 mutation 路由；保留仍被运行时引用的第三方 Claude plugin 配置读取、MCP 读取和旧来源记录解析。停止企业微信 plugin 自动安装，不批量修改既有第三方设置。旧内置 plugin 仅对已确认由 Comate 管理的挂载抑制重复，原磁盘文件不删除。落实 R10、R17–R19。
 
@@ -304,7 +298,7 @@ flowchart TB
 
 - **Goal:** 清单、picker 与管理 Agent 对同一安装达成一致。
 - **Dependencies:** U1。
-- **Requirements:** R6、R14–R16、R19；F4–F5、AE6–AE8；KTD3、KTD7。
+- **Requirements:** R6、R14–R16、R19–R21；F4–F5、AE6–AE8；KTD3、KTD7。
 - **Files:** `src/server/services/skills-service.ts`、`skills/skills-discovery.ts`、`opencode-skill-discovery.ts`、`commands-service.ts`、`src/server/routes/skills.ts`、`src/client/stores/skills-store.ts`、共享 DTO 与相邻测试；新增统一发现服务。
 - **Approach:** 从有效后端根和内置资源扫描安装项，合并来源记录；提供只读 inventory，派生会话候选和加载状态。扩展现有 watcher 与缓存失效，不为每次渲染递归扫描目录。
 - **Test Scenarios:** 无 lock 的外部安装出现；仅 lock 无文件不伪装安装；项目与全局同名分别显示；共享软链接不重复当成不同实体且保留别名；循环与断链不挂起；旧专家包仍显示关系；旧工作区的迟到请求不覆盖新工作区；运行时无法刷新时出现新会话提示。
@@ -314,7 +308,7 @@ flowchart TB
 
 - **Goal:** 通过已存在且可执行的工具完成对话管理，并迁移企业微信 Skill 内容。
 - **Dependencies:** U1、U2。
-- **Requirements:** R1–R9、R18；F2–F4、AE3–AE5、AE9–AE10；KTD1–KTD5。
+- **Requirements:** R1–R9、R18、R22–R23；F2–F4、AE3–AE5、AE9–AE10；KTD1–KTD5。
 - **Files:** 新增 `skills/skill-manager/SKILL.md` 与配套参考；迁入 `skills/send-wecom-msg/`、`skills/send-wecom-file/`、`skills/wecom-doc/`；`packages/comate-cli/src/index.ts`、`packages/wecom-cli/src/commands/`、`src/server/vendor/vercel-skills/`、`scripts/build-sidecar.ts` 和相邻构建/CLI 测试。
 - **Approach:** 构建 vendored CLI 并提供转发和只读 inventory 入口；Skill 指导发现、源检查、范围确认、安装核验和失败说明。标准目录安装复用工具，生成式安装遵循仓库说明。企业微信调整会话身份入口和说明，保留原引用文件。三个后端都从其实际执行上下文获得可执行文件路径。
 - **Test Scenarios:** 单 Skill 源、多 Skill 只选一项和生成式源分别保留脚本引用；已明确 scope 不重复询问；安装失败不能写成功结果；删除共享链接不删实体；本地修改与无来源更新先说明；内置资源不被普通删除流程移除；搜索超时有失败信号；取消后无变更；企业微信测试使用受控接收端和正确 Comate 会话身份。
@@ -324,9 +318,9 @@ flowchart TB
 
 - **Goal:** 用户在已安装页知道管理方式，并能通过示例开始可编辑的管理对话。
 - **Dependencies:** U2、U3。
-- **Requirements:** R11–R16；F1、AE1–AE2、AE6–AE7；KTD6–KTD7。
+- **Requirements:** R11–R16、R20–R23；F1、AE1–AE2、AE6–AE7；KTD6–KTD7。
 - **Files:** `src/client/components/SkillsPage.tsx`、`SkillsPage.browser.test.tsx`、`PromptInput.tsx`、`CommandPicker.tsx`、`src/client/stores/chat-store.ts`、`skills-store.ts`、管理区导航及相关样式。
-- **Approach:** 采用 Product Contract 引导文案与信息顺序。顶部展示解释、主按钮及可点击例句，下面展示安装项及来源/可用性详情。复用已有 Prompt 引用交互，新增有上下文的草稿交接动作；未知或不可用的 Skill 不能生成看似有效的引用。
+- **Approach:** 采用 Product Contract 引导文案与信息顺序。工具栏提供安装按钮和按需帮助，正文提供 scope/Agent 独立筛选和按真实安装分行的清单，内置项单独分组；行内更新/移除携带精确路径及全部 Agent 进入草稿。复用已有 Prompt 引用交互，新增有上下文的草稿交接动作；未知或不可用的 Skill 不能生成看似有效的引用。
 - **Test Scenarios:** 空与非空列表均能找到入口；四类示例进入可编辑输入且不发送；已有文字、附件、忙碌会话及非空新会话草稿完整保留；切换工作区期间点击不会写错位置；键盘可激活例句并聚焦输入；加载错误有重试；小窗口下引导与列表均可达；后端禁止该 Skill 时解释原因并不触发无效交接。
 - **Verification:** React 行为测试覆盖草稿和异步切换；浏览器验收覆盖空/非空布局、键盘流程和 picker；避免用整页快照替代流程断言。
 
@@ -377,8 +371,22 @@ Agent 行为评估至少覆盖 AE3–AE5、AE9–AE10；给定相同明确输入
 ## Definition of Done
 
 - U1–U6 各自的验证通过；产品 AE1–AE10 有可追溯结果，三个后端的加载路径已实测。
-- 已安装页在空/非空状态都提供用途说明、主入口和示例，用户进入对话时原草稿与附件无损。
+- 已安装页在空/非空状态都提供安装入口、按需帮助与示例，用户进入对话时原草稿与附件无损。
 - `skill-manager` 和适用的业务 Skills 随发布包可用，执行不依赖旧内置 plugin 安装流程。
 - 用户文件、第三方 plugin 配置和旧安装来源保留；磁盘清单与会话 picker 对可用状态一致。
 - 失败与未生效状态可辨识，Bot 权限未扩大，跨工作区的私有 Skills 和会话身份未串用。
 - Verification Contract 门禁完成；移除废弃入口及试验代码，文档与最终实现一致。
+
+### Contextual management verification (U2–U4, U6)
+
+- R20–R23：同名的项目级与用户级安装分行，其他项目不出现；可靠版本与未知版本分别展示。
+- Agent 筛选包含共享项；筛选后行操作仍携带全部 Agent 和精确路径，不自动发送。
+- 内置项没有变更操作；帮助默认收起；空列表和搜索无结果均有对应入口。
+- 浏览器验证桌面和窄屏中文布局；保留原有草稿、附件、运行会话保护测试。
+
+### Restored Hub discovery and lifecycle
+
+- `find` defaults to the existing four-provider registry (skills.sh, SkillsHub, xfyun, skillhub-cn), accepts explicit provider subsets, and reports partial and total failure separately. Repository URLs remain direct source inspection inputs.
+- Hub installSource coordinates are materialized through the existing bounded archive downloaders and validated before calling the same selected-skill installer. Listing does not install files. Updates redownload the original source and keep exact-path and shared-target checks. Failed downloads leave existing installations untouched.
+- Successful installs save per-installation source provenance in `.comate-skill-source.json`; inventory prefers this over ambiguous name-keyed locks. Scope and agent filters never broaden an update to another same-name installation.
+- U3/U6 verification includes search-provider failures and an archive fixture covering listing, project/user installs, update isolation, failed-download preservation, reusable provenance and precise deletion.

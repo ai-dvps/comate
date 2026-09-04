@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor, cleanup } from '@testing-libra
 import { page, userEvent } from '@vitest/browser/context'
 import { I18nextProvider } from 'react-i18next'
 import PromptInput from './PromptInput'
+import { useCommandsStore } from '../stores/commands-store'
 import i18n from '../i18n'
 import type { SessionActivitySnapshot } from '../types/message'
 import { extractPlainText, setCaretOffset, setSelectionOffsets } from '../lib/contenteditable'
@@ -168,14 +169,18 @@ vi.mock('../lib/image-input', () => {
 })
 
 const workspaceAwareControlsMock = vi.hoisted(() => ({
+  useRealCommands: false,
   commandWorkspaceIds: [] as string[],
   commandScopes: [] as Array<{ sessionId?: string; backendId?: string } | undefined>,
   fileWorkspaceIds: [] as string[],
   providerWorkspaceIds: [] as string[],
 }))
 
-vi.mock('../stores/commands-store', () => ({
+vi.mock('../stores/commands-store', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../stores/commands-store')>()
+  return { ...actual,
   useCommands: (workspaceId: string, scope?: { sessionId?: string; backendId?: string }) => {
+    if (workspaceAwareControlsMock.useRealCommands) return actual.useCommands(workspaceId, scope as Parameters<typeof actual.useCommands>[1])
     workspaceAwareControlsMock.commandWorkspaceIds.push(workspaceId)
     workspaceAwareControlsMock.commandScopes.push(scope)
     return {
@@ -199,7 +204,8 @@ vi.mock('../stores/commands-store', () => ({
     })),
     }
   },
-}))
+  }
+})
 
 const filesMock = vi.hoisted(() => ({
   results: [] as { path: string; type?: 'file' | 'folder' }[],
@@ -270,6 +276,7 @@ describe('PromptInput browser', () => {
     vi.clearAllMocks()
     cleanup()
     chatStoreMock.getState().sessions = {}
+    workspaceAwareControlsMock.useRealCommands = false
     chatStoreMock.getState().drafts = {}
     chatStoreMock.getState().imageDrafts = {}
     chatStoreMock.getState().messages = {}
@@ -1708,6 +1715,29 @@ describe('PromptInput browser', () => {
     await waitFor(() => expect(screen.getByText('/commit')).toBeInTheDocument(), {
       timeout: 1000,
     })
+  })
+
+  it('restores a preset chip after the real command store completes its first request', async () => {
+    workspaceAwareControlsMock.useRealCommands = true
+    useCommandsStore.setState({ commandsByWorkspace: {}, loadingByWorkspace: {}, errorByWorkspace: {} })
+    const id = `__new_chat_draft__:${JSON.stringify('ws-1')}`
+    chatStoreMock.setDraft(id, '/skill-manager Install from URL')
+    let finish!: (response: Response) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { finish = resolve })))
+    renderWithI18n(<PromptInput mode="new-chat" workspaceId="ws-1" backendId="claude" onBackendChange={vi.fn()} providerId={null} onProviderChange={vi.fn()} fastMode={false} onFastModeChange={vi.fn()} approvalMode="manual" onApprovalModeChange={vi.fn()} onSend={vi.fn()} />)
+    await waitFor(() => expect(finish).toBeDefined())
+    expect(editableElement().querySelector('[data-prompt-reference-chip]')).toBeNull()
+    await act(async () => { finish(Response.json({ commands: [{ name: 'skill-manager', description: 'Manage Skills' }] })) })
+    await waitFor(() => expect(editableElement().querySelector('[data-prompt-reference-chip]')?.textContent).toBe('/skill-manager'))
+  })
+
+  it('renders validated skill chips when a preset updates an already mounted New Chat draft', async () => {
+    const id = `__new_chat_draft__:${JSON.stringify('ws-1')}`
+    renderWithI18n(<PromptInput mode="new-chat" workspaceId="ws-1" backendId="claude" onBackendChange={vi.fn()} providerId={null} onProviderChange={vi.fn()} fastMode={false} onFastModeChange={vi.fn()} approvalMode="manual" onApprovalModeChange={vi.fn()} onSend={vi.fn()} />)
+    await act(async () => { chatStoreMock.setDraft(id, '/commit prepare changes') })
+    await waitFor(() => expect(editableElement().querySelector('[data-prompt-reference-chip]')?.textContent).toBe('/commit'))
+    await act(async () => { chatStoreMock.setDraft(id, '/unknown not a known skill') })
+    await waitFor(() => expect(editableElement().querySelector('[data-prompt-reference-chip]')).toBeNull())
   })
 
   it('atomizes only completed references that resolve', async () => {

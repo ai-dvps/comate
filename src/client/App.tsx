@@ -16,6 +16,7 @@ import ContextWorkspace from './components/ContextWorkspace'
 import UsageLoginModal from './components/UsageLoginModal'
 import CustomTitlebar from './components/CustomTitlebar'
 import AgentCommandCenter from './components/AgentCommandCenter'
+import { prepareSkillInstallDraft } from './lib/skill-manager-draft'
 import NewChatPage from './components/NewChatPage'
 import CreateWorkspaceModal from './components/CreateWorkspaceModal'
 import ToastContainer from './components/ToastContainer'
@@ -115,6 +116,12 @@ function App() {
     setNewChatWorkspaceId(null)
     requestDestination('new-chat')
   }, [requestDestination])
+  const openSkillInstall = useCallback((workspaceId: string, text: string, invocationName: string) => {
+    const sessionId = prepareSkillInstallDraft(workspaceId, text, invocationName)
+    openNewChat()
+    setNewChatWorkspaceId(workspaceId)
+    requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('comate:focus-prompt', { detail: { sessionId } })))
+  }, [openNewChat])
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showContextMenu, setShowContextMenu] = useState(false)
   const gitCatalog = useGitRepositoryStore((state) => activeWorkspaceId ? state.workspaces[activeWorkspaceId] : undefined)
@@ -739,6 +746,7 @@ function App() {
           {activePanel ? (
             <div className="absolute inset-0 flex">
               <ManagementWorkspace
+                onInstallSkill={openSkillInstall}
                 destination={activePanel}
                 workspaceId={activeWorkspaceId ?? undefined}
                 settingsWorkspaceId={settingsWorkspaceTargetId ?? undefined}

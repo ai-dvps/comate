@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- 移除 WeSkillHub 搜索与安装适配，保留其他四个 Skill 搜索来源。
+
+- 恢复 skill-manager 的四源搜索，支持按来源筛选及部分失败报告；接通 Hub Skill 安装与精确更新，并保留安装来源。
+
+- Skills 页面改为紧凑清单与按需帮助，支持范围和 Agent 筛选；行内更新、移除自动携带具体安装信息进入 skill-manager 草稿。
+
 ### Changed
 
 - **Manage Skills through conversation** — The installed Skills page guides you into an editable `skill-manager` draft, with examples for discovery, installation, removal and updates. Existing text and attachments are preserved.

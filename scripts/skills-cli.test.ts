@@ -55,3 +55,77 @@ it('reports failed discovery distinctly from an empty successful search', () => 
   const result = spawnSync(process.execPath, [cli, 'find'], { encoding: 'utf8' });
   assert.notEqual(result.status, 0); assert.match(result.stderr, /requires a search query/); assert.doesNotMatch(result.stdout, /"skills": \[\]/);
 });
+
+it('searches selected hubs and installs, updates and removes an archive Skill with reusable provenance', async () => {
+  const { createServer } = await import('node:http');
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const exec = promisify(execFile);
+  const root = mkdtempSync(path.join(tmpdir(), 'comate-hub-cli-'));
+  const workspace = path.join(root, 'workspace');
+  const home = path.join(root, 'home');
+  const fixture = path.join(root, 'fixture');
+  for (const dir of [workspace, home, fixture]) mkdirSync(dir);
+  const writeArchive = (version: string) => {
+    writeFileSync(path.join(fixture, 'SKILL.md'), `---\nname: hub-demo\ndescription: Hub demo\nmetadata:\n  version: "${version}"\n---\nRead detail.txt`);
+    writeFileSync(path.join(fixture, 'detail.txt'), version);
+    execFileSync('zip', ['-q', '-j', path.join(root, 'skill.zip'), 'SKILL.md', 'detail.txt'], { cwd: fixture });
+  };
+  writeArchive('1.0');
+  let failDownload = false;
+  const server = createServer((req, res) => {
+    if (req.url?.startsWith('/download/')) {
+      if (failDownload) { res.writeHead(503).end(); return; }
+      res.end(readFileSync(path.join(root, 'skill.zip'))); return;
+    }
+    if (req.url?.startsWith('/skills?')) {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ items: [{ slug: 'hub-demo', displayName: 'Hub demo', summary: 'Test' }] })); return;
+    }
+    res.writeHead(503).end();
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const env = { ...process.env, HOME: home, USERPROFILE: home, CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), XDG_CONFIG_HOME: path.join(home, '.config'), XDG_STATE_HOME: '', COMATE_SKILL_ISOLATED: '0', SKILLS_API_URL: base, XFYUN_SKILLS_API_URL: base };
+  const run = (args: string[]) => exec(process.execPath, [cli, ...args], { cwd: workspace, env, timeout: 30000 });
+  try {
+    const found = JSON.parse((await run(['find', 'demo', '--providers', 'skills.sh,xfyun'])).stdout);
+    assert.equal(found.status, 'partial');
+    assert.equal(found.providers.length, 2);
+    assert.equal(found.skills[0].installSource, 'xfyun:hub-demo');
+    await assert.rejects(run(['find', 'demo', '--providers', 'skills.sh']));
+    await assert.rejects(run(['find', 'demo', '--providers', 'unknown']));
+    const listed = await run(['add', 'xfyun:hub-demo', '--list']);
+    assert.match(listed.stdout, /hub-demo/);
+    const target = path.join(workspace, '.agents/skills/hub-demo');
+    assert.equal(existsSync(target), false);
+    const add = ['add', 'xfyun:hub-demo', '--project', '--skill', 'hub-demo', '--agent', 'codex'];
+    await run(add);
+    let installed = JSON.parse((await run(['inventory'])).stdout).skills.find((s: { name: string; scope: string }) => s.name === 'hub-demo' && s.scope === 'project');
+    assert.equal(installed.source, 'xfyun:hub-demo');
+    assert.equal(installed.version, '1.0');
+    await run(['add', 'xfyun:hub-demo', '--global', '--skill', 'hub-demo', '--agent', 'codex']);
+    const userInstall = JSON.parse((await run(['inventory'])).stdout).skills.find((s: { name: string; scope: string }) => s.name === 'hub-demo' && s.scope === 'global');
+    assert.equal(userInstall.source, 'xfyun:hub-demo');
+    const userTarget = userInstall.installPath;
+    const update = [...add, '--replace', '--expected-path', target];
+    writeArchive('2.0');
+    failDownload = true;
+    await assert.rejects(run(update));
+    assert.equal(readFileSync(path.join(target, 'detail.txt'), 'utf8'), '1.0');
+    failDownload = false;
+    await run(update);
+    installed = JSON.parse((await run(['inventory'])).stdout).skills.find((s: { name: string; scope: string }) => s.name === 'hub-demo' && s.scope === 'project');
+    assert.equal(installed.source, 'xfyun:hub-demo');
+    assert.equal(installed.version, '2.0');
+    assert.equal(readFileSync(path.join(userTarget, 'detail.txt'), 'utf8'), '1.0');
+    assert.equal(readFileSync(path.join(target, 'detail.txt'), 'utf8'), '2.0');
+    await run(['remove', '--path', installed.installPath, '--real-path', installed.realPath]);
+    assert.equal(existsSync(target), false);
+    assert.equal(existsSync(userTarget), true);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
