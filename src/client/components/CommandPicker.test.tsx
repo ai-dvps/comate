@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import React from 'react'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import i18n from '../i18n'
@@ -14,6 +14,7 @@ vi.mock('../stores/commands-store', () => ({
     commands: [
       { name: 'commit', description: 'Commit changes' },
       { name: 'compact', description: 'Compact session' },
+      { name: 'skill-manager', description: 'Manage installed Skills' },
     ],
     loading: false,
     error: undefined,
@@ -52,6 +53,29 @@ describe('CommandPicker', () => {
 
     return { handleSelect, handleOpenChange, ref }
   }
+
+  it('puts skill-manager in its own first section and preserves keyboard ordering', () => {
+    const { handleSelect } = renderPicker()
+    const input = screen.getByPlaceholderText(/Search commands/i)
+    const choices = input.parentElement!.querySelectorAll('button')
+    expect(choices[0].textContent).toContain('/skill-manager')
+    expect(screen.getByText('Skill management')).toBeInTheDocument()
+    expect(screen.getByText('Other Skills')).toBeInTheDocument()
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(handleSelect).toHaveBeenCalledWith(expect.objectContaining({ name: 'commit' }))
+  })
+
+  it('filters the pinned section and selects skill-manager first when it matches', () => {
+    const { handleSelect } = renderPicker()
+    const input = screen.getByPlaceholderText(/Search commands/i)
+    fireEvent.change(input, { target: { value: 'commit' } })
+    expect(screen.queryByText('/skill-manager')).toBeNull()
+    expect(screen.queryByText('Skill management')).toBeNull()
+    fireEvent.change(input, { target: { value: '' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(handleSelect).toHaveBeenCalledWith(expect.objectContaining({ name: 'skill-manager' }))
+  })
 
   it('applies contentWidth to the popover', () => {
     renderPicker({ contentWidth: 480 })

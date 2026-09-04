@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useState,
   useEffect,
   useRef,
@@ -97,7 +98,9 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
     }, [open, hideFilterInput, initialFilter])
 
     const filtered = useMemo(() => {
-      return filterItems(commands, filter, 'name')
+      return [...filterItems(commands, filter, 'name')].sort(
+        (a, b) => Number(b.name === 'skill-manager') - Number(a.name === 'skill-manager'),
+      )
     }, [commands, filter])
 
     useEffect(() => {
@@ -236,8 +239,10 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
             {!showLoadingState &&
               !showErrorState &&
               filtered.map((cmd, i) => (
+                <Fragment key={cmd.skillPath ?? cmd.name}>
+                  {i === 0 && cmd.name === 'skill-manager' && <div className="px-2 py-1 text-xs font-medium text-text-secondary">{t('commandPicker.management')}</div>}
+                  {i > 0 && filtered[i - 1].name === 'skill-manager' && cmd.name !== 'skill-manager' && <div className="mt-1 border-t border-border px-2 pb-1 pt-2 text-xs font-medium text-text-secondary">{t('commandPicker.otherSkills')}</div>}
                 <button
-                  key={cmd.skillPath ?? cmd.name}
                   ref={(el) => {
                     rowRefs.current[i] = el
                   }}
@@ -264,6 +269,7 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
                     </div>
                   )}
                 </button>
+                </Fragment>
               ))}
           </div>
         </PopoverContent>

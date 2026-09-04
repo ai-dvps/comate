@@ -141,7 +141,9 @@
     "searchPlaceholder": "Search commands...",
     "loading": "Loading commands...",
     "noMatch": "No commands match `{{filter}}`",
-    "noCommands": "No commands available"
+    "noCommands": "No commands available",
+    "management": "Skill management",
+    "otherSkills": "Other Skills"
   },
   "filePicker": {
     "partialFallback": "Results are partial — only some files were scanned."
