@@ -321,7 +321,7 @@ export default function PromptInput(props: PromptInputProps) {
   // Saved caret position when the editable surface loses focus, so pickers
   // opened by toolbar buttons can still insert at the intended position.
   const caretBeforeBlurRef = useRef<number | null>(null)
-  const inputCardRef = useRef<HTMLDivElement>(null)
+  const [inputCard, setInputCard] = useState<HTMLDivElement | null>(null)
   const [contentWidth, setContentWidth] = useState<number | undefined>(undefined)
 
   // Mirror BackendSelector's effective-backend resolution (U5/R4): a new chat
@@ -365,7 +365,7 @@ export default function PromptInput(props: PromptInputProps) {
   }, [fetchProviders, providers.length])
 
   useEffect(() => {
-    const el = inputCardRef.current
+    const el = inputCard
     if (!el) return
 
     const measure = () => {
@@ -380,7 +380,7 @@ export default function PromptInput(props: PromptInputProps) {
     return () => {
       observer.disconnect()
     }
-  }, [])
+  }, [inputCard])
 
   useEffect(() => {
     imageComposerDisposedRef.current = false
@@ -1669,7 +1669,7 @@ export default function PromptInput(props: PromptInputProps) {
             </div>
           )}
         <div
-          ref={inputCardRef}
+          ref={setInputCard}
           data-testid="input-card"
           className={isNewChat
             ? 'relative bg-work'

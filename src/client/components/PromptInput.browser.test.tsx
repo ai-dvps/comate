@@ -1453,6 +1453,38 @@ describe('PromptInput browser', () => {
     await waitFor(() => expect(editableElement().textContent).toBe('hello'))
   })
 
+  it.each([false, true])('restores toolbar and command menu width after a bot session (initial bot: %s)', async (initialBot) => {
+    const ui = (bot: boolean) => (
+      <I18nextProvider i18n={i18n}>
+        <div style={{ width: '800px' }}>
+          <PromptInput {...DEFAULT_PROPS} isBotSession={bot} />
+        </div>
+      </I18nextProvider>
+    )
+    const view = render(ui(initialBot))
+    if (!initialBot) {
+      await editableLocator().fill('/')
+      await waitFor(() => expect(screen.getByRole('dialog').offsetWidth).toBe(inputCardElement().offsetWidth))
+      await userEvent.keyboard('{Escape}')
+      view.rerender(ui(true))
+    }
+    await waitFor(() => expect(screen.queryByTestId('input-card')).toBeNull())
+    // Allow ResizeObserver to report removal of the old composer node.
+    await act(async () => {
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    })
+    view.rerender(ui(false))
+    await editableLocator().fill('')
+    await editableLocator().fill('/')
+    await waitFor(() => {
+      expect(screen.getByRole('dialog').offsetWidth).toBe(inputCardElement().offsetWidth)
+      expect(screen.getByTestId('provider-selector')).toBeInTheDocument()
+      expect(screen.getByTestId('fast-mode-toggle')).toBeInTheDocument()
+      expect(screen.getByTestId('approval-mode-toggle')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /History/i })).not.toHaveClass('hidden')
+    })
+  })
+
   it('sizes the command picker popover to the input card width', async () => {
     renderWithI18n(<PromptInput {...DEFAULT_PROPS} />)
     const card = inputCardElement()
