@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import i18next from 'i18next'
+import { readNavigationState, saveActiveSessionIds } from '../lib/navigation-state'
 
 import type {
   ChatMessage,
@@ -3444,7 +3445,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: {},
   inFlightBrowserTools: {},
   promptHistory: {},
-  activeSessionIds: {},
+  activeSessionIds: readNavigationState().activeSessionIds,
   isStreaming: {},
   isCompacting: {},
   compactingStartTime: {},
@@ -3496,6 +3497,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     : {}),
 
   fetchSessions: async (workspaceId: string) => {
+    const selectionAtRequestStart = get().activeSessionIds[workspaceId]
     set((state) => ({ isLoadingSessions: { ...state.isLoadingSessions, [workspaceId]: true } }))
     try {
       const settings = getInitialSettings()
@@ -3533,6 +3535,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // Prune only sessions that vanished from THIS workspace; keys for other
         // workspaces belong to their own fetches.
         const fetchedIds = new Set(fetchedSessions.map((s) => s.id))
+        let activeSessionIds = state.activeSessionIds
+        if (activeSessionIds[workspaceId]
+          && activeSessionIds[workspaceId] === selectionAtRequestStart
+          && !fetchedIds.has(activeSessionIds[workspaceId])) {
+          activeSessionIds = { ...activeSessionIds }
+          delete activeSessionIds[workspaceId]
+        }
         for (const previous of state.sessions[workspaceId] ?? []) {
           if (!fetchedIds.has(previous.id)) {
             delete nextLastActivityAt[previous.id]
@@ -3553,11 +3562,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ),
           },
           lastActivityAt: nextLastActivityAt,
+          activeSessionIds,
         }
       })
       for (const sessionId of unarchiveSessionIds) {
         persistSessionUnarchive(workspaceId, sessionId)
       }
+      // A restored selection predates the session rows. Subscribe only once
+      // those rows exist, so source checks and runtime setup use real metadata.
+      const activeSessionId = get().activeSessionIds[workspaceId]
+      if (activeSessionId) get().setActiveSession(workspaceId, activeSessionId)
       startBackgroundPolling(set, workspaceId)
       // Load workspace-scoped prompt history in parallel with session setup.
       // Errors are logged but do not fail the overall session fetch.
@@ -4863,3 +4877,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 }))
+
+useChatStore.subscribe((state, previous) => {
+  if (state.activeSessionIds !== previous.activeSessionIds) {
+    saveActiveSessionIds(state.activeSessionIds, previous.activeSessionIds)
+  }
+})

@@ -7,6 +7,7 @@ import { useCommandsStore } from './commands-store';
 import { useWeComQueueStore } from './wecom-queue-store';
 import { useGitRepositoryStore } from './git-repository-store';
 import { useContextTabStore } from './context-tab-store';
+import { readNavigationState, saveNavigationState } from '../lib/navigation-state';
 
 export interface Workspace {
   id: string;
@@ -47,6 +48,7 @@ interface WorkspaceState {
 }
 
 const API_BASE = '/api';
+const savedNavigation = readNavigationState();
 
 function computeFocusFallback(
   openWorkspaceIds: string[],
@@ -65,8 +67,8 @@ function computeFocusFallback(
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: [],
-  activeWorkspaceId: null,
-  openWorkspaceIds: [],
+  activeWorkspaceId: savedNavigation.activeWorkspaceId,
+  openWorkspaceIds: savedNavigation.openWorkspaceIds,
   isLoading: false,
   error: null,
 
@@ -79,7 +81,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const workspaces = (data.workspaces || []) as Workspace[];
       // Seed the workspace ordering map from server-carried keys (KTD1/KTD3).
       useChatStore.getState().seedWorkspaceActivityKeys(workspaces);
-      set({ workspaces, isLoading: false });
+      set((state) => {
+        const validIds = new Set(workspaces.map((workspace) => workspace.id));
+        const openWorkspaceIds = state.openWorkspaceIds.filter((id) => validIds.has(id));
+        const activeWorkspaceId = state.activeWorkspaceId && validIds.has(state.activeWorkspaceId)
+          ? state.activeWorkspaceId
+          : state.activeWorkspaceId ? openWorkspaceIds.at(-1) ?? null : null;
+        if (activeWorkspaceId && !openWorkspaceIds.includes(activeWorkspaceId)) {
+          openWorkspaceIds.push(activeWorkspaceId);
+        }
+        return { workspaces, openWorkspaceIds, activeWorkspaceId, isLoading: false };
+      });
     } catch (err) {
       set({ error: err instanceof Error ? err.message : i18next.t('common:unknownError', 'Unknown error'), isLoading: false });
     }
@@ -214,3 +226,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ error: null });
   },
 }));
+
+useWorkspaceStore.subscribe((state, previous) => {
+  if (state.activeWorkspaceId !== previous.activeWorkspaceId || state.openWorkspaceIds !== previous.openWorkspaceIds) {
+    saveNavigationState({ activeWorkspaceId: state.activeWorkspaceId, openWorkspaceIds: state.openWorkspaceIds });
+  }
+});
