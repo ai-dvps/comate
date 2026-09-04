@@ -237,7 +237,7 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
               !showErrorState &&
               filtered.map((cmd, i) => (
                 <button
-                  key={cmd.name}
+                  key={cmd.skillPath ?? cmd.name}
                   ref={(el) => {
                     rowRefs.current[i] = el
                   }}

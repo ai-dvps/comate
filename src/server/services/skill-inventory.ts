@@ -102,7 +102,6 @@ export async function discoverInstalledSkills(workspace?: string, home = getPrim
     nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
   }
   for (const skill of skills) {
-    skill.invocationName = `${skill.name}~${skill.id.slice(0, 8)}`;
     // Legacy locks key by name, so they cannot identify two independent copies
     // of that name in one scope. Do not present ambiguous provenance as fact.
     if (skill.scope !== 'builtin' && (nameCounts.get(`${skill.scope}:${skill.name}`) ?? 0) > 1) skill.source = '';

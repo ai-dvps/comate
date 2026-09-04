@@ -8,7 +8,7 @@ import type { Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { withSkillReferences, permittedSkills } from './skill-input.js';
 import { discoverInstalledSkills } from './skill-inventory.js';
 
-it('binds an explicit reference to its selected path across name collisions and preserves attachments', async () => {
+it('uses original names, leaves collisions unresolved and preserves attachments', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'comate-skill-input-'));
   try {
     const dirs = ['one', 'two'].map(name => path.join(root, '.claude/skills', name));
@@ -22,15 +22,15 @@ it('binds an explicit reference to its selected path across name collisions and 
       throw new Error('No message');
     };
     const blocks = await invoke();
-    assert.match(blocks[0].text!, /\/one\/SKILL.md/); assert.deepEqual(blocks[1], attachment);
+    assert.equal(blocks[0].text, "/collision inspect"); assert.deepEqual(blocks[1], attachment);
     await rm(dirs[1], { recursive: true });
-    assert.match((await invoke())[0].text!, /\/one\/SKILL.md/, 'stored identity survives removal of its same-name sibling');
-    assert.match((await invoke({ settings: { permissions: { deny: ['Skill(collision)'] } } }))[0].text!, /\/collision~/, 'denied reference is never expanded into a file read');
+    assert.match((await invoke())[0].text!, /\/one\/SKILL.md/, 'a unique original name resolves after the user removes the collision');
+    assert.match((await invoke({ settings: { permissions: { deny: ['Skill(collision)'] } } }))[0].text!, /\/collision /, 'denied reference is never expanded into a file read');
     await writeFile(path.join(root, '.claude/settings.local.json'), JSON.stringify({ permissions: { deny: ['Skill(coll*)'] } }));
-    assert.match((await invoke())[0].text!, /\/collision~/, 'native project denials are not bypassed by the file-read bridge');
+    assert.match((await invoke())[0].text!, /\/collision /, 'native project denials are not bypassed by the file-read bridge');
     assert.match((await invoke({ settingSources: [] }))[0].text!, /\/one\/SKILL.md/, 'isolated sessions do not inherit project settings');
     await rm(dirs[0], { recursive: true });
-    assert.match((await invoke())[0].text!, /\/collision~/, 'deleted installation is not resurrected');
+    assert.match((await invoke())[0].text!, /\/collision /, 'deleted installation is not resurrected');
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 it('excludes user-level installations and unmounted builtins from isolated sessions', async () => {

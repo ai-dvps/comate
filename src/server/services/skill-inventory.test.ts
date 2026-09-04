@@ -25,7 +25,7 @@ it('discovers external installs, keeps same-name identities and merges shared al
     const demos = skills.filter((s) => s.name === 'demo');
     assert.equal(demos.length, 2);
     assert.notEqual(demos[0].id, demos[1].id);
-    assert.ok(demos.every((s) => s.invocationName.startsWith('demo~')));
+    assert.ok(demos.every((s) => s.invocationName === 'demo'));
     assert.equal(demos.find((s) => s.scope === 'project')?.aliases.length, 1);
     assert.ok(!skills.some((s) => s.name === 'ghost'));
     assert.equal(skillCommands(demos, 'claude').length, 2);
