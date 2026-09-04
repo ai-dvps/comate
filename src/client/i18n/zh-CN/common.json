@@ -138,7 +138,9 @@
     "searchPlaceholder": "搜索命令...",
     "loading": "正在加载命令...",
     "noMatch": "没有匹配 `{{filter}}` 的命令",
-    "noCommands": "没有可用命令"
+    "noCommands": "没有可用命令",
+    "management": "Skill 管理",
+    "otherSkills": "其他 Skills"
   },
   "filePicker": {
     "partialFallback": "结果不完整 — 仅扫描了部分文件。"
