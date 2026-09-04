@@ -8,7 +8,7 @@ Comate ships standard Skills under `skills/`. The installed Skills page shows lo
 
 Claude loads these directories through its additional-directory discovery and explicit Skill references. Codex registers native Skill roots and sends selected paths through its Skill input protocol. OpenCode receives native `skills.paths`. Session prompts include the applicable bundled Skill catalog; business Skills still require the existing integration configuration, session identity and permissions.
 
-The inventory discovers actual files in supported project and user roots. Lock records only supply available provenance and legacy expert-package metadata. Stable invocation aliases distinguish same-name installations. Shared targets appear once with their aliases. The installed list describes disk state; the picker additionally applies backend discovery and session policy. A changed native Skill can require a new session.
+The inventory discovers actual files in supported project and user roots. Lock records only supply available provenance and legacy expert-package metadata. Invocation names use the original Skill name without a generated suffix. Users resolve same-name installation conflicts. Shared targets appear once with their aliases. The installed list describes disk state; the picker additionally applies backend discovery and session policy. A changed native Skill can require a new session.
 
 ## Bundled CLI
 

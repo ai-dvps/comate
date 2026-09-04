@@ -19,7 +19,7 @@ it('validates the session belongs to the requested workspace', async () => {
   const res = response(); await handler({ params: { id: 'a' }, query: { sessionId: 'foreign' } }, res);
   assert.equal(res.statusCode, 404);
 });
-it('discovers current files and binds duplicate names to distinct paths on each backend', async () => {
+it('discovers current files without adding suffixes to duplicate names', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'comate-picker-'));
   try {
     const paths = ['.claude/skills/one', '.claude/skills/two'].map(relative => path.join(root, relative));
@@ -30,11 +30,11 @@ it('discovers current files and binds duplicate names to distinct paths on each 
     for (const backend of ['claude', 'codex', 'opencode']) {
       const res = response(); await handler({ params: { id: 'workspace' }, query: { backend } }, res);
       assert.equal(res.statusCode, 200);
-      const same = (res.body as { commands: Array<{ name: string; skillPath: string }> }).commands.filter(command => command.name.startsWith('same~'));
-      assert.equal(same.length, 2); assert.notEqual(same[0].name, same[1].name); assert.notEqual(same[0].skillPath, same[1].skillPath);
+      const same = (res.body as { commands: Array<{ name: string; skillPath: string }> }).commands.filter(command => command.name === 'same');
+      assert.equal(same.length, 2); assert.equal(same[0].name, same[1].name); assert.notEqual(same[0].skillPath, same[1].skillPath);
     }
     await rm(paths[0], { recursive: true });
     const refreshed = response(); await handler({ params: { id: 'workspace' }, query: { backend: 'opencode' } }, refreshed);
-    assert.equal((refreshed.body as { commands: Array<{ name: string }> }).commands.filter(command => command.name.startsWith('same~')).length, 1);
+    assert.equal((refreshed.body as { commands: Array<{ name: string }> }).commands.filter(command => command.name === 'same').length, 1);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

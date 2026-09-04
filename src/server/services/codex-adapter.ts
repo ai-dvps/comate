@@ -237,11 +237,14 @@ export class CodexBackendDriver implements BackendDriver {
         const discovered = hasSlashReference(message.message.content) ? await discoverInstalledSkills(this.deps.directory) : [];
         const inventory = permittedSkills(discovered, 'codex', options);
         const byPath = new Map(nativeSkills.map(skill => [skill.path, skill]));
+        const nameCounts = new Map<string, number>();
+        for (const skill of inventory) nameCounts.set(skill.name, (nameCounts.get(skill.name) ?? 0) + 1);
         const skills = inventory.flatMap(skill => {
+          if (nameCounts.get(skill.name) !== 1) return [];
           const native = byPath.get(path.join(skill.realPath, 'SKILL.md')) ?? byPath.get(path.join(skill.installPath, 'SKILL.md'));
           return native ? [{ ...native, name: skill.invocationName }] : [];
         });
-        // Native-only plugins remain available; filesystem installations use stable aliases.
+        // Native-only plugins remain available; same-name installations are left for the user to resolve.
         const diskNames = new Set(discovered.map(skill => skill.name));
         skills.push(...nativeSkills.filter(skill => !diskNames.has(skill.name)));
         const response = await this.manager.request<{ turn: { id: string } }>('turn/start', {

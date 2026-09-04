@@ -46,7 +46,7 @@ export async function* withSkillReferences(input: AsyncIterable<SDKUserMessage>,
     const texts = typeof content === 'string' ? [content] : content.flatMap(block => block.type === 'text' ? [block.text] : []);
     if (!texts.some(text => /(^|\s)\/\S+/.test(text))) { yield message; continue; }
     const skills = permittedSkills(await discoverInstalledSkills(options.cwd), backend, options);
-    const byName = new Map(skills.map((skill) => [skill.invocationName, skill]));
+    const byName = new Map<string, SkillInstallation>();
     const counts = new Map<string, number>();
     for (const skill of skills) counts.set(skill.name, (counts.get(skill.name) ?? 0) + 1);
     for (const skill of skills) {

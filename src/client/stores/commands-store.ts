@@ -6,6 +6,7 @@ import type { BackendId } from './backend-store';
 export interface SlashCommandDto {
   name: string;
   displayName?: string;
+  skillPath?: string;
   description: string;
   argumentHint?: string;
   aliases?: string[];
