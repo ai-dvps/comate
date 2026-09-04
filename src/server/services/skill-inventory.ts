@@ -42,6 +42,7 @@ async function lockEntries(file: string): Promise<Record<string, { source?: stri
 /** The filesystem owns existence. Lock records only enrich known installations. */
 export async function discoverInstalledSkills(workspace?: string, home = getPrimaryHomeDir()): Promise<SkillInstallation[]> {
   const records = new Map<string, SkillInstallation>();
+  const recordedSources = new Set<string>();
   const [projectLock, globalLock] = await Promise.all([
     workspace ? lockEntries(path.join(workspace, 'skills-lock.json')) : lockEntries(''),
     lockEntries(process.env.XDG_STATE_HOME ? path.join(process.env.XDG_STATE_HOME, 'skills', '.skill-lock.json') : path.join(home, '.agents', '.skill-lock.json')),
@@ -60,7 +61,7 @@ export async function discoverInstalledSkills(workspace?: string, home = getPrim
       visited.add(canonical);
       const lock = root.scope === 'project' ? projectLock : globalLock;
       const entry = root.scope === 'builtin' ? undefined : lock[path.basename(directory)];
-      let skill: { name: string; description: string } | null = await parseSkillMd(path.join(directory, 'SKILL.md'), { includeInternal: true });
+      let skill: { name: string; description: string; metadata?: Record<string, unknown> } | null = await parseSkillMd(path.join(directory, 'SKILL.md'), { includeInternal: true });
       // Older expert packages stored an orchestration document without frontmatter.
       // A lock entry can describe that actual file, but must never resurrect it.
       if (!skill && entry?.source?.startsWith('skillhub-package:') && (await stat(path.join(directory, 'SKILL.md')).catch(() => undefined))?.isFile()) {
@@ -74,10 +75,16 @@ export async function discoverInstalledSkills(workspace?: string, home = getPrim
           return;
         }
         const appOwned = isBuiltinSkillFile(path.join(directory, 'SKILL.md'));
-        const source = appOwned ? 'Comate' : typeof entry?.source === 'string' ? entry.source : '';
+        const provenance = await readFile(path.join(directory, '.comate-skill-source.json'), 'utf8')
+          .then(text => JSON.parse(text) as { source?: unknown }).catch(() => undefined);
+        const localSource = typeof provenance?.source === 'string' ? provenance.source : '';
+        if (localSource) recordedSources.add(canonical);
+        const source = appOwned ? 'Comate' : localSource || (typeof entry?.source === 'string' ? entry.source : '');
         const id = createHash('sha256').update(canonical).digest('hex').slice(0, 16);
         records.set(canonical, {
-          id, name: skill.name, description: skill.description, scope: appOwned ? 'builtin' : root.scope, source,
+          id, name: skill.name, description: skill.description,
+          ...(typeof skill.metadata?.version === 'string' && skill.metadata.version.trim() ? { version: skill.metadata.version.trim() } : {}),
+          scope: appOwned ? 'builtin' : root.scope, source,
           installPath: directory, realPath: canonical, aliases: [], backends: [...root.backends],
           isLegacySymlink: (await lstat(directory).catch(() => undefined))?.isSymbolicLink() ?? false,
           kind: source.startsWith('skillhub-package:') ? 'expert-package-orchestrator' : 'skill',
@@ -104,7 +111,7 @@ export async function discoverInstalledSkills(workspace?: string, home = getPrim
   for (const skill of skills) {
     // Legacy locks key by name, so they cannot identify two independent copies
     // of that name in one scope. Do not present ambiguous provenance as fact.
-    if (skill.scope !== 'builtin' && (nameCounts.get(`${skill.scope}:${skill.name}`) ?? 0) > 1) skill.source = '';
+    if (skill.scope !== 'builtin' && !recordedSources.has(skill.realPath) && (nameCounts.get(`${skill.scope}:${skill.name}`) ?? 0) > 1) skill.source = '';
   }
   return skills.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }

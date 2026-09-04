@@ -2,6 +2,7 @@ export interface SkillInstallation {
   id: string;
   name: string;
   description: string;
+  version?: string;
   scope: 'project' | 'global' | 'builtin';
   source: string;
   installPath: string;

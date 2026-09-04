@@ -21,9 +21,7 @@ import {
   searchSkillhubCnSkills,
   searchSkillsAPI,
   searchSkillsHubSkills,
-  searchWeSkillHubSkills,
 } from './search.js';
-import { WeSkillHubError } from './weskillhub.js';
 
 const originalFetch = global.fetch;
 
@@ -218,9 +216,9 @@ describe('searchFederatedSkills', () => {
   it('exposes a unique stable registry entry for every provider', () => {
     assert.deepStrictEqual(
       SEARCH_PROVIDER_REGISTRY.map(({ id }) => id),
-      ['skills.sh', 'skillshub', 'xfyun', 'skillhub-cn', 'weskillhub'],
+      ['skills.sh', 'skillshub', 'xfyun', 'skillhub-cn'],
     );
-    assert.strictEqual(new Set(SEARCH_PROVIDER_REGISTRY.map(({ id }) => id)).size, 5);
+    assert.strictEqual(new Set(SEARCH_PROVIDER_REGISTRY.map(({ id }) => id)).size, 4);
     assert.ok(SEARCH_PROVIDER_REGISTRY.every(({ label }) => label.length > 0));
   });
 
@@ -262,35 +260,19 @@ describe('searchFederatedSkills', () => {
         }));
       }
 
-      if (url.includes('weskillhub.weoa.com')) {
-        return Promise.resolve(makeJsonResponse({
-          code: '0',
-          data: {
-            data: [{
-              id: 116,
-              slug: 'weoa-todo',
-              name: 'todo',
-              description: 'Track work',
-              downloads: 90,
-              update_date: '2026-08-02T03:04:05Z',
-            }],
-          },
-        }));
-      }
 
       return Promise.resolve(makeJsonResponse({ items: [] }));
     }) as typeof fetch;
 
     const result = await searchFederatedSkills('security review');
 
-    assert.strictEqual(requestedUrls.length, 5);
+    assert.strictEqual(requestedUrls.length, 4);
     assert.deepStrictEqual(
       result.skills.map((skill) => ({ name: skill.name, sourceKind: skill.sourceKind })),
       [
         { name: 'Frontend Design', sourceKind: 'skills.sh' },
         { name: 'Security Review', sourceKind: 'skillshub' },
         { name: '安全审计', sourceKind: 'skillhub-cn' },
-        { name: 'todo', sourceKind: 'weskillhub' },
       ]
     );
     assert.strictEqual(result.skills[1]!.description, '');
@@ -300,7 +282,7 @@ describe('searchFederatedSkills', () => {
   it('keeps results from a healthy source when another source fails', async () => {
     global.fetch = ((input: string | URL | Request) => {
       const url = typeof input === 'string' ? input : input.toString();
-      if (url.includes('weskillhub.weoa.com')) return Promise.reject(new Error('WeSkillHub unavailable'));
+      if (url.includes('skillshub.wtf')) return Promise.reject(new Error('SkillsHub unavailable'));
       return Promise.resolve(makeJsonResponse({
         skills: [{ id: 'review', name: 'Review', installs: 10, source: 'acme/review' }],
       }));
@@ -311,12 +293,12 @@ describe('searchFederatedSkills', () => {
     assert.strictEqual(result.skills.length, 1);
     assert.strictEqual(result.skills[0]!.sourceKind, 'skills.sh');
     assert.deepStrictEqual(
-      result.providers.find(({ id }) => id === 'weskillhub'),
-      { id: 'weskillhub', label: 'WeSkillHub', status: 'unavailable', reason: 'network' },
+      result.providers.find(({ id }) => id === 'skillshub'),
+      { id: 'skillshub', label: 'SkillsHub', status: 'unavailable', reason: 'network' },
     );
   });
 
-  it('applies shared downloads and newest sorting to WeSkillHub and peer results', async () => {
+  it('applies shared downloads and newest sorting to Tencent and peer results', async () => {
     global.fetch = (async (input) => {
       const url = String(input);
       if (url.includes('skills.sh')) {
@@ -324,18 +306,10 @@ describe('searchFederatedSkills', () => {
           skills: [{ id: 'popular', name: 'Popular', installs: 100, source: 'acme/popular' }],
         });
       }
-      if (url.includes('weskillhub.weoa.com')) {
-        return makeJsonResponse({
-          code: '0',
-          data: { data: [{
-            id: 116,
-            name: 'Recent',
-            slug: 'recent',
-            downloads: 10,
-            update_date: '2026-08-02T03:04:05Z',
-          }] },
-        });
+      if (url.includes('api.skillhub.cn')) {
+        return makeJsonResponse({ code: 0, data: { skills: [{ name: 'Recent', slug: 'recent', namespace: { handle: 'test' }, downloads: 10, updated_at: 1785639845000 }] } });
       }
+
       return makeJsonResponse({ items: [], data: [], code: 0 });
     }) as typeof fetch;
 
@@ -396,7 +370,7 @@ describe('searchFederatedSkills', () => {
 
     await searchFederatedSkills('timeout');
 
-    assert.strictEqual(signals.length, 5);
+    assert.strictEqual(signals.length, 4);
     assert.ok(signals.every((signal) => signal instanceof AbortSignal));
   });
 });
@@ -466,84 +440,10 @@ describe('searchSkillsHubSkills', () => {
     assert.strictEqual(tencentUrl.searchParams.get('sortBy'), 'newest');
     assert.strictEqual(tencentUrl.searchParams.get('keyword'), 'review 中文');
 
-    const weSkillHubUrl = new URL(urls.find((url) => url.includes('weskillhub.weoa.com'))!);
-    assert.strictEqual(weSkillHubUrl.searchParams.get('search'), 'review');
-    assert.strictEqual(weSkillHubUrl.searchParams.get('sort_by'), 'update_date');
-    assert.strictEqual(weSkillHubUrl.searchParams.has('scene'), false);
-    assert.strictEqual(weSkillHubUrl.searchParams.has('category'), false);
-    assert.strictEqual(weSkillHubUrl.searchParams.has('preferChinese'), false);
-    assert.strictEqual(weSkillHubUrl.searchParams.has('noApiKey'), false);
-    assert.doesNotMatch(weSkillHubUrl.searchParams.get('search') || '', /中文|API/);
+
   });
 });
 
-describe('searchWeSkillHubSkills', () => {
-  beforeEach(() => {
-    global.fetch = originalFetch;
-  });
-
-  afterEach(() => {
-    global.fetch = originalFetch;
-  });
-
-  it('normalizes a distinct name and slug to a durable install coordinate', async () => {
-    mockFetch(makeJsonResponse({
-      code: '0',
-      data: {
-        data: [{
-          id: 116,
-          slug: 'weoa-todo',
-          name: 'todo',
-          description: 'Track work',
-          downloads: 42,
-          update_date: '2026-08-02T03:04:05Z',
-        }],
-      },
-    }));
-
-    assert.deepStrictEqual(await searchWeSkillHubSkills('todo'), [{
-      id: 'weskillhub:116/weoa-todo',
-      name: 'todo',
-      slug: 'weoa-todo',
-      source: 'weskillhub.weoa.com',
-      installSource: 'weskillhub:116/weoa-todo',
-      sourceKind: 'weskillhub',
-      description: 'Track work',
-      installs: 42,
-      updatedAt: Date.parse('2026-08-02T03:04:05Z'),
-    }]);
-  });
-
-  it('does not request empty queries and exposes provider-local failures', async () => {
-    let calls = 0;
-    global.fetch = (async () => {
-      calls += 1;
-      throw new Error('unavailable');
-    }) as typeof fetch;
-
-    assert.deepStrictEqual(await searchWeSkillHubSkills('  '), []);
-    assert.strictEqual(calls, 0);
-    await assert.rejects(
-      searchWeSkillHubSkills('todo'),
-      (error) => error instanceof WeSkillHubError && error.category === 'network',
-    );
-    assert.strictEqual(calls, 1);
-  });
-
-  it('maps all shared sort values to supported provider sort parameters', async () => {
-    const sorts: string[] = [];
-    global.fetch = (async (input) => {
-      sorts.push(new URL(String(input)).searchParams.get('sort_by') || '');
-      return makeJsonResponse({ code: '0', data: { data: [] } });
-    }) as typeof fetch;
-
-    await searchWeSkillHubSkills({ keyword: 'x', sort: 'score' });
-    await searchWeSkillHubSkills({ keyword: 'x', sort: 'downloads' });
-    await searchWeSkillHubSkills({ keyword: 'x', sort: 'newest' });
-
-    assert.deepStrictEqual(sorts, ['hot', 'downloads', 'update_date']);
-  });
-});
 
 describe('searchSkillhubCnSkills', () => {
   beforeEach(() => {

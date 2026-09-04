@@ -71,7 +71,6 @@ export const SKILL_SEARCH_PROVIDER_IDS = [
   'skillshub',
   'xfyun',
   'skillhub-cn',
-  'weskillhub',
 ] as const;
 
 export type SkillSearchProviderId = (typeof SKILL_SEARCH_PROVIDER_IDS)[number];

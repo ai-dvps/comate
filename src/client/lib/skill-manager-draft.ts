@@ -1,4 +1,4 @@
-import { useChatStore, promptImageDraftKey } from '../stores/chat-store'
+import { useChatStore, promptImageDraftKey, newChatDraftSessionId } from '../stores/chat-store'
 import { useBackendStore } from '../stores/backend-store'
 
 /** Keep every existing draft intact; create only a draft session, never a user turn. */
@@ -19,5 +19,15 @@ export async function prepareSkillManagerDraft(workspaceId: string, text: string
     sessionId = result.session.id
   }
   useChatStore.getState().setDraft(sessionId, `/${invocationName} ${text}`)
+  return sessionId
+}
+
+/** Use the New Chat composer without creating or sending a session. */
+export function prepareSkillInstallDraft(workspaceId: string, text: string, invocationName: string): string {
+  const sessionId = newChatDraftSessionId(workspaceId)
+  const state = useChatStore.getState()
+  const request = `/${invocationName} ${text}`
+  const existing = state.drafts[sessionId]
+  state.setDraft(sessionId, existing ? `${existing}\n\n${request}` : request)
   return sessionId
 }

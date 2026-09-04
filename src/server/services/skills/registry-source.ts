@@ -1,15 +1,10 @@
 import { execFile } from 'child_process';
 import { mkdirSync, unlinkSync, writeFileSync } from 'fs';
-import { lstat, mkdtemp, readdir, rename, rm } from 'fs/promises';
+import { lstat, readdir } from 'fs/promises';
 import { join } from 'path';
 import { promisify } from 'util';
 import { getExpertPackageDefinition, isExpertPackageCoordinate } from './expert-packages.js';
 import { readBoundedResponse } from './bounded-response.js';
-import {
-  createWeSkillHubClient,
-  WeSkillHubError,
-  type WeSkillHubClient,
-} from './weskillhub.js';
 
 const execFileAsync = promisify(execFile);
 const XFYUN_API_BASE = process.env.XFYUN_SKILLS_API_URL || 'https://skill.xfyun.cn/api/v1';
@@ -30,21 +25,12 @@ export type RegistrySource = {
   namespace?: string;
   slug?: string;
   packageSlug?: string;
-  skillId?: number;
 };
 
 const SEGMENT = '[A-Za-z0-9._-]+';
 
 export function parseRegistrySource(source: string): RegistrySource | null {
-  let match = new RegExp(`^weskillhub:([1-9][0-9]*)/(${SEGMENT})$`).exec(source);
-  if (match) {
-    const skillId = Number(match[1]);
-    if (Number.isSafeInteger(skillId)
-      && /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(match[2])) {
-      return { source, kind: 'skill', label: 'WeSkillHub', skillId, slug: match[2] };
-    }
-  }
-  match = new RegExp(`^xfyun:(${SEGMENT})$`).exec(source);
+  let match = new RegExp(`^xfyun:(${SEGMENT})$`).exec(source);
   if (match && isExpertPackageCoordinate(match[1])) {
     return { source, kind: 'skill', label: 'iFlytek', slug: match[1] };
   }
@@ -71,9 +57,6 @@ export function parseRegistrySource(source: string): RegistrySource | null {
 }
 
 export function registrySourceUrl(source: RegistrySource): string {
-  if (source.skillId !== undefined) {
-    throw new Error('WeSkillHub downloads require a resolved version transaction');
-  }
   if (source.packageSlug) {
     return `${SKILLHUB_API_BASE}/api/v1/skillsets/${encodeURIComponent(source.packageSlug)}`;
   }
@@ -111,16 +94,6 @@ function validateZipInfo(output: string): void {
     if (size > MAX_SINGLE_FILE_BYTES) throw new Error('Registry archive contains an oversized file');
     expandedBytes += size;
     if (expandedBytes > MAX_EXPANDED_BYTES) throw new Error('Registry archive expands beyond the allowed size');
-  }
-}
-
-function validateWeSkillHubZipInfo(output: string): void {
-  validateZipInfo(output);
-  for (const line of output.split(/\r?\n/)) {
-    const type = /^([a-z-])[rwx-]{9}\s/.exec(line.trim())?.[1];
-    if (type && type !== 'd' && type !== '-') {
-      throw new Error('Registry archive contains an unsupported file type');
-    }
   }
 }
 
@@ -182,51 +155,6 @@ async function downloadArchive(source: RegistrySource, destination: string): Pro
   unlinkSync(archivePath);
 }
 
-async function materializeWeSkillHubArchive(
-  source: RegistrySource,
-  destination: string,
-  client: WeSkillHubClient,
-): Promise<void> {
-  let scratch: string | undefined;
-  let failure: WeSkillHubError | undefined;
-  try {
-    scratch = await mkdtemp(join(destination, '.weskillhub-'));
-    const extracted = join(scratch, 'extracted');
-    mkdirSync(extracted, { recursive: true, mode: 0o700 });
-    const transaction = await client.resolveLatestVersion({ id: source.skillId!, slug: source.slug! });
-    const bytes = await client.downloadExactVersion(transaction);
-    const archivePath = join(scratch, 'skill.zip');
-    writeFileSync(archivePath, bytes, { mode: 0o600 });
-
-    try {
-      const [{ stdout: entryOutput }, { stdout: zipInfoOutput }] = await Promise.all([
-        execFileAsync('unzip', ['-Z1', archivePath], { timeout: DOWNLOAD_TIMEOUT_MS }),
-        execFileAsync('unzip', ['-Z', '-l', archivePath], { timeout: DOWNLOAD_TIMEOUT_MS }),
-      ]);
-      validateArchiveEntries(entryOutput.split(/\r?\n/).filter(Boolean));
-      validateWeSkillHubZipInfo(zipInfoOutput);
-      await execFileAsync('unzip', ['-q', archivePath, '-d', extracted], { timeout: DOWNLOAD_TIMEOUT_MS });
-      await validateMaterializedRegistryTree(extracted);
-    } catch {
-      throw new WeSkillHubError('archive');
-    }
-
-    for (const name of await readdir(extracted)) {
-      await rename(join(extracted, name), join(destination, name));
-    }
-  } catch (error) {
-    failure = error instanceof WeSkillHubError ? error : new WeSkillHubError('archive');
-  }
-  if (scratch) {
-    try {
-      await rm(scratch, { recursive: true, force: true });
-    } catch {
-      failure = new WeSkillHubError('archive');
-    }
-  }
-  if (failure) throw failure;
-}
-
 function writeExpertPackageOrchestration(
   source: RegistrySource,
   content: string,
@@ -247,7 +175,7 @@ function writeExpertPackageOrchestration(
 export async function materializeRegistrySource(
   source: RegistrySource,
   destination: string,
-  options: { packageOrchestrationContent?: string; weSkillHubClient?: WeSkillHubClient } = {},
+  options: { packageOrchestrationContent?: string } = {},
 ): Promise<void> {
   if (source.kind === 'expert-package-orchestrator') {
     if (options.packageOrchestrationContent !== undefined) {
@@ -256,14 +184,6 @@ export async function materializeRegistrySource(
     }
     const detail = await getExpertPackageDefinition(source.packageSlug!);
     writeExpertPackageOrchestration(source, detail.content, destination);
-    return;
-  }
-  if (source.skillId !== undefined) {
-    await materializeWeSkillHubArchive(
-      source,
-      destination,
-      options.weSkillHubClient || createWeSkillHubClient(),
-    );
     return;
   }
   await downloadArchive(source, destination);

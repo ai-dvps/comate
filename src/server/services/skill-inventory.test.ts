@@ -51,3 +51,18 @@ it('keeps legacy expert orchestration files visible without reviving deleted loc
     assert.equal((await discoverInstalledSkills(root)).some(skill => skill.name === 'expert'), false);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+it('reads declared versions from installed files and excludes other projects', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'comate-version-'));
+  try {
+    for (const [base, version] of [['a', '1.2'], ['b', '1.4'], ['home', '1.3']]) {
+      const dir = path.join(root, base, '.agents/skills/versioned');
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, 'SKILL.md'), `---\nname: versioned\ndescription: Test\nmetadata:\n  version: "${version}"\n---\nBody`);
+    }
+    const installed = (await discoverInstalledSkills(path.join(root, 'a'), path.join(root, 'home'))).filter(s => s.name === 'versioned');
+    assert.equal(installed.length, 2);
+    assert.deepEqual(installed.map(s => s.version).sort(), ['1.2', '1.3']);
+    assert.ok(installed.every(s => !s.installPath.includes('/b/')));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

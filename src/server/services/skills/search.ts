@@ -26,11 +26,6 @@ import type {
   SkillProviderFailureReason,
   SkillSearchProviderId,
 } from './types.js';
-import {
-  createWeSkillHubClient,
-  WeSkillHubError,
-  type WeSkillHubSearchSort,
-} from './weskillhub.js';
 
 // API endpoint for skills search. Allow override via env for testing/staging.
 const SEARCH_API_BASE = process.env.SKILLS_API_URL || 'https://skills.sh';
@@ -87,12 +82,6 @@ function invalidProviderResponse(): never {
 
 function toSafeFailureReason(error: unknown): SkillProviderFailureReason {
   if (error instanceof SkillSearchProviderError) return error.reason;
-  if (error instanceof WeSkillHubError) {
-    if (error.category === 'network') return 'network';
-    if (error.category === 'timeout') return 'timeout';
-    if (error.category === 'http') return 'http';
-    return 'invalid-response';
-  }
   return isTimeoutError(error) ? 'timeout' : 'network';
 }
 
@@ -294,43 +283,11 @@ export async function searchSkillhubCnSkills(input: SkillSearchInput): Promise<S
     .sort((a, b) => b.installs - a.installs);
 }
 
-/** Search WeSkillHub's public catalog through its bounded provider client. */
-export async function searchWeSkillHubSkills(input: SkillSearchInput): Promise<SearchSkill[]> {
-  const query = normalizeSkillSearchQuery(input);
-  if (!isUsableQuery(query.keyword)) return [];
-
-  const sortMap: Record<NonNullable<SkillSearchQuery['sort']>, WeSkillHubSearchSort> = {
-    score: 'hot',
-    downloads: 'downloads',
-    newest: 'update_date',
-  };
-
-  const records = await createWeSkillHubClient().searchSkills({
-    search: query.keyword,
-    sort: sortMap[query.sort || 'score'],
-  });
-  return records.map((skill) => {
-    const coordinate = `${skill.id}/${skill.slug}`;
-    return {
-      id: `weskillhub:${coordinate}`,
-      name: skill.name,
-      slug: skill.slug,
-      source: 'weskillhub.weoa.com',
-      installSource: `weskillhub:${coordinate}`,
-      sourceKind: 'weskillhub' as const,
-      description: skill.description,
-      installs: skill.downloads,
-      ...(skill.updatedAt !== undefined ? { updatedAt: skill.updatedAt } : {}),
-    };
-  });
-}
-
 export const SEARCH_PROVIDER_REGISTRY: readonly SkillSearchProviderDescriptor[] = [
   { id: 'skills.sh', label: 'skills.sh', search: searchSkillsAPI },
   { id: 'skillshub', label: 'SkillsHub', search: searchSkillsHubSkills },
   { id: 'xfyun', label: '讯飞 SkillHub', search: searchXfyunSkills },
   { id: 'skillhub-cn', label: '腾讯 SkillHub', search: searchSkillhubCnSkills },
-  { id: 'weskillhub', label: 'WeSkillHub', search: searchWeSkillHubSkills },
 ];
 
 export function isSkillSearchProviderId(value: string): value is SkillSearchProviderId {
