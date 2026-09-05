@@ -16,8 +16,7 @@ import { browserTaskStateService, type BrowserTaskProjection, type BrowserTaskSt
  *
  *  - Passive: subscribing NEVER creates a runtime or a browser session — the
  *    channel only reads browser-service's registry (KTD-9).
- *  - Hydration: subscribing pushes the current state immediately (the
- *    git-changes-service.ts:171-173 precedent); a session with no browser
+ *  - Hydration: subscribing pushes the current state immediately; a session with no browser
  *    hydrates as `browser_state` with state 'none'.
  *  - Every state-machine migration re-broadcasts (browser-service emits on
  *    every transition, including approval resolve/timeout/abort-driven ones

@@ -18,7 +18,6 @@ const gitChangesMock = vi.hoisted(() => {
     statusLoading: false,
     statusError: null as string | null,
     viewMode: 'tree' as 'tree' | 'flat',
-    isWatcherAvailable: true,
   }
   function notify() {
     listeners.forEach((l) => l())
@@ -72,7 +71,6 @@ describe('GitChangesPanel browser', () => {
     gitChangesMock.state.statusLoading = false
     gitChangesMock.state.statusError = null
     gitChangesMock.state.viewMode = 'tree'
-    gitChangesMock.state.isWatcherAvailable = true
     window.fetch = vi.fn(() =>
       Promise.resolve({
         ok: true,

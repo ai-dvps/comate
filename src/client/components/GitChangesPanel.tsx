@@ -6,7 +6,6 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  AlertTriangle,
   ChevronRight,
   File,
   FilePenLine,
@@ -154,15 +153,11 @@ export default function GitChangesPanel({ onPreviewDiff, onOpenDiff }: GitChange
     statusLoading,
     statusError,
     viewMode,
-    isWatcherAvailable,
   } = useGitChanges(activeWorkspaceId)
   const [highlightedPath, setHighlightedPath] = useState<string | null>(null)
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set())
 
-  // Subscription lifecycle lives here. ContextWorkspace keeps this component mounted
-  // (CSS-toggling visibility) for the whole time the right panel is expanded,
-  // so switching the inner Files/Git-Changes tab no longer tears down and
-  // recreates the watcher (and its .gitignore crawl) on every toggle.
+  // Load on opening the panel or changing workspace; subsequent refreshes are manual.
   useEffect(() => {
     setPanelVisible(true)
     return () => {
@@ -375,13 +370,6 @@ export default function GitChangesPanel({ onPreviewDiff, onOpenDiff }: GitChange
           </Tooltip>
         </div>
       </div>
-
-      {!isWatcherAvailable && (
-        <div className="px-3 py-1.5 text-xs bg-warning/10 text-warning flex items-center gap-1.5 flex-shrink-0">
-          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-          <span className="truncate">{t('gitChanges.watcherUnavailable')}</span>
-        </div>
-      )}
 
       {statusError && (
         <div className="px-3 py-2 text-xs text-destructive flex-shrink-0">

@@ -534,6 +534,17 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
     }
   });
 
+  it('rejects retired Git watcher subscriptions instead of starting automatic refresh', async () => {
+    ws = await connect();
+    for (const type of ['subscribeGitChanges', 'unsubscribeGitChanges']) {
+      sendRequest(ws, type, type, { workspaceId: 'ws-1' });
+      const response = await waitForMessage<WsErrorResponse>(ws,
+        (msg) => 'id' in msg && (msg as WsResponse).id === type);
+      assert.strictEqual(response.ok, false);
+      assert.match(response.error.message, /Unknown request type/);
+    }
+  });
+
   it('returns an error for unknown request types', async () => {
     ws = await connect();
     sendRequest(ws, 'bad-1', 'unknownType', {});

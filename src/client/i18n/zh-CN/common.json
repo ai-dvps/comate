@@ -233,7 +233,6 @@
     "loading": "正在加载变更…",
     "refresh": "刷新",
     "refreshError": "刷新 Git 变更失败",
-    "watcherUnavailable": "自动刷新不可用",
     "viewModeTree": "树状视图",
     "viewModeFlat": "平铺视图",
     "diffModeUnified": "统一差异",
