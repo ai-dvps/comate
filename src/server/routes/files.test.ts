@@ -46,6 +46,7 @@ function createMockRes(): {
   jsonBody: unknown;
   status(code: number): typeof res;
   json(body: unknown): void;
+  end(): void;
 } {
   const res = {
     statusCode: 200,
@@ -54,6 +55,7 @@ function createMockRes(): {
       this.statusCode = code;
       return this;
     },
+    end() {},
     json(body: unknown) {
       this.jsonBody = body;
     },
@@ -184,6 +186,7 @@ describe('files routes', { concurrency: false }, () => {
     assert.strictEqual(res.statusCode, 200);
     assert.deepStrictEqual(res.jsonBody, {
       path: 'pixel.png',
+      version: (res.jsonBody as { version: string }).version,
       content: image.toString('base64'),
       encoding: 'base64',
       mimeType: 'image/png',
@@ -206,6 +209,7 @@ describe('files routes', { concurrency: false }, () => {
 
     assert.deepStrictEqual(res.jsonBody, {
       path: 'clip.mp4',
+      version: (res.jsonBody as { version: string }).version,
       content: null,
       mimeType: 'video/mp4',
       isBinary: true,
@@ -227,6 +231,7 @@ describe('files routes', { concurrency: false }, () => {
 
     assert.deepStrictEqual(res.jsonBody, {
       path: 'tone.wav',
+      version: (res.jsonBody as { version: string }).version,
       content: null,
       mimeType: 'audio/wav',
       isBinary: true,
@@ -407,6 +412,7 @@ describe('files routes', { concurrency: false }, () => {
     assert.strictEqual(res.statusCode, 200);
     assert.deepStrictEqual(res.jsonBody, {
       path: 'large.png',
+      version: (res.jsonBody as { version: string }).version,
       content: null,
       mimeType: 'image/png',
       isBinary: true,
@@ -428,10 +434,43 @@ describe('files routes', { concurrency: false }, () => {
 
     assert.deepStrictEqual(res.jsonBody, {
       path: 'notes.txt',
+      version: (res.jsonBody as { version: string }).version,
       content: 'hello image preview',
       isBinary: false,
       size: 19,
     });
+  });
+
+  it('GET /content skips unchanged content and reloads edits and atomic replacements', async () => {
+    const filePath = path.join(tempDir, 'live.txt');
+    await writeFile(filePath, 'before');
+    const workspace = await workspaceStore.create({ name: 'test-ws', folderPath: tempDir });
+    const handler = await importContentHandler();
+    const read = async (ifVersion?: string) => {
+      const res = createMockRes();
+      await handler({ params: { id: workspace.id }, query: { path: 'live.txt', ifVersion } }, res);
+      return res;
+    };
+    const first = await read();
+    const version = (first.jsonBody as { version: string }).version;
+    assert.strictEqual(typeof version, 'string');
+    const unchanged = await read(version);
+    assert.strictEqual(unchanged.statusCode, 204);
+    assert.strictEqual(unchanged.jsonBody, undefined);
+    await writeFile(filePath, 'after!');
+    const edited = await read(version);
+    assert.strictEqual((edited.jsonBody as { content: string }).content, 'after!');
+    const editedVersion = (edited.jsonBody as { version: string }).version;
+    assert.notStrictEqual(editedVersion, version);
+    await rm(filePath);
+    await writeFile(filePath, 'newest');
+    const replaced = await read(editedVersion);
+    assert.strictEqual((replaced.jsonBody as { content: string }).content, 'newest');
+    assert.notStrictEqual((replaced.jsonBody as { version: string }).version, editedVersion);
+    await rm(filePath);
+    const removed = await read(editedVersion);
+    assert.strictEqual(removed.statusCode, 404);
+    assert.deepStrictEqual(removed.jsonBody, { error: 'File not found' });
   });
 
   it('GET /content continues to omit non-image binary content', async () => {
@@ -447,6 +486,7 @@ describe('files routes', { concurrency: false }, () => {
 
     assert.deepStrictEqual(res.jsonBody, {
       path: 'archive.bin',
+      version: (res.jsonBody as { version: string }).version,
       content: null,
       isBinary: true,
       size: 4,

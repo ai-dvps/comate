@@ -12,6 +12,7 @@ import { isMarkdown } from '../lib/file-helpers'
 import { useAppSettings } from '../hooks/use-app-settings'
 import { fontSizeValue } from '../lib/font-size'
 import type { FileContextTab } from '../stores/context-tab-store'
+import { useFileAutoReload } from '../hooks/use-file-auto-reload'
 
 interface CodeMirrorFileViewerProps {
   tab: FileContextTab
@@ -27,6 +28,7 @@ export default function CodeMirrorFileViewer({
 }: CodeMirrorFileViewerProps) {
   const { t } = useTranslation('common')
   const { chatFontSize } = useAppSettings()
+  const reloadFailed = useFileAutoReload(tab.workspaceId, tab.id, tab.path)
   const absolutePath = getPathDisplayInfo(tab.path, workspacePath).displayAbsolute
   const language = useMemo(() => getCodeMirrorLanguage(tab.name), [tab.name])
   const fontSize = fontSizeValue(chatFontSize)
@@ -89,6 +91,11 @@ export default function CodeMirrorFileViewer({
         </div>
       </div>
 
+      {(reloadFailed || tab.reloaded) && (
+        <div role="status" className="px-4 py-1.5 text-xs text-text-secondary border-b border-border/50 flex-shrink-0">
+          {t(reloadFailed ? 'fileReloadFailed' : 'fileReloaded')}
+        </div>
+      )}
       <div className={cn('flex-1 overflow-auto', isMarkdown(tab.name) && 'p-0')} data-testid="file-viewer-content">
         {tab.videoUrl && !videoLoadFailed ? (
           <div className="flex items-center justify-center h-full p-4 bg-black/90">

@@ -22,6 +22,8 @@ export interface FileContextTab {
   videoUrl?: string
   audioUrl?: string
   preview: boolean
+  version?: string
+  reloaded?: boolean
 }
 
 export interface ChangesContextTab {
@@ -103,6 +105,7 @@ interface OpenOptions {
 }
 
 interface FileContentResponse {
+  version?: string
   content?: string | null
   isBinary?: boolean
   encoding?: string
@@ -135,6 +138,7 @@ export interface ContextTabState extends ContextTabData {
     name: string,
     options?: OpenOptions,
   ) => Promise<void>
+  refreshFile: (tab: FileContextTab, signal: AbortSignal) => Promise<void>
   openDiff: (
     workspaceId: string,
     item: GitStatusItem,
@@ -286,6 +290,25 @@ function cloneWorkspaceCollection(
   return { tabs: [...(state.workspaceTabs[workspaceId]?.tabs ?? [])] }
 }
 
+async function filePreview(data: FileContentResponse, workspaceId: string, path: string) {
+  const imageDataUrl = data.encoding === 'base64'
+    && data.mimeType?.startsWith('image/')
+    && typeof data.content === 'string'
+    ? `data:${data.mimeType};base64,${data.content}`
+    : undefined
+  const mediaPath = (data.mimeType?.startsWith('video/') || data.mimeType?.startsWith('audio/'))
+    ? `/api/workspaces/${workspaceId}/files/media?path=${encodeURIComponent(path)}`
+    : undefined
+  const mediaUrl = mediaPath ? `${await getApiBase()}${mediaPath}${data.version ? `&v=${encodeURIComponent(data.version)}` : ''}` : undefined
+  const videoUrl = data.mimeType?.startsWith('video/') ? mediaUrl : undefined
+  const audioUrl = data.mimeType?.startsWith('audio/') ? mediaUrl : undefined
+  return {
+    content: imageDataUrl || videoUrl || audioUrl ? '' : typeof data.content === 'string' ? data.content : '',
+    isBinary: data.isBinary === true,
+    imageDataUrl, videoUrl, audioUrl, version: data.version,
+  }
+}
+
 export const useContextTabStore = create<ContextTabState>((set, get) => ({
   ...EMPTY_DATA,
 
@@ -332,17 +355,7 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
       }
       const data = await response.json() as FileContentResponse
       if (abortControllers.get(key) !== controller) return
-      const imageDataUrl = data.encoding === 'base64'
-        && data.mimeType?.startsWith('image/')
-        && typeof data.content === 'string'
-        ? `data:${data.mimeType};base64,${data.content}`
-        : undefined
-      const mediaPath = (data.mimeType?.startsWith('video/') || data.mimeType?.startsWith('audio/'))
-        ? `/api/workspaces/${workspaceId}/files/media?path=${encodeURIComponent(path)}`
-        : undefined
-      const mediaUrl = mediaPath ? `${await getApiBase()}${mediaPath}` : undefined
-      const videoUrl = data.mimeType?.startsWith('video/') ? mediaUrl : undefined
-      const audioUrl = data.mimeType?.startsWith('audio/') ? mediaUrl : undefined
+      const previewData = await filePreview(data, workspaceId, path)
       if (abortControllers.get(key) !== controller) return
       const tab: FileContextTab = {
         type: 'file',
@@ -350,11 +363,7 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
         workspaceId,
         path,
         name,
-        content: imageDataUrl || videoUrl || audioUrl ? '' : typeof data.content === 'string' ? data.content : '',
-        isBinary: data.isBinary === true,
-        imageDataUrl,
-        videoUrl,
-        audioUrl,
+        ...previewData,
         preview,
       }
       set((state) => {
@@ -373,6 +382,38 @@ export const useContextTabStore = create<ContextTabState>((set, get) => ({
     } finally {
       if (abortControllers.get(key) === controller) abortControllers.delete(key)
     }
+  },
+
+  refreshFile: async (tab, signal) => {
+    const { workspaceId, path } = tab
+    if (!path || signal.aborted) return
+    const params = new URLSearchParams({ path })
+    if (tab.version) params.set('ifVersion', tab.version)
+    const response = await fetch(`/api/workspaces/${workspaceId}/files/content?${params}`, {
+      signal, cache: 'no-store',
+    })
+    if (response.status === 204) return
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const data = await response.json() as FileContentResponse
+    const previewData = await filePreview(data, workspaceId, path)
+    if (signal.aborted) return
+    set((state) => {
+      // An old response must never resurrect a closed/replaced tab or overwrite
+      // a newer refresh. Promotion of a preview is checked on the next poll.
+      const collection = state.workspaceTabs[workspaceId]
+      if (!collection?.tabs.includes(tab)) return state
+      const changed = Object.entries(previewData).some(([key, value]) =>
+        tab[key as keyof FileContextTab] !== value)
+      if (!changed) return state
+      return synchronize({
+        ...state,
+        workspaceTabs: {
+          ...state.workspaceTabs,
+          [workspaceId]: { tabs: collection.tabs.map((item) => item === tab
+            ? { ...tab, ...previewData, reloaded: true } : item) },
+        },
+      })
+    })
   },
 
   openDiff: async (workspaceId, item, stagedOverride, options = {}) => {

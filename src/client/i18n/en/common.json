@@ -1,4 +1,6 @@
 {
+  "fileReloaded": "File changed. Latest contents loaded.",
+  "fileReloadFailed": "Unable to reload file. Showing the last loaded contents; retrying automatically.",
   "newChat": {
     "title": "New chat",
     "description": "Start with a prompt and Comate will create the session for you.",

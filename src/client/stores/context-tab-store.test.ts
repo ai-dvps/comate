@@ -49,6 +49,69 @@ function resetStore() {
 describe('context-tab-store', () => {
   beforeEach(resetStore)
 
+  it('reloads a changed file without selecting it or replacing other tabs', async () => {
+    const store = useContextTabStore.getState()
+    store.setContext('ws-1', null)
+    await store.openFile('ws-1', 'a.ts', 'a.ts')
+    const tab = useContextTabStore.getState().openTabs[0]
+    if (tab.type !== 'file') throw new Error('Expected file')
+    await store.openFile('ws-1', 'b.ts', 'b.ts')
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ content: 'updated', version: 'v2' })))
+    await store.refreshFile(tab, new AbortController().signal)
+    expect(useContextTabStore.getState().openTabs[0]).toMatchObject({ content: 'updated', version: 'v2', reloaded: true })
+    expect(useContextTabStore.getState().activeTabId).toBe('file:b.ts')
+  })
+
+  it('keeps unchanged content and preserves the last loaded contents on failure', async () => {
+    const store = useContextTabStore.getState()
+    store.setContext('ws-1', null)
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ content: 'saved', version: 'v1' })))
+    await store.openFile('ws-1', 'a.ts', 'a.ts')
+    const tab = useContextTabStore.getState().openTabs[0]
+    if (tab.type !== 'file') throw new Error('Expected file')
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 204 }))
+    await store.refreshFile(tab, new AbortController().signal)
+    expect(vi.mocked(fetch).mock.lastCall?.[0]).toContain('ifVersion=v1')
+    expect(useContextTabStore.getState().openTabs[0]).toBe(tab)
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 404 }))
+    await expect(store.refreshFile(tab, new AbortController().signal)).rejects.toThrow('HTTP 404')
+    expect(useContextTabStore.getState().openTabs[0]).toBe(tab)
+  })
+
+  it('does not overwrite a reopened tab with a late response', async () => {
+    const store = useContextTabStore.getState()
+    store.setContext('ws-1', null)
+    await store.openFile('ws-1', 'a.ts', 'a.ts')
+    const tab = useContextTabStore.getState().openTabs[0]
+    if (tab.type !== 'file') throw new Error('Expected file')
+    let resolve!: (response: Response) => void
+    vi.mocked(fetch).mockReturnValueOnce(new Promise<Response>((done) => { resolve = done }))
+    const refreshing = store.refreshFile(tab, new AbortController().signal)
+    store.closeTab(tab.id)
+    await store.openFile('ws-1', 'a.ts', 'a.ts')
+    resolve(new Response(JSON.stringify({ content: 'stale' })))
+    await refreshing
+    expect(useContextTabStore.getState().openTabs[0]).toMatchObject({ content: 'content' })
+  })
+
+  it('refreshes media URLs with the file version and ignores aborted responses', async () => {
+    const store = useContextTabStore.getState()
+    store.setContext('ws-1', null)
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ mimeType: 'video/mp4', version: 'v1' })))
+    await store.openFile('ws-1', 'a.mp4', 'a.mp4')
+    const tab = useContextTabStore.getState().openTabs[0]
+    if (tab.type !== 'file') throw new Error('Expected file')
+    expect(tab.videoUrl).toContain('&v=v1')
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ mimeType: 'video/mp4', version: 'v2' })))
+    await store.refreshFile(tab, new AbortController().signal)
+    expect(useContextTabStore.getState().openTabs[0]).toMatchObject({ videoUrl: expect.stringContaining('&v=v2') })
+    const controller = new AbortController()
+    controller.abort()
+    const calls = vi.mocked(fetch).mock.calls.length
+    await store.refreshFile(tab, controller.signal)
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(calls)
+  })
+
   it('projects Workspace tabs with only the active Session Browser tab', async () => {
     const store = useContextTabStore.getState()
     store.setContext('ws-1', 'session-a')
