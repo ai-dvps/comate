@@ -1,4 +1,6 @@
 {
+  "fileReloaded": "文件已修改，已加载最新内容。",
+  "fileReloadFailed": "暂时无法重新加载文件，当前保留上次内容，将自动重试。",
   "newChat": {
     "title": "新对话",
     "description": "输入你的需求，Comate 会自动创建会话并开始处理。",

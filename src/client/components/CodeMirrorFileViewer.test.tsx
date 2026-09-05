@@ -6,6 +6,17 @@ import type { FileContextTab } from '../stores/context-tab-store'
 import CodeMirrorFileViewer from './CodeMirrorFileViewer'
 
 describe('CodeMirrorFileViewer', () => {
+  it('shows a loaded notice alongside the updated contents', () => {
+    const tab: FileContextTab = {
+      type: 'file', id: 'file:notes.md', workspaceId: 'notice-ws',
+      path: 'notes.md', name: 'notes.md', content: 'Latest contents',
+      isBinary: false, preview: false, reloaded: true,
+    }
+    render(<I18nextProvider i18n={i18n}><CodeMirrorFileViewer tab={tab} /></I18nextProvider>)
+    expect(screen.getByRole('status')).toHaveTextContent('File changed. Latest contents loaded.')
+    expect(screen.getByText('Latest contents')).toBeInTheDocument()
+  })
+
   it('renders supported videos with native playback controls', () => {
     const tab: FileContextTab = {
       type: 'file',

@@ -354,11 +354,18 @@ router.get('/content', async (req, res) => {
       return;
     }
 
+    // Include ctime and inode so atomic replacement and same-size writes count.
+    const version = `${fileStat.dev}:${fileStat.ino}:${fileStat.size}:${fileStat.mtimeMs}:${fileStat.ctimeMs}`;
+    if (req.query.ifVersion === version) {
+      res.status(204).end();
+      return;
+    }
+
     const extension = path.extname(targetPath).toLowerCase();
     const videoMimeType = VIDEO_MIME_TYPES[extension];
     if (videoMimeType) {
       res.json({
-        path: relativePath,
+        path: relativePath, version,
         content: null,
         mimeType: videoMimeType,
         isBinary: true,
@@ -370,7 +377,7 @@ router.get('/content', async (req, res) => {
     const audioMimeType = AUDIO_MIME_TYPES[extension];
     if (audioMimeType) {
       res.json({
-        path: relativePath,
+        path: relativePath, version,
         content: null,
         mimeType: audioMimeType,
         isBinary: true,
@@ -383,7 +390,7 @@ router.get('/content', async (req, res) => {
     if (imageMimeType) {
       if (fileStat.size > MAX_IMAGE_PREVIEW_BYTES) {
         res.json({
-          path: relativePath,
+          path: relativePath, version,
           content: null,
           mimeType: imageMimeType,
           isBinary: true,
@@ -395,7 +402,7 @@ router.get('/content', async (req, res) => {
 
       const buffer = await readFile(targetPath);
       res.json({
-        path: relativePath,
+        path: relativePath, version,
         content: buffer.toString('base64'),
         encoding: 'base64',
         mimeType: imageMimeType,
@@ -412,7 +419,7 @@ router.get('/content', async (req, res) => {
 
     if (isBinary) {
       res.json({
-        path: relativePath,
+        path: relativePath, version,
         content: null,
         isBinary: true,
         size: fileStat.size
@@ -421,8 +428,12 @@ router.get('/content', async (req, res) => {
     }
 
     const content = buffer.toString('utf-8');
-    res.json({ path: relativePath, content, isBinary: false, size: fileStat.size });
+    res.json({ path: relativePath, version, content, isBinary: false, size: fileStat.size });
   } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      res.status(404).json({ error: 'File not found' });
+      return;
+    }
     console.error('Failed to read file:', error);
     res.status(500).json({ error: 'Failed to read file' });
   }
