@@ -15,11 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Reload open file previews automatically** — Visible files update after changes on disk and show a loaded notice. Failed reloads retain the previous contents and retry automatically.
 - **Pin Skill management** — The Skill picker places skill-manager in a separate top section while preserving search and keyboard selection.
 - **Resume your last workspace and conversation** — Comate restores open workspaces and the selected session after restarting, skipping entries that have been deleted.
 - **Manage Skills through conversation** — The installed Skills page guides you into an editable `skill-manager` draft, with examples for discovery, installation, removal and updates. Existing text and attachments are preserved.
 - **Standard Skills across Agents** — Comate ships skill-manager and its WeCom Skills for Claude Code, Codex and OpenCode, with a bundled Skills CLI. Skill references keep their original names without generated suffixes; users resolve same-name conflicts. The picker refreshes after filesystem changes.
 - **Retire plugin management and Skill catalogs** — Plugin Manager, Skill Search, Expert Packages and Enterprise Zone no longer have dedicated management screens. Existing user files and third-party plugin settings remain intact; built-in WeCom plugin auto-installation is retired.
+
+### Fixed
+
+- **Keep Sidecar alive after watcher exhaustion** — Closing file watchers now handles late errors, preventing repeated EMFILE errors from crashing the process after Git auto-refresh is disabled.
+- **Handle native Skill watcher errors** — Skill and command watchers use Chokidar's shared, error-forwarding native watchers, release failed watchers, and dispose during Sidecar shutdown.
 
 ## [0.4.7] - 2026-09-03
 

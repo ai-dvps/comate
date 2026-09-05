@@ -5,6 +5,7 @@ import { todoSchedulerService } from './services/todo-scheduler-service.js';
 import { runNotifier } from './services/run-notifier.js';
 import { wecomUserResolver } from './services/wecom-user-resolver.js';
 import { gitChangesService } from './services/git-changes-service.js';
+import { commandsService } from './services/commands-service.js';
 import { chatService } from './services/chat-service.js';
 import { browserService } from './services/browser-service.js';
 import { shutdown as shutdownGithubAuth } from './services/github-auth.js';
@@ -33,6 +34,7 @@ export async function teardownServices(): Promise<void> {
   await runNotifier.shutdown();
   await wecomUserResolver.shutdown();
   await gitChangesService.dispose();
+  await commandsService.dispose();
   await browserService.shutdown();
   await chatService.closeAllRuntimes();
 }

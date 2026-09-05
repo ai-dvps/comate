@@ -10,6 +10,7 @@ import os from 'os';
 import { GitChangesService } from './git-changes-service.js';
 import type { WebSocket } from 'ws';
 import type { GitStatusItem } from '../models/git-changes.js';
+import type { FSWatcher } from 'chokidar';
 
 const execFileAsync = promisify(execFile);
 
@@ -74,6 +75,22 @@ describe('git-changes service', { concurrency: false }, () => {
     if (tempDir) {
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it('survives further EMFILE errors after retiring a failed watcher', async () => {
+    await initGitRepo(tempDir);
+    service = new GitChangesService(createFakeStore(tempDir), async () => []);
+    const socket = createMockSocket();
+    await service.subscribe('ws-1', socket as unknown as WebSocket);
+    const watchers = (service as unknown as { watchers: Map<string, FSWatcher> }).watchers;
+    const watcher = watchers.get('ws-1')!;
+    const error = Object.assign(new Error('EMFILE: too many open files, watch'), { code: 'EMFILE' });
+    watcher.emit('error', error);
+    assert.strictEqual(watcher.closed, true);
+    assert.strictEqual(watchers.size, 0);
+    assert.doesNotThrow(() => watcher.emit('error', error));
+    assert.ok(socket.messages.some((message) =>
+      (message as { eventType: string }).eventType === 'watcher_unavailable'));
   });
 
   it('broadcasts git_changes event when a file changes', async () => {
@@ -252,7 +269,9 @@ describe('git-changes service', { concurrency: false }, () => {
     await service.subscribe('ws-1', socket as unknown as WebSocket);
     await waitFor(() => socket.messages.length > 0, 3000);
 
+    const watcher = (service as unknown as { watchers: Map<string, FSWatcher> }).watchers.get('ws-1')!;
     await service.dispose();
+    assert.doesNotThrow(() => watcher.emit('error', new Error('late watch error')));
 
     // After dispose, a change should not produce further events.
     socket.messages.length = 0;

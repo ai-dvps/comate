@@ -1,9 +1,16 @@
 import '../test-utils/test-env.js';
-import { afterEach, describe, it } from 'node:test';
+import { afterEach, describe, it, mock } from 'node:test';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { setTimeout as delay } from 'node:timers/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import assert from 'node:assert/strict';
 import type { Workspace } from '../models/workspace.js';
 import { store } from '../storage/sqlite-store.js';
 import { CommandsService } from './commands-service.js';
+import { watch, type FSWatcher } from 'chokidar';
 
 const originalDefault = store.getDefaultProvider.bind(store);
 
@@ -17,6 +24,47 @@ const workspace: Workspace = {
 };
 
 describe('CommandsService Provider resolution', () => {
+  it('forwards native watcher EMFILE errors instead of throwing an unhandled event', async () => {
+    const folder = await mkdtemp(path.join(os.tmpdir(), 'comate-native-watcher-'));
+    await mkdir(path.join(folder, '.claude', 'commands'), { recursive: true });
+    const nativeWatchers: fs.FSWatcher[] = [];
+    const originalWatch = fs.watch;
+    const watchMock = mock.method(fs, 'watch', (...args: unknown[]) => {
+      const watcher = Reflect.apply(originalWatch, fs, args) as fs.FSWatcher;
+      nativeWatchers.push(watcher);
+      return watcher;
+    });
+    syncBuiltinESMExports();
+    const service = new CommandsService({ fetchInitialization: async () => ({ commands: [] }) } as never);
+    try {
+      service.watchSkills(folder);
+      for (let i = 0; i < 100 && nativeWatchers.length === 0; i++) await delay(10);
+      assert.ok(nativeWatchers.length > 0, 'Expected a real native watcher');
+      const error = Object.assign(new Error('EMFILE: too many open files, watch'), { code: 'EMFILE' });
+      assert.doesNotThrow(() => nativeWatchers[0].emit('error', error));
+      assert.equal((service as unknown as { watchers: Map<string, FSWatcher> }).watchers.size, 0);
+      assert.ok(nativeWatchers[0].listenerCount('error') > 0);
+    } finally {
+      await service.dispose();
+      watchMock.mock.restore();
+      syncBuiltinESMExports();
+      await rm(folder, { recursive: true, force: true });
+    }
+  });
+
+  it('absorbs late watcher errors after disposing the service', async () => {
+    const service = new CommandsService({ fetchInitialization: async () => ({ commands: [] }) } as never);
+    const watcher = watch([]);
+    const watchers = (service as unknown as { watchers: Map<string, FSWatcher> }).watchers;
+    watchers.set('test', watcher);
+    await service.dispose();
+    assert.equal(watcher.closed, true);
+    assert.equal(watchers.size, 0);
+    assert.doesNotThrow(() => watcher.emit('error', Object.assign(new Error('EMFILE'), { code: 'EMFILE' })));
+    await service.dispose();
+    assert.equal(watcher.listenerCount('error'), 1);
+  });
+
   it('does not initialize Claude when the default Provider is unavailable', async () => {
     let calls = 0;
     const sdk = { fetchInitialization: async () => { calls += 1; return { commands: [] }; } };

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { watch, type FSWatcher } from 'chokidar';
+import { closeFileWatcher } from '../utils/close-file-watcher.js';
 import type { Workspace } from '../models/workspace.js';
 import type { CachedCommandList, CommandSource } from '../types/commands.js';
 import type { SlashCommandDto } from '../types/initialization.js';
@@ -95,7 +96,7 @@ export class CommandsService {
   async dispose(): Promise<void> {
     const closing: Promise<void>[] = [];
     for (const watcher of this.watchers.values()) {
-      closing.push(watcher.close());
+      closing.push(closeFileWatcher(watcher));
     }
     this.watchers.clear();
     for (const timer of this.invalidationTimers.values()) clearTimeout(timer);
@@ -185,7 +186,9 @@ export class CommandsService {
 
     const watcher = watch([...paths, ...skillRoots(folderPath).map(root => root.path)], {
       ignoreInitial: true,
-      persistent: false,
+      // Chokidar 5's non-persistent branch omits native error forwarding and
+      // cannot share native handles across workspaces. Dispose on shutdown.
+      persistent: true,
       depth: 12,
       awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
     });
@@ -218,6 +221,13 @@ export class CommandsService {
     });
     watcher.on('error', (err) => {
       console.error(`[commands] watcher error for ${folderPath}:`, err);
+      if (this.watchers.get(folderPath) !== watcher) return;
+      this.watchers.delete(folderPath);
+      this.cache.delete(folderPath);
+      this.skillVersions.set(folderPath, (this.skillVersions.get(folderPath) ?? 0) + 1);
+      void closeFileWatcher(watcher).catch((error) => {
+        console.error(`[commands] watcher close failed for ${folderPath}:`, error);
+      });
     });
 
     this.watchers.set(folderPath, watcher);
