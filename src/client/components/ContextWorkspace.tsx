@@ -306,16 +306,16 @@ export default function ContextWorkspace({
             {viewerHasHeader ? null : navigatorToggle}
           </div>
           <div className="min-h-0 flex-1 overflow-hidden">
-            <div className={cn('h-full', activeTab?.type !== 'file' && 'hidden')}>
-              <FileExplorer
-                selectedPath={activeTab?.type === 'file' ? activeTab.path : undefined}
-                onFilePreview={previewFile}
-                onFileClick={openFile}
-              />
-            </div>
-            <div className={cn('h-full', activeTab?.type !== 'changes' && 'hidden')}>
-              <GitChangesPanel />
-            </div>
+            {!isCollapsed && showNavigator && activeTab?.type === 'file' ? (
+              <div className="h-full">
+                <FileExplorer selectedPath={activeTab.path} onFilePreview={previewFile} onFileClick={openFile} />
+              </div>
+            ) : null}
+            {!isCollapsed && showNavigator && activeTab?.type === 'changes' ? (
+              <div className="h-full">
+                <GitChangesPanel />
+              </div>
+            ) : null}
           </div>
           {showNavigator ? (
             <div

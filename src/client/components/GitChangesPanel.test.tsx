@@ -40,7 +40,7 @@ const gitChangesMock = vi.hoisted(() => {
     setPanelVisible: vi.fn(),
     setActiveWorkspaceId: vi.fn(),
   }
-  return { state, actions, useGitChanges, notify }
+  return { state, actions, useGitChanges: vi.fn(useGitChanges), notify }
 })
 
 vi.mock('../stores/git-changes-store', () => ({
@@ -77,6 +77,26 @@ describe('GitChangesPanel', () => {
 
     expect(screen.getByRole('tree')).toBeInTheDocument()
     expect(document.querySelector('.animate-pulse')).toBeInTheDocument()
+  })
+
+  it.each(['tree', 'flat'] as const)('only mounts visible rows in a large %s list', (mode) => {
+    gitChangesMock.state.viewMode = mode
+    gitChangesMock.state.statusItems = Array.from({ length: 1000 }, (_, i) => ({
+      path: `file-${String(i).padStart(4, '0')}.txt`, indexStatus: '?', workingTreeStatus: '?',
+    }))
+    renderWithI18n(<GitChangesPanel />)
+    expect(screen.getAllByTestId('git-file-row').length).toBeLessThan(60)
+    expect(screen.queryByText('file-0999.txt')).not.toBeInTheDocument()
+    fireEvent.scroll(screen.getByRole('tree'), { target: { scrollTop: 28 * 1000 } })
+    expect(screen.getByText('file-0999.txt')).toBeInTheDocument()
+    expect(screen.getAllByTestId('git-file-row').length).toBeLessThan(60)
+  })
+
+  it('does not rerender unchanged file rows when its parent rerenders', () => {
+    const { rerender } = renderWithI18n(<GitChangesPanel />)
+    const calls = gitChangesMock.useGitChanges.mock.calls.length
+    rerender(<I18nextProvider i18n={i18n}><GitChangesPanel /></I18nextProvider>)
+    expect(gitChangesMock.useGitChanges).toHaveBeenCalledTimes(calls)
   })
 
   it('renders an empty state when there are no changes', () => {

@@ -96,10 +96,22 @@ describe('ContextWorkspace', () => {
     expect(screen.getByTestId('context-workspace')).toHaveClass('border-l')
     expect(screen.getByTestId('context-navigator')).toBeInTheDocument()
     expect(screen.getByTestId('file-explorer')).toBeInTheDocument()
-    expect(screen.getByTestId('git-changes-panel')).toBeInTheDocument()
+    expect(screen.queryByTestId('git-changes-panel')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Collapse internal navigator' }))
     expect(screen.queryByTestId('context-navigator')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('file-explorer')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Expand internal navigator' })).toBeInTheDocument()
+  })
+
+  it('unmounts Git changes when the outer panel is collapsed and restores it on opening', () => {
+    useContextTabStore.getState().openChangesWorkspace('ws-1')
+    const props = { width: 600, onWidthChange: vi.fn(), workspaceId: 'ws-1', workspacePath: '/workspace' }
+    const { rerender } = renderWorkspace(<ContextWorkspace {...props} isCollapsed={false} />)
+    expect(screen.getByTestId('git-changes-panel')).toBeInTheDocument()
+    rerender(<I18nextProvider i18n={i18n}><ContextWorkspace {...props} isCollapsed /></I18nextProvider>)
+    expect(screen.queryByTestId('git-changes-panel')).not.toBeInTheDocument()
+    rerender(<I18nextProvider i18n={i18n}><ContextWorkspace {...props} isCollapsed={false} /></I18nextProvider>)
+    expect(screen.getByTestId('git-changes-panel')).toBeInTheDocument()
   })
 
   it('renders the navigator toggle inside the viewer header when a file is open', async () => {

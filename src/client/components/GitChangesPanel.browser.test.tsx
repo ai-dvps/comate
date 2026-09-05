@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import React from 'react'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { userEvent } from '@vitest/browser/context'
 import { I18nextProvider } from 'react-i18next'
 import GitChangesPanel from './GitChangesPanel'
 import i18n from '../i18n'
+import '../index.css'
 
 function renderWithI18n(ui: React.ReactElement) {
   return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>)
@@ -77,6 +78,24 @@ describe('GitChangesPanel browser', () => {
         json: () => Promise.resolve({ items: gitChangesMock.state.statusItems }),
       }),
     ) as unknown as typeof window.fetch
+  })
+
+  it('keeps a large tree bounded while scrolling and navigating past the viewport', async () => {
+    gitChangesMock.state.statusItems = Array.from({ length: 10000 }, (_, i) => ({
+      path: `src/file-${String(i).padStart(5, '0')}.ts`, indexStatus: '?', workingTreeStatus: '?',
+    }))
+    renderWithI18n(<div style={{ height: 360, width: 400 }}><GitChangesPanel /></div>)
+    const tree = screen.getByRole('tree')
+    expect(screen.getAllByTestId('git-file-row').length).toBeLessThan(60)
+    for (let i = 0; i < 40; i++) fireEvent.keyDown(tree, { key: 'ArrowDown' })
+    await vi.waitFor(() => expect(tree.scrollTop).toBeGreaterThan(0))
+    expect(tree.querySelector('[aria-selected="true"]')).toBeInTheDocument()
+    tree.scrollTop = tree.scrollHeight
+    fireEvent.scroll(tree)
+    await vi.waitFor(() => expect(screen.getByText('file-09999.ts')).toBeInTheDocument())
+    expect(screen.getAllByTestId('git-file-row').length).toBeLessThan(60)
+    await userEvent.dblClick(screen.getByText('file-09999.ts'))
+    expect(rightPanelMock.openDiff).toHaveBeenCalledWith('ws1', gitChangesMock.state.statusItems[9999], false)
   })
 
   it('double-clicking a modified file calls right-panel openDiff with workspace id and file', async () => {

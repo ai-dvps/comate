@@ -1,4 +1,6 @@
 import {
+  memo,
+  useRef,
   useCallback,
   useEffect,
   useMemo,
@@ -42,12 +44,14 @@ interface FileSide {
   both: boolean
 }
 
-/**
- * Expand a status entry into one or two viewable sides. A file with changes in
- * both the index and the working tree (e.g. `MM`, `AM`) yields two entries so
- * the user can review the staged diff AND the unstaged diff independently; the
- * previous single-entry model made the unstaged half unreachable.
- */
+const ROW_HEIGHT = 28
+const OVERSCAN = 8
+
+type VisibleRow =
+  | { kind: 'header'; key: string; group: 'tracked' | 'untracked'; count: number }
+  | { kind: 'node'; key: string; node: TreeNode; level: number; side?: FileSide }
+
+/** Keep staged and unstaged diffs independently accessible for files such as MM or AM. */
 function buildFileSides(file: GitStatusItem): FileSide[] {
   if (isUntrackedFile(file)) {
     return [{ staged: false, statusCode: '?', both: false }]
@@ -143,7 +147,7 @@ interface GitChangesPanelProps {
   onOpenDiff?: (file: GitStatusItem, staged: boolean) => void
 }
 
-export default function GitChangesPanel({ onPreviewDiff, onOpenDiff }: GitChangesPanelProps = {}) {
+function GitChangesPanel({ onPreviewDiff, onOpenDiff }: GitChangesPanelProps = {}) {
   const { t } = useTranslation('common')
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId)
   const { setPanelVisible, setActiveWorkspaceId, refresh, setViewMode } =
@@ -300,14 +304,74 @@ export default function GitChangesPanel({ onPreviewDiff, onOpenDiff }: GitChange
   )
 
   const allTreeNodes = useMemo(
-    () => [...untrackedTree, ...tree],
+    () => [...tree, ...untrackedTree],
     [untrackedTree, tree],
   )
+
+  const rows = useMemo(() => {
+    const result: VisibleRow[] = []
+    const append = (nodes: TreeNode[], group: string, level = 0) => {
+      for (const node of nodes) {
+        if (node.type === 'folder') {
+          result.push({ kind: 'node', key: `${group}:${node.path}`, node, level })
+          if (expandedPaths.has(node.path)) append(node.children, group, level + 1)
+        } else if (node.isUntrackedDir) {
+          result.push({ kind: 'node', key: `${group}:${node.path}`, node, level })
+        } else if (node.file) {
+          for (const side of buildFileSides(node.file)) {
+            result.push({ kind: 'node', key: `${group}:${node.path}:${side.staged}`, node, level, side })
+          }
+        }
+      }
+    }
+    const addGroup = (group: 'tracked' | 'untracked', items: GitStatusItem[], nodes: TreeNode[]) => {
+      if (!items.length) return
+      result.push({ kind: 'header', key: group, group, count: items.length })
+      append(viewMode === 'tree' ? nodes : items.map((file): TreeNode => ({
+        name: file.path, path: file.path, type: 'file', file,
+        isUntrackedDir: file.path.endsWith('/'), children: [],
+      })), group)
+    }
+    addGroup('tracked', trackedItems, tree)
+    addGroup('untracked', untrackedItems, untrackedTree)
+    return result
+  }, [viewMode, trackedItems, untrackedItems, tree, untrackedTree, expandedPaths])
+  const listRef = useRef<HTMLDivElement>(null)
+  const [scrollTop, setScrollTop] = useState(0)
+  const [viewportHeight, setViewportHeight] = useState(400)
+  useEffect(() => {
+    const list = listRef.current
+    if (!list) return
+    const measure = () => setViewportHeight(list.clientHeight || 400)
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(list)
+    return () => observer.disconnect()
+  }, [])
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = 0
+    setScrollTop(0)
+  }, [activeWorkspaceId, viewMode, statusItems])
+  useEffect(() => {
+    const list = listRef.current
+    if (!list || !highlightedPath) return
+    const index = rows.findIndex((row) => row.kind === 'node' && row.node.path === highlightedPath)
+    if (index < 0) return
+    const top = index * ROW_HEIGHT
+    if (top < list.scrollTop) list.scrollTop = top
+    else if (top + ROW_HEIGHT > list.scrollTop + viewportHeight) {
+      list.scrollTop = top + ROW_HEIGHT - viewportHeight
+    }
+    setScrollTop(list.scrollTop)
+  }, [highlightedPath, rows, viewportHeight])
+  const start = Math.max(0, Math.min(Math.floor(scrollTop / ROW_HEIGHT), Math.max(0, rows.length - 1)) - OVERSCAN)
+  const end = Math.min(rows.length, start + Math.ceil(viewportHeight / ROW_HEIGHT) + OVERSCAN * 2)
 
   return (
     <div
       data-testid="git-changes-panel"
-      className="flex flex-col h-full outline-none"
+      className="flex min-h-0 flex-col h-full outline-none"
     >
       <div className="flex items-center justify-end px-3 py-1 border-b border-border/50 flex-shrink-0 gap-2">
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -378,7 +442,9 @@ export default function GitChangesPanel({ onPreviewDiff, onOpenDiff }: GitChange
       )}
 
       <div
-        className="flex-1 overflow-y-auto"
+        ref={listRef}
+        className="min-h-0 flex-1 overflow-y-auto"
+        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
         role="tree"
         aria-label={t('gitChanges.panelTitle')}
         onKeyDown={(e) => viewMode === 'tree' && handleTreeKeyDown(e, allTreeNodes)}
@@ -396,106 +462,33 @@ export default function GitChangesPanel({ onPreviewDiff, onOpenDiff }: GitChange
             </div>
           )}
 
-          {trackedItems.length > 0 && (
-            <div data-testid="git-changed-tree" className="py-1">
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-hover/60 border-b border-border/50 text-[11px] font-semibold text-text-secondary uppercase tracking-wider">
-                <FilePenLine className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
-                {t('gitChanges.statusModified')}
-                <span className="ml-auto text-text-tertiary normal-case">
-                  {trackedItems.length}
-                </span>
-              </div>
-              {viewMode === 'tree' ? (
-                tree.map((node) => (
-                  <TreeNodeView
-                    key={node.path}
-                    node={node}
-                    level={0}
-                    expandedPaths={expandedPaths}
-                    highlightedPath={highlightedPath}
-                    onToggleExpand={handleToggleExpand}
-                    onSelect={handleSelect}
-                    onPreview={handlePreviewFile}
-                    onOpen={handleOpenFile}
-                  />
-                ))
-              ) : (
-                trackedItems.flatMap((file) =>
-                  buildFileSides(file).map((side) => (
-                    <FileRow
-                      key={`${file.path}:${side.staged ? 's' : 'w'}`}
-                      file={file}
-                      staged={side.staged}
-                      statusCode={side.statusCode}
-                      showSide={side.both}
-                      path={file.path}
-                      isHighlighted={highlightedPath === file.path}
-                      onSelect={() => handleSelect(file.path)}
-                      onPreview={() => handlePreviewFile(file, side.staged)}
-                      onOpen={() => handleOpenFile(file, side.staged)}
-                    />
-                  )),
-                )
-              )}
-            </div>
-          )}
-
-          {untrackedItems.length > 0 && (
-            <div
-              data-testid="git-untracked-group"
-              className={cn('py-1', trackedItems.length > 0 && 'border-t border-border/50')}
-            >
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-hover/60 border-b border-border/50 text-[11px] font-semibold text-text-secondary uppercase tracking-wider">
-                <HelpCircle className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
-                {t('gitChanges.statusUntracked')}
-                <span className="ml-auto text-text-tertiary normal-case">
-                  {untrackedItems.length}
-                </span>
-              </div>
-              {viewMode === 'tree' ? (
-                untrackedTree.map((node) => (
-                  <TreeNodeView
-                    key={node.path}
-                    node={node}
-                    level={0}
-                    expandedPaths={expandedPaths}
-                    highlightedPath={highlightedPath}
-                    onToggleExpand={handleToggleExpand}
-                    onSelect={handleSelect}
-                    onPreview={handlePreviewFile}
-                    onOpen={handleOpenFile}
-                  />
-                ))
-              ) : (
-                untrackedItems.map((file) =>
-                  file.path.endsWith('/') ? (
-                    <UntrackedRepoRow
-                      key={file.path}
-                      path={file.path}
-                      isHighlighted={highlightedPath === file.path}
-                      onSelect={() => handleSelect(file.path)}
-                    />
+          {rows.length > 0 && (
+            <div style={{ height: rows.length * ROW_HEIGHT, position: 'relative' }}>
+              {rows.slice(start, end).map((row, offset) => (
+                <div key={row.key} style={{ position: 'absolute', top: (start + offset) * ROW_HEIGHT, height: ROW_HEIGHT, width: '100%' }}>
+                  {row.kind === 'header' ? (
+                    <div data-testid={row.group === 'tracked' ? 'git-changed-tree' : 'git-untracked-group'}
+                      className="flex h-7 items-center gap-2 px-3 bg-surface-hover/60 border-b border-border/50 text-[11px] font-semibold text-text-secondary uppercase tracking-wider">
+                      {row.group === 'tracked' ? <FilePenLine className="w-3.5 h-3.5 shrink-0" /> : <HelpCircle className="w-3.5 h-3.5 shrink-0" />}
+                      {t(row.group === 'tracked' ? 'gitChanges.statusModified' : 'gitChanges.statusUntracked')}
+                      <span className="ml-auto text-text-tertiary normal-case">{row.count}</span>
+                    </div>
                   ) : (
-                    <FileRow
-                      key={file.path}
-                      file={file}
-                      staged={false}
-                      statusCode="?"
-                      path={file.path}
-                      isHighlighted={highlightedPath === file.path}
-                      onSelect={() => handleSelect(file.path)}
-                      onPreview={() => handlePreviewFile(file, false)}
-                      onOpen={() => handleOpenFile(file, false)}
-                    />
-                  ),
-                )
-              )}
+                    <TreeNodeView node={row.node} level={row.level} side={row.side} flat={viewMode === 'flat'}
+                      expandedPaths={expandedPaths} highlightedPath={highlightedPath}
+                      onToggleExpand={handleToggleExpand} onSelect={handleSelect}
+                      onPreview={handlePreviewFile} onOpen={handleOpenFile} />
+                  )}
+                </div>
+              ))}
             </div>
           )}
         </div>
     </div>
   )
 }
+
+export default memo(GitChangesPanel)
 
 function renderSkeleton() {
   return (
@@ -544,9 +537,10 @@ function FileRow({
     <div
       data-testid="git-file-row"
       role="treeitem"
+      aria-level={(level ?? 0) + 1}
       aria-selected={isHighlighted}
       className={cn(
-        'flex items-center gap-2 py-1 px-3 text-xs cursor-pointer select-none',
+        'flex h-7 items-center gap-2 px-3 text-xs cursor-pointer select-none',
         isHighlighted ? 'bg-accent/10 text-text-primary' : 'hover:bg-surface-hover text-text-secondary',
       )}
       style={level !== undefined ? { paddingLeft: `${24 + level * 12}px` } : undefined}
@@ -585,6 +579,8 @@ function FileRow({
 }
 
 interface TreeNodeViewProps {
+  side?: FileSide
+  flat?: boolean
   node: TreeNode
   level: number
   expandedPaths: Set<string>
@@ -596,6 +592,8 @@ interface TreeNodeViewProps {
 }
 
 function TreeNodeView({
+  side,
+  flat = false,
   node,
   level,
   expandedPaths,
@@ -625,10 +623,10 @@ function TreeNodeView({
 
   if (node.type === 'folder') {
     return (
-      <div role="treeitem" aria-expanded={isExpanded}>
+      <div role="treeitem" aria-level={level + 1} aria-expanded={isExpanded}>
         <div
           className={cn(
-            'group flex items-center gap-1.5 py-1 px-3 text-xs cursor-pointer select-none',
+            'group flex h-7 items-center gap-1.5 px-3 text-xs cursor-pointer select-none',
             isHighlighted ? 'bg-accent/10 text-text-primary' : 'hover:bg-surface-hover text-text-secondary',
           )}
           style={{ paddingLeft: `${12 + level * 12}px` }}
@@ -660,38 +658,13 @@ function TreeNodeView({
           )}
           <span className="truncate">{node.name}</span>
         </div>
-        {isExpanded && (
-          <div role="group">
-            {node.children.length === 0 ? (
-              <div
-                className="py-1 px-3 text-[11px] text-text-tertiary"
-                style={{ paddingLeft: `${24 + level * 12}px` }}
-              >
-                {t('emptyFolder')}
-              </div>
-            ) : (
-              node.children.map((child) => (
-                <TreeNodeView
-                  key={child.path}
-                  node={child}
-                  level={level + 1}
-                  expandedPaths={expandedPaths}
-                  highlightedPath={highlightedPath}
-                  onToggleExpand={onToggleExpand}
-                  onSelect={onSelect}
-                  onPreview={onPreview}
-                  onOpen={onOpen}
-                />
-              ))
-            )}
-          </div>
-        )}
+
       </div>
     )
   }
 
   const file = node.file ?? { path: node.path, indexStatus: '?', workingTreeStatus: '?' }
-  const sides = buildFileSides(file)
+  const sides = side ? [side] : buildFileSides(file)
   return (
     <>
       {sides.map((side) => (
@@ -703,8 +676,8 @@ function TreeNodeView({
           showSide={side.both}
           path={node.path}
           name={node.name}
-          level={level}
-          showFileIcon
+          level={flat ? undefined : level}
+          showFileIcon={!flat}
           isHighlighted={isHighlighted}
           onSelect={() => onSelect(node.path)}
           onPreview={() => onPreview(file, side.staged)}
@@ -736,9 +709,10 @@ function UntrackedRepoRow({ path, level, isHighlighted, onSelect }: UntrackedRep
     <div
       data-testid="git-repo-row"
       role="treeitem"
+      aria-level={(level ?? 0) + 1}
       aria-selected={isHighlighted}
       className={cn(
-        'flex items-center gap-2 py-1 px-3 text-xs cursor-pointer select-none',
+        'flex h-7 items-center gap-2 px-3 text-xs cursor-pointer select-none',
         isHighlighted ? 'bg-accent/10 text-text-primary' : 'hover:bg-surface-hover text-text-secondary',
       )}
       style={level !== undefined ? { paddingLeft: `${12 + level * 12}px` } : undefined}
