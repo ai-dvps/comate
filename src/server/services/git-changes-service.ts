@@ -1,4 +1,5 @@
 import { watch, type FSWatcher } from 'chokidar';
+import { closeFileWatcher } from '../utils/close-file-watcher.js';
 import path from 'path';
 import { realpath } from 'fs/promises';
 import { readFile } from 'fs/promises';
@@ -229,7 +230,7 @@ export class GitChangesService {
 
     const closing: Promise<void>[] = [];
     for (const watcher of this.watchers.values()) {
-      closing.push(watcher.close());
+      closing.push(closeFileWatcher(watcher));
     }
     this.watchers.clear();
     await Promise.all(closing);
@@ -470,7 +471,7 @@ export class GitChangesService {
       this.timers.delete(workspaceId);
     }
     this.pending.delete(workspaceId);
-    await watcher.close();
+    await closeFileWatcher(watcher);
   }
 }
 

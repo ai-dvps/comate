@@ -5,6 +5,7 @@ import { browserService } from './services/browser-service.js';
 import { chatService } from './services/chat-service.js';
 import { teardownServices } from './service-teardown.js';
 import { providerRouteRegistry } from './services/provider-route-registry.js';
+import { commandsService } from './services/commands-service.js';
 
 // F1 regression: graceful shutdown (SIGTERM/SIGINT/POST /shutdown) must tear
 // every live browser view down — before this wiring existed, browser sessions
@@ -20,17 +21,23 @@ test('teardownServices shuts browserService down before closing chat runtimes', 
   const closeRoutesMock = mock.method(providerRouteRegistry, 'closeAll', () => {
     order.push('providerRouteRegistry.closeAll');
   });
+  const commandsDisposeMock = mock.method(commandsService, 'dispose', async () => {
+    order.push('commandsService.dispose');
+  });
   try {
     await teardownServices();
   } finally {
     browserShutdownMock.mock.restore();
     closeRuntimesMock.mock.restore();
     closeRoutesMock.mock.restore();
+    commandsDisposeMock.mock.restore();
   }
   assert.equal(browserShutdownMock.mock.callCount(), 1);
   assert.equal(closeRoutesMock.mock.callCount(), 1);
+  assert.equal(commandsDisposeMock.mock.callCount(), 1);
   assert.deepEqual(order, [
     'providerRouteRegistry.closeAll',
+    'commandsService.dispose',
     'browserService.shutdown',
     'chatService.closeAllRuntimes',
   ]);
