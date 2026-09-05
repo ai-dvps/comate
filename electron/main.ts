@@ -16,7 +16,7 @@
  *    the Vite dev server), macOS Edit menu for Cmd+C/V, main.log file logging.
  */
 
-import { app, BrowserWindow, Menu, Notification, Tray, WebContentsView, dialog, ipcMain, nativeImage, nativeTheme, net, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, Menu, Notification, Tray, WebContentsView, dialog, ipcMain, nativeImage, nativeTheme, net, protocol, screen, session, shell } from 'electron';
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { createServer as createNetServer } from 'node:net';
@@ -25,6 +25,7 @@ import { join, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { MISSING_UPDATE_FEED_ERROR } from '../src/shared/updater-contract';
 import { APP_ID, resolveLegacyDataDir } from './paths';
+import { loadWindowState, saveWindowState } from './window-state';
 import { createNoopShellLogger, createShellLogger, type ShellLogger } from './logger';
 import { createApiInfoLatch } from './api-info';
 import {
@@ -499,14 +500,26 @@ function setupDetachedBrowserController(): void {
   });
 }
 
+function persistMainWindowBounds(win: BrowserWindow): void {
+  if (win.isDestroyed()) return;
+  try {
+    saveWindowState(join(app.getPath('userData'), 'window-state.json'), win.getNormalBounds());
+  } catch (error) {
+    logger.warn(`Failed to save main window bounds: ${String(error)}`);
+  }
+}
+
 function createMainWindow(): BrowserWindow {
+  const primary = screen.getPrimaryDisplay();
+  const bounds = loadWindowState(join(app.getPath('userData'), 'window-state.json'), [
+    primary.workArea,
+    ...screen.getAllDisplays().filter((display) => display.id !== primary.id).map((display) => display.workArea),
+  ]);
   const win = new BrowserWindow({
     title: 'Comate',
-    width: 1280,
-    height: 800,
     minWidth: 480,
     minHeight: 600,
-    center: true,
+    ...(bounds ?? { width: 1280, height: 800, center: true }),
     icon: nativeImage.createFromPath(shellIconPath()),
     // macOS parity with the Tauri shell (Overlay + hiddenTitle): the client
     // reserves pl-20 for the traffic lights and drags via -webkit-app-region.
@@ -545,6 +558,7 @@ function createMainWindow(): BrowserWindow {
   // notifier host) close-to-hide is a trap, so close degrades to quitting
   // (resolveWindowCloseAction in tray.ts).
   win.on('close', (event) => {
+    persistMainWindowBounds(win);
     const action = resolveWindowCloseAction(isQuitting || isShuttingDown, trayHandle !== null);
     if (action === 'close') return;
     event.preventDefault();
@@ -1013,6 +1027,7 @@ function startSidecar(): void {
 async function performShutdown(): Promise<void> {
   if (isShuttingDown) return;
   isShuttingDown = true;
+  if (mainWindow) persistMainWindowBounds(mainWindow);
   detachedBrowserController?.closeForQuit();
   trayPoller?.stop();
   // U5: ANY quit carrying a downloaded update (electron-updater's implicit
