@@ -236,7 +236,6 @@
     "loading": "Loading changes…",
     "refresh": "Refresh",
     "refreshError": "Failed to refresh git changes",
-    "watcherUnavailable": "Auto-refresh unavailable",
     "viewModeTree": "Tree view",
     "viewModeFlat": "Flat view",
     "diffModeUnified": "Unified diff",

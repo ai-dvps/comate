@@ -17,7 +17,6 @@ const gitChangesMock = vi.hoisted(() => {
     statusLoading: false,
     statusError: null as string | null,
     viewMode: 'tree' as 'tree' | 'flat',
-    isWatcherAvailable: true,
   }
   function notify() {
     listeners.forEach((l) => l())
@@ -70,7 +69,6 @@ describe('GitChangesPanel', () => {
     gitChangesMock.state.statusLoading = false
     gitChangesMock.state.statusError = null
     gitChangesMock.state.viewMode = 'tree'
-    gitChangesMock.state.isWatcherAvailable = true
   })
 
   it('renders a loading skeleton while status is loading', () => {
@@ -199,6 +197,12 @@ describe('GitChangesPanel', () => {
     })
   })
 
+  it('refreshes the active workspace when the refresh button is clicked', () => {
+    renderWithI18n(<GitChangesPanel />)
+    fireEvent.click(screen.getByTestId('git-refresh-button'))
+    expect(gitChangesMock.actions.refresh).toHaveBeenCalledWith('ws1')
+  })
+
   it('shows a spinner while refreshing and surfaces an error on failure', () => {
     gitChangesMock.state.statusLoading = true
     const { rerender } = renderWithI18n(<GitChangesPanel />)
@@ -210,13 +214,6 @@ describe('GitChangesPanel', () => {
     rerender(<GitChangesPanel />)
 
     expect(screen.getByText(/network error/)).toBeInTheDocument()
-  })
-
-  it('shows the watcher unavailable warning', () => {
-    gitChangesMock.state.isWatcherAvailable = false
-    renderWithI18n(<GitChangesPanel />)
-
-    expect(screen.getByText('Auto-refresh unavailable')).toBeInTheDocument()
   })
 
   it('renders an untracked directory entry (nested repo) as a labeled repository leaf', () => {

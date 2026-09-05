@@ -20,8 +20,6 @@ export type WsRequestType =
   | 'sendMessage'
   | 'loadMessages'
   | 'loadMessagesAfter'
-  | 'subscribeGitChanges'
-  | 'unsubscribeGitChanges'
   | 'subscribeBrowserState'
   | 'unsubscribeBrowserState'
   | 'browserTakeover'
@@ -120,14 +118,6 @@ export interface LoadMessagesAfterPayload {
   workspaceId: string
   sessionId: string
   afterMessageId?: string
-}
-
-export interface SubscribeGitChangesPayload {
-  workspaceId: string
-}
-
-export interface UnsubscribeGitChangesPayload {
-  workspaceId: string
 }
 
 /**

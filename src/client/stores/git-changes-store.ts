@@ -1,8 +1,6 @@
 import { create } from 'zustand'
 import { shallow } from 'zustand/shallow'
 import i18next from 'i18next'
-import type { WsEventMessage } from '@server/websocket/types'
-import { wsClient } from '../lib/websocket-client.js'
 
 export interface GitStatusItem {
   path: string
@@ -18,7 +16,6 @@ interface WorkspaceGitState {
   statusLoading: boolean
   statusError: string | null
   viewMode: GitViewMode
-  isWatcherAvailable: boolean
 }
 
 interface GitChangesState {
@@ -31,17 +28,10 @@ interface GitChangesState {
   refresh: (workspaceId: string) => Promise<void>
   setViewMode: (workspaceId: string, mode: GitViewMode) => void
 
-  // Internal setters used by the lifecycle manager and WebSocket handler.
+  // Internal setters used by status requests.
   _setStatusItems: (workspaceId: string, items: GitStatusItem[]) => void
   _setStatusLoading: (workspaceId: string, loading: boolean) => void
   _setStatusError: (workspaceId: string, error: string | null) => void
-  _setWatcherAvailable: (workspaceId: string, available: boolean) => void
-}
-
-interface GitChangesEventData {
-  type: 'git_changes'
-  workspaceId: string
-  items: GitStatusItem[]
 }
 
 function getInitialWorkspaceState(): WorkspaceGitState {
@@ -50,7 +40,6 @@ function getInitialWorkspaceState(): WorkspaceGitState {
     statusLoading: false,
     statusError: null,
     viewMode: 'tree',
-    isWatcherAvailable: true,
   }
 }
 
@@ -62,82 +51,20 @@ function getWorkspaceState(
 }
 
 const abortControllers = new Map<string, AbortController>()
-const wsUnsubscribers = new Map<string, () => void>()
 
 function abortInFlightStatus(workspaceId: string): void {
   const controller = abortControllers.get(workspaceId)
   if (controller) {
     controller.abort()
     abortControllers.delete(workspaceId)
-  }
-}
-
-async function sendSubscribe(workspaceId: string): Promise<void> {
-  if (wsUnsubscribers.has(workspaceId)) return
-  // Register a placeholder unsubscriber synchronously, BEFORE the await, so a
-  // panel-hide or workspace switch during the in-flight request can still
-  // cancel the pending subscription instead of leaking a server-side watcher.
-  const handle = { cancelled: false }
-  const placeholder = (): void => {
-    handle.cancelled = true
-    wsUnsubscribers.delete(workspaceId)
-    wsClient
-      .request('unsubscribeGitChanges', { workspaceId })
-      .catch(() => {})
-  }
-  wsUnsubscribers.set(workspaceId, placeholder)
-  await wsClient
-    .request('subscribeGitChanges', { workspaceId })
-    .catch((err) => {
-      console.error(`Failed to subscribe to git changes for ${workspaceId}:`, err)
-    })
-  // Only install the real unsubscriber if our placeholder is still the active
-  // entry. If it was cancelled mid-flight, the placeholder already sent the
-  // unsubscribe; if something else replaced it (e.g. resubscribe), let that
-  // owner stay in charge.
-  if (handle.cancelled) return
-  if (wsUnsubscribers.get(workspaceId) !== placeholder) return
-  wsUnsubscribers.set(workspaceId, () => {
-    wsUnsubscribers.delete(workspaceId)
-    wsClient
-      .request('unsubscribeGitChanges', { workspaceId })
-      .catch(() => {})
-  })
-}
-
-function sendUnsubscribe(workspaceId: string): void {
-  const unsub = wsUnsubscribers.get(workspaceId)
-  if (unsub) {
-    unsub()
-    wsUnsubscribers.delete(workspaceId)
-  }
-}
-
-function unsubscribeAll(): void {
-  for (const workspaceId of [...wsUnsubscribers.keys()]) {
-    sendUnsubscribe(workspaceId)
-  }
-}
-
-function resubscribeAll(): void {
-  for (const workspaceId of [...wsUnsubscribers.keys()]) {
-    wsUnsubscribers.delete(workspaceId)
-    void sendSubscribe(workspaceId)
+    useGitChangesStore.getState()._setStatusLoading(workspaceId, false)
   }
 }
 
 function syncLifecycle(state: GitChangesState): void {
+  for (const workspaceId of abortControllers.keys()) abortInFlightStatus(workspaceId)
   const target = state.panelVisible ? state.activeWorkspaceId : null
-  if (target && wsUnsubscribers.has(target)) {
-    // Already subscribed to the active workspace; refresh is triggered by the
-    // action that changed visibility/workspace.
-    return
-  }
-  unsubscribeAll()
-  if (target) {
-    void sendSubscribe(target)
-    void refreshStatus(target)
-  }
+  if (target) void refreshStatus(target)
 }
 
 async function refreshStatus(workspaceId: string): Promise<void> {
@@ -160,9 +87,10 @@ async function refreshStatus(workspaceId: string): Promise<void> {
       throw new Error(body.error || `HTTP ${res.status}`)
     }
     const data = (await res.json()) as { items?: GitStatusItem[] }
+    if (controller.signal.aborted) return
     store._setStatusItems(workspaceId, Array.isArray(data.items) ? data.items : [])
   } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') return
+    if (controller.signal.aborted) return
     const message =
       err instanceof Error
         ? err.message
@@ -179,20 +107,6 @@ async function refreshStatus(workspaceId: string): Promise<void> {
     }
   }
 }
-
-wsClient.onEvent((msg: WsEventMessage) => {
-  if (msg.eventType === 'git_changes' && msg.workspaceId) {
-    const data = msg.data as GitChangesEventData
-    const items = Array.isArray(data.items) ? data.items : []
-    useGitChangesStore.getState()._setStatusItems(msg.workspaceId, items)
-  } else if (msg.eventType === 'watcher_unavailable' && msg.workspaceId) {
-    useGitChangesStore.getState()._setWatcherAvailable(msg.workspaceId, false)
-  }
-})
-
-wsClient.onReconnect(() => {
-  resubscribeAll()
-})
 
 export const useGitChangesStore = create<GitChangesState>((set, get) => ({
   panelVisible: false,
@@ -228,7 +142,7 @@ export const useGitChangesStore = create<GitChangesState>((set, get) => ({
     }))
   },
 
-  // Internal setters used by the lifecycle manager and WebSocket handler.
+  // Internal setters used by status requests.
   _setStatusItems: (workspaceId: string, items: GitStatusItem[]) => {
     const current = getWorkspaceState(get(), workspaceId)
     if (shallow(current.statusItems, items)) return
@@ -272,20 +186,6 @@ export const useGitChangesStore = create<GitChangesState>((set, get) => ({
       },
     }))
   },
-
-  _setWatcherAvailable: (workspaceId: string, available: boolean) => {
-    const current = getWorkspaceState(get(), workspaceId)
-    if (current.isWatcherAvailable === available) return
-    set((state) => ({
-      workspaces: {
-        ...state.workspaces,
-        [workspaceId]: {
-          ...getWorkspaceState(state, workspaceId),
-          isWatcherAvailable: available,
-        },
-      },
-    }))
-  },
 }))
 
 export function useGitChanges(workspaceId: string | null) {
@@ -297,7 +197,6 @@ export function useGitChanges(workspaceId: string | null) {
         statusLoading: Boolean(ws?.statusLoading),
         statusError: ws?.statusError ?? null,
         viewMode: ws?.viewMode ?? 'tree',
-        isWatcherAvailable: ws?.isWatcherAvailable ?? true,
       }
     },
     shallow,

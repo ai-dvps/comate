@@ -58,9 +58,9 @@ describe('git-changes-store', () => {
       ),
     )
 
-    expect(wsClientMock.request).toHaveBeenCalledWith('subscribeGitChanges', {
-      workspaceId: 'ws1',
-    })
+    expect(wsClientMock.request).not.toHaveBeenCalled()
+    expect(wsClientMock.onEvent).not.toHaveBeenCalled()
+    expect(wsClientMock.onReconnect).not.toHaveBeenCalled()
   })
 
   it('exposes loading and error states while fetching', async () => {
@@ -95,52 +95,36 @@ describe('git-changes-store', () => {
     expect(useGitChangesStore.getState().workspaces['ws1']?.statusItems).toHaveLength(1)
   })
 
-  it('refetches status when a WebSocket git_changes event arrives', async () => {
-    const { setPanelVisible, setActiveWorkspaceId } = useGitChangesStore.getState()
-    setActiveWorkspaceId('ws1')
-    setPanelVisible(true)
-
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1))
-
-    wsClientMock.emitEvent({
-      type: 'event',
-      eventType: 'git_changes',
-      workspaceId: 'ws1',
-      data: {
-        type: 'git_changes',
-        workspaceId: 'ws1',
-        items: [{ path: 'b.ts', indexStatus: 'A', workingTreeStatus: ' ' }],
-      },
-    })
-
-    await waitFor(() =>
-      expect(useGitChangesStore.getState().workspaces['ws1']?.statusItems).toEqual([
-        { path: 'b.ts', indexStatus: 'A', workingTreeStatus: ' ' },
-      ]),
-    )
+  it('ignores legacy push events and only updates after a manual refresh', async () => {
+    const store = useGitChangesStore.getState()
+    store.setActiveWorkspaceId('ws1')
+    store.setPanelVisible(true)
+    await waitFor(() => expect(useGitChangesStore.getState().workspaces.ws1?.statusLoading).toBe(false))
+    const items = [{ path: 'b.ts', indexStatus: 'A', workingTreeStatus: ' ' }]
+    wsClientMock.emitEvent({ type: 'event', eventType: 'git_changes', workspaceId: 'ws1',
+      data: { type: 'git_changes', workspaceId: 'ws1', items } })
+    expect(useGitChangesStore.getState().workspaces.ws1.statusItems).toEqual([])
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+    vi.mocked(global.fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ items }) } as Response)
+    await store.refresh('ws1')
+    expect(useGitChangesStore.getState().workspaces.ws1.statusItems).toEqual(items)
+    expect(global.fetch).toHaveBeenCalledTimes(2)
+    expect(wsClientMock.request).not.toHaveBeenCalled()
   })
 
-  it('sets isWatcherAvailable to false on watcher_unavailable', async () => {
-    const { setPanelVisible, setActiveWorkspaceId } = useGitChangesStore.getState()
-    setActiveWorkspaceId('ws1')
-    setPanelVisible(true)
-
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1))
-
-    wsClientMock.emitEvent({
-      type: 'event',
-      eventType: 'watcher_unavailable',
-      workspaceId: 'ws1',
-      data: {
-        type: 'watcher_unavailable',
-        workspaceId: 'ws1',
-        reason: 'Too many files',
-      },
-    })
-
-    await waitFor(() =>
-      expect(useGitChangesStore.getState().workspaces['ws1']?.isWatcherAvailable).toBe(false),
-    )
+  it('loads a newly selected workspace only while the panel is open', async () => {
+    const store = useGitChangesStore.getState()
+    store.setActiveWorkspaceId('ws1')
+    expect(global.fetch).not.toHaveBeenCalled()
+    store.setPanelVisible(true)
+    await waitFor(() => expect(useGitChangesStore.getState().workspaces.ws1?.statusLoading).toBe(false))
+    store.setActiveWorkspaceId('ws2')
+    await waitFor(() => expect(useGitChangesStore.getState().workspaces.ws2?.statusLoading).toBe(false))
+    expect(global.fetch).toHaveBeenCalledTimes(2)
+    store.setPanelVisible(false)
+    store.setActiveWorkspaceId('ws3')
+    expect(global.fetch).toHaveBeenCalledTimes(2)
+    expect(wsClientMock.request).not.toHaveBeenCalled()
   })
 
   it('switches view mode per workspace', () => {
