@@ -9,10 +9,10 @@ import {
   forwardRef,
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Loader2 } from 'lucide-react'
+import { Loader2, RefreshCw } from 'lucide-react'
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'
 import { cn } from './ui/utils'
-import { useCommands, type SlashCommandDto } from '../stores/commands-store'
+import { useCommands, useCommandsStore, type SlashCommandDto } from '../stores/commands-store'
 import type { BackendId } from '../stores/backend-store'
 import { filterItems } from '../lib/picker-filter'
 
@@ -62,6 +62,38 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
       useCommands(workspaceId, { sessionId, backendId })
     const [filter, setFilter] = useState(initialFilter)
     const [activeIndex, setActiveIndex] = useState(0)
+    const [refreshing, setRefreshing] = useState(false)
+    const [refreshError, setRefreshError] = useState('')
+    const refreshGeneration = useRef(0)
+    const fetchedScope = useRef('')
+
+    useEffect(() => {
+      refreshGeneration.current += 1
+      setRefreshing(false)
+      setRefreshError('')
+      return () => { refreshGeneration.current += 1 }
+    }, [workspaceId, sessionId, backendId])
+
+    const handleRefresh = async () => {
+      if (refreshing || loading || !workspaceId) return
+      const generation = refreshGeneration.current
+      setRefreshing(true)
+      setRefreshError('')
+      try {
+        const response = await window.fetch(`/api/skills/installed?workspaceId=${encodeURIComponent(workspaceId)}&refresh=true`, {
+          signal: AbortSignal.timeout(10_000),
+        })
+        if (!response.ok) throw new Error(t('settings:skills.fetchInstalledFailed'))
+        useCommandsStore.getState().clearCommandsForWorkspace(workspaceId)
+        await refresh()
+      } catch (cause) {
+        if (generation === refreshGeneration.current) {
+          setRefreshError(cause instanceof Error ? cause.message : t('settings:skills.fetchInstalledFailed'))
+        }
+      } finally {
+        if (generation === refreshGeneration.current) setRefreshing(false)
+      }
+    }
 
     const filterInputRef = useRef<HTMLInputElement>(null)
     const listRef = useRef<HTMLDivElement>(null)
@@ -69,13 +101,19 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
     const wasOpenRef = useRef(false)
 
     useEffect(() => {
-      if (!open) return
+      if (!open) {
+        fetchedScope.current = ''
+        return
+      }
+      const scope = JSON.stringify([workspaceId, sessionId, backendId])
+      if (fetchedScope.current === scope) return
+      fetchedScope.current = scope
       if (refetchOnOpen) {
         void refresh()
       } else {
         void fetch()
       }
-    }, [open, refetchOnOpen, fetch, refresh])
+    }, [open, refetchOnOpen, fetch, refresh, workspaceId, sessionId, backendId])
 
     useEffect(() => {
       if (open) {
@@ -198,6 +236,20 @@ const CommandPicker = forwardRef<CommandPickerHandle, CommandPickerProps>(
               : { width: contentWidth, boxSizing: 'border-box' }
           }
         >
+          <div className="flex justify-end px-1 pb-1">
+            <button
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => void handleRefresh()}
+              disabled={refreshing || loading || !workspaceId}
+              title={t('settings:skills.manager.refresh')}
+              className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs text-text-secondary hover:bg-surface-hover disabled:opacity-50"
+            >
+              <RefreshCw className={cn('h-3 w-3', refreshing && 'animate-spin')} />
+              {t('settings:skills.manager.refresh')}
+            </button>
+          </div>
+          {refreshError && <div role="alert" className="px-2 py-1 text-xs text-accent">{refreshError}</div>}
           {partial && (
             <div className="text-[11px] text-text-tertiary px-2 py-1 mb-1 rounded bg-surface-hover">
               {partialReason || t('commandPicker.partialFallback')}

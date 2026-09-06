@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Refresh Skills on demand** — Skills and commands no longer create filesystem watchers. The Skills page loads when opened and offers an explicit Refresh button, without periodic or focus-triggered scans; manual refresh also reloads the command menu.
 - **Reload open file previews automatically** — Visible files update after changes on disk and show a loaded notice. Failed reloads retain the previous contents and retry automatically.
 - **Pin Skill management** — The Skill picker places skill-manager in a separate top section while preserving search and keyboard selection.
 - **Resume your last workspace and conversation** — Comate restores open workspaces and the selected session after restarting, skipping entries that have been deleted.

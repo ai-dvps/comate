@@ -1,5 +1,6 @@
 import '../test-utils/test-env.js';
-import { afterEach, it } from 'node:test';
+import { afterEach, it, mock } from 'node:test';
+import { commandsService } from '../services/commands-service.js';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -27,6 +28,14 @@ it('discovers external files, preserves source records and rejects unknown works
     assert.ok(skills.some(skill => skill.name === 'external'));
     assert.ok(skills.some(skill => skill.name === 'skill-manager'));
     assert.ok(!skills.some(skill => skill.name === 'ghost'));
+    const invalidate = mock.method(commandsService, 'invalidateCommands', () => {});
+    try {
+      await routes[0].stack[0].handle({ query: { workspaceId: 'project' } }, response());
+      assert.equal(invalidate.mock.callCount(), 0);
+      await routes[0].stack[0].handle({ query: { workspaceId: 'project', refresh: 'true' } }, response());
+      assert.equal(invalidate.mock.callCount(), 1);
+      assert.deepEqual(invalidate.mock.calls[0].arguments, [root]);
+    } finally { invalidate.mock.restore(); }
     const missing = response();
     await routes[0].stack[0].handle({ query: { workspaceId: 'unknown' } }, missing);
     assert.equal(missing.statusCode, 404);

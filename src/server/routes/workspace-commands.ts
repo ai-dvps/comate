@@ -31,7 +31,6 @@ router.get('/', async (req, res) => {
     if (!['claude', 'codex', 'opencode'].includes(String(backend))) {
       res.status(400).json({ error: 'Unsupported backend' }); return;
     }
-    commandsService.watchSkills(workspace.folderPath);
     const installations = await discoverInstalledSkills(workspace.folderPath);
     const selected = permittedSkills(installations, backend as BackendId, { ...sessionSkillOptions(session), cwd: workspace.folderPath });
     const skills = skillCommands(selected, backend as BackendId);
