@@ -24,6 +24,20 @@ const project = { ...manager, id: 'project', name: 'review', scope: 'project', v
 const global = { ...project, id: 'global', scope: 'global', version: undefined, installPath: '/home/.codex/skills/review', realPath: '/home/.codex/skills/review', backends: ['codex'] }
 const click = async (element: HTMLElement) => { await act(async () => { await userEvent.click(element) }) }
 describe('installed Skills contextual management', () => {
+  it('refreshes only on request, with no focus refresh or periodic scan', async () => {
+    const { fetch } = show()
+    const refresh = await screen.findByRole('button', { name: 'Refresh Skills' })
+    await waitFor(() => expect(refresh).toBeEnabled())
+    const initialCalls = fetch.mock.calls.length
+    window.dispatchEvent(new Event('focus'))
+    await new Promise(resolve => setTimeout(resolve, 5200))
+    expect(fetch).toHaveBeenCalledTimes(initialCalls)
+    fetch.mockImplementation(async () => Response.json({ skills: [manager, project] }))
+    await click(refresh)
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'review' })).toBeVisible())
+    expect(fetch.mock.lastCall?.[0]).toBe('/api/skills/installed?workspaceId=ws&refresh=true')
+  }, 10000)
+
   it('ranks name matches before descriptions, preserves ties and restores default order', async () => {
     const names = ['guide-b', 'my-code-review', 'code-review-extra', 'code-review', 'guide-a', 'unrelated']
     show(names.map((name, index) => ({ ...project, id: String(index), name, description: name.startsWith('guide') ? 'Use code-review for checking changes' : 'Test capability' })))

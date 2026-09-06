@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import { create } from 'zustand';
 import i18next from 'i18next';
 import type { BackendId } from './backend-store';
@@ -195,6 +195,9 @@ export function useCommands(workspaceId: string, scope?: CommandScope): UseComma
     () => fetchCommands(workspaceId, { sessionId, backendId }),
     [backendId, fetchCommands, sessionId, workspaceId],
   );
+  useEffect(() => {
+    if (workspaceId && !cached && !loading && !error) void fetch();
+  }, [workspaceId, cached, loading, error, fetch]);
   const refresh = useCallback(async () => {
     await refreshCommands(workspaceId, { sessionId, backendId });
     const state = useCommandsStore.getState();

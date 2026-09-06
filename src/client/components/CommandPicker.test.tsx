@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import React from 'react'
-import { render, screen, cleanup, fireEvent } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import i18n from '../i18n'
@@ -9,7 +9,10 @@ function renderWithI18n(ui: React.ReactElement) {
   return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>)
 }
 
+const commandsMock = vi.hoisted(() => ({ refresh: vi.fn(), clear: vi.fn() }))
+
 vi.mock('../stores/commands-store', () => ({
+  useCommandsStore: { getState: () => ({ clearCommandsForWorkspace: commandsMock.clear }) },
   useCommands: () => ({
     commands: [
       { name: 'commit', description: 'Commit changes' },
@@ -21,17 +24,20 @@ vi.mock('../stores/commands-store', () => ({
     partial: false,
     partialReason: undefined,
     fetch: vi.fn(),
-    refresh: vi.fn(),
+    refresh: commandsMock.refresh,
   }),
 }))
 
 describe('CommandPicker', () => {
   beforeEach(() => {
     cleanup()
+    vi.clearAllMocks()
     if (!Element.prototype.scrollIntoView) {
       Element.prototype.scrollIntoView = vi.fn()
     }
   })
+
+  afterEach(() => vi.unstubAllGlobals())
 
   function renderPicker(props: Partial<React.ComponentProps<typeof CommandPicker>> = {}) {
     const handleSelect = vi.fn()
@@ -54,11 +60,39 @@ describe('CommandPicker', () => {
     return { handleSelect, handleOpenChange, ref }
   }
 
+  it('refreshes Skills without closing the slash picker or selecting a command', async () => {
+    let finish!: (response: Response) => void
+    const request = vi.fn(() => new Promise<Response>((resolve) => { finish = resolve }))
+    vi.stubGlobal('fetch', request)
+    const { handleSelect, handleOpenChange } = renderPicker({ hideFilterInput: true, refetchOnOpen: false })
+    const button = screen.getByRole('button', { name: 'Refresh Skills' })
+    fireEvent.click(button)
+    expect(button).toBeDisabled()
+    expect(request).toHaveBeenCalledWith('/api/skills/installed?workspaceId=ws-1&refresh=true', expect.any(Object))
+    finish(Response.json({ skills: [] }))
+    await waitFor(() => expect(button).toBeEnabled())
+    expect(commandsMock.clear).toHaveBeenCalledWith('ws-1')
+    expect(commandsMock.refresh).toHaveBeenCalledTimes(1)
+    expect(handleSelect).not.toHaveBeenCalled()
+    expect(handleOpenChange).not.toHaveBeenCalled()
+  })
+
+  it('shows refresh failures and allows retry without clearing existing choices', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 500 })))
+    renderPicker({ refetchOnOpen: false })
+    const button = screen.getByRole('button', { name: 'Refresh Skills' })
+    fireEvent.click(button)
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+    expect(button).toBeEnabled()
+    expect(screen.getByText('/commit')).toBeInTheDocument()
+    expect(commandsMock.clear).not.toHaveBeenCalled()
+  })
+
   it('puts skill-manager in its own first section and preserves keyboard ordering', () => {
     const { handleSelect } = renderPicker()
     const input = screen.getByPlaceholderText(/Search commands/i)
     const choices = input.parentElement!.querySelectorAll('button')
-    expect(choices[0].textContent).toContain('/skill-manager')
+    expect(choices[1].textContent).toContain('/skill-manager')
     expect(screen.getByText('Skill management')).toBeInTheDocument()
     expect(screen.getByText('Other Skills')).toBeInTheDocument()
     fireEvent.keyDown(input, { key: 'ArrowDown' })

@@ -1,15 +1,11 @@
-import { skillRoots } from './skill-inventory.js';
 import os from 'node:os';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
-import { watch, type FSWatcher } from 'chokidar';
-import { closeFileWatcher } from '../utils/close-file-watcher.js';
 import type { Workspace } from '../models/workspace.js';
 import type { CachedCommandList, CommandSource } from '../types/commands.js';
 import type { SlashCommandDto } from '../types/initialization.js';
 import {
   commandNameFromFilePath,
-  parseCommandFile,
   parseCommandsDir,
   parseSkillsDir,
 } from './command-fs-parser.js';
@@ -48,14 +44,13 @@ export class CommandsService {
   private sdkClient: SdkClient;
   private cache = new Map<string, WorkspaceCommandsState>();
   private inflight = new Map<string, Promise<CachedCommandList>>();
-  private watchers = new Map<string, FSWatcher>();
   private providerGeneration = 0;
-  private skillVersions = new Map<string, number>();
-  private invalidationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private commandGenerations = new Map<string, number>();
 
-  watchSkills(folderPath: string): number {
-    this.attachWatcher(folderPath, [path.join(folderPath, '.claude/commands'), ...skillRoots(folderPath).map(root => root.path)]);
-    return this.skillVersions.get(folderPath) ?? 0;
+  invalidateCommands(folderPath: string): void {
+    this.commandGenerations.set(folderPath, (this.commandGenerations.get(folderPath) ?? 0) + 1);
+    this.cache.delete(folderPath);
+    this.inflight.delete(folderPath);
   }
 
   constructor(sdkClient: SdkClient = new SdkClient()) {
@@ -72,10 +67,10 @@ export class CommandsService {
     if (pending) return pending;
 
     const generation = this.providerGeneration;
-    const skillVersion = this.skillVersions.get(key) ?? 0;
+    const commandGeneration = this.commandGenerations.get(key) ?? 0;
     const promise = (async () => {
       const state = await this.populate(workspace);
-      if (generation === this.providerGeneration && skillVersion === (this.skillVersions.get(key) ?? 0)) this.cache.set(key, state);
+      if (generation === this.providerGeneration && commandGeneration === (this.commandGenerations.get(key) ?? 0)) this.cache.set(key, state);
       return this.deriveList(state);
     })();
 
@@ -94,17 +89,10 @@ export class CommandsService {
   }
 
   async dispose(): Promise<void> {
-    const closing: Promise<void>[] = [];
-    for (const watcher of this.watchers.values()) {
-      closing.push(closeFileWatcher(watcher));
-    }
-    this.watchers.clear();
-    for (const timer of this.invalidationTimers.values()) clearTimeout(timer);
-    this.invalidationTimers.clear();
-    this.skillVersions.clear();
+    this.providerGeneration += 1;
+    this.commandGenerations.clear();
     this.cache.clear();
     this.inflight.clear();
-    await Promise.all(closing);
   }
 
   private async populate(workspace: Workspace): Promise<WorkspaceCommandsState> {
@@ -148,9 +136,6 @@ export class CommandsService {
       outputStyles,
     };
 
-    const pluginDirs = pluginEntries.map((e) => path.dirname(e.filePath));
-    this.attachWatcher(workspace.folderPath, [projectDir, skillsDir, ...pluginDirs]);
-
     return state;
   }
 
@@ -179,86 +164,6 @@ export class CommandsService {
       partialReason: state.partialReason,
       ...(state.outputStyles !== undefined && { outputStyles: state.outputStyles }),
     };
-  }
-
-  private attachWatcher(folderPath: string, paths: string[]): void {
-    if (this.watchers.has(folderPath)) return;
-
-    const watcher = watch([...paths, ...skillRoots(folderPath).map(root => root.path)], {
-      ignoreInitial: true,
-      // Chokidar 5's non-persistent branch omits native error forwarding and
-      // cannot share native handles across workspaces. Dispose on shutdown.
-      persistent: true,
-      depth: 12,
-      awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
-    });
-
-    watcher.on('all', () => {
-      const pending = this.invalidationTimers.get(folderPath);
-      if (pending) clearTimeout(pending);
-      this.invalidationTimers.set(folderPath, setTimeout(() => {
-        this.cache.delete(folderPath);
-        this.inflight.delete(folderPath);
-        this.skillVersions.set(folderPath, (this.skillVersions.get(folderPath) ?? 0) + 1);
-        this.invalidationTimers.delete(folderPath);
-      }, 100));
-    });
-    watcher.on('add', (filePath) => {
-      this.handleFsUpsert(folderPath, filePath).catch((err) => {
-        console.error(`[commands] watcher add failed for ${filePath}:`, err);
-      });
-    });
-    watcher.on('change', (filePath) => {
-      this.handleFsUpsert(folderPath, filePath).catch((err) => {
-        console.error(`[commands] watcher change failed for ${filePath}:`, err);
-      });
-    });
-    watcher.on('unlink', (filePath) => {
-      this.handleFsRemove(folderPath, filePath);
-    });
-    watcher.on('unlinkDir', (dirPath) => {
-      this.handleFsRemoveDir(folderPath, dirPath);
-    });
-    watcher.on('error', (err) => {
-      console.error(`[commands] watcher error for ${folderPath}:`, err);
-      if (this.watchers.get(folderPath) !== watcher) return;
-      this.watchers.delete(folderPath);
-      this.cache.delete(folderPath);
-      this.skillVersions.set(folderPath, (this.skillVersions.get(folderPath) ?? 0) + 1);
-      void closeFileWatcher(watcher).catch((error) => {
-        console.error(`[commands] watcher close failed for ${folderPath}:`, error);
-      });
-    });
-
-    this.watchers.set(folderPath, watcher);
-  }
-
-  private async handleFsUpsert(folderPath: string, filePath: string): Promise<void> {
-    const state = this.cache.get(folderPath);
-    if (!state) return;
-
-    const source = sourceForPath(filePath, folderPath);
-    if (!source) return;
-
-    const dto = await parseCommandFile(filePath);
-    if (!dto) return;
-
-    state.fsCommandsByPath.set(filePath, { filePath, source, dto });
-  }
-
-  private handleFsRemove(folderPath: string, filePath: string): void {
-    const state = this.cache.get(folderPath);
-    if (!state) return;
-    state.fsCommandsByPath.delete(filePath);
-  }
-
-  private handleFsRemoveDir(folderPath: string, dirPath: string): void {
-    const state = this.cache.get(folderPath);
-    if (!state) return;
-    const prefix = dirPath.endsWith(path.sep) ? dirPath : dirPath + path.sep;
-    for (const key of [...state.fsCommandsByPath.keys()]) {
-      if (key.startsWith(prefix)) state.fsCommandsByPath.delete(key);
-    }
   }
 
   private async loadPluginEntries(workspacePath: string): Promise<FsCommandEntry[]> {
@@ -413,24 +318,6 @@ async function loadSkillsDir(dir: string): Promise<FsCommandEntry[]> {
     const filePath = path.join(dir, dto.name, 'SKILL.md');
     return { filePath, source: 'skill' as const, dto };
   });
-}
-
-function sourceForPath(filePath: string, workspaceFolder: string): CommandSource | null {
-  const commandsRoot = path.join(workspaceFolder, '.claude/commands') + path.sep;
-  const skillsRoot = path.join(workspaceFolder, '.claude/skills') + path.sep;
-  const pluginCacheRoot = path.join(os.homedir(), '.claude/plugins/cache') + path.sep;
-  if (filePath.startsWith(commandsRoot)) {
-    const base = path.basename(filePath);
-    return base.endsWith('.md') ? 'project' : null;
-  }
-  if (filePath.startsWith(skillsRoot)) {
-    return path.basename(filePath) === 'SKILL.md' ? 'skill' : null;
-  }
-  if (filePath.startsWith(pluginCacheRoot)) {
-    const base = path.basename(filePath);
-    return base.endsWith('.md') ? 'plugin' : null;
-  }
-  return null;
 }
 
 // Exposed only for tests that need to validate name extraction.

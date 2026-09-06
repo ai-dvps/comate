@@ -37,12 +37,12 @@ export default function SkillsPage({ workspaceId, isOpen, onClose, onInstallSkil
   const generation = useRef(0)
   const request = useRef(0)
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (manual = false) => {
     const current = generation.current
     const requestId = ++request.current
     setLoading(true)
     try {
-      const response = await fetch(`/api/skills/installed?workspaceId=${encodeURIComponent(workspaceId)}`)
+      const response = await fetch(`/api/skills/installed?workspaceId=${encodeURIComponent(workspaceId)}${manual ? '&refresh=true' : ''}`)
       if (!response.ok) throw new Error(t('skills.fetchInstalledFailed'))
       const data = await response.json()
       if (current !== generation.current || requestId !== request.current) return
@@ -62,14 +62,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose, onInstallSkil
     setOpening(false)
     if (!isOpen) return
     void refresh()
-    const onFocus = () => { void refresh() }
-    window.addEventListener('focus', onFocus)
-    const timer = window.setInterval(() => { if (!document.hidden) void refresh() }, 5000)
-    return () => {
-      generation.current += 1
-      window.removeEventListener('focus', onFocus)
-      window.clearInterval(timer)
-    }
+    return () => { generation.current += 1 }
   }, [isOpen, refresh])
 
   const manager = skills.find((skill) => skill.scope === 'builtin' && skill.name === 'skill-manager')
@@ -149,7 +142,7 @@ export default function SkillsPage({ workspaceId, isOpen, onClose, onInstallSkil
               <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-border px-2 py-1.5 focus-within:ring-2 focus-within:ring-accent"><Search className="h-3.5 w-3.5 shrink-0 text-text-tertiary" /><input ref={searchInput} aria-label={t('skills.manager.filter')} placeholder={t('skills.manager.filter')} value={filter} onChange={(event) => setFilter(event.target.value)} className="min-w-0 w-full bg-transparent text-sm text-text-primary outline-none" />
                 {filter && <button type="button" aria-label={t('skills.manager.clearSearch')} title={t('skills.manager.clearSearch')} onClick={() => { setFilter(''); searchInput.current?.focus() }} className="shrink-0 rounded p-1 text-text-tertiary hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"><X className="h-3.5 w-3.5" /></button>}
               </div>
-              <button type="button" onClick={() => void refresh()} disabled={loading} aria-label={t('skills.manager.refresh')} title={t('skills.manager.refresh')} className={buttonClass}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></button>
+              <button type="button" onClick={() => void refresh(true)} disabled={loading} aria-label={t('skills.manager.refresh')} title={t('skills.manager.refresh')} className={`${buttonClass} inline-flex items-center gap-1.5`}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />{t('skills.manager.refresh')}</button>
               <div className="flex w-full flex-wrap gap-2">
                 <select aria-label={t('skills.manager.scopeFilter')} value={scope} onChange={(event) => setScope(event.target.value)} className="min-h-9 rounded-md border border-border bg-surface px-2 text-sm">
                   <option value="all">{t('skills.manager.allScopes')}</option>

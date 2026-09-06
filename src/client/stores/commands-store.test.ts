@@ -1,9 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useCommandsStore } from './commands-store'
+import { useCommands, useCommandsStore } from './commands-store'
+import { act, renderHook, waitFor } from '@testing-library/react'
 
 const originalFetch = global.fetch
 
 describe('commands store session-scoped discovery', () => {
+  it('reloads an active command menu after Skills refresh invalidates its cache', async () => {
+    global.fetch = vi.fn(async () => Response.json({ commands: [{ name: 'new', description: '' }], partial: false }))
+    useCommandsStore.setState({ commandsByWorkspace: { ws: { commands: [{ name: 'old', description: '' }], partial: false } } })
+    const { result, unmount } = renderHook(() => useCommands('ws'))
+    expect(result.current.commands[0].name).toBe('old')
+    act(() => useCommandsStore.getState().clearCommandsForWorkspace('ws'))
+    await waitFor(() => expect(result.current.commands[0]?.name).toBe('new'))
+    unmount()
+  })
+
   beforeEach(() => {
     useCommandsStore.setState({
       commandsByWorkspace: {},

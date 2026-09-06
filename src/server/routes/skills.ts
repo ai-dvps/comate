@@ -11,8 +11,8 @@ router.get('/installed', async (req, res) => {
   try {
     const workspace = id ? await store.get(id) : undefined;
     if (id && !workspace) { res.status(404).json({ error: 'Workspace not found' }); return; }
-    const version = workspace ? commandsService.watchSkills(workspace.folderPath) : 0;
-    res.json({ skills: await discoverInstalledSkills(workspace?.folderPath), version });
+    if (workspace && req.query.refresh === 'true') commandsService.invalidateCommands(workspace.folderPath);
+    res.json({ skills: await discoverInstalledSkills(workspace?.folderPath) });
   } catch {
     res.status(500).json({ error: 'Failed to list installed skills' });
   }
