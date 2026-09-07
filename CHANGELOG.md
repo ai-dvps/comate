@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-09-07
+
 - 移除 WeSkillHub 搜索与安装适配，保留其他四个 Skill 搜索来源。
 
 - 恢复 skill-manager 的四源搜索，支持按来源筛选及部分失败报告；接通 Hub Skill 安装与精确更新，并保留安装来源。
@@ -25,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Keep Kimi usage visible without repeated web logins** — Kimi For Coding quota checks now reuse the Provider credential against Kimi's coding usage endpoint instead of relying on an expiring captured website token.
 - **Keep Sidecar alive after watcher exhaustion** — Closing file watchers now handles late errors, preventing repeated EMFILE errors from crashing the process after Git auto-refresh is disabled.
 - **Handle native Skill watcher errors** — Skill and command watchers use Chokidar's shared, error-forwarding native watchers, release failed watchers, and dispose during Sidecar shutdown.
 
