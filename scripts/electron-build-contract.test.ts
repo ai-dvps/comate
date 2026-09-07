@@ -92,7 +92,7 @@ test('the main window supports its compact width without changing launch or deta
 
   assert.match(
     electronMainSource,
-    /function createMainWindow\(\): BrowserWindow \{[\s\S]*?new BrowserWindow\(\{[\s\S]*?width: 1280,[\s\S]*?minWidth: 480,/,
+    /function createMainWindow\(\): BrowserWindow \{[\s\S]*?new BrowserWindow\(\{[\s\S]*?minWidth: 480,[\s\S]*?\.\.\.\(bounds \?\? \{ width: 1280, height: 800, center: true \}\),/,
     'the main window must launch at 1280px wide and remain resizable down to 480px',
   );
   assert.match(
