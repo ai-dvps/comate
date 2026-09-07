@@ -1,9 +1,8 @@
 /**
- * Shared contract for provider coding-plan usage summaries (KTD3). The captured
- * login credential itself lives in the global site-auth store
- * (`global_site_auth['kimi.com']`, see kimi-usage-service). Usage summaries are
- * fetched live on every check — there is deliberately no server-side cache, so
- * quota readings never lag behind the provider.
+ * Shared contract for provider coding-plan usage summaries (KTD3). Provider
+ * services keep their credentials server-side and return only this whitelist.
+ * Usage summaries are fetched live on every check — there is deliberately no
+ * server-side cache, so quota readings never lag behind the provider.
  */
 
 export interface UsageSummary {

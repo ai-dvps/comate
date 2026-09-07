@@ -3,18 +3,15 @@ import type { UsageSummary, UsageStatus } from './provider-usage-types.js';
 import { store as sqliteStoreSingleton } from '../storage/sqlite-store.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
 import { diagLog } from '../utils/diag-logger.js';
-import { BrowserSiteAuthReadError, readGlobalSiteAuthEntry } from './browser-site-auth.js';
 import { providerVendorFromProvenance } from './provider-presets.js';
 
 /**
- * Compile-time constants (R13/KTD8). The Kimi login URL and the GetUsages
- * endpoint are NEVER derived from `provider.baseUrl` or any client-supplied
- * field, so a tampered provider row cannot redirect the trusted capture modal
- * or the billing query to an attacker host.
+ * Compile-time constants (R13/KTD8). These URLs are NEVER derived from
+ * `provider.baseUrl` or any client-supplied field, so a tampered provider row
+ * cannot redirect the trusted login modal or usage query to an attacker host.
  */
 export const KIMI_LOGIN_URL = 'https://www.kimi.com';
-export const KIMI_GET_USAGES_URL =
-  'https://www.kimi.com/apiv2/kimi.gateway.billing.v1.BillingService/GetUsages';
+export const KIMI_GET_USAGES_URL = 'https://api.kimi.com/coding/v1/usages';
 /** Registrable-domain site key under which the Kimi login is stored globally. */
 export const KIMI_SITE_KEY = 'kimi.com';
 
@@ -25,21 +22,6 @@ export function isKimiCodingPlanProvider(provider?: Provider): boolean {
   return providerVendorFromProvenance(provider?.configuration?.preset) === 'kimi';
 }
 
-/**
- * Read the captured Kimi bearer JWT from the global site-auth store
- * (`global_site_auth['kimi.com'].bearerToken`). Null when no login is captured.
- * Server-side only; the token is never returned to clients.
- */
-function readKimiBearerToken(sqlite: SqliteStore): string | null {
-  try {
-    const entry = readGlobalSiteAuthEntry(sqlite, KIMI_SITE_KEY)?.entry;
-    return entry?.bearerToken && entry.bearerToken.length > 0 ? entry.bearerToken : null;
-  } catch (error) {
-    if (!(error instanceof BrowserSiteAuthReadError)) throw error;
-    return null;
-  }
-}
-
 export interface UsageResult {
   status: UsageStatus;
   summary?: UsageSummary;
@@ -47,35 +29,12 @@ export interface UsageResult {
 }
 
 /**
- * Decode ONLY the `exp` claim from a JWT payload (KTD5). The rest of the
- * decoded payload is discarded; cause-classification uses static strings, never
- * decoded claims. Returns null when there is no `exp` or the payload is malformed.
- */
-function readJwtExp(token: string): number | null {
-  const parts = token.split('.');
-  if (parts.length < 2) return null;
-  try {
-    const payload = Buffer.from(parts[1], 'base64url').toString('utf-8');
-    const claims = JSON.parse(payload) as Record<string, unknown>;
-    const exp = claims.exp;
-    return typeof exp === 'number' ? exp : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Build the whitelist summary (R14) by reading NAMED fields only. Never spreads
  * or clones the response, so account-identifying fields cannot reach the client.
  *
- * Real GetUsages shape (FEATURE_CODING): values are STRINGS, and the data is
- * nested —
- *   { totalQuota: { limit, used, remaining },
- *     usages: [ { scope: 'FEATURE_CODING', detail: { limit, used, resetTime },
- *                 limits: [ { detail: { limit, remaining, resetTime } } ] } ] }
- * `totalQuota` is the headline coding-plan quota; the FEATURE_CODING detail
- * carries the reset time. An account with no coding plan returns no
- * totalQuota / no FEATURE_CODING entry → all fields null → `no-plan`.
+ * Kimi For Coding's `/usages` endpoint returns decimal strings. The top-level
+ * `usage` is the weekly plan window and `limits[]` contains shorter windows,
+ * including the 300-minute rolling limit.
  */
 /** @internal — shared by all provider usage services. */
 export function asRecord(value: unknown): Record<string, unknown> | null {
@@ -103,26 +62,28 @@ function parseUsageSummary(body: unknown): UsageSummary | null {
   const rec = asRecord(body);
   if (!rec) return null;
 
-  // The coding-plan usage is usages[scope=FEATURE_CODING]. `totalQuota` is the
-  // overall subscription total and is NOT coding-plan-usable, so it is ignored.
-  const usages = Array.isArray(rec.usages) ? (rec.usages as unknown[]) : [];
-  const coding = asRecord(usages.find((u) => asRecord(u)?.scope === 'FEATURE_CODING'));
-  const codingDetail = asRecord(coding?.detail); // 7-day coding-plan window
-  const limits = Array.isArray(coding?.limits) ? (coding.limits as unknown[]) : [];
-  const firstLimitDetail = asRecord(asRecord(limits[0])?.detail); // rolling rate limit
+  const usage = asRecord(rec.usage);
+  const used = asNum(usage?.used);
+  const total = asNum(usage?.limit);
+  const remaining = asNum(usage?.remaining)
+    ?? (total !== null && used !== null ? total - used : null);
+  const resetDate = asStr(usage?.resetTime);
 
-  const used = asNum(codingDetail?.used);
-  const total = asNum(codingDetail?.limit);
-  const remaining = total !== null && used !== null ? total - used : null;
-  const resetDate = asStr(codingDetail?.resetTime);
-
-  // No FEATURE_CODING detail → not a coding-plan payload (no-plan).
-  if (used === null && total === null && resetDate === null) {
+  if (used === null && total === null && remaining === null && resetDate === null) {
     return null;
   }
 
-  const rollingRemaining = asNum(firstLimitDetail?.remaining);
-  const rollingReset = asStr(firstLimitDetail?.resetTime);
+  const limits = Array.isArray(rec.limits) ? (rec.limits as unknown[]) : [];
+  const rollingLimit = limits.find((item) => {
+    const window = asRecord(asRecord(item)?.window);
+    return asNum(window?.duration) === 300 && window?.timeUnit === 'TIME_UNIT_MINUTE';
+  }) ?? limits[0];
+  const rollingDetail = asRecord(asRecord(rollingLimit)?.detail);
+  const rollingUsed = asNum(rollingDetail?.used);
+  const rollingTotal = asNum(rollingDetail?.limit);
+  const rollingRemaining = asNum(rollingDetail?.remaining)
+    ?? (rollingTotal !== null && rollingUsed !== null ? rollingTotal - rollingUsed : null);
+  const rollingReset = asStr(rollingDetail?.resetTime);
   const rolling =
     rollingRemaining !== null || rollingReset !== null
       ? { remaining: rollingRemaining, resetDate: rollingReset }
@@ -142,9 +103,8 @@ export class KimiUsageService {
    * token or account fields.
    *
    * Status semantics: `unsupported` (not a Kimi coding-plan provider),
-   * `idle` (coding-plan provider, no captured token yet), `relogin` (token
-   * expired or auth failed), `no-plan` (logged-in account has no coding plan),
-   * `error` (network/timeout), `ready` (summary available).
+   * `no-plan` (the credential has no coding plan), `error` (credential,
+   * network, or timeout failure), `ready` (summary available).
    */
   async runUsageCheck(providerId: string): Promise<UsageResult> {
     const provider = this.sqlite.getProvider(providerId);
@@ -152,33 +112,22 @@ export class KimiUsageService {
       return { status: 'unsupported' };
     }
 
-    const token = readKimiBearerToken(this.sqlite);
-    if (!token) {
-      return { status: 'idle' };
-    }
-
-    // Proactive expiry probe (KTD5): if the JWT is already expired, ask the
-    // user to re-login without burning a request.
-    const exp = readJwtExp(token);
-    if (exp !== null && exp * 1000 <= Date.now()) {
-      return { status: 'relogin' };
-    }
+    const token = provider.authToken.trim();
+    if (!token) return { status: 'error' };
 
     try {
       const response = await fetch(KIMI_GET_USAGES_URL, {
-        method: 'POST',
+        method: 'GET',
         redirect: 'error',
         headers: {
           authorization: `Bearer ${token}`,
-          'content-type': 'application/json',
           accept: 'application/json',
         },
-        body: JSON.stringify({ scope: ['FEATURE_CODING'] }),
         signal: AbortSignal.timeout(USAGE_TIMEOUT_MS),
       });
 
       if (response.status === 401 || response.status === 403) {
-        return { status: 'relogin' };
+        return { status: 'error' };
       }
       if (response.status < 200 || response.status >= 300) {
         return { status: 'error' };
