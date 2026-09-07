@@ -19,17 +19,15 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 const REAL_USAGE = {
-  totalQuota: { limit: '100', used: '49', remaining: '51' },
-  usages: [
+  usage: { limit: '100', used: '100', remaining: '0', resetTime: '2026-07-29T08:20:53.375248Z' },
+  limits: [
     {
-      scope: 'FEATURE_CODING',
-      detail: { limit: '100', used: '100', resetTime: '2026-07-29T08:20:53.375248Z' },
-      limits: [
-        {
-          window: { duration: 300, timeUnit: 'TIME_UNIT_MINUTE' },
-          detail: { limit: '100', remaining: '100', resetTime: '2026-07-28T14:20:53.375248Z' },
-        },
-      ],
+      window: { duration: 60, timeUnit: 'TIME_UNIT_MINUTE' },
+      detail: { limit: '100', used: '97', remaining: '3', resetTime: '2026-07-28T10:20:53.375248Z' },
+    },
+    {
+      window: { duration: 300, timeUnit: 'TIME_UNIT_MINUTE' },
+      detail: { limit: '100', used: '0', remaining: '100', resetTime: '2026-07-28T14:20:53.375248Z' },
     },
   ],
 };
@@ -80,22 +78,25 @@ describe('KimiUsageService', () => {
 
   test('non-coding-plan provider (api.moonshot.cn) is unsupported', async () => {
     const id = makeProvider('https://api.moonshot.cn/v1');
-    seedBearer(makeJwt(Math.floor(Date.now() / 1000) + 1e6));
     const result = await svc.runUsageCheck(id);
     assert.equal(result.status, 'unsupported');
     assert.equal(fetchedUrls.length, 0);
   });
 
-  test('coding-plan provider with no captured login is idle', async () => {
+  test('coding-plan provider uses its configured credential without a captured web login', async () => {
     const id = makeProvider('https://api.kimi.com/coding');
+    trackFetch(() => jsonResponse(200, REAL_USAGE));
     const result = await svc.runUsageCheck(id);
-    assert.equal(result.status, 'idle');
-    assert.equal(fetchedUrls.length, 0);
+    assert.equal(result.status, 'ready');
+    assert.equal(KIMI_GET_USAGES_URL, 'https://api.kimi.com/coding/v1/usages');
+    assert.equal(fetchedUrls[0], 'https://api.kimi.com/coding/v1/usages');
+    assert.equal(fetchInit?.method, 'GET');
+    assert.equal((fetchInit?.headers as Record<string, string>).authorization, 'Bearer sk-key');
+    assert.equal(fetchInit?.body, undefined);
   });
 
   test('happy path returns a ready whitelist summary', async () => {
     const id = makeProvider('https://api.kimi.com/coding');
-    seedBearer(makeJwt(Math.floor(Date.now() / 1000) + 1e6));
     trackFetch(() => jsonResponse(200, REAL_USAGE));
     const result = await svc.runUsageCheck(id);
     assert.equal(result.status, 'ready');
@@ -106,13 +107,12 @@ describe('KimiUsageService', () => {
     assert.equal(result.summary?.rolling?.remaining, 100);
     assert.equal(fetchedUrls[0], KIMI_GET_USAGES_URL);
     assert.equal(fetchInit?.redirect, 'error');
-    assert.equal((fetchInit?.headers as Record<string, string>).authorization.startsWith('Bearer '), true);
+    assert.equal((fetchInit?.headers as Record<string, string>).authorization, 'Bearer sk-key');
     assert.ok(fetchInit?.signal instanceof AbortSignal);
   });
 
   test('whitelist: account-identifying fields never reach the summary', async () => {
     const id = makeProvider('https://api.kimi.com/coding');
-    seedBearer(makeJwt(Math.floor(Date.now() / 1000) + 1e6));
     trackFetch(() => jsonResponse(200, { ...REAL_USAGE, email: 'user@example.com', user_id: 'u-123', payment: 'card-cc-4242' }));
     const result = await svc.runUsageCheck(id);
     assert.equal(result.status, 'ready');
@@ -123,26 +123,26 @@ describe('KimiUsageService', () => {
     assert.equal(serialized.includes('card'), false);
   });
 
-  test('401 from the billing endpoint surfaces relogin', async () => {
+  test('401 and 403 from the coding usage endpoint do not request an unrelated web relogin', async () => {
     const id = makeProvider('https://api.kimi.com/coding');
-    seedBearer(makeJwt(Math.floor(Date.now() / 1000) + 1e6));
-    trackFetch(() => jsonResponse(401, { error: 'unauthorized' }));
-    const result = await svc.runUsageCheck(id);
-    assert.equal(result.status, 'relogin');
+    for (const status of [401, 403]) {
+      trackFetch(() => jsonResponse(status, { error: 'unauthorized' }));
+      const result = await svc.runUsageCheck(id);
+      assert.equal(result.status, 'error');
+    }
   });
 
-  test('an already-expired token surfaces relogin without calling the endpoint', async () => {
+  test('an expired captured web token does not hide usage when the provider credential is valid', async () => {
     const id = makeProvider('https://api.kimi.com/coding');
     seedBearer(makeJwt(Math.floor(Date.now() / 1000) - 1));
     trackFetch(() => jsonResponse(200, REAL_USAGE));
     const result = await svc.runUsageCheck(id);
-    assert.equal(result.status, 'relogin');
-    assert.equal(fetchedUrls.length, 0);
+    assert.equal(result.status, 'ready');
+    assert.equal(fetchedUrls.length, 1);
   });
 
   test('a payload with no recognizable usage fields is no-plan', async () => {
     const id = makeProvider('https://api.kimi.com/coding');
-    seedBearer(makeJwt(Math.floor(Date.now() / 1000) + 1e6));
     trackFetch(() => jsonResponse(200, { has_coding_plan: false }));
     const result = await svc.runUsageCheck(id);
     assert.equal(result.status, 'no-plan');
@@ -150,7 +150,6 @@ describe('KimiUsageService', () => {
 
   test('a network failure surfaces error', async () => {
     const id = makeProvider('https://api.kimi.com/coding');
-    seedBearer(makeJwt(Math.floor(Date.now() / 1000) + 1e6));
     global.fetch = (() => Promise.reject(new Error('network down'))) as unknown as FetchImpl;
     const result = await svc.runUsageCheck(id);
     assert.equal(result.status, 'error');
@@ -162,15 +161,13 @@ describe('KimiUsageService', () => {
     const configuration = structuredClone(provider.configuration!);
     configuration.endpoints.openai!.baseUrl = 'https://kimi.com.evil.attacker/';
     sqlite.updateProvider(id, { configuration });
-    seedBearer(makeJwt(Math.floor(Date.now() / 1000) + 1e6));
     trackFetch(() => jsonResponse(200, REAL_USAGE));
     await svc.runUsageCheck(id);
-    assert.equal(fetchedUrls[0], KIMI_GET_USAGES_URL);
+    assert.equal(fetchedUrls[0], 'https://api.kimi.com/coding/v1/usages');
   });
 
   test('consecutive checks re-fetch live data (no server-side cache)', async () => {
     const id = makeProvider('https://api.kimi.com/coding');
-    seedBearer(makeJwt(Math.floor(Date.now() / 1000) + 1e6));
     trackFetch(() => jsonResponse(200, REAL_USAGE));
     const first = await svc.runUsageCheck(id);
     const second = await svc.runUsageCheck(id);
