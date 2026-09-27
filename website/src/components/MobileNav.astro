@@ -1,0 +1,150 @@
+---
+import { getRelativeLocaleUrl } from 'astro:i18n';
+import { useTranslations, type Lang, type UIKey } from '../i18n/utils.js';
+import ThemeToggle from './ThemeToggle.astro';
+
+interface Props {
+  items: { key: string; href: string }[];
+}
+
+const locale = (Astro.currentLocale ?? 'zh') as Lang;
+const t = useTranslations(locale);
+const { items } = Astro.props;
+const menuLabel = locale === 'zh' ? '打开主菜单' : 'Open primary menu';
+const navigationLabel = locale === 'zh' ? '移动端主导航' : 'Mobile primary navigation';
+const themeLabel = locale === 'zh' ? '切换明暗主题' : 'Toggle light or dark theme';
+const themeText = locale === 'zh' ? '明暗主题' : 'Color theme';
+---
+
+<div class="md:hidden">
+  <button
+    type="button"
+    id="mobile-nav-toggle"
+    aria-expanded="false"
+    aria-controls="mobile-nav-panel"
+    aria-label={menuLabel}
+    class="inline-flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-surface-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent"
+  >
+    <svg
+      id="mobile-nav-icon-open"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <line x1="3" y1="12" x2="21" y2="12" />
+      <line x1="3" y1="18" x2="21" y2="18" />
+    </svg>
+    <svg
+      id="mobile-nav-icon-close"
+      class="hidden"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  </button>
+
+  <div
+    id="mobile-nav-panel"
+    hidden
+    class="absolute left-0 right-0 top-16 border-b border-border bg-bg shadow-md"
+  >
+    <nav aria-label={navigationLabel} class="mx-auto max-w-6xl px-4 py-4">
+      <ul class="flex flex-col gap-1">
+        {
+          items.map((item) => (
+            <li>
+              <a
+                href={item.href}
+                data-analytics-event={item.key === 'nav.download' ? 'download_cta_click' : undefined}
+                data-analytics-locale={item.key === 'nav.download' ? locale : undefined}
+                data-analytics-location={item.key === 'nav.download' ? 'mobile_nav_menu' : undefined}
+                data-analytics-platform={item.key === 'nav.download' ? 'all' : undefined}
+                data-analytics-stage={item.key === 'nav.download' ? 'download_page' : undefined}
+                class="block rounded-md px-3 py-3 text-base font-medium text-text-secondary no-underline hover:bg-surface-hover hover:text-text-primary"
+              >
+                {t(item.key as UIKey)}
+              </a>
+            </li>
+          ))
+        }
+      </ul>
+
+      <div class="mt-4 border-t border-border pt-4">
+        <a
+          href={getRelativeLocaleUrl(locale, '/download/')}
+          data-analytics-event="download_cta_click"
+          data-analytics-locale={locale}
+          data-analytics-location="mobile_nav_primary"
+          data-analytics-platform="all"
+          data-analytics-stage="download_page"
+          class="flex min-h-12 items-center justify-center rounded-lg bg-conversion px-4 py-3 text-base font-semibold text-conversion-foreground no-underline shadow-sm shadow-conversion/20 hover:bg-conversion-hover"
+        >
+          {t('nav.downloadCta')}
+        </a>
+      </div>
+
+      <div class="mt-4 flex items-center gap-3 border-t border-border pt-4">
+        <ThemeToggle label={themeLabel} />
+        <span class="text-sm text-text-secondary">{themeText}</span>
+      </div>
+    </nav>
+  </div>
+
+  <script is:inline>
+    (function () {
+      const toggle = document.getElementById('mobile-nav-toggle');
+      const panel = document.getElementById('mobile-nav-panel');
+      const iconOpen = document.getElementById('mobile-nav-icon-open');
+      const iconClose = document.getElementById('mobile-nav-icon-close');
+      if (!toggle || !panel || !iconOpen || !iconClose) return;
+
+      function set(open) {
+        toggle.setAttribute('aria-expanded', String(open));
+        toggle.setAttribute('aria-label', open
+          ? (document.documentElement.lang === 'zh-CN' ? '关闭主菜单' : 'Close primary menu')
+          : (document.documentElement.lang === 'zh-CN' ? '打开主菜单' : 'Open primary menu'));
+        panel.hidden = !open;
+        iconOpen.classList.toggle('hidden', open);
+        iconClose.classList.toggle('hidden', !open);
+        if (open) {
+          panel.querySelector('a, button, select')?.focus();
+        }
+      }
+
+      toggle.addEventListener('click', () => {
+        set(toggle.getAttribute('aria-expanded') !== 'true');
+      });
+
+      panel.querySelectorAll('a').forEach((link) => {
+        link.addEventListener('click', () => set(false));
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape' || panel.hidden) return;
+        set(false);
+        toggle.focus();
+      });
+
+      document.addEventListener('click', (event) => {
+        if (panel.hidden || !(event.target instanceof Node)) return;
+        if (!panel.contains(event.target) && !toggle.contains(event.target)) set(false);
+      });
+    })();
+  </script>
+</div>

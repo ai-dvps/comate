@@ -1,0 +1,137 @@
+---
+import { getRelativeLocaleUrl } from 'astro:i18n';
+import { useTranslations, type Lang, type UIKey } from '../i18n/utils.js';
+import BrandLogo from './BrandLogo.astro';
+
+const locale = (Astro.currentLocale ?? 'zh') as Lang;
+const t = useTranslations(locale);
+
+const productLinks = [
+  { key: 'nav.features', href: getRelativeLocaleUrl(locale, '/features/') },
+  { key: 'nav.usage', href: getRelativeLocaleUrl(locale, '/usage/') },
+  { key: 'nav.download', href: getRelativeLocaleUrl(locale, '/download/') },
+];
+
+const resourceLinks = [
+  { key: 'nav.about', href: getRelativeLocaleUrl(locale, '/about/') },
+  { key: 'nav.faq', href: getRelativeLocaleUrl(locale, '/faq/') },
+  { key: 'footer.releaseNotes', href: 'https://github.com/ai-dvps/comate/releases', external: true },
+];
+
+const legalLinks = [
+  { key: 'footer.repo', href: 'https://github.com/ai-dvps/comate', external: true },
+  { key: 'footer.license', href: 'https://github.com/ai-dvps/comate/blob/main/LICENSE', external: true },
+];
+---
+
+<footer class="border-t border-border bg-surface">
+  <div class="mx-auto max-w-6xl px-4 py-12">
+    <div class="grid gap-10 md:grid-cols-2 lg:grid-cols-4">
+      <div class="space-y-4">
+        <a
+          href={getRelativeLocaleUrl(locale, '/')}
+          class="flex items-center gap-2 text-lg font-semibold text-text-primary no-underline"
+        >
+          <BrandLogo size={28} />
+          <span>Comate</span>
+        </a>
+        <p class="text-sm leading-relaxed text-text-secondary">
+          {t('footer.tagline')}
+        </p>
+      </div>
+
+      <div>
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-text-primary">{t('footer.product')}</h2>
+        <ul class="mt-4 space-y-2.5">
+          {
+            productLinks.map((item) => (
+              <li>
+                <a
+                  href={item.href}
+                  data-analytics-event={item.key === 'nav.download' ? 'download_cta_click' : undefined}
+                  data-analytics-locale={item.key === 'nav.download' ? locale : undefined}
+                  data-analytics-location={item.key === 'nav.download' ? 'footer_product' : undefined}
+                  data-analytics-platform={item.key === 'nav.download' ? 'all' : undefined}
+                  data-analytics-stage={item.key === 'nav.download' ? 'download_page' : undefined}
+                  class="text-sm text-text-secondary no-underline hover:text-text-primary"
+                >
+                  {t(item.key as UIKey)}
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+
+      <div>
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-text-primary">{t('footer.resources')}</h2>
+        <ul class="mt-4 space-y-2.5">
+          {
+            resourceLinks.map((item) => (
+              <li>
+                <a
+                  href={item.href}
+                  target={item.external ? '_blank' : undefined}
+                  rel={item.external ? 'noopener noreferrer' : undefined}
+                  class="text-sm text-text-secondary no-underline hover:text-text-primary"
+                >
+                  {t(item.key as UIKey)}
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+
+      <div>
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-text-primary">{t('footer.legal')}</h2>
+        <ul class="mt-4 space-y-2.5">
+          {
+            legalLinks.map((item) => (
+              <li>
+                <a
+                  href={item.href}
+                  target={item.external ? '_blank' : undefined}
+                  rel={item.external ? 'noopener noreferrer' : undefined}
+                  class="text-sm text-text-secondary no-underline hover:text-text-primary"
+                >
+                  {t(item.key as UIKey)}
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+    </div>
+
+    <div class="mt-12 flex flex-col items-center justify-between gap-4 border-t border-border pt-8 text-sm text-text-tertiary sm:flex-row">
+      <div class="max-w-2xl text-center sm:text-left">
+        <span>© {new Date().getFullYear()} Comate. {t('footer.license')}.</span>
+        <p id="analytics-privacy-note" class="mt-2 text-xs leading-relaxed">{t('footer.analyticsPrivacy')}</p>
+      </div>
+      <div class="flex items-center gap-4">
+        <button
+          type="button"
+          data-analytics-preferences
+          class="rounded px-1 py-1 text-sm underline underline-offset-2 hover:text-text-secondary focus-visible:ring-2 focus-visible:ring-accent"
+        >{t('footer.analyticsPreferences')}</button>
+        <a
+          href="https://github.com/ai-dvps/comate"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="inline-flex items-center gap-1.5 no-underline hover:text-text-secondary"
+        >
+          <svg
+            class="h-4 w-4"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12Z" />
+          </svg>
+          GitHub
+        </a>
+      </div>
+    </div>
+  </div>
+</footer>

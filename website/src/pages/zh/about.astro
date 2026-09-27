@@ -1,0 +1,30 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Nav from '../../components/Nav.astro';
+import Footer from '../../components/Footer.astro';
+import LanguagePicker from '../../components/LanguagePicker.astro';
+---
+
+<BaseLayout title="关于 Comate — 通用 Agent 任务工作区" description="了解 Comate 如何让个人在组织环境中掌控工作区、模型选择、权限和扩展。">
+  <Nav><LanguagePicker slot="language-picker" /><LanguagePicker slot="language-picker-mobile" /></Nav>
+  <main class="mx-auto max-w-4xl px-4 py-16 md:py-24">
+    <p class="text-sm font-semibold uppercase tracking-wide text-accent">关于 Comate</p>
+    <h1 class="mt-3 max-w-3xl text-4xl font-bold leading-tight text-text-primary md:text-6xl">把 Agent 带进真实工作，控制权仍然属于你</h1>
+    <section class="mt-8 max-w-3xl space-y-4 text-lg leading-8 text-text-secondary">
+      <p>Comate 是面向个人专业人士的通用 Agent 任务工作区。它把会话、任务执行、文件、工具与进度组织在一个桌面环境中，适配多种日常工作。</p>
+      <p>你可以管理自己的工作区，选择 Agent 后端与模型 Provider，明确授予工具权限，并通过 Skills、MCP 及组织批准的集成扩展日常工作。</p>
+    </section>
+    <section class="mt-12 grid gap-5 md:grid-cols-2" aria-labelledby="principles-title">
+      <h2 id="principles-title" class="md:col-span-2 text-2xl font-semibold text-text-primary">我们的产品原则</h2>
+      <article class="rounded-xl border border-border bg-surface p-6"><h3 class="font-semibold text-text-primary">个人可控</h3><p class="mt-2 leading-7 text-text-secondary">工作区归你管理；模型、Provider、权限和扩展均有明确选择。</p></article>
+      <article class="rounded-xl border border-border bg-surface p-6"><h3 class="font-semibold text-text-primary">适配组织环境</h3><p class="mt-2 leading-7 text-text-secondary">连接企业内部模型、IM 与 Skill Market 时，仍遵循组织的身份、权限和数据边界。</p></article>
+      <article class="rounded-xl border border-border bg-surface p-6"><h3 class="font-semibold text-text-primary">过程透明</h3><p class="mt-2 leading-7 text-text-secondary">任务状态、工具调用、权限请求与结果都保持可见，便于你随时介入。</p></article>
+      <article class="rounded-xl border border-border bg-surface p-6"><h3 class="font-semibold text-text-primary">开放扩展</h3><p class="mt-2 leading-7 text-text-secondary">项目采用 Apache License 2.0 开源；源码、版本与问题跟踪均公开在 GitHub。</p></article>
+    </section>
+    <div class="mt-12 flex flex-wrap gap-3">
+      <a href="/comate/zh/faq/" class="inline-flex min-h-11 items-center rounded-lg bg-accent px-5 py-2.5 font-semibold text-accent-foreground no-underline hover:bg-accent-hover">查看常见问题</a>
+      <a href="https://github.com/ai-dvps/comate" class="inline-flex min-h-11 items-center rounded-lg border border-border px-5 py-2.5 font-semibold text-text-primary no-underline hover:bg-surface-hover">查看 GitHub 仓库</a>
+    </div>
+  </main>
+  <Footer />
+</BaseLayout>

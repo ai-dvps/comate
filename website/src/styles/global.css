@@ -1,0 +1,185 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --color-bg: hsl(var(--color-bg-hsl));
+  --color-surface: hsl(var(--color-surface-hsl));
+  --color-surface-hover: hsl(var(--color-surface-hover-hsl));
+  --color-surface-active: hsl(var(--color-surface-active-hsl));
+  --color-border: hsl(var(--color-border-hsl));
+  --color-border-hover: hsl(var(--color-border-hover-hsl));
+  --color-accent: hsl(var(--color-accent-hsl));
+  --color-accent-hover: hsl(var(--color-accent-hover-hsl));
+  --color-accent-secondary: hsl(var(--color-accent-secondary-hsl));
+  --color-accent-secondary-hover: hsl(var(--color-accent-secondary-hover-hsl));
+  --color-accent-foreground: hsl(var(--color-accent-foreground-hsl));
+  --color-conversion: hsl(var(--color-conversion-hsl));
+  --color-conversion-hover: hsl(var(--color-conversion-hover-hsl));
+  --color-conversion-foreground: hsl(var(--color-conversion-foreground-hsl));
+  --color-text-primary: hsl(var(--color-text-primary-hsl));
+  --color-text-secondary: hsl(var(--color-text-secondary-hsl));
+  --color-text-tertiary: hsl(var(--color-text-tertiary-hsl));
+  --color-destructive: hsl(var(--color-destructive-hsl));
+  --color-success: hsl(var(--color-success-hsl));
+  --color-warning: hsl(var(--color-warning-hsl));
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+:root {
+  color-scheme: light;
+  --color-bg-hsl: 220 24% 98%;
+  --color-surface-hsl: 0 0% 100%;
+  --color-surface-hover-hsl: 218 25% 96%;
+  --color-surface-active-hsl: 218 22% 93%;
+  --color-border-hsl: 218 20% 86%;
+  --color-border-hover-hsl: 217 18% 67%;
+  --color-accent-hsl: 221 78% 31%;
+  --color-accent-hover-hsl: 222 80% 24%;
+  --color-accent-secondary-hsl: 190 78% 53%;
+  --color-accent-secondary-hover-hsl: 190 82% 43%;
+  --color-accent-foreground-hsl: 0 0% 100%;
+  --color-conversion-hsl: 24 95% 38%;
+  --color-conversion-hover-hsl: 20 94% 31%;
+  --color-conversion-foreground-hsl: 0 0% 100%;
+  --color-text-primary-hsl: 222 39% 11%;
+  --color-text-secondary-hsl: 217 19% 33%;
+  --color-text-tertiary-hsl: 215 16% 42%;
+  --color-destructive-hsl: 0 70% 50%;
+  --color-success-hsl: 145 70% 40%;
+  --color-warning-hsl: 38 90% 50%;
+}
+
+.dark {
+  color-scheme: dark;
+  --color-bg-hsl: 222 47% 7%;
+  --color-surface-hsl: 221 39% 11%;
+  --color-surface-hover-hsl: 219 31% 16%;
+  --color-surface-active-hsl: 217 26% 20%;
+  --color-border-hsl: 217 25% 23%;
+  --color-border-hover-hsl: 215 20% 36%;
+  --color-accent-hsl: 211 82% 67%;
+  --color-accent-hover-hsl: 211 88% 76%;
+  --color-accent-secondary-hsl: 190 82% 64%;
+  --color-accent-secondary-hover-hsl: 190 88% 72%;
+  --color-accent-foreground-hsl: 222 47% 11%;
+  --color-conversion-hsl: 25 96% 59%;
+  --color-conversion-hover-hsl: 27 96% 67%;
+  --color-conversion-foreground-hsl: 24 10% 8%;
+  --color-text-primary-hsl: 210 40% 96%;
+  --color-text-secondary-hsl: 215 20% 72%;
+  --color-text-tertiary-hsl: 215 16% 60%;
+  --color-destructive-hsl: 0 70% 55%;
+  --color-success-hsl: 145 65% 50%;
+  --color-warning-hsl: 38 90% 55%;
+}
+
+@layer base {
+  html {
+    @apply bg-bg text-text-primary;
+    font-family: var(--font-sans);
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply min-w-0 antialiased;
+    background-image: radial-gradient(circle at 50% -16rem, hsl(var(--color-accent-hsl) / 0.08), transparent 34rem);
+    background-repeat: no-repeat;
+  }
+
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: var(--font-mono);
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-bg;
+  }
+
+  a {
+    @apply text-accent hover:text-accent-hover transition-colors duration-200 ease-out;
+    text-underline-offset: 0.2em;
+  }
+
+  button,
+  select {
+    @apply transition-colors duration-200 ease-out;
+  }
+
+  button,
+  select,
+  a {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--color-border-hover-hsl)) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--color-border-hover-hsl));
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--color-text-tertiary-hsl));
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer utilities {
+  .reveal {
+    opacity: 0;
+    transform: translateY(1rem);
+    transition:
+      opacity 0.5s var(--ease-out-expo),
+      transform 0.5s var(--ease-out-expo);
+  }
+
+  .reveal.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reveal {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .gradient-text {
+    background: linear-gradient(105deg, hsl(var(--color-text-primary-hsl)) 12%, hsl(var(--color-accent-hsl)) 88%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+}

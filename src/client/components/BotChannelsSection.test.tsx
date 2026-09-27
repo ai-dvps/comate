@@ -1,0 +1,333 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { I18nextProvider } from 'react-i18next';
+import i18n from '../i18n';
+import type { Bot } from '../stores/bot-store';
+import BotChannelsSection from './BotChannelsSection';
+import { emptyForm } from './bot-form-utils';
+
+function renderWithI18n(ui: React.ReactElement) {
+  return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>);
+}
+
+describe('BotChannelsSection', () => {
+  beforeEach(() => {
+    cleanup();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('toggles WeCom and shows credential fields', () => {
+    const onUpdate = vi.fn();
+    renderWithI18n(
+      <BotChannelsSection form={emptyForm()} onUpdate={onUpdate} />,
+    );
+
+    expect(screen.queryByPlaceholderText('your-bot-id')).not.toBeInTheDocument();
+
+    const toggle = screen.getAllByRole('button').find((b) => b.className.includes('rounded-full'))!;
+    fireEvent.click(toggle);
+
+    expect(onUpdate).toHaveBeenCalledWith({ wecomEnabled: true });
+  });
+
+  it('shows WeCom fields when enabled', () => {
+    renderWithI18n(
+      <BotChannelsSection form={{ ...emptyForm(), wecomEnabled: true }} onUpdate={vi.fn()} />,
+    );
+
+    expect(screen.getByPlaceholderText('your-bot-id')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('your-bot-secret')).toBeInTheDocument();
+  });
+
+  it('renders secret placeholder for unchanged secret in edit mode', () => {
+    const originalBot: Bot = {
+      id: 'bot-1',
+      name: 'Bot',
+      activeWorkspaceId: null,
+      channelSettings: { wecom: { enabled: true, botId: 'bid', botSecret: true } },
+      rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
+      createdAt: '',
+      updatedAt: '',
+    };
+
+    renderWithI18n(
+      <BotChannelsSection
+        form={{ ...emptyForm(), wecomEnabled: true }}
+        onUpdate={vi.fn()}
+        originalBot={originalBot}
+      />,
+    );
+
+    const secretInput = screen.getByPlaceholderText('••••••••');
+    expect(secretInput).toBeInTheDocument();
+    expect(secretInput.getAttribute('type')).toBe('password');
+  });
+
+  it('renders per-channel status labels and dots', () => {
+    renderWithI18n(
+      <BotChannelsSection
+        form={{ ...emptyForm(), wecomEnabled: true, feishuEnabled: true }}
+        onUpdate={vi.fn()}
+        channelStatus={{ wecom: 'connected', feishu: 'not_configured' }}
+      />,
+    );
+
+    expect(screen.getByText('WeCom connected')).toBeInTheDocument();
+    expect(screen.getByText('Feishu not configured')).toBeInTheDocument();
+  });
+
+  it('renders sanitized error message when a channel is in error state', () => {
+    renderWithI18n(
+      <BotChannelsSection
+        form={{ ...emptyForm(), feishuEnabled: true }}
+        onUpdate={vi.fn()}
+        channelStatus={{ wecom: 'not_configured', feishu: 'error', errors: { feishu: 'Authentication failed' } }}
+      />,
+    );
+
+    expect(screen.getByText('Authentication failed')).toBeInTheDocument();
+  });
+
+  it('renders and updates the Feishu server URL', () => {
+    const onUpdate = vi.fn();
+    renderWithI18n(
+      <BotChannelsSection
+        form={{
+          ...emptyForm(),
+          feishuEnabled: true,
+          feishuServerUrl: 'https://feishu.internal.example:8443',
+        }}
+        onUpdate={onUpdate}
+      />,
+    );
+
+    const input = screen.getByLabelText('Server URL') as HTMLInputElement;
+    expect(input.value).toBe('https://feishu.internal.example:8443');
+    expect(screen.getByText(/Leave blank to use the official Feishu service/i)).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: 'https://new.feishu.internal' } });
+    expect(onUpdate).toHaveBeenCalledWith({ feishuServerUrl: 'https://new.feishu.internal' });
+  });
+
+  it('hides Feishu reconnect when only the server URL is dirty', () => {
+    const originalBot: Bot = {
+      id: 'bot-1',
+      name: 'Bot',
+      activeWorkspaceId: null,
+      channelSettings: {
+        feishu: {
+          enabled: true,
+          appId: 'feishu-app',
+          appSecret: true,
+          serverUrl: 'https://old.feishu.internal',
+        },
+      },
+      rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
+      createdAt: '',
+      updatedAt: '',
+    };
+
+    renderWithI18n(
+      <BotChannelsSection
+        form={{
+          ...emptyForm(),
+          feishuEnabled: true,
+          feishuAppId: 'feishu-app',
+          feishuServerUrl: 'https://new.feishu.internal',
+        }}
+        onUpdate={vi.fn()}
+        originalBot={originalBot}
+        channelStatus={{ wecom: 'not_configured', feishu: 'disconnected' }}
+        onReconnect={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /reconnect/i })).not.toBeInTheDocument();
+  });
+
+  it('shows Reconnect button when channel is disconnected and credentials are unchanged', () => {
+    const originalBot: Bot = {
+      id: 'bot-1',
+      name: 'Bot',
+      activeWorkspaceId: null,
+      channelSettings: { wecom: { enabled: true, botId: 'bid', botSecret: true } },
+      rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
+      createdAt: '',
+      updatedAt: '',
+    };
+    const onReconnect = vi.fn();
+
+    renderWithI18n(
+      <BotChannelsSection
+        form={{ ...emptyForm(), wecomEnabled: true, wecomBotId: 'bid' }}
+        onUpdate={vi.fn()}
+        originalBot={originalBot}
+        channelStatus={{ wecom: 'disconnected', feishu: 'not_configured' }}
+        onReconnect={onReconnect}
+      />,
+    );
+
+    const reconnectButton = screen.getByRole('button', { name: /reconnect/i });
+    expect(reconnectButton).toBeInTheDocument();
+    fireEvent.click(reconnectButton);
+    expect(onReconnect).toHaveBeenCalledWith('wecom');
+  });
+
+  it('hides Reconnect button when credentials are dirty', () => {
+    const originalBot: Bot = {
+      id: 'bot-1',
+      name: 'Bot',
+      activeWorkspaceId: null,
+      channelSettings: { wecom: { enabled: true, botId: 'bid', botSecret: true } },
+      rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
+      createdAt: '',
+      updatedAt: '',
+    };
+
+    renderWithI18n(
+      <BotChannelsSection
+        form={{ ...emptyForm(), wecomEnabled: true, wecomBotId: 'different-id' }}
+        onUpdate={vi.fn()}
+        originalBot={originalBot}
+        channelStatus={{ wecom: 'disconnected', feishu: 'not_configured' }}
+        onReconnect={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /reconnect/i })).not.toBeInTheDocument();
+  });
+
+  it('hides Reconnect button when channel is not disconnected', () => {
+    const originalBot: Bot = {
+      id: 'bot-1',
+      name: 'Bot',
+      activeWorkspaceId: null,
+      channelSettings: { wecom: { enabled: true, botId: 'bid', botSecret: true } },
+      rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
+      createdAt: '',
+      updatedAt: '',
+    };
+
+    renderWithI18n(
+      <BotChannelsSection
+        form={{ ...emptyForm(), wecomEnabled: true }}
+        onUpdate={vi.fn()}
+        originalBot={originalBot}
+        channelStatus={{ wecom: 'connected', feishu: 'not_configured' }}
+        onReconnect={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /reconnect/i })).not.toBeInTheDocument();
+  });
+
+  it('requests credential reveal with the correct field key when the eye is clicked', async () => {
+    const originalBot: Bot = {
+      id: 'bot-1',
+      name: 'Bot',
+      activeWorkspaceId: null,
+      channelSettings: { wecom: { enabled: true, botId: 'bid', botSecret: true } },
+      rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
+      createdAt: '',
+      updatedAt: '',
+    };
+    const onRevealCredential = vi.fn().mockResolvedValue('plain-secret');
+
+    renderWithI18n(
+      <BotChannelsSection
+        form={{ ...emptyForm(), wecomEnabled: true }}
+        onUpdate={vi.fn()}
+        originalBot={originalBot}
+        onRevealCredential={onRevealCredential}
+      />,
+    );
+
+    const buttons = screen.getAllByRole('button');
+    // The first eye button belongs to the WeCom Bot Secret input.
+    fireEvent.click(buttons[1]);
+    expect(onRevealCredential).toHaveBeenCalledWith('wecomBotSecret');
+  });
+
+  it('preserves secret visibility and input focus across parent re-renders', () => {
+    const props = {
+      form: { ...emptyForm(), wecomEnabled: true },
+      onUpdate: vi.fn(),
+      revealedCredentials: { wecomBotSecret: 'plain-secret' },
+      channelStatus: { wecom: 'connected', feishu: 'not_configured' },
+    } as const;
+    const { rerender } = renderWithI18n(<BotChannelsSection {...props} />);
+
+    // Focus a plain input inside the channel card.
+    const botIdInput = screen.getByPlaceholderText('your-bot-id');
+    botIdInput.focus();
+    expect(document.activeElement).toBe(botIdInput);
+
+    // Reveal the already-known secret (plain visibility toggle, no fetch).
+    const secretInput = screen.getByDisplayValue('plain-secret') as HTMLInputElement;
+    const eyeButton = secretInput.parentElement!.querySelector('button')!;
+    fireEvent.click(eyeButton);
+    expect(secretInput.type).toBe('text');
+
+    // Simulate a status poll re-render: identical data, fresh references.
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <BotChannelsSection
+          {...props}
+          channelStatus={{ wecom: 'connected', feishu: 'not_configured' }}
+        />
+      </I18nextProvider>,
+    );
+
+    expect((screen.getByDisplayValue('plain-secret') as HTMLInputElement).type).toBe('text');
+    expect(document.activeElement).toBe(botIdInput);
+  });
+
+  it('resets secret visibility when the reset key changes (e.g. after save)', () => {
+    const props = {
+      form: { ...emptyForm(), wecomEnabled: true },
+      onUpdate: vi.fn(),
+      revealedCredentials: { wecomBotSecret: 'plain-secret' },
+      secretsResetKey: 'bot-1:0',
+    };
+    const { rerender } = renderWithI18n(<BotChannelsSection {...props} />);
+
+    const secretInput = screen.getByDisplayValue('plain-secret') as HTMLInputElement;
+    fireEvent.click(secretInput.parentElement!.querySelector('button')!);
+    expect(secretInput.type).toBe('text');
+
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <BotChannelsSection {...props} secretsResetKey="bot-1:1" />
+      </I18nextProvider>,
+    );
+
+    expect((screen.getByDisplayValue('plain-secret') as HTMLInputElement).type).toBe('password');
+  });
+
+  it('appends disabled descriptor when a channel toggle is off', () => {
+    const originalBot: Bot = {
+      id: 'bot-1',
+      name: 'Bot',
+      activeWorkspaceId: null,
+      channelSettings: { wecom: { enabled: false } },
+      rolePolicy: { normalToolPolicy: {}, skillAllowlist: [], bashWhitelist: [] },
+      createdAt: '',
+      updatedAt: '',
+    };
+
+    renderWithI18n(
+      <BotChannelsSection
+        form={{ ...emptyForm(), wecomEnabled: false, feishuEnabled: true }}
+        onUpdate={vi.fn()}
+        originalBot={originalBot}
+        channelStatus={{ wecom: 'disconnected', feishu: 'connected' }}
+      />,
+    );
+
+    expect(screen.getByText(/WeCom disconnected/i)).toBeInTheDocument();
+    expect(screen.getByText(/WeCom disconnected.*disabled/i)).toBeInTheDocument();
+  });
+});

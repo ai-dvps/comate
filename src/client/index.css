@@ -1,0 +1,491 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Chrome: App header, sidebar, status bar */
+    --color-chrome: 220 20% 96%;
+    --color-chrome-hover: 218 22% 92%;
+    --color-chrome-active: 218 20% 88%;
+
+    /* Work: main content area, message body, right panel, prompt input */
+    --color-work: 0 0% 100%;
+
+    /* Compatibility aliases */
+    --color-bg: var(--color-work);
+    --color-surface: var(--color-chrome);
+    --color-surface-hover: var(--color-chrome-hover);
+    --color-surface-active: var(--color-chrome-active);
+
+    --color-border: 218 18% 86%;
+    --color-border-hover: 217 17% 78%;
+    --color-accent: 221 83% 53%;
+    --color-accent-hover: 224 76% 48%;
+    --color-accent-foreground: 0 0% 100%;
+    --color-agent: 190 85% 29%;
+    --color-attention: 24 95% 38%;
+    --color-text-primary: 222 39% 11%;
+    --color-text-secondary: 217 19% 36%;
+    --color-text-tertiary: 215 16% 42%;
+    --color-msg-user: 218 28% 94%;
+    --color-msg-assistant: 0 0% 100%;
+    --color-overlay: 0 0% 0%;
+    --color-destructive: 0 70% 45%;
+    --color-destructive-foreground: 0 0% 100%;
+    --color-success: 140 60% 35%;
+    --color-warning: 35 90% 45%;
+    --color-shimmer-base: 0 0% 42%;
+    --color-shimmer-highlight: 0 0% 100%;
+
+    /* Prompt reference chips */
+    --color-reference-skill: 270 55% 38%;
+    --color-reference-skill-surface: 270 70% 96%;
+    --color-reference-file: 150 58% 27%;
+    --color-reference-file-surface: 150 52% 95%;
+    --color-reference-invalid: 32 78% 34%;
+    --color-reference-invalid-surface: 38 86% 94%;
+
+    /* Analytics heatmap intensity (light) */
+    --color-heatmap-empty: 40 10% 90%;
+    --color-heatmap-low: 140 50% 75%;
+    --color-heatmap-medium: 140 60% 55%;
+    --color-heatmap-high: 140 70% 38%;
+
+    /* Analytics metric accents (light) */
+    --color-metric-blue: 210 80% 55%;
+    --color-metric-green: 140 65% 45%;
+    --color-metric-purple: 270 65% 58%;
+    --color-metric-amber: 35 90% 50%;
+    --color-metric-orange: 18 85% 55%;
+    --color-metric-pink: 330 75% 58%;
+    --color-metric-cyan: 190 75% 50%;
+    --color-metric-yellow: 50 90% 50%;
+    --color-metric-red: 0 75% 55%;
+  }
+
+  .dark {
+    --color-chrome: 221 24% 13%;
+    --color-chrome-hover: 219 24% 17%;
+    --color-chrome-active: 218 23% 21%;
+
+    --color-work: 222 35% 7%;
+
+    --color-bg: var(--color-work);
+    --color-surface: var(--color-chrome);
+    --color-surface-hover: var(--color-chrome-hover);
+    --color-surface-active: var(--color-chrome-active);
+
+    --color-border: 217 22% 22%;
+    --color-border-hover: 215 20% 29%;
+    --color-accent: 213 65% 62%;
+    --color-accent-hover: 213 70% 69%;
+    --color-accent-foreground: 222 47% 11%;
+    --color-agent: 190 82% 64%;
+    --color-attention: 25 96% 59%;
+    --color-text-primary: 210 40% 96%;
+    --color-text-secondary: 215 20% 72%;
+    --color-text-tertiary: 215 16% 60%;
+    --color-msg-user: 219 29% 15%;
+    --color-msg-assistant: 222 35% 7%;
+    --color-overlay: 0 0% 0%;
+    --color-destructive: 0 70% 50%;
+    --color-destructive-foreground: 0 0% 100%;
+    --color-success: 140 60% 45%;
+    --color-warning: 35 90% 50%;
+    --color-shimmer-base: 0 0% 62%;
+    --color-shimmer-highlight: 0 0% 7%;
+
+    /* Prompt reference chips */
+    --color-reference-skill: 270 76% 80%;
+    --color-reference-skill-surface: 270 42% 18%;
+    --color-reference-file: 150 58% 72%;
+    --color-reference-file-surface: 150 34% 15%;
+    --color-reference-invalid: 42 88% 70%;
+    --color-reference-invalid-surface: 36 46% 16%;
+
+    /* Analytics heatmap intensity (dark) */
+    --color-heatmap-empty: 0 0% 14%;
+    --color-heatmap-low: 140 40% 28%;
+    --color-heatmap-medium: 140 55% 42%;
+    --color-heatmap-high: 140 70% 55%;
+
+    /* Analytics metric accents (dark — slightly brighter for contrast) */
+    --color-metric-blue: 210 80% 65%;
+    --color-metric-green: 140 65% 55%;
+    --color-metric-purple: 270 65% 68%;
+    --color-metric-amber: 35 90% 60%;
+    --color-metric-orange: 18 85% 62%;
+    --color-metric-pink: 330 75% 68%;
+    --color-metric-cyan: 190 75% 60%;
+    --color-metric-yellow: 50 90% 60%;
+    --color-metric-red: 0 75% 65%;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--color-border-hover)) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--color-border-hover));
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--color-text-tertiary));
+  }
+
+  .prompt-reference-chip {
+    /* Visual truncation only: the DOM text stays the full reference, so
+       plain-text extraction, undo, and atomic deletion are unaffected. */
+    display: inline-block;
+    max-width: min(18rem, 60%);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding-inline: 0.35em;
+    border-radius: 0.3em;
+    font-weight: 600;
+    line-height: inherit;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    /* overflow: hidden makes an inline-block's baseline its bottom edge, so
+       baseline alignment would lift the chip above the text line. */
+    vertical-align: bottom;
+    cursor: default;
+  }
+
+  .prompt-reference-chip--skill {
+    color: hsl(var(--color-reference-skill));
+    background-color: hsl(var(--color-reference-skill-surface));
+  }
+
+  .prompt-reference-chip--file {
+    color: hsl(var(--color-reference-file));
+    background-color: hsl(var(--color-reference-file-surface));
+  }
+
+  .prompt-reference-chip--invalid {
+    color: hsl(var(--color-reference-invalid));
+    background-color: hsl(var(--color-reference-invalid-surface));
+  }
+
+  .prompt-reference-chip--invalid::after {
+    content: '!';
+    display: inline-grid;
+    place-items: center;
+    width: 1.05em;
+    height: 1.05em;
+    margin-left: 0.24em;
+    border-radius: 999px;
+    color: hsl(var(--color-reference-invalid));
+    background-color: color-mix(
+      in srgb,
+      hsl(var(--color-reference-invalid)) 16%,
+      transparent
+    );
+    font-size: 0.72em;
+    font-weight: 700;
+    line-height: 1;
+    vertical-align: 0.08em;
+  }
+}
+
+@layer components {
+  .preview-content {
+    @apply text-sm text-text-secondary leading-relaxed;
+  }
+  .preview-content > * + * {
+    @apply mt-2;
+  }
+  .preview-content p {
+    @apply text-text-secondary;
+  }
+  .preview-content h1,
+  .preview-content h2,
+  .preview-content h3,
+  .preview-content h4,
+  .preview-content h5,
+  .preview-content h6 {
+    @apply text-text-primary font-semibold;
+  }
+  .preview-content h1 { @apply text-base mt-3; }
+  .preview-content h2 { @apply text-sm mt-3; }
+  .preview-content h3,
+  .preview-content h4,
+  .preview-content h5,
+  .preview-content h6 { @apply text-sm mt-2; }
+  .preview-content strong { @apply text-text-primary font-semibold; }
+  .preview-content em { @apply italic; }
+  .preview-content mark {
+    @apply bg-accent/20 text-text-primary px-0.5 rounded;
+  }
+  .preview-content code {
+    @apply font-mono text-[12px] bg-surface px-1 py-0.5 rounded text-text-primary;
+  }
+  .preview-content kbd {
+    @apply font-mono text-[11px] bg-surface border border-border px-1 py-0.5 rounded text-text-primary;
+  }
+  .preview-content pre {
+    @apply font-mono text-[12px] bg-surface border border-border rounded px-2 py-1.5 overflow-x-auto;
+  }
+  .preview-content pre code {
+    @apply bg-transparent px-0 py-0 text-text-secondary;
+  }
+  .preview-content ul,
+  .preview-content ol {
+    @apply pl-5;
+  }
+  .preview-content ul { @apply list-disc; }
+  .preview-content ol { @apply list-decimal; }
+  .preview-content li + li { @apply mt-0.5; }
+  .preview-content a {
+    @apply text-accent underline underline-offset-2 hover:text-accent/80;
+  }
+  .preview-content blockquote {
+    @apply border-l-2 border-border pl-3 text-text-tertiary italic;
+  }
+  .preview-content hr {
+    @apply my-3 border-t border-border;
+  }
+  .preview-content table {
+    @apply w-full border-collapse text-xs;
+  }
+  .preview-content th,
+  .preview-content td {
+    @apply border border-border px-2 py-1 text-left align-top;
+  }
+  .preview-content th {
+    @apply bg-surface text-text-primary font-semibold;
+  }
+
+}
+
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Shimmer effect for AI Elements `Shimmer` component (CSS replacement for motion/react). */
+  .ai-shimmer {
+    background-image:
+      linear-gradient(
+        90deg,
+        transparent calc(50% - var(--ai-shimmer-spread, 0px)),
+        hsl(var(--color-shimmer-highlight)),
+        transparent calc(50% + var(--ai-shimmer-spread, 0px))
+      ),
+      linear-gradient(hsl(var(--color-shimmer-base)), hsl(var(--color-shimmer-base)));
+    background-size: 250% 100%, auto;
+    background-repeat: no-repeat, padding-box;
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    animation: ai-shimmer var(--ai-shimmer-duration, 2s) linear infinite;
+  }
+
+  @keyframes ai-shimmer {
+    from { background-position: 100% center; }
+    to { background-position: 0% center; }
+  }
+
+  /* Indeterminate progress bar for CompactingIndicator */
+  .animate-indeterminate-progress {
+    animation: indeterminate-progress 1.5s linear infinite;
+  }
+
+  @keyframes indeterminate-progress {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(300%); }
+  }
+
+  /* Slide-in from bottom for the result-focused ghost's latest-step update. */
+  .animate-slide-in-from-bottom {
+    animation: slide-in-from-bottom 0.2s ease-out;
+  }
+
+  @keyframes slide-in-from-bottom {
+    from { transform: translateY(0.4rem); opacity: 0.4; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+
+  /* Subtle content reveal for the sidebar collapse/expand transition. */
+  .animate-sidebar-content-reveal {
+    animation: sidebar-content-reveal 200ms ease-out forwards;
+  }
+
+  @keyframes sidebar-content-reveal {
+    from { opacity: 0; transform: translateX(-0.25rem); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  /* Detail drawer presence: grow the chat-side column while the pane slides in,
+     then keep it mounted long enough to reverse the motion on close. */
+  .animate-detail-drawer-enter {
+    animation: detail-drawer-enter 200ms ease-out both;
+  }
+
+  .animate-detail-drawer-exit {
+    animation: detail-drawer-exit 200ms ease-in both;
+  }
+
+  @keyframes detail-drawer-enter {
+    from { width: 0; opacity: 0; transform: translateX(1rem); }
+    to { width: var(--detail-drawer-width); opacity: 1; transform: translateX(0); }
+  }
+
+  @keyframes detail-drawer-exit {
+    from { width: var(--detail-drawer-width); opacity: 1; transform: translateX(0); }
+    to { width: 0; opacity: 0; transform: translateX(1rem); }
+  }
+
+  /* Process-region item details: Radix exposes the measured content height,
+     allowing both expansion and collapse to animate without a fixed height. */
+  .animate-process-item[data-state='open'] {
+    animation: process-item-expand 180ms ease-out;
+  }
+
+  .animate-process-item[data-state='closed'] {
+    animation: process-item-collapse 150ms ease-in;
+  }
+
+  @keyframes process-item-expand {
+    from { height: 0; opacity: 0; transform: translateY(-0.25rem); }
+    to {
+      height: min(var(--radix-collapsible-content-height), 40vh);
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes process-item-collapse {
+    from {
+      height: min(var(--radix-collapsible-content-height), 40vh);
+      opacity: 1;
+      transform: translateY(0);
+    }
+    to { height: 0; opacity: 0; transform: translateY(-0.25rem); }
+  }
+
+  /* Agent settings use the measured Radix height so both directions remain
+     smooth as more Agent-specific settings are added. */
+  .animate-settings-collapse {
+    overflow: hidden;
+  }
+
+  .animate-settings-collapse[data-state='open'] {
+    animation: settings-collapse-expand 180ms ease-out;
+  }
+
+  .animate-settings-collapse[data-state='closed'] {
+    animation: settings-collapse-contract 150ms ease-in;
+  }
+
+  @keyframes settings-collapse-expand {
+    from { height: 0; opacity: 0; }
+    to { height: var(--radix-collapsible-content-height); opacity: 1; }
+  }
+
+  @keyframes settings-collapse-contract {
+    from { height: var(--radix-collapsible-content-height); opacity: 1; }
+    to { height: 0; opacity: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-process-item[data-state],
+    .animate-settings-collapse[data-state] {
+      animation: none;
+    }
+  }
+
+}
+
+/* Electron custom titlebar dragging (U2): the preload exposes no startDragging
+   IPC — Electron drags frameless regions via -webkit-app-region. Inert in
+   plain browsers. */
+[data-electron-drag-region] {
+  -webkit-app-region: drag;
+}
+
+/* The conversation column can be much narrower than the viewport when both
+   side panels are open, so the status bar responds to its own inline size. */
+.status-bar-shell {
+  container-type: inline-size;
+}
+
+.status-bar {
+  gap: 0.75rem;
+}
+
+@container (max-width: 560px) {
+  .status-bar-label,
+  .status-bar-path-value,
+  .status-bar-branch-value,
+  .status-bar-separator {
+    display: none;
+  }
+
+  .status-bar-compact-icon {
+    display: block;
+  }
+
+  .status-bar-location,
+  .status-bar-metrics {
+    gap: 0.5rem;
+  }
+}
+
+@container (max-width: 360px) {
+  .status-bar {
+    gap: 0.25rem;
+    padding-inline: 0.5rem;
+  }
+
+  .status-bar-git,
+  .status-bar-effort {
+    display: none;
+  }
+
+  .status-bar-provider-usage .status-bar-compact-icon,
+  .status-bar-session-usage > span:first-child .status-bar-compact-icon {
+    display: none;
+  }
+
+  .status-bar-context-usage {
+    padding-inline: 0;
+  }
+
+  .status-bar-location,
+  .status-bar-metrics,
+  .status-bar-session-usage {
+    gap: 0.375rem;
+  }
+}
+
+/* Windows drops the native top edge for a hidden title bar. Restore that
+   subtle frame while the window is restored, without shifting header layout. */
+[data-windows-restored-frame] {
+  position: relative;
+}
+
+[data-windows-restored-frame]::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 40;
+  height: 1px;
+  background: hsl(var(--color-border));
+  pointer-events: none;
+}

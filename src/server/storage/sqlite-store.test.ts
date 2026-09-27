@@ -1,0 +1,1842 @@
+import '../test-utils/test-env.js';
+import { describe, it, beforeEach } from 'node:test';
+import assert from 'node:assert';
+import { existsSync, mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import type { ChatSession } from '../models/session.js';
+import { SqliteStore } from './sqlite-store.js';
+
+const testDbDir = mkdtempSync(join(tmpdir(), 'sqlite-store-test-'));
+const testDbPath = join(testDbDir, 'data.db');
+
+describe('SqliteStore proactive messages', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(testDbPath);
+    store.resetData();
+  });
+
+  function createMessageInput(overrides: Partial<{
+    senderSessionId: string;
+    recipientEncryptedUserId: string;
+    recipientPlaintextUserId: string;
+    messageContent: string;
+  }> = {}) {
+    return {
+      senderSessionId: overrides.senderSessionId ?? 'session-a',
+      recipientEncryptedUserId: overrides.recipientEncryptedUserId ?? 'enc-b',
+      recipientPlaintextUserId: overrides.recipientPlaintextUserId ?? 'plain-b',
+      messageContent: overrides.messageContent ?? 'Hello B',
+    };
+  }
+
+  it('enqueueProactiveMessage creates a pending message', () => {
+    const msg = store.enqueueProactiveMessage('ws-1', createMessageInput());
+    assert.strictEqual(msg.workspaceId, 'ws-1');
+    assert.strictEqual(msg.status, 'pending');
+    assert.strictEqual(msg.senderSessionId, 'session-a');
+    assert.strictEqual(msg.recipientEncryptedUserId, 'enc-b');
+    assert.strictEqual(msg.recipientPlaintextUserId, 'plain-b');
+    assert.strictEqual(msg.messageContent, 'Hello B');
+    assert.strictEqual(msg.errorReason, null);
+    assert.strictEqual(msg.deliveredAt, null);
+    assert.strictEqual(msg.claimedAt, null);
+    assert.strictEqual(msg.retryCount, 0);
+    assert.ok(msg.id);
+    assert.ok(msg.createdAt);
+    assert.ok(msg.updatedAt);
+  });
+
+  it('listProactiveMessages returns all messages for workspace ordered by created_at ASC', () => {
+    store.enqueueProactiveMessage('ws-1', createMessageInput({ messageContent: 'First' }));
+    store.enqueueProactiveMessage('ws-1', createMessageInput({ messageContent: 'Second' }));
+    store.enqueueProactiveMessage('ws-2', createMessageInput({ messageContent: 'Other ws' }));
+
+    const msgs = store.listProactiveMessages('ws-1');
+    assert.strictEqual(msgs.length, 2);
+    assert.strictEqual(msgs[0].messageContent, 'First');
+    assert.strictEqual(msgs[1].messageContent, 'Second');
+  });
+
+  it('listProactiveMessages with statusFilter returns only matching rows', () => {
+    store.enqueueProactiveMessage('ws-1', createMessageInput({ messageContent: 'Pending' }));
+    const failed = store.enqueueProactiveMessage('ws-1', createMessageInput({ messageContent: 'Failed' }));
+    store.updateProactiveMessage(failed.id, { status: 'failed', errorReason: 'error' });
+
+    const pending = store.listProactiveMessages('ws-1', 'pending');
+    assert.strictEqual(pending.length, 1);
+    assert.strictEqual(pending[0].messageContent, 'Pending');
+
+    const failedList = store.listProactiveMessages('ws-1', 'failed');
+    assert.strictEqual(failedList.length, 1);
+    assert.strictEqual(failedList[0].messageContent, 'Failed');
+  });
+
+  it('getProactiveMessage returns message by id', () => {
+    const msg = store.enqueueProactiveMessage('ws-1', createMessageInput());
+    const found = store.getProactiveMessage(msg.id);
+    assert.ok(found);
+    assert.strictEqual(found.id, msg.id);
+  });
+
+  it('getProactiveMessage returns null for non-existent id', () => {
+    const found = store.getProactiveMessage('non-existent');
+    assert.strictEqual(found, null);
+  });
+
+  it('claimNextPendingMessage atomically claims one pending row', () => {
+    const msg1 = store.enqueueProactiveMessage('ws-1', createMessageInput({ messageContent: 'First' }));
+    store.enqueueProactiveMessage('ws-1', createMessageInput({ messageContent: 'Second' }));
+
+    const claimed = store.claimNextPendingMessage('ws-1');
+    assert.ok(claimed);
+    assert.strictEqual(claimed.id, msg1.id);
+    assert.strictEqual(claimed.status, 'delivering');
+    assert.ok(claimed.claimedAt);
+
+    const claimed2 = store.claimNextPendingMessage('ws-1');
+    assert.ok(claimed2);
+    assert.strictEqual(claimed2.status, 'delivering');
+
+    const claimed3 = store.claimNextPendingMessage('ws-1');
+    assert.strictEqual(claimed3, null);
+  });
+
+  it('claimNextPendingMessage returns null when no pending rows exist', () => {
+    const claimed = store.claimNextPendingMessage('ws-1');
+    assert.strictEqual(claimed, null);
+  });
+
+  it('claimNextPendingMessage skips rows already in delivering', () => {
+    const msg = store.enqueueProactiveMessage('ws-1', createMessageInput());
+    store.updateProactiveMessage(msg.id, { status: 'delivering', claimedAt: new Date().toISOString() });
+
+    const claimed = store.claimNextPendingMessage('ws-1');
+    assert.strictEqual(claimed, null);
+  });
+
+  it('updateProactiveMessage updates status and timestamps', () => {
+    const msg = store.enqueueProactiveMessage('ws-1', createMessageInput());
+    const updated = store.updateProactiveMessage(msg.id, {
+      status: 'delivered',
+      deliveredAt: new Date().toISOString(),
+    });
+
+    assert.ok(updated);
+    assert.strictEqual(updated.status, 'delivered');
+    assert.ok(updated.deliveredAt);
+  });
+
+  it('updateProactiveMessage returns null for non-existent id', () => {
+    const updated = store.updateProactiveMessage('non-existent', { status: 'failed' });
+    assert.strictEqual(updated, null);
+  });
+
+  it('updateProactiveMessage returns existing when no changes provided', () => {
+    const msg = store.enqueueProactiveMessage('ws-1', createMessageInput());
+    const updated = store.updateProactiveMessage(msg.id, {});
+    assert.ok(updated);
+    assert.strictEqual(updated.id, msg.id);
+    assert.strictEqual(updated.status, 'pending');
+  });
+
+  it('deleteProactiveMessage removes the row', () => {
+    const msg = store.enqueueProactiveMessage('ws-1', createMessageInput());
+    const deleted = store.deleteProactiveMessage(msg.id);
+    assert.strictEqual(deleted, true);
+    assert.strictEqual(store.getProactiveMessage(msg.id), null);
+  });
+
+  it('deleteProactiveMessage returns false for non-existent id', () => {
+    const deleted = store.deleteProactiveMessage('non-existent');
+    assert.strictEqual(deleted, false);
+  });
+
+  it('delete workspace cascades to proactive messages', async () => {
+    const ws = await store.create({
+      name: 'Cascade Test',
+      folderPath: '/tmp/cascade-test',
+    });
+    store.enqueueProactiveMessage(ws.id, createMessageInput());
+
+    const before = store.listProactiveMessages(ws.id);
+    assert.strictEqual(before.length, 1);
+
+    await store.delete(ws.id);
+
+    const after = store.listProactiveMessages(ws.id);
+    assert.strictEqual(after.length, 0);
+  });
+
+  it('retry resets failed to pending and increments retry count', () => {
+    const msg = store.enqueueProactiveMessage('ws-1', createMessageInput());
+    store.updateProactiveMessage(msg.id, { status: 'failed', errorReason: 'timeout', retryCount: 1 });
+
+    const updated = store.updateProactiveMessage(msg.id, {
+      status: 'pending',
+      errorReason: null,
+      retryCount: 2,
+    });
+
+    assert.ok(updated);
+    assert.strictEqual(updated.status, 'pending');
+    assert.strictEqual(updated.errorReason, null);
+    assert.strictEqual(updated.retryCount, 2);
+  });
+});
+
+describe('SqliteStore workspace delete cascade', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(testDbPath);
+    store.resetData();
+  });
+
+  function createWorkspace(name: string) {
+    return store.create({ name, folderPath: `/tmp/${name}` });
+  }
+
+  function createSession(workspaceId: string): string {
+    return store.createLocalSession(workspaceId, 'Test session').id;
+  }
+
+  function seedSessionMetadata(sessionId: string): void {
+    store.setSessionMetadata(sessionId, true);
+  }
+
+  function seedAnalyticsCache(workspaceId: string, sessionId: string): void {
+    store.getAnalyticsCache().upsert({
+      sessionId,
+      workspaceId,
+      transcriptMtime: Date.now(),
+      extractedAt: Date.now(),
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      estimatedCostUsd: 0,
+      costCoveragePercent: 100,
+      durationMs: 0,
+      messageCount: 0,
+      firstMessageTs: null,
+      lastMessageTs: null,
+      hasCompaction: false,
+      modelUsage: [],
+      toolUsage: [],
+      dailyStats: [],
+      heatmap: [],
+    });
+  }
+
+  it('deleting a workspace removes sessions, session_metadata, and analytics cache rows', async () => {
+    const ws = await createWorkspace('Cascade Sessions');
+    const sessionId = createSession(ws.id);
+    seedSessionMetadata(sessionId);
+    seedAnalyticsCache(ws.id, sessionId);
+
+    assert.strictEqual(store.listLocalSessions(ws.id).length, 1);
+    assert.strictEqual(Object.keys(store.getSessionMetadata([sessionId])).length, 1);
+    assert.strictEqual(store.getAnalyticsCache().listByWorkspace(ws.id).length, 1);
+
+    await store.delete(ws.id);
+
+    assert.strictEqual(store.listLocalSessions(ws.id).length, 0);
+    assert.strictEqual(Object.keys(store.getSessionMetadata([sessionId])).length, 0);
+    assert.strictEqual(store.getAnalyticsCache().listByWorkspace(ws.id).length, 0);
+  });
+
+  it('deleting a non-existent workspace leaves sessions and cache untouched', async () => {
+    const ws = await createWorkspace('Untouched');
+    const sessionId = createSession(ws.id);
+    seedSessionMetadata(sessionId);
+    seedAnalyticsCache(ws.id, sessionId);
+
+    const deleted = await store.delete('non-existent-id');
+    assert.strictEqual(deleted, false);
+
+    assert.strictEqual(store.listLocalSessions(ws.id).length, 1);
+    assert.strictEqual(Object.keys(store.getSessionMetadata([sessionId])).length, 1);
+    assert.strictEqual(store.getAnalyticsCache().listByWorkspace(ws.id).length, 1);
+  });
+
+  it('deleting one workspace does not affect sessions in another workspace', async () => {
+    const wsA = await createWorkspace('Workspace A');
+    const wsB = await createWorkspace('Workspace B');
+    const sessionA = createSession(wsA.id);
+    const sessionB = createSession(wsB.id);
+
+    seedSessionMetadata(sessionA);
+    seedAnalyticsCache(wsA.id, sessionA);
+
+    seedSessionMetadata(sessionB);
+    seedAnalyticsCache(wsB.id, sessionB);
+
+    await store.delete(wsA.id);
+
+    assert.strictEqual(store.listLocalSessions(wsA.id).length, 0);
+    assert.strictEqual(store.listLocalSessions(wsB.id).length, 1);
+    assert.strictEqual(Object.keys(store.getSessionMetadata([sessionB])).length, 1);
+    assert.strictEqual(store.getAnalyticsCache().listByWorkspace(wsB.id).length, 1);
+  });
+});
+
+describe('SqliteStore workspace prompt history', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(testDbPath);
+    store.resetData();
+  });
+
+  async function createWorkspace(name: string) {
+    return store.create({ name, folderPath: `/tmp/${name}` });
+  }
+
+  it('createPromptHistory records a prompt and returns an entry', async () => {
+    const ws = await createWorkspace('History Test');
+    const entry = store.createPromptHistory(ws.id, 'session-1', 'hello world');
+
+    assert.strictEqual(entry.workspaceId, ws.id);
+    assert.strictEqual(entry.sessionId, 'session-1');
+    assert.strictEqual(entry.prompt, 'hello world');
+    assert.ok(entry.id);
+    assert.ok(entry.createdAt);
+  });
+
+  it('listPromptHistory returns prompts ordered oldest-first', async () => {
+    const ws = await createWorkspace('History Order');
+    store.createPromptHistory(ws.id, 'session-1', 'first');
+    store.createPromptHistory(ws.id, 'session-1', 'second');
+
+    const rows = store.listPromptHistory(ws.id);
+    assert.strictEqual(rows.length, 2);
+    assert.strictEqual(rows[0].prompt, 'first');
+    assert.strictEqual(rows[1].prompt, 'second');
+  });
+
+  it('listPromptHistory isolates workspaces', async () => {
+    const wsA = await createWorkspace('History A');
+    const wsB = await createWorkspace('History B');
+    store.createPromptHistory(wsA.id, 'session-a', 'a');
+    store.createPromptHistory(wsB.id, 'session-b', 'b');
+
+    assert.strictEqual(store.listPromptHistory(wsA.id).length, 1);
+    assert.strictEqual(store.listPromptHistory(wsA.id)[0].prompt, 'a');
+    assert.strictEqual(store.listPromptHistory(wsB.id).length, 1);
+    assert.strictEqual(store.listPromptHistory(wsB.id)[0].prompt, 'b');
+  });
+
+  it('prunePromptHistory removes entries older than retentionDays', async () => {
+    const ws = await createWorkspace('History Prune');
+    store.createPromptHistory(ws.id, 'session-1', 'old', new Date(Date.now() - 31 * 86400_000).toISOString());
+    store.createPromptHistory(ws.id, 'session-1', 'recent');
+
+    const pruned = store.prunePromptHistory(ws.id, 30);
+    assert.strictEqual(pruned, 1);
+
+    const rows = store.listPromptHistory(ws.id);
+    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(rows[0].prompt, 'recent');
+  });
+
+  it('prunePromptHistory returns 0 for non-positive retentionDays', async () => {
+    const ws = await createWorkspace('History No Prune');
+    store.createPromptHistory(ws.id, 'session-1', 'kept');
+
+    assert.strictEqual(store.prunePromptHistory(ws.id, 0), 0);
+    assert.strictEqual(store.prunePromptHistory(ws.id, -1), 0);
+    assert.strictEqual(store.listPromptHistory(ws.id).length, 1);
+  });
+
+  it('deleting a workspace cascades to prompt history', async () => {
+    const ws = await createWorkspace('History Cascade');
+    store.createPromptHistory(ws.id, 'session-1', 'goodbye');
+
+    await store.delete(ws.id);
+
+    assert.strictEqual(store.listPromptHistory(ws.id).length, 0);
+  });
+});
+
+describe('SqliteStore in-memory + resetData', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(':memory:');
+  });
+
+  it('round-trips a workspace create/get/delete against an in-memory database', async () => {
+    const created = await store.create({ name: 'InMem', folderPath: '/tmp/inmem' });
+    const fetched = await store.get(created.id);
+    assert.ok(fetched);
+    assert.strictEqual(fetched!.name, 'InMem');
+
+    const deleted = await store.delete(created.id);
+    assert.strictEqual(deleted, true);
+    assert.strictEqual(await store.get(created.id), null);
+  });
+
+  it('resetData clears rows across every table family', async () => {
+    const ws = await store.create({ name: 'WS', folderPath: '/tmp/ws' });
+    const session = store.createLocalSession(ws.id, 's1');
+    store.createTodo(ws.id, { text: 'do thing' });
+    store.createPromptHistory(ws.id, session.id, 'hello');
+    store.getAnalyticsCache().upsert({
+      sessionId: session.id,
+      workspaceId: ws.id,
+      transcriptMtime: 1,
+      extractedAt: 1,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      estimatedCostUsd: 0,
+      costCoveragePercent: 100,
+      durationMs: 0,
+      messageCount: 0,
+      firstMessageTs: null,
+      lastMessageTs: null,
+      hasCompaction: false,
+      modelUsage: [],
+      toolUsage: [],
+      dailyStats: [],
+      heatmap: [],
+    });
+
+    store.resetData();
+
+    assert.strictEqual((await store.list()).length, 0);
+    assert.strictEqual(store.listLocalSessions().length, 0);
+    assert.strictEqual(store.getTodosByWorkspace(ws.id).length, 0);
+    assert.strictEqual(store.listPromptHistory(ws.id).length, 0);
+    assert.strictEqual(store.getAnalyticsCache().listAll().length, 0);
+  });
+
+  it('resetData on a freshly constructed (empty) store completes without error', () => {
+    assert.doesNotThrow(() => store.resetData());
+  });
+
+  it('close releases the database connection and is idempotent', async () => {
+    store.close();
+    assert.doesNotThrow(() => store.close());
+    await assert.rejects(store.list(), /database connection is not open/i);
+  });
+
+  it('close releases a file-backed database so its directory can be deleted', () => {
+    const storageDir = mkdtempSync(join(tmpdir(), 'sqlite-store-close-'));
+    const fileStore = new SqliteStore(join(storageDir, 'data.db'));
+
+    try {
+      fileStore.close();
+      rmSync(storageDir, { recursive: true });
+      assert.strictEqual(existsSync(storageDir), false);
+    } finally {
+      fileStore.close();
+      rmSync(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  it('separate in-memory stores are isolated from each other', async () => {
+    const other = new SqliteStore(':memory:');
+    const ws = await store.create({ name: 'Owner', folderPath: '/tmp/owner' });
+
+    assert.ok(await store.get(ws.id));
+    assert.strictEqual(await other.get(ws.id), null);
+  });
+});
+
+describe('SqliteStore unified user sessions', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(':memory:');
+    store.resetData();
+  });
+
+  async function createWorkspace(name: string) {
+    return store.create({ name, folderPath: `/tmp/${name}` });
+  }
+
+  it('adds and lists user sessions', async () => {
+    const ws = await createWorkspace('US Test');
+    const bot = store.createBot({ name: 'Test Bot', activeWorkspaceId: ws.id });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+    });
+
+    const session = store.createLocalSession(ws.id, 'Test');
+    store.addUserSession(ws.id, session.id, user.id);
+
+    const sessions = store.listUserSessionsByUser(user.id);
+    assert.strictEqual(sessions.length, 1);
+    assert.strictEqual(sessions[0].sessionId, session.id);
+  });
+
+  it('getActiveUserSession returns null when no active session', async () => {
+    const ws = await createWorkspace('US Active');
+    const bot = store.createBot({ name: 'Test Bot', activeWorkspaceId: ws.id });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+    });
+
+    assert.strictEqual(store.getActiveUserSession(user.id), null);
+  });
+
+  it('setActiveUserSession marks session active and demotes previous', async () => {
+    const ws = await createWorkspace('US Switch');
+    const bot = store.createBot({ name: 'Test Bot', activeWorkspaceId: ws.id });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+    });
+
+    const session1 = store.createLocalSession(ws.id, 'S1');
+    const session2 = store.createLocalSession(ws.id, 'S2');
+    store.addUserSession(ws.id, session1.id, user.id);
+    store.addUserSession(ws.id, session2.id, user.id);
+
+    store.setActiveUserSession(user.id, session1.id);
+    assert.strictEqual(store.getActiveUserSession(user.id), session1.id);
+
+    store.setActiveUserSession(user.id, session2.id);
+    assert.strictEqual(store.getActiveUserSession(user.id), session2.id);
+
+    const all = store.listUserSessionsByUser(user.id);
+    assert.strictEqual(all.length, 2);
+  });
+
+  it('getActiveUserSession self-heals when session is deleted', async () => {
+    const ws = await createWorkspace('US Heal');
+    const bot = store.createBot({ name: 'Test Bot', activeWorkspaceId: ws.id });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+    });
+
+    const session = store.createLocalSession(ws.id, 'S1');
+    store.addUserSession(ws.id, session.id, user.id);
+    store.setActiveUserSession(user.id, session.id);
+    assert.strictEqual(store.getActiveUserSession(user.id), session.id);
+
+    store.deleteLocalSession(session.id);
+    assert.strictEqual(store.getActiveUserSession(user.id), null);
+  });
+
+  it('deleteLocalSession purges browser task state', async () => {
+    const ws = await createWorkspace('Browser Task Purge');
+    const session = store.createLocalSession(ws.id, 'S1');
+    store.createBrowserTask({
+      workspaceId: ws.id,
+      sessionId: session.id,
+      principalId: 'principal-1',
+      runtimeGeneration: 'runtime-1',
+      capabilityId: 'capability-1',
+      taskId: 'task-1',
+      goalEpoch: 'goal-1',
+      lifecycle: 'active',
+    }, []);
+
+    assert.ok(store.getActiveBrowserTask(ws.id, session.id));
+    assert.equal(store.deleteLocalSession(session.id), true);
+    assert.equal(store.getActiveBrowserTask(ws.id, session.id), null);
+  });
+
+  it('getSessionUsers returns linked user ids', async () => {
+    const ws = await createWorkspace('US Owners');
+    const bot = store.createBot({ name: 'Test Bot', activeWorkspaceId: ws.id });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+    });
+
+    const session = store.createLocalSession(ws.id, 'S1');
+    store.addUserSession(ws.id, session.id, user.id);
+
+    const users = store.getSessionUsers(session.id);
+    assert.strictEqual(users.length, 1);
+    assert.strictEqual(users[0], user.id);
+  });
+
+  it('workspace delete cascades to user_sessions', async () => {
+    const ws = await createWorkspace('US Cascade');
+    const bot = store.createBot({ name: 'Test Bot', activeWorkspaceId: ws.id });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+    });
+
+    const session = store.createLocalSession(ws.id, 'S1');
+    store.addUserSession(ws.id, session.id, user.id);
+    store.setActiveUserSession(user.id, session.id);
+
+    assert.strictEqual(store.getActiveUserSession(user.id), session.id);
+
+    await store.delete(ws.id);
+
+    assert.strictEqual(store.getActiveUserSession(user.id), null);
+    assert.strictEqual(store.listUserSessionsByUser(user.id).length, 0);
+  });
+});
+
+describe('SqliteStore bot management (unified schema)', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(':memory:');
+    store.resetData();
+  });
+
+  it('createBot persists a bot and default channels/roles', () => {
+    const bot = store.createBot({ name: 'Test Bot' });
+
+    assert.strictEqual(bot.name, 'Test Bot');
+    assert.ok(bot.id);
+    assert.ok(bot.createdAt);
+    assert.ok(bot.updatedAt);
+    assert.strictEqual(bot.activeWorkspaceId, null);
+
+    const channels = store.listBotChannels(bot.id);
+    assert.strictEqual(channels.length, 2);
+    assert.ok(channels.some((c) => c.channelKey === 'wecom'));
+    assert.ok(channels.some((c) => c.channelKey === 'feishu'));
+
+    const roles = store.listBotRoles(bot.id);
+    assert.strictEqual(roles.length, 3);
+    assert.ok(roles.some((r) => r.roleKey === 'owner'));
+    assert.ok(roles.some((r) => r.roleKey === 'admin'));
+    assert.ok(roles.some((r) => r.roleKey === 'normal'));
+  });
+
+  it('createBot stores and returns a persona', () => {
+    const persona = { prompt: '你是运维助手', mode: 'append' as const };
+    const bot = store.createBot({ name: 'Persona Bot', persona });
+
+    assert.deepStrictEqual(bot.persona, persona);
+    const found = store.getBot(bot.id);
+    assert.deepStrictEqual(found?.persona, persona);
+  });
+
+  it('getBot returns null for unknown id', () => {
+    assert.strictEqual(store.getBot('unknown'), null);
+  });
+
+  it('listBots returns all bots', () => {
+    store.createBot({ name: 'A' });
+    store.createBot({ name: 'B' });
+
+    const bots = store.listBots();
+    assert.strictEqual(bots.length, 2);
+    assert.ok(bots.some((b) => b.name === 'A'));
+    assert.ok(bots.some((b) => b.name === 'B'));
+  });
+
+  it('listBotsForWorkspace filters by active workspace', () => {
+    store.createBot({ name: 'In WS1', activeWorkspaceId: 'ws-1' });
+    store.createBot({ name: 'In WS2', activeWorkspaceId: 'ws-2' });
+    store.createBot({ name: 'Unbound' });
+
+    const ws1Bots = store.listBotsForWorkspace('ws-1');
+    assert.strictEqual(ws1Bots.length, 1);
+    assert.strictEqual(ws1Bots[0].name, 'In WS1');
+  });
+
+  it('updateBot modifies name and workspace', () => {
+    const bot = store.createBot({ name: 'Original' });
+    const updated = store.updateBot(bot.id, {
+      name: 'Renamed',
+      activeWorkspaceId: 'ws-updated',
+    });
+
+    assert.ok(updated);
+    assert.strictEqual(updated!.name, 'Renamed');
+    assert.strictEqual(updated!.activeWorkspaceId, 'ws-updated');
+
+    const fromDb = store.getBot(bot.id);
+    assert.strictEqual(fromDb!.name, 'Renamed');
+  });
+
+  it('updateBot clears persona when set to null', () => {
+    const persona = { prompt: '你是运维助手', mode: 'append' as const };
+    const bot = store.createBot({ name: 'Persona Bot', persona });
+    assert.deepStrictEqual(store.getBot(bot.id)?.persona, persona);
+
+    const updated = store.updateBot(bot.id, { persona: null });
+    assert.strictEqual(updated?.persona, undefined);
+    assert.strictEqual(store.getBot(bot.id)?.persona, undefined);
+  });
+
+  it('updateBot returns null for unknown id', () => {
+    const updated = store.updateBot('unknown', { name: 'X' });
+    assert.strictEqual(updated, null);
+  });
+
+  it('deleteBot removes the bot and cascades to channels, roles, users, audit logs', () => {
+    const bot = store.createBot({ name: 'Test Bot' });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+    });
+    store.recordAuditLog({ botId: bot.id, actorType: 'system', actorId: 'test', eventType: 'created' });
+
+    assert.strictEqual(store.deleteBot(bot.id), true);
+    assert.strictEqual(store.getBot(bot.id), null);
+    assert.strictEqual(store.listBotChannels(bot.id).length, 0);
+    assert.strictEqual(store.listBotRoles(bot.id).length, 0);
+    assert.strictEqual(store.listBotUsers(bot.id).length, 0);
+    assert.strictEqual(store.listAuditLogs(bot.id).length, 0);
+    assert.strictEqual(store.getBotUser(user.id), null);
+  });
+
+  it('deleteBot returns false for unknown id', () => {
+    assert.strictEqual(store.deleteBot('unknown'), false);
+  });
+
+  it('createBotUser and getBotUser round-trip', () => {
+    const bot = store.createBot({ name: 'Test Bot' });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+      plaintextUserId: 'plain-1',
+    });
+
+    assert.strictEqual(user.botId, bot.id);
+    assert.strictEqual(user.channelId, channel.id);
+    assert.strictEqual(user.roleId, role!.id);
+    assert.strictEqual(user.channelUserId, 'user-1');
+    assert.strictEqual(user.plaintextUserId, 'plain-1');
+    assert.strictEqual(user.resolutionStatus, 'resolved');
+    assert.strictEqual(user.roleKey, 'normal');
+
+    const found = store.getBotUser(user.id);
+    assert.ok(found);
+    assert.strictEqual(found!.channelUserId, 'user-1');
+    assert.strictEqual(found!.plaintextUserId, 'plain-1');
+  });
+
+  it('getBotUserByChannelIdentity finds user by channel identity', () => {
+    const bot = store.createBot({ name: 'Test Bot' });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+
+    store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+    });
+
+    const found = store.getBotUserByChannelIdentity(bot.id, channel.id, 'user-1');
+    assert.ok(found);
+    assert.strictEqual(found!.channelUserId, 'user-1');
+
+    const notFound = store.getBotUserByChannelIdentity(bot.id, channel.id, 'unknown');
+    assert.strictEqual(notFound, null);
+  });
+
+  it('listBotUsers returns users scoped to bot', () => {
+    const bot1 = store.createBot({ name: 'Bot 1' });
+    const bot2 = store.createBot({ name: 'Bot 2' });
+    const ch1 = store.listBotChannels(bot1.id)[0];
+    const r1 = store.getBotRoleByKey(bot1.id, 'normal');
+    assert.ok(r1);
+    const ch2 = store.listBotChannels(bot2.id)[0];
+    const r2 = store.getBotRoleByKey(bot2.id, 'normal');
+    assert.ok(r2);
+
+    store.createBotUser({ botId: bot1.id, channelId: ch1.id, roleId: r1!.id, channelUserId: 'u1' });
+    store.createBotUser({ botId: bot2.id, channelId: ch2.id, roleId: r2!.id, channelUserId: 'u2' });
+
+    assert.strictEqual(store.listBotUsers(bot1.id).length, 1);
+    assert.strictEqual(store.listBotUsers(bot2.id).length, 1);
+  });
+
+  it('updateBotUser changes role and plaintext', () => {
+    const bot = store.createBot({ name: 'Test Bot' });
+    const channel = store.listBotChannels(bot.id)[0];
+    const normalRole = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(normalRole);
+    const adminRole = store.getBotRoleByKey(bot.id, 'admin');
+    assert.ok(adminRole);
+
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: normalRole!.id,
+      channelUserId: 'user-1',
+    });
+
+    const updated = store.updateBotUser(user.id, { roleId: adminRole!.id, plaintextUserId: 'resolved-1' });
+    assert.ok(updated);
+    assert.strictEqual(updated!.roleId, adminRole!.id);
+    assert.strictEqual(updated!.roleKey, 'admin');
+    assert.strictEqual(updated!.plaintextUserId, 'resolved-1');
+    assert.strictEqual(updated!.resolutionStatus, 'resolved');
+  });
+
+  it('deleteBotUser removes user and linked sessions', async () => {
+    const ws = await store.create({ name: 'WS', folderPath: '/tmp/ws' });
+    const bot = store.createBot({ name: 'Test Bot', activeWorkspaceId: ws.id });
+    const channel = store.listBotChannels(bot.id)[0];
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+    const user = store.createBotUser({
+      botId: bot.id,
+      channelId: channel.id,
+      roleId: role!.id,
+      channelUserId: 'user-1',
+    });
+
+    const session = store.createLocalSession(ws.id, 'S1');
+    store.addUserSession(ws.id, session.id, user.id);
+    store.setActiveUserSession(user.id, session.id);
+
+    assert.strictEqual(store.deleteBotUser(user.id), true);
+    assert.strictEqual(store.getBotUser(user.id), null);
+    assert.strictEqual(store.listUserSessionsByUser(user.id).length, 0);
+  });
+
+  it('recordAuditLog creates entries ordered newest-first', () => {
+    const bot = store.createBot({ name: 'Audit Bot' });
+    store.recordAuditLog({ botId: bot.id, actorType: 'system', actorId: 'a', eventType: 'one' });
+    store.recordAuditLog({ botId: bot.id, actorType: 'user', actorId: 'b', eventType: 'two' });
+
+    const logs = store.listAuditLogs(bot.id);
+    assert.strictEqual(logs.length, 2);
+    assert.strictEqual(logs[0].eventType, 'two');
+    assert.strictEqual(logs[1].eventType, 'one');
+    assert.strictEqual(logs[0].actorType, 'user');
+  });
+
+  it('pruneBotAuditLogs deletes rows older than the retention cutoff and keeps newer rows (U6, KTD-22)', () => {
+    const bot = store.createBot({ name: 'Audit Bot' });
+    store.recordAuditLog({ botId: bot.id, actorType: 'system', actorId: 'a', eventType: 'fresh' });
+    // Negative retention pushes the cutoff into the future so every row is
+    // "expired" — the same deterministic stand-in pruneBrowserAudit uses.
+    const deletedAll = store.pruneBotAuditLogs({ retentionDays: -1 });
+    assert.strictEqual(deletedAll, 1);
+    assert.deepStrictEqual(store.listAuditLogs(bot.id), []);
+
+    store.recordAuditLog({ botId: bot.id, actorType: 'system', actorId: 'a', eventType: 'fresh' });
+    // Default retention (90 days) keeps rows written now.
+    assert.strictEqual(store.pruneBotAuditLogs(), 0);
+    assert.strictEqual(store.listAuditLogs(bot.id).length, 1);
+  });
+
+  it('pruneBotAuditLogs scopes deletion by age across bots', () => {
+    const a = store.createBot({ name: 'A' });
+    const b = store.createBot({ name: 'B' });
+    store.recordAuditLog({ botId: a.id, actorType: 'system', actorId: 'x', eventType: 'old' });
+    store.recordAuditLog({ botId: b.id, actorType: 'system', actorId: 'x', eventType: 'old' });
+    const deleted = store.pruneBotAuditLogs({ retentionDays: -1 });
+    assert.strictEqual(deleted, 2);
+    assert.deepStrictEqual(store.listAuditLogs(a.id), []);
+    assert.deepStrictEqual(store.listAuditLogs(b.id), []);
+  });
+
+  it('migration state stores and retrieves version and snapshot', () => {
+    assert.strictEqual(store.getMigrationVersion(), null);
+
+    store.setMigrationState(1, new Date().toISOString(), { workspaces: 3 });
+    assert.strictEqual(store.getMigrationVersion(), 1);
+  });
+
+  it('setSessionBotId links sessions to a bot', () => {
+    const bot = store.createBot({ name: 'Test Bot', activeWorkspaceId: 'ws-1' });
+    const session = store.createLocalSession('ws-1', 'Test');
+
+    store.setSessionBotId(session.id, bot.id);
+    const botSessions = store.listSessionsForBot(bot.id);
+    assert.strictEqual(botSessions.length, 1);
+    assert.strictEqual(botSessions[0].id, session.id);
+    assert.strictEqual(botSessions[0].botId, bot.id);
+  });
+
+  it('bot channel config encrypts and decrypts at rest', () => {
+    const bot = store.createBot({ name: 'Encrypted' });
+    const channel = store.listBotChannels(bot.id)[0];
+    const config: import('../models/bot.js').BotChannelSettings = {
+      wecom: { botId: 'wecom-bot-id', botSecret: 'wecom-bot-secret', corpSecret: 'wecom-corp-secret' },
+    };
+
+    store.updateBotChannel(channel.id, config);
+    const updated = store.getBotChannel(channel.id);
+    assert.deepStrictEqual(updated!.config, config);
+
+    const row = (store as unknown as { db: { prepare: (sql: string) => { get: (id: string) => { config_json: string } | undefined } } }).db
+      .prepare('SELECT config_json FROM bot_channels WHERE id = ?')
+      .get(channel.id);
+    assert.ok(row);
+    const json = JSON.parse(row!.config_json);
+    assert.notStrictEqual(json.wecom.botSecret, 'wecom-bot-secret');
+  });
+
+  it('bot role permissions round-trip', () => {
+    const bot = store.createBot({ name: 'Role Test' });
+    const role = store.getBotRoleByKey(bot.id, 'normal');
+    assert.ok(role);
+
+    const newPerms: import('../models/bot.js').BotRolePolicy = {
+      normalToolPolicy: {
+        posture: 'allow-all',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'allow',
+          shell: 'allow',
+          network: 'allow',
+          subagents: 'allow',
+          reply: 'allow',
+        },
+      },
+      skillAllowlist: ['skill-a'],
+      bashWhitelist: ['ls'],
+    } as import('../models/bot.js').BotRolePolicy;
+
+    store.updateBotRole(role!.id, newPerms);
+    const updated = store.getBotRole(role!.id);
+    // The read path sanitizes (U2): missing categories backfill fail-closed
+    // (browser: 'deny') and the new fields backfill to safe defaults.
+    assert.deepStrictEqual(updated!.permissions, {
+      normalToolPolicy: {
+        posture: 'allow-all',
+        categoryDefaults: {
+          fileRead: 'allow',
+          fileWrite: 'allow',
+          shell: 'allow',
+          network: 'allow',
+          subagents: 'allow',
+          reply: 'allow',
+          browser: 'deny',
+        },
+        overrides: undefined,
+      },
+      skillAllowlist: ['skill-a'],
+      bashWhitelist: ['ls'],
+      disabledSkills: [],
+      passlistRules: [],
+      networkAllowlist: [],
+    });
+  });
+
+  it('bot role persona round-trip', () => {
+    const bot = store.createBot({ name: 'Role Persona Test' });
+    const role = store.getBotRoleByKey(bot.id, 'admin');
+    assert.ok(role);
+
+    const persona = { prompt: 'Admin helper', mode: 'replace' as const };
+    store.updateBotRole(role!.id, role!.permissions, persona);
+    const updated = store.getBotRole(role!.id);
+    assert.deepStrictEqual(updated!.persona, persona);
+  });
+});
+
+describe('SqliteStore session fast mode', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(':memory:');
+    store.resetData();
+  });
+
+  async function createWorkspace(name: string) {
+    return store.create({ name, folderPath: `/tmp/${name}` });
+  }
+
+  it('creates sessions with fastMode off by default', async () => {
+    const ws = await createWorkspace('Fast Default');
+    const session = store.createLocalSession(ws.id, 'Test');
+    assert.strictEqual(session.fastMode, false);
+    assert.strictEqual(store.getLocalSession(session.id)?.fastMode, false);
+  });
+
+  it('persists fastMode through updateLocalSession', async () => {
+    const ws = await createWorkspace('Fast Update');
+    const session = store.createLocalSession(ws.id, 'Test');
+    const updated = store.updateLocalSession(session.id, { fastMode: true });
+    assert.strictEqual(updated?.fastMode, true);
+    assert.strictEqual(store.getLocalSession(session.id)?.fastMode, true);
+  });
+
+  it('preserves existing fastMode during syncSdkSession', async () => {
+    const ws = await createWorkspace('Fast Sync');
+    const session = store.createLocalSession(ws.id, 'Test');
+    store.updateLocalSession(session.id, { fastMode: true });
+    const sdkSession: ChatSession = { ...session, isDraft: false };
+    store.syncSdkSession(sdkSession);
+    assert.strictEqual(store.getLocalSession(session.id)?.fastMode, true);
+  });
+});
+
+describe('SqliteStore Codex session settings', { concurrency: false }, () => {
+  it('persists and clears per-session model, effort, and speed', async () => {
+    const store = new SqliteStore(':memory:');
+    store.resetData();
+    const workspace = await store.create({ name: 'Codex Settings', folderPath: '/tmp/codex-settings' });
+    const session = store.createLocalSession(workspace.id, 'Codex');
+
+    const configured = store.updateLocalSession(session.id, {
+      codexModel: 'gpt-5.6-codex',
+      codexEffort: 'high',
+      codexSpeed: 'fast',
+    });
+    assert.strictEqual(configured?.codexModel, 'gpt-5.6-codex');
+    assert.strictEqual(configured?.codexEffort, 'high');
+    assert.strictEqual(configured?.codexSpeed, 'fast');
+
+    const cleared = store.updateLocalSession(session.id, {
+      codexModel: null,
+      codexEffort: null,
+      codexSpeed: null,
+    });
+    assert.strictEqual(cleared?.codexModel, undefined);
+    assert.strictEqual(cleared?.codexEffort, undefined);
+    assert.strictEqual(cleared?.codexSpeed, undefined);
+  });
+});
+
+describe('SqliteStore provider fast mode capability', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(':memory:');
+    store.resetData();
+  });
+
+  it('marks known unsupported models as not supporting fast mode', () => {
+    const provider = store.createProvider({
+      name: 'Opus',
+      baseUrl: 'http://test',
+      authToken: 'test',
+      model: 'claude-3-opus-20240229',
+    });
+    assert.strictEqual(provider.supportsFastMode, false);
+    assert.strictEqual(store.getProvider(provider.id)?.supportsFastMode, false);
+  });
+
+  it('marks known supported models as supporting fast mode', () => {
+    const provider = store.createProvider({
+      name: 'Haiku',
+      baseUrl: 'http://test',
+      authToken: 'test',
+      model: 'claude-3-5-haiku-20241022',
+    });
+    assert.strictEqual(provider.supportsFastMode, true);
+  });
+
+  it('defaults no model to supporting fast mode', () => {
+    const provider = store.createProvider({
+      name: 'Default',
+      baseUrl: 'http://test',
+      authToken: 'test',
+    });
+    assert.strictEqual(provider.supportsFastMode, true);
+    assert.strictEqual(store.getProvider(provider.id)?.protocol, 'anthropic');
+  });
+
+  it('updates capability when model changes', () => {
+    const provider = store.createProvider({
+      name: 'Switch',
+      baseUrl: 'http://test',
+      authToken: 'test',
+      model: 'claude-3-5-haiku',
+    });
+    assert.strictEqual(provider.supportsFastMode, true);
+    const updated = store.updateProvider(provider.id, { model: 'claude-3-opus' });
+    assert.strictEqual(updated?.supportsFastMode, false);
+  });
+
+  it('persists Responses protocol and preserves an omitted secret', () => {
+    const provider = store.createProvider({
+      name: 'Enterprise',
+      baseUrl: 'https://example.com/v1',
+      authToken: 'stored-secret',
+      protocol: 'openai-responses',
+      model: 'enterprise-model',
+    });
+    const updated = store.updateProvider(provider.id, { name: 'Renamed' });
+
+    assert.strictEqual(updated?.protocol, 'openai-responses');
+    assert.strictEqual(updated?.authToken, 'stored-secret');
+  });
+
+  it('records trusted preset provenance for legacy Provider input', () => {
+    const provider = store.createProvider({
+      name: 'Kimi legacy',
+      baseUrl: 'https://api.kimi.com/coding/v1',
+      authToken: 'stored-secret',
+      protocol: 'openai-responses',
+      model: 'kimi-for-coding',
+    });
+
+    assert.deepStrictEqual(provider.configuration?.preset, { id: 'kimi', version: 2 });
+  });
+
+  it('keeps legacy Provider provenance aligned when its endpoint changes', () => {
+    const provider = store.createProvider({
+      name: 'Legacy endpoint',
+      baseUrl: 'https://example.com/v1',
+      authToken: 'stored-secret',
+      protocol: 'openai-responses',
+    });
+
+    const kimi = store.updateProvider(provider.id, { baseUrl: 'https://api.kimi.com/coding/v1' });
+    assert.deepStrictEqual(kimi?.configuration?.preset, { id: 'kimi', version: 2 });
+
+    const custom = store.updateProvider(provider.id, { baseUrl: 'https://example.com/v2' });
+    assert.strictEqual(custom?.configuration?.preset, undefined);
+  });
+
+  it('persists the versioned nested configuration without dual-writing legacy columns', () => {
+    const provider = store.createProvider({
+      name: 'Multi protocol',
+      authToken: 'shared-secret',
+      configuration: {
+        schemaVersion: 1,
+        endpoints: {
+          anthropic: { enabled: true, baseUrl: 'https://example.com/anthropic' },
+          openai: { enabled: true, baseUrl: 'https://example.com/openai', format: 'openai-chat-completions' },
+        },
+        models: { claudeCode: 'claude-model', codex: 'codex-model', openCode: 'open-model' },
+        openCode: { protocol: 'openai' },
+        claude: {},
+        codex: {
+          promptCacheRouting: 'auto',
+          thinking: 'required',
+          effortByModel: { 'codex-model': ['low', 'high'] },
+          effortWireMappingByModel: { 'codex-model': { low: 'low', high: 'max' } },
+        },
+        preset: { id: 'custom', version: 1 },
+      },
+    });
+    const raw = (store as unknown as { db: { prepare: (sql: string) => { get: (id: string) => unknown } } }).db
+      .prepare('SELECT base_url, model, options_json FROM providers WHERE id = ?').get(provider.id) as {
+        base_url: string; model: string | null; options_json: string;
+      };
+    assert.strictEqual(raw.base_url, '');
+    assert.strictEqual(raw.model, null);
+    assert.deepStrictEqual(JSON.parse(raw.options_json), provider.configuration);
+    assert.strictEqual(provider.baseUrl, 'https://example.com/openai');
+    assert.equal(provider.configuration?.codex.modelProfiles?.['codex-model']?.promptCacheRouting, 'auto');
+    assert.equal(provider.configuration?.codex.modelProfiles?.['codex-model']?.thinking, 'required');
+    assert.equal(provider.configuration?.codex.modelProfiles?.['codex-model']?.effortWireMapping?.high, 'max');
+  });
+
+  it('rejects malformed Codex capability and wire-mapping metadata', () => {
+    const configuration = {
+      schemaVersion: 1,
+      endpoints: { openai: { enabled: true, baseUrl: 'https://example.com/v1', format: 'openai-chat-completions' } },
+      models: { codex: 'model' }, openCode: { protocol: 'openai' }, claude: {},
+      codex: { effortWireMappingByModel: { model: { high: '' } } },
+    } as const;
+    assert.throws(
+      () => store.createProvider({ name: 'Invalid capability', authToken: 'secret', configuration: configuration as never }),
+      /effort wire mapping is invalid/,
+    );
+  });
+
+  it('round-trips canonical Codex and OpenCode model profiles', () => {
+    const provider = store.createProvider({
+      name: 'Profiled', authToken: 'secret',
+      configuration: {
+        schemaVersion: 1,
+        endpoints: { openai: { enabled: true, baseUrl: 'https://example.com/v1', format: 'openai-responses' } },
+        models: { codex: 'model', openCode: 'model' },
+        openCode: {
+          protocol: 'openai',
+          modelProfiles: {
+            model: {
+              contextWindow: 128_000, maxOutputTokens: 16_000, reasoning: true, toolCall: true,
+              inputModalities: ['text', 'image'], outputModalities: ['text'], reasoningField: 'reasoning_details',
+              variants: { high: { reasoningEffort: 'high', reasoningSummary: 'concise' } },
+            },
+          },
+        },
+        claude: {},
+        codex: {
+          modelProfiles: {
+            model: {
+              contextWindow: 128_000, autoCompactTokenLimit: 96_000, promptCacheRouting: 'auto',
+              thinking: 'supported', supportedEfforts: ['low', 'high'],
+              effortWireMapping: { low: 'minimal', high: 'max' }, reasoningSummary: 'auto',
+              supportsReasoningSummaries: true, verbosity: 'medium',
+            },
+          },
+        },
+      },
+    });
+
+    assert.deepStrictEqual(provider.configuration?.codex.modelProfiles?.model, {
+      contextWindow: 128_000, autoCompactTokenLimit: 96_000, promptCacheRouting: 'auto',
+      thinking: 'supported', supportedEfforts: ['low', 'high'],
+      effortWireMapping: { low: 'minimal', high: 'max' }, reasoningSummary: 'auto',
+      supportsReasoningSummaries: true, verbosity: 'medium',
+    });
+    assert.deepStrictEqual(provider.configuration?.openCode.modelProfiles?.model, {
+      contextWindow: 128_000, maxOutputTokens: 16_000, reasoning: true, toolCall: true,
+      inputModalities: ['text', 'image'], outputModalities: ['text'], reasoningField: 'reasoning_details',
+      variants: { high: { reasoningEffort: 'high', reasoningSummary: 'concise' } },
+    });
+  });
+
+  it('rejects unsafe model and variant profile keys', () => {
+    const unsafeCodex = JSON.parse('{"__proto__":{"contextWindow":1000}}');
+    const unsafeVariants = JSON.parse('{"constructor":{"reasoningEffort":"high"}}');
+    const base = {
+      schemaVersion: 1,
+      endpoints: { openai: { enabled: true, baseUrl: 'https://example.com/v1', format: 'openai-responses' } },
+      models: { codex: 'model', openCode: 'model' }, openCode: { protocol: 'openai' }, claude: {}, codex: {},
+    } as const;
+    assert.throws(() => store.createProvider({
+      name: 'Unsafe model', authToken: 'secret',
+      configuration: { ...base, codex: { modelProfiles: unsafeCodex } } as never,
+    }), /model profile key is invalid/);
+    assert.throws(() => store.createProvider({
+      name: 'Unsafe variant', authToken: 'secret',
+      configuration: {
+        ...base, openCode: { protocol: 'openai', modelProfiles: { model: { variants: unsafeVariants } } },
+      } as never,
+    }), /variant key is invalid/);
+  });
+
+  it('rejects invalid profile token limits and protocol-specific variants', () => {
+    const base = {
+      schemaVersion: 1,
+      endpoints: { openai: { enabled: true, baseUrl: 'https://example.com/v1', format: 'openai-responses' } },
+      models: { codex: 'model', openCode: 'model' }, openCode: { protocol: 'openai' }, claude: {}, codex: {},
+    } as const;
+    assert.throws(() => store.createProvider({
+      name: 'Invalid limit', authToken: 'secret',
+      configuration: { ...base, codex: { modelProfiles: { model: { contextWindow: 100, autoCompactTokenLimit: 101 } } } } as never,
+    }), /cannot exceed context window/);
+    assert.throws(() => store.createProvider({
+      name: 'Invalid variant', authToken: 'secret',
+      configuration: {
+        ...base,
+        openCode: { protocol: 'openai', modelProfiles: { model: { variants: { high: { thinkingBudgetTokens: 4096 } } } } },
+      } as never,
+    }), /incompatible with OpenAI/);
+  });
+
+  it('accepts disabled empty Custom preset endpoints as an editable unavailable draft', () => {
+    const provider = store.createProvider({
+      name: 'Custom draft', authToken: 'secret',
+      configuration: {
+        schemaVersion: 1,
+        endpoints: {
+          anthropic: { enabled: false, baseUrl: '' },
+          openai: { enabled: false, baseUrl: '', format: 'openai-responses' },
+        },
+        models: {}, openCode: { protocol: 'anthropic' }, claude: {}, codex: {},
+        preset: { id: 'custom', version: 1 },
+      },
+    });
+    assert.equal(provider.configuration?.endpoints.anthropic?.enabled, false);
+    assert.equal(provider.configuration?.endpoints.anthropic?.baseUrl, '');
+  });
+
+  it('preserves the coding credential for omitted, undefined, and blank direct updates', () => {
+    const provider = store.createProvider({
+      name: 'Credential', baseUrl: 'https://example.com', authToken: 'stored-secret',
+    });
+    assert.strictEqual(store.updateProvider(provider.id, {})?.authToken, 'stored-secret');
+    assert.strictEqual(store.updateProvider(provider.id, { authToken: undefined })?.authToken, 'stored-secret');
+    assert.strictEqual(store.updateProvider(provider.id, { authToken: '   ' })?.authToken, 'stored-secret');
+  });
+
+  it('switches the single default atomically', () => {
+    const first = store.createProvider({
+      name: 'First', baseUrl: 'https://first.example', authToken: 'first', isDefault: true,
+    });
+    const second = store.createProvider({
+      name: 'Second', baseUrl: 'https://second.example', authToken: 'second', isDefault: true,
+    });
+    assert.strictEqual(store.getProvider(first.id)?.isDefault, false);
+    assert.strictEqual(store.getProvider(second.id)?.isDefault, true);
+    assert.strictEqual(store.listProviders().filter((provider) => provider.isDefault).length, 1);
+  });
+
+  it('counts historical session references before Provider deletion without reassigning them', async () => {
+    const workspace = await store.create({ name: 'Provider impact', folderPath: '/tmp/provider-impact' });
+    const provider = store.createProvider({
+      name: 'Referenced', baseUrl: 'https://example.com', authToken: 'secret',
+    });
+    store.createLocalSession(workspace.id, 'one', 'manual', provider.id);
+    store.createLocalSession(workspace.id, 'two', 'manual', provider.id);
+    store.createLocalSession(workspace.id, 'other');
+
+    assert.strictEqual(store.countSessionsByProviderId(provider.id), 2);
+    assert.strictEqual(store.deleteProvider(provider.id), true);
+    assert.strictEqual(store.countSessionsByProviderId(provider.id), 2);
+  });
+});
+
+describe('SqliteStore unified schema migration', { concurrency: false }, () => {
+  const migrationDbPath = join(testDbDir, 'migration-data.db');
+
+  beforeEach(() => {
+    try {
+      const store = new SqliteStore(migrationDbPath);
+      store.resetData();
+    } catch {
+      // If the DB does not exist yet, resetData is not needed.
+    }
+  });
+
+  it('fresh database initializes to the latest schema version with new tables', () => {
+    const freshStore = new SqliteStore(':memory:');
+    // v6: browser_audit (U8); v7: global todos (U1); v8: todos.content;
+    // v9: Todo execution; v10: bot_escalation_ledger; v11: browser operations;
+    // v12: versioned Provider configuration; v13: Provider preset provenance.
+    assert.strictEqual(freshStore.getMigrationVersion(), 13);
+
+    // Old tables should not exist
+    const tables = (freshStore as unknown as { db: { prepare: (sql: string) => { all: () => Array<{ name: string }> } } }).db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all();
+    const tableNames = tables.map((t) => t.name);
+    assert.ok(!tableNames.includes('bot_members'));
+    assert.ok(!tableNames.includes('wecom_user_sessions'));
+    assert.ok(!tableNames.includes('wecom_user_id_mappings'));
+    assert.ok(!tableNames.includes('wecom_workspace_users'));
+    assert.ok(!tableNames.includes('feishu_user_sessions'));
+    assert.ok(!tableNames.includes('feishu_active_sessions'));
+    assert.ok(!tableNames.includes('feishu_workspace_users'));
+    assert.ok(!tableNames.includes('feishu_bot_binding'));
+
+    // New tables should exist
+    assert.ok(tableNames.includes('bot_channels'));
+    assert.ok(tableNames.includes('bot_roles'));
+    assert.ok(tableNames.includes('bot_users'));
+    assert.ok(tableNames.includes('user_sessions'));
+    assert.ok(tableNames.includes('browser_audit'));
+    assert.ok(tableNames.includes('bot_escalation_ledger'));
+    assert.ok(tableNames.includes('browser_operation_ledger'));
+  });
+
+  it('re-running migration on already-migrated database does nothing', () => {
+    const firstStore = new SqliteStore(migrationDbPath);
+    firstStore.createBot({ name: 'Pre-migration Bot' });
+
+    const version = firstStore.getMigrationVersion();
+    assert.strictEqual(version, 13);
+
+    // Re-opening should not throw or advance the version.
+    const secondStore = new SqliteStore(migrationDbPath);
+    assert.strictEqual(secondStore.getMigrationVersion(), 13);
+    assert.strictEqual(secondStore.listBots().length, 1);
+  });
+});
+
+describe('SqliteStore browser_audit pruning (F18)', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(testDbPath);
+    store.resetData();
+  });
+
+  function recordRows(workspaceId: string, count: number): string[] {
+    const ids: string[] = [];
+    for (let i = 0; i < count; i += 1) {
+      ids.push(
+        store.recordBrowserAudit({
+          workspaceId,
+          sessionId: 's1',
+          category: 'tool',
+          action: 'mcp__comate-browser__open',
+          outcome: 'ok',
+        }).id,
+      );
+    }
+    return ids;
+  }
+
+  it('prunes rows beyond the retention age', () => {
+    recordRows('ws-1', 3);
+    // Negative retention pushes the cutoff into the future so every row is
+    // "expired" — a deterministic stand-in for backdated rows (recordBrowserAudit
+    // always stamps now()).
+    const deleted = store.pruneBrowserAudit({ retentionDays: -1 });
+    assert.strictEqual(deleted, 3);
+    assert.deepStrictEqual(store.listBrowserAudit('ws-1'), []);
+  });
+
+  it('keeps the newest rows when over the row cap', () => {
+    const ids = recordRows('ws-1', 5);
+    const deleted = store.pruneBrowserAudit({ maxRows: 2 });
+    assert.strictEqual(deleted, 3);
+    const remaining = store.listBrowserAudit('ws-1').map((entry) => entry.id);
+    assert.deepStrictEqual(remaining.sort(), [ids[3], ids[4]].sort());
+  });
+
+  it('is a no-op within bounds', () => {
+    recordRows('ws-1', 2);
+    assert.strictEqual(store.pruneBrowserAudit(), 0);
+    assert.strictEqual(store.listBrowserAudit('ws-1').length, 2);
+  });
+});
+
+describe('SqliteStore bot_escalation_ledger (U8, KTD-16)', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(testDbPath);
+    store.resetData();
+  });
+
+  function createInput(id: string, overrides: Record<string, unknown> = {}) {
+    return {
+      id,
+      botId: 'bot-1',
+      sessionId: 'sess-1',
+      audience: 'self' as const,
+      requester: { channel: 'wecom', channelUserId: 'owner-1', role: 'owner' },
+      recipients: [{ userId: 'owner-1', taskId: id }],
+      rulePayload: { toolName: 'Bash', command: `echo ${id}` },
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      ...overrides,
+    };
+  }
+
+  const RESOLUTION = {
+    approver: { type: 'wecom', channelKey: 'wecom', channelUserId: 'owner-1' },
+    decision: 'allow' as const,
+    source: 'self-approval',
+  };
+
+  it('create + get round-trips every field', () => {
+    const entry = store.createBotEscalation(createInput('req-1'));
+    assert.strictEqual(entry.state, 'pending');
+    const fetched = store.getBotEscalation('req-1');
+    assert.deepStrictEqual(fetched, entry);
+  });
+
+  it('transitionBotEscalation is first-writer-wins (atomic pending guard)', () => {
+    store.createBotEscalation(createInput('req-1'));
+    const first = store.transitionBotEscalation('req-1', 'approved', RESOLUTION, new Date().toISOString());
+    assert.ok(first);
+    assert.strictEqual(first.state, 'approved');
+    const second = store.transitionBotEscalation(
+      'req-1',
+      'denied',
+      { approver: { type: 'user' }, decision: 'deny', source: 'desktop' },
+      new Date().toISOString(),
+    );
+    assert.strictEqual(second, null);
+    assert.strictEqual(store.getBotEscalation('req-1')!.state, 'approved');
+  });
+
+  it('listBotEscalations filters by bot and state', () => {
+    store.createBotEscalation(createInput('req-1'));
+    store.createBotEscalation(createInput('req-2', { botId: 'bot-2' }));
+    store.transitionBotEscalation('req-2', 'expired', { approver: { type: 'system' }, decision: 'expired', source: 'timeout' }, new Date().toISOString());
+
+    assert.strictEqual(store.listBotEscalations({ botId: 'bot-1' }).length, 1);
+    assert.strictEqual(store.listBotEscalations({ state: 'pending' }).length, 1);
+    assert.strictEqual(store.listBotEscalations({ state: 'expired' }).length, 1);
+    assert.strictEqual(store.listBotEscalations({}).length, 2);
+  });
+
+  it('expireAllPendingBotEscalations settles only pending rows, in one transaction', () => {
+    store.createBotEscalation(createInput('req-1'));
+    store.createBotEscalation(createInput('req-2'));
+    store.createBotEscalation(createInput('req-3'));
+    store.transitionBotEscalation('req-3', 'approved', RESOLUTION, new Date().toISOString());
+
+    const resolution = { approver: { type: 'system' }, decision: 'expired' as const, source: 'boot-recovery' };
+    const expired = store.expireAllPendingBotEscalations(resolution, new Date().toISOString());
+    assert.deepStrictEqual(expired.map((e) => e.id).sort(), ['req-1', 'req-2']);
+    assert.ok(expired.every((e) => e.state === 'expired' && e.resolution?.source === 'boot-recovery'));
+    assert.strictEqual(store.getBotEscalation('req-3')!.state, 'approved');
+    assert.strictEqual(store.listBotEscalations({ state: 'pending' }).length, 0);
+  });
+
+  it('row parser fails safe on unknown audience/state values', () => {
+    store.createBotEscalation(createInput('req-1'));
+    const raw = store as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } };
+    raw.db.prepare("UPDATE bot_escalation_ledger SET audience = 'bogus', state = 'bogus' WHERE id = ?").run('req-1');
+    const parsed = store.getBotEscalation('req-1')!;
+    assert.strictEqual(parsed.audience, 'admins', 'unknown audience must never parse as self');
+    assert.strictEqual(parsed.state, 'expired', 'unknown state must parse fail-closed');
+  });
+
+  it('pruneBotEscalationLedger removes only settled rows past retention', () => {
+    store.createBotEscalation(createInput('req-pending'));
+    store.createBotEscalation(createInput('req-settled'));
+    store.transitionBotEscalation('req-settled', 'approved', RESOLUTION, new Date().toISOString());
+
+    // Negative retention pushes the cutoff into the future (deterministic
+    // stand-in for backdated rows — created_at is stamped at insert).
+    const deleted = store.pruneBotEscalationLedger({ retentionDays: -1 });
+    assert.strictEqual(deleted, 1, 'settled row pruned');
+    assert.strictEqual(store.getBotEscalation('req-settled'), null);
+    assert.ok(store.getBotEscalation('req-pending'), 'pending rows are never pruned');
+  });
+});
+
+describe('SqliteStore browser operation ledger positive-shape parsing', { concurrency: false }, () => {
+  it('fails closed when persisted state or receipt JSON is corrupt', () => {
+    const store = new SqliteStore(':memory:');
+    const propose = (operationId: string) => store.proposeBrowserOperation({
+      operationId, principalId: 'principal', workspaceId: 'workspace', sessionId: 'session',
+      runtimeGeneration: 'runtime', capabilityId: 'capability', action: 'fill', parameterDigest: 'v1:digest',
+    });
+    const successful = JSON.stringify({
+      outcome: 'dispatched_verified', dispatchState: 'dispatched', verified: true,
+      retrySafe: false, normalizedLength: 12, delta: { kind: 'field', changed: true },
+    });
+    propose('bad-state');
+    propose('bad-receipt');
+    propose('bad-json');
+    const raw = store as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } };
+    raw.db.prepare('UPDATE browser_operation_ledger SET state = ?, receipt_json = ? WHERE operation_id = ?')
+      .run('forged_success', successful, 'bad-state');
+    raw.db.prepare('UPDATE browser_operation_ledger SET state = ?, receipt_json = ? WHERE operation_id = ?')
+      .run('terminal', JSON.stringify({ outcome: 'dispatched_verified', verified: 'yes' }), 'bad-receipt');
+    raw.db.prepare('UPDATE browser_operation_ledger SET state = ?, receipt_json = ? WHERE operation_id = ?')
+      .run('terminal', '{', 'bad-json');
+
+    for (const operationId of ['bad-state', 'bad-receipt', 'bad-json']) {
+      const parsed = store.getBrowserOperation('principal', operationId)!;
+      assert.strictEqual(parsed.state, 'terminal');
+      assert.strictEqual(parsed.receipt?.outcome, 'outcome_unknown');
+      assert.strictEqual(parsed.receipt?.dispatchState, 'dispatched');
+      assert.strictEqual(parsed.receipt?.retrySafe, false);
+    }
+  });
+});
+
+describe('SqliteStore session backend column (KTD-9)', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+
+  beforeEach(() => {
+    store = new SqliteStore(testDbPath);
+    store.resetData();
+  });
+
+  it('creates sessions without a backend by default and round-trips a set backend', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/w' });
+    const session = store.createLocalSession(ws.id, 'S');
+    assert.strictEqual(session.backend, undefined);
+
+    store.updateSessionBackend(session.id, 'opencode');
+    const reloaded = store.getLocalSession(session.id);
+    assert.strictEqual(reloaded?.backend, 'opencode');
+  });
+
+  it('legacy rows (no backend value) read as undefined', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/w' });
+    const session = store.createLocalSession(ws.id, 'S');
+    const reloaded = store.getLocalSession(session.id);
+    assert.strictEqual(reloaded?.backend, undefined);
+  });
+});
+
+describe('SqliteStore last_turn_started_at ordering key (U1, KTD1/KTD4)', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(':memory:');
+    store.resetData();
+  });
+
+  it('createLocalSession initializes the key to now and the row parsers carry it', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/turn-key' });
+    const before = Date.now();
+    const session = store.createLocalSession(ws.id, 'S');
+    const after = Date.now();
+
+    assert.ok(session.lastTurnStartedAt !== undefined, 'creation returns the key');
+    assert.ok(
+      session.lastTurnStartedAt >= before && session.lastTurnStartedAt <= after,
+      `key ${session.lastTurnStartedAt} within [${before}, ${after}]`,
+    );
+    assert.strictEqual(store.getLocalSession(session.id)?.lastTurnStartedAt, session.lastTurnStartedAt);
+    assert.strictEqual(store.listLocalSessions(ws.id)[0]?.lastTurnStartedAt, session.lastTurnStartedAt);
+    assert.strictEqual(store.listLocalSessions()[0]?.lastTurnStartedAt, session.lastTurnStartedAt);
+  });
+
+  it('workspace create initializes the key to now and list/get carry it', async () => {
+    const before = Date.now();
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/turn-key-ws' });
+    const after = Date.now();
+
+    assert.ok(ws.lastTurnStartedAt !== undefined, 'creation returns the key');
+    assert.ok(
+      ws.lastTurnStartedAt >= before && ws.lastTurnStartedAt <= after,
+      `key ${ws.lastTurnStartedAt} within [${before}, ${after}]`,
+    );
+    assert.strictEqual((await store.get(ws.id))?.lastTurnStartedAt, ws.lastTurnStartedAt);
+    assert.strictEqual((await store.list()).find((w) => w.id === ws.id)?.lastTurnStartedAt, ws.lastTurnStartedAt);
+  });
+
+  it('syncSdkSession discovery initializes from lastModified; a repeat sync leaves the key untouched', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/turn-key-sync' });
+    const discovered: ChatSession = {
+      id: 'sdk-1',
+      workspaceId: ws.id,
+      name: 'Discovered',
+      isDraft: false,
+      createdAt: '2025-08-10T10:00:00.000Z',
+      updatedAt: '2025-08-12T12:30:45.678Z',
+      lastModified: 1_755_500_000_123,
+    };
+    store.syncSdkSession(discovered);
+    assert.strictEqual(store.getLocalSession('sdk-1')?.lastTurnStartedAt, 1_755_500_000_123);
+
+    // The conflict-upsert branch must not move the key (KTD4).
+    store.syncSdkSession({ ...discovered, lastModified: 1_799_999_999_999, summary: 'newer scan' });
+    const afterResync = store.getLocalSession('sdk-1');
+    assert.strictEqual(afterResync?.lastTurnStartedAt, 1_755_500_000_123);
+    assert.strictEqual(afterResync?.summary, 'newer scan', 'the rest of the upsert still applies');
+  });
+
+  it('syncSdkSession discovery without lastModified falls back to Date.parse(createdAt)', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/turn-key-sync2' });
+    store.syncSdkSession({
+      id: 'sdk-2',
+      workspaceId: ws.id,
+      name: 'No lastModified',
+      isDraft: false,
+      createdAt: '2025-08-14T09:15:30.000Z',
+      updatedAt: '2025-08-16T18:45:30.000Z',
+    });
+    assert.strictEqual(
+      store.getLocalSession('sdk-2')?.lastTurnStartedAt,
+      Date.parse('2025-08-14T09:15:30.000Z'),
+    );
+  });
+
+  it('a NULL key (row inserted by a downgraded binary) parses as undefined', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/turn-key-null' });
+    const session = store.createLocalSession(ws.id, 'S');
+    const raw = store as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } };
+    raw.db.prepare('UPDATE sessions SET last_turn_started_at = NULL WHERE id = ?').run(session.id);
+
+    assert.strictEqual(store.getLocalSession(session.id)?.lastTurnStartedAt, undefined);
+    raw.db.prepare('UPDATE workspaces SET last_turn_started_at = NULL WHERE id = ?').run(ws.id);
+    assert.strictEqual((await store.get(ws.id))?.lastTurnStartedAt, undefined);
+  });
+});
+
+describe('SqliteStore stampTurnStarted (U2, KTD1/R2)', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(':memory:');
+    store.resetData();
+  });
+
+  const rawDb = (s: SqliteStore) =>
+    s as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } };
+
+  it('advances both the session and the workspace key to the turn-start timestamp', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/stamp-both' });
+    const session = store.createLocalSession(ws.id, 'S');
+    const other = store.createLocalSession(ws.id, 'Other');
+
+    const t = Date.now() + 60_000;
+    const applied = store.stampTurnStarted(session.id, ws.id, t);
+
+    assert.strictEqual(applied, t);
+    assert.strictEqual(store.getLocalSession(session.id)?.lastTurnStartedAt, t);
+    assert.strictEqual((await store.get(ws.id))?.lastTurnStartedAt, t);
+    assert.notStrictEqual(
+      store.getLocalSession(other.id)?.lastTurnStartedAt,
+      t,
+      'a sibling session that did not start a turn keeps its own key',
+    );
+  });
+
+  it('defaults to Date.now() when no timestamp is given', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/stamp-now' });
+    const session = store.createLocalSession(ws.id, 'S');
+
+    const before = Date.now();
+    store.stampTurnStarted(session.id, ws.id);
+    const after = Date.now();
+
+    const sessionKey = store.getLocalSession(session.id)?.lastTurnStartedAt;
+    const workspaceKey = (await store.get(ws.id))?.lastTurnStartedAt;
+    assert.ok(sessionKey !== undefined && sessionKey >= before && sessionKey <= after, `session key ${sessionKey} within [${before}, ${after}]`);
+    assert.ok(workspaceKey !== undefined && workspaceKey >= before && workspaceKey <= after, `workspace key ${workspaceKey} within [${before}, ${after}]`);
+  });
+
+  it('keeps keys monotonically non-decreasing: an older stamp never moves a key backwards', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/stamp-mono' });
+    const session = store.createLocalSession(ws.id, 'S');
+
+    const t1 = 1_800_000_000_000;
+    store.stampTurnStarted(session.id, ws.id, t1);
+    store.stampTurnStarted(session.id, ws.id, t1 - 5_000);
+    assert.strictEqual(store.getLocalSession(session.id)?.lastTurnStartedAt, t1);
+    assert.strictEqual((await store.get(ws.id))?.lastTurnStartedAt, t1);
+
+    store.stampTurnStarted(session.id, ws.id, t1);
+    store.stampTurnStarted(session.id, ws.id, t1 + 5_000);
+    assert.strictEqual(store.getLocalSession(session.id)?.lastTurnStartedAt, t1 + 5_000);
+    assert.strictEqual((await store.get(ws.id))?.lastTurnStartedAt, t1 + 5_000);
+  });
+
+  it('heals NULL keys left by a downgraded binary', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/stamp-heal' });
+    const session = store.createLocalSession(ws.id, 'S');
+    rawDb(store).db.prepare('UPDATE sessions SET last_turn_started_at = NULL WHERE id = ?').run(session.id);
+    rawDb(store).db.prepare('UPDATE workspaces SET last_turn_started_at = NULL WHERE id = ?').run(ws.id);
+
+    const t = 1_800_000_000_000;
+    store.stampTurnStarted(session.id, ws.id, t);
+
+    assert.strictEqual(store.getLocalSession(session.id)?.lastTurnStartedAt, t);
+    assert.strictEqual((await store.get(ws.id))?.lastTurnStartedAt, t);
+  });
+
+  it('leaves missing rows untouched and does not throw', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/stamp-missing' });
+    const session = store.createLocalSession(ws.id, 'S');
+    const keyBefore = store.getLocalSession(session.id)?.lastTurnStartedAt;
+
+    const t = 1_800_000_000_000;
+    assert.doesNotThrow(() => store.stampTurnStarted('no-such-session', 'no-such-workspace', t));
+
+    assert.strictEqual(store.getLocalSession(session.id)?.lastTurnStartedAt, keyBefore);
+    assert.strictEqual((await store.get(ws.id))?.lastTurnStartedAt, ws.lastTurnStartedAt);
+  });
+});
+
+describe('SqliteStore deleted-session tombstones', { concurrency: false }, () => {
+  let store: SqliteStore;
+
+  beforeEach(() => {
+    store = new SqliteStore(':memory:');
+    store.resetData();
+  });
+
+  function discoveredSession(wsId: string, id: string): ChatSession {
+    return {
+      id,
+      workspaceId: wsId,
+      name: 'Discovered',
+      isDraft: false,
+      createdAt: '2025-08-10T10:00:00.000Z',
+      updatedAt: '2025-08-12T12:30:45.678Z',
+      lastModified: 1_755_500_000_123,
+    };
+  }
+
+  it('deleteSessionWithTombstone removes the row and records a tombstone', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/tombstone-basic' });
+    const session = store.createLocalSession(ws.id, 'S1');
+    store.setSessionDraft(session.id, false);
+
+    assert.equal(store.deleteSessionWithTombstone(session.id), true);
+    assert.equal(store.getLocalSession(session.id), null);
+    assert.equal(store.isSessionDeleted(session.id), true);
+    assert.equal(store.listLocalSessions(ws.id).length, 0);
+  });
+
+  it('syncSdkSession never resurrects a tombstoned id', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/tombstone-resurrect' });
+    const session = store.createLocalSession(ws.id, 'S1');
+    store.deleteSessionWithTombstone(session.id);
+
+    store.syncSdkSession(discoveredSession(ws.id, session.id));
+    store.syncSdkSession(discoveredSession(ws.id, 'sdk-live-1'));
+
+    assert.equal(store.getLocalSession(session.id), null, 'tombstoned id stays deleted');
+    assert.ok(store.getLocalSession('sdk-live-1'), 'control: a different id still upserts');
+  });
+
+  it('unknown id returns false and writes no tombstone', () => {
+    assert.equal(store.deleteSessionWithTombstone('never-existed'), false);
+    assert.equal(store.isSessionDeleted('never-existed'), false);
+  });
+
+  it('re-deleting a tombstoned id is a no-op that keeps the tombstone', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/tombstone-idempotent' });
+    const session = store.createLocalSession(ws.id, 'S1');
+    assert.equal(store.deleteSessionWithTombstone(session.id), true);
+
+    assert.equal(store.deleteSessionWithTombstone(session.id), false);
+    assert.equal(store.isSessionDeleted(session.id), true);
+  });
+
+  it('workspace delete cascades tombstone cleanup', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/tombstone-cascade' });
+    const session = store.createLocalSession(ws.id, 'S1');
+    store.deleteSessionWithTombstone(session.id);
+    assert.equal(store.isSessionDeleted(session.id), true);
+
+    await store.delete(ws.id);
+    assert.equal(store.isSessionDeleted(session.id), false, 'tombstone dies with its workspace');
+  });
+
+  it('deleteSessionWithTombstone purges browser task state like deleteLocalSession', async () => {
+    const ws = await store.create({ name: 'W', folderPath: '/tmp/tombstone-browser' });
+    const session = store.createLocalSession(ws.id, 'S1');
+    store.createBrowserTask({
+      workspaceId: ws.id,
+      sessionId: session.id,
+      principalId: 'principal-1',
+      runtimeGeneration: 'runtime-1',
+      capabilityId: 'capability-1',
+      taskId: 'task-1',
+      goalEpoch: 'goal-1',
+      lifecycle: 'active',
+    }, []);
+
+    assert.ok(store.getActiveBrowserTask(ws.id, session.id));
+    assert.equal(store.deleteSessionWithTombstone(session.id), true);
+    assert.equal(store.getActiveBrowserTask(ws.id, session.id), null);
+  });
+});

@@ -1,0 +1,114 @@
+/**
+ * Adapted from Vercel AI Elements (Apache 2.0).
+ * Original source: github.com/vercel/ai-elements (packages/elements/src/message.tsx)
+ * Modifications:
+ *  - Dropped the `MessageBranch*` family (requires shadcn `ButtonGroup` we don't vendor).
+ *  - Dropped `MessageAction` (requires a shadcn `Tooltip` primitive we don't vendor).
+ *  - Replaced `UIMessage["role"]` import with the local `MessageRole` shared type.
+ *  - Stripped Streamdown plugin imports (`@streamdown/cjk`, `code`, `math`, `mermaid`).
+ *  - Token names remapped to this repo's Tailwind palette.
+ */
+'use client'
+
+import type { ComponentProps, HTMLAttributes } from 'react'
+import { memo } from 'react'
+import { Streamdown } from 'streamdown'
+
+import type { MessageRole } from '../../types/message'
+import { cn } from '../ui/utils'
+
+export type { MessageRole }
+
+export type MessageProps = HTMLAttributes<HTMLDivElement> & {
+  from: MessageRole
+}
+
+export const Message = ({ className, from, ...props }: MessageProps) => (
+  <div
+    className={cn(
+      'group flex w-full max-w-[95%] flex-col gap-2',
+      from === 'user' ? 'is-user ml-auto justify-end' : 'is-assistant',
+      className,
+    )}
+    {...props}
+  />
+)
+
+export type MessageContentProps = HTMLAttributes<HTMLDivElement>
+
+export const MessageContent = ({
+  children,
+  className,
+  ...props
+}: MessageContentProps) => (
+  <div
+    className={cn(
+      'is-user:dark flex w-fit min-w-0 max-w-full flex-col gap-2 overflow-hidden',
+      'group-[.is-user]:ml-auto group-[.is-user]:rounded-lg group-[.is-user]:border group-[.is-user]:border-accent/30 group-[.is-user]:bg-accent/10 group-[.is-user]:px-3 group-[.is-user]:py-2 group-[.is-user]:text-text-primary',
+      'dark:group-[.is-user]:border-accent/35 dark:group-[.is-user]:bg-accent/15',
+      'group-[.is-assistant]:text-text-primary',
+      className,
+    )}
+    {...props}
+  >
+    {children}
+  </div>
+)
+
+export type MessageActionsProps = ComponentProps<'div'>
+
+export const MessageActions = ({
+  className,
+  children,
+  ...props
+}: MessageActionsProps) => (
+  <div className={cn('flex items-center gap-1', className)} {...props}>
+    {children}
+  </div>
+)
+
+export type MessageResponseProps = ComponentProps<typeof Streamdown> & {
+  /** Forces a Markdown rerender when external render state changes. */
+  renderKey?: string
+}
+
+export const MessageResponse = memo(
+  ({ className, renderKey, ...props }: MessageResponseProps) => (
+    <Streamdown
+      key={renderKey}
+      className={cn(
+        'size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0',
+        '[&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5',
+        '[&_*]:[font-size:inherit]',
+        '[&_h1]:text-[1.875em] [&_h2]:text-[1.5em] [&_h3]:text-[1.25em]',
+        '[&_h4]:text-[1.125em] [&_h5]:text-[1em] [&_h6]:text-[0.875em]',
+        className,
+      )}
+      {...props}
+    />
+  ),
+  (prevProps, nextProps) =>
+    prevProps.children === nextProps.children &&
+    nextProps.isAnimating === prevProps.isAnimating &&
+    nextProps.renderKey === prevProps.renderKey,
+)
+
+MessageResponse.displayName = 'MessageResponse'
+
+export type MessageToolbarProps = ComponentProps<'div'>
+
+export const MessageToolbar = ({
+  className,
+  children,
+  ...props
+}: MessageToolbarProps) => (
+  <div
+    className={cn(
+      'mt-4 flex w-full items-center justify-between gap-4',
+      className,
+    )}
+    {...props}
+  >
+    {children}
+  </div>
+)

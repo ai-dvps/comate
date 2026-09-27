@@ -1,0 +1,61 @@
+---
+import { getCollection, render } from 'astro:content';
+import { getContentLocale, getLocalizedEntries, type Lang } from '../i18n/utils.js';
+import HeroSection from './HeroSection.astro';
+import StatsBand from './StatsBand.astro';
+import ControlPillars from './ControlPillars.astro';
+import FinanceWorkflow from './FinanceWorkflow.astro';
+import ProductEvidence from './ProductEvidence.astro';
+import FeatureHighlightGrid from './FeatureHighlightGrid.astro';
+import BeforeAfterStrip from './BeforeAfterStrip.astro';
+import CTASection from './CTASection.astro';
+
+interface Props {
+  locale: Lang;
+}
+
+const { locale } = Astro.props;
+const contentLocale = getContentLocale(locale).toLowerCase();
+
+const homeEntries = await getCollection('home');
+const homeEntry = getLocalizedEntries(homeEntries, locale).find(
+  (entry) => entry.id === `${contentLocale}/hero`
+);
+if (!homeEntry) {
+  throw new Error(`Missing hero content for locale ${locale}`);
+}
+const { Content } = await render(homeEntry);
+const { title, description, headline, subheadline, ctaText, ctaHref, secondaryCtaText, secondaryCtaHref } =
+  homeEntry.data;
+
+---
+
+<main class="space-y-4">
+  <HeroSection
+    locale={locale}
+    headline={headline ?? title}
+    subheadline={subheadline ?? description}
+    ctaText={ctaText}
+    ctaHref={ctaHref}
+    secondaryCtaText={secondaryCtaText}
+    secondaryCtaHref={secondaryCtaHref}
+  />
+
+  <StatsBand locale={locale} />
+
+  <ControlPillars locale={locale} />
+
+  <FinanceWorkflow locale={locale} />
+
+  <ProductEvidence locale={locale} />
+
+  <FeatureHighlightGrid locale={locale} />
+
+  <BeforeAfterStrip locale={locale} />
+
+  <CTASection locale={locale} />
+
+  <section class="mx-auto max-w-3xl px-4 pb-16 text-center text-text-tertiary">
+    <Content />
+  </section>
+</main>

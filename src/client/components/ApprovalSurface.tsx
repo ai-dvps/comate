@@ -1,0 +1,1188 @@
+import {
+  useState,
+  useRef,
+  useEffect,
+  useMemo,
+  useCallback,
+  useId,
+} from 'react'
+import { useTranslation } from 'react-i18next'
+import { Loader2, Square, SlashSquare, Paperclip, ChevronDown, ChevronUp } from 'lucide-react'
+import { Streamdown } from 'streamdown'
+import type { QuestionPayload, PermissionSuggestion } from '../types/message'
+import type { SlashCommandDto } from '../stores/commands-store'
+import { Button } from './ui/button'
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from './ui/popover'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from './ui/collapsible'
+import { cn } from './ui/utils'
+import { BROWSER_TOOL_NAMES } from '@server/services/browser-tool-names'
+import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
+import FilePicker, { type FilePickerHandle } from './FilePicker'
+import PreviewPane from './PreviewPane'
+import { getToolRenderer, isSecurityManifestRenderer, StructuredFallback } from './tool-renderers'
+
+export const CHAT_ABOUT_THIS_MESSAGE =
+  'chatAboutThisMessage'
+
+function formatRemainingMs(ms: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`
+}
+
+function useCommandEnter(onSubmit: () => void, enabled: boolean) {
+  useEffect(() => {
+    if (!enabled) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.key !== 'Enter' ||
+        (!event.metaKey && !event.ctrlKey)
+      ) {
+        return
+      }
+
+      event.preventDefault()
+      onSubmit()
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [enabled, onSubmit])
+}
+
+function Countdown({ expiresAt }: { expiresAt?: number }) {
+  const { t } = useTranslation('chat')
+  const [remaining, setRemaining] = useState(() =>
+    expiresAt ? Math.max(0, expiresAt - Date.now()) : 0,
+  )
+
+  useEffect(() => {
+    if (!expiresAt) return
+    setRemaining(Math.max(0, expiresAt - Date.now()))
+    const interval = setInterval(() => {
+      setRemaining(Math.max(0, expiresAt - Date.now()))
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [expiresAt])
+
+  if (!expiresAt) return null
+  return (
+    <span
+      className="text-xs text-text-tertiary tabular-nums"
+      aria-label={t('approval.timeout', { time: formatRemainingMs(remaining) })}
+    >
+      {t('approval.timeout', { time: formatRemainingMs(remaining) })}
+    </span>
+  )
+}
+
+interface PendingApproval {
+  requestId: string
+  toolName: string
+  toolUseId: string
+  input: unknown
+  inputSummary: string
+  title?: string
+  description?: string
+  suggestions?: PermissionSuggestion[]
+  expiresAt?: number
+  denialReason?: 'safetyCheck' | 'asyncAgent' | string
+}
+
+interface PendingQuestion {
+  requestId: string
+  questions: QuestionPayload[]
+  expiresAt?: number
+}
+
+type PendingItem = PendingApproval | PendingQuestion
+
+interface ApprovalSurfaceProps {
+  workspaceId: string
+  sessionId?: string
+  pendingItem: PendingItem
+  queueDepth: number
+  isResolving?: boolean
+  onAllow: () => void
+  onAllowAlways: () => void
+  onDeny: (message: string) => void
+  onDecideLater: () => void
+  onAnswerQuestion: (answers: Record<string, string>) => void
+  onChatAbout: () => void
+  onStop: () => void
+}
+
+export default function ApprovalSurface({
+  workspaceId,
+  sessionId,
+  pendingItem,
+  queueDepth,
+  isResolving = false,
+  onAllow,
+  onAllowAlways,
+  onDeny,
+  onDecideLater,
+  onAnswerQuestion,
+  onChatAbout,
+  onStop,
+}: ApprovalSurfaceProps) {
+  const { t } = useTranslation('chat')
+  const titleId = useId()
+  const [isExpanded, setIsExpanded] = useState(true)
+
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    return () => {
+      if (previous?.isConnected) previous.focus()
+    }
+  }, [pendingItem.requestId])
+
+  // Reset to expanded when a new pending item arrives so the user notices it.
+  useEffect(() => {
+    setIsExpanded(true)
+  }, [pendingItem.requestId])
+
+  const isQuestion = 'questions' in pendingItem
+  const headerTitle = isQuestion
+    ? t('approval.clarifyingQuestion')
+    : pendingItem.title || pendingItem.toolName
+  const headerDescription = isQuestion
+    ? undefined
+    : pendingItem.description
+  const queueLabel = queueDepth > 0 ? `1 of ${queueDepth + 1}` : null
+
+  const [stepIndex, setStepIndex] = useState(0)
+  const questions = isQuestion
+    ? (pendingItem as PendingQuestion).questions
+    : []
+  const isStepper = questions.length >= 2
+
+  // Reset step on new pending item
+  useEffect(() => {
+    setStepIndex(0)
+  }, [pendingItem.requestId])
+
+  const stepLabel =
+    isStepper ? `${stepIndex + 1} of ${questions.length}` : null
+  const positionLabel = isStepper ? stepLabel : queueLabel
+
+  return (
+    <div className="max-w-3xl mx-auto px-4 py-3">
+      <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          aria-live="polite"
+          className="bg-chrome border border-border/50 rounded-lg shadow-[0_-8px_24px_-8px_rgba(0,0,0,0.12)]"
+        >
+          <header className="flex items-start justify-between gap-3 px-4 py-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <h2
+                id={titleId}
+                className="text-sm font-semibold text-text-primary truncate"
+              >
+                {headerTitle}
+              </h2>
+              {headerDescription && (
+                <span className="text-xs text-text-secondary truncate">
+                  {headerDescription}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {pendingItem.expiresAt != null && (
+                <Countdown expiresAt={pendingItem.expiresAt} />
+              )}
+              {positionLabel && (
+                <span className="text-xs text-text-tertiary">
+                  {positionLabel}
+                </span>
+              )}
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={
+                    isExpanded
+                      ? t('approval.collapsePanel')
+                      : t('approval.expandPanel')
+                  }
+                  title={
+                    isExpanded
+                      ? t('approval.collapsePanel')
+                      : t('approval.expandPanel')
+                  }
+                  aria-expanded={isExpanded}
+                  className="p-1.5 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors"
+                >
+                  {isExpanded ? (
+                    <ChevronDown className="w-4 h-4" />
+                  ) : (
+                    <ChevronUp className="w-4 h-4" />
+                  )}
+                </button>
+              </CollapsibleTrigger>
+              <StopButton onStop={onStop} isResolving={isResolving} />
+            </div>
+          </header>
+
+          <CollapsibleContent
+            className={cn(
+              'data-[state=open]:animate-in data-[state=open]:slide-in-from-top-2',
+              'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2',
+            )}
+          >
+            <div className="bg-work px-4 py-3 border-t border-border/50 rounded-b-lg">
+              {isQuestion ? (
+                <QuestionView
+                  workspaceId={workspaceId}
+                  sessionId={sessionId}
+                  item={pendingItem as PendingQuestion}
+                  isResolving={isResolving}
+                  stepIndex={stepIndex}
+                  onStepChange={setStepIndex}
+                  onAnswerQuestion={onAnswerQuestion}
+                  onChatAbout={onChatAbout}
+                />
+              ) : (
+                <ApprovalView
+                  item={pendingItem as PendingApproval}
+                  isResolving={isResolving}
+                  onAllow={onAllow}
+                  onAllowAlways={onAllowAlways}
+                  onDeny={onDeny}
+                  onDecideLater={onDecideLater}
+                />
+              )}
+            </div>
+          </CollapsibleContent>
+        </div>
+      </Collapsible>
+    </div>
+  )
+}
+
+function StopButton({
+  onStop,
+  isResolving,
+}: {
+  onStop: () => void
+  isResolving: boolean
+}) {
+  const { t } = useTranslation('chat')
+  const [open, setOpen] = useState(false)
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={t('approval.stop')}
+          title={t('approval.stop')}
+          disabled={isResolving}
+          className="p-1.5 rounded-md text-text-tertiary hover:text-accent hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <span className="relative w-4 h-4 flex items-center justify-center">
+            <Loader2 className="absolute inset-0 w-4 h-4 animate-spin opacity-60" />
+            <Square className="w-2 h-2 fill-current" />
+          </span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="bottom"
+        align="end"
+        className="bg-surface border border-border rounded-lg shadow-lg p-3 z-50"
+      >
+        <p className="text-sm text-text-primary mb-3">{t('stopPopover.title')}</p>
+        <div className="flex items-center justify-end gap-2">
+          <button
+            onClick={() => setOpen(false)}
+            disabled={isResolving}
+            className="px-3 py-1.5 text-xs font-medium text-text-secondary hover:text-text-primary rounded-md hover:bg-surface-hover transition-colors"
+          >
+            {t('stopPopover.cancel')}
+          </button>
+          <button
+            onClick={() => {
+              onStop()
+              setOpen(false)
+            }}
+            disabled={isResolving}
+            className="px-3 py-1.5 text-xs font-medium text-accent-foreground bg-accent hover:bg-accent/90 rounded-md transition-colors"
+          >
+            {isResolving ? (
+              <span className="flex items-center gap-1">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                {t('stopPopover.stopping')}
+              </span>
+            ) : (
+              t('stopPopover.confirm')
+            )}
+          </button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function ApprovalView({
+  item,
+  isResolving,
+  onAllow,
+  onAllowAlways,
+  onDeny,
+  onDecideLater,
+}: {
+  item: PendingApproval
+  isResolving: boolean
+  onAllow: () => void
+  onAllowAlways: () => void
+  onDeny: (message: string) => void
+  onDecideLater: () => void
+}) {
+  const { t } = useTranslation('chat')
+  const [showMore, setShowMore] = useState(false)
+  const hasSuggestions = item.suggestions && item.suggestions.length > 0
+
+  const renderer = getToolRenderer(item.toolName)
+  const hasCustomRenderer = !!renderer
+  const isSecurityManifest = isSecurityManifestRenderer(item.toolName)
+  const isDeclaration = item.toolName === BROWSER_TOOL_NAMES.setDeclaration
+  const renderedManifest = isSecurityManifest && renderer ? renderer(item.input) : null
+  const invalidSecurityManifest = isSecurityManifest && renderedManifest == null
+
+  useCommandEnter(onAllow, !isResolving && !isDeclaration)
+
+  // Reset Show more across pendingItem swaps
+  useEffect(() => {
+    setShowMore(false)
+  }, [item.requestId])
+
+  const inputStr =
+    typeof item.input === 'string'
+      ? item.input
+      : JSON.stringify(item.input, null, 2)
+  const isTruncated = inputStr.length > 200
+
+  const denialNotice = useMemo(() => {
+    if (!item.denialReason) return null
+    if (item.denialReason === 'safetyCheck') {
+      return t('approval.denialReason_safetyCheck')
+    }
+    if (item.denialReason === 'asyncAgent') {
+      return t('approval.denialReason_asyncAgent')
+    }
+    return t('approval.denialReason_default', { reason: item.denialReason })
+  }, [item.denialReason, t])
+
+  return (
+    <div>
+      {denialNotice && (
+        <div className="mb-3 px-3 py-2 rounded-md bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200">
+          <span className="font-semibold">{t('approval.denialReason')}: </span>
+          {denialNotice}
+        </div>
+      )}
+      <div className="mb-3 max-h-[60vh] overflow-y-auto">
+        {isSecurityManifest && renderer ? (
+          <div className="bg-bg rounded px-2 py-1.5">
+            {renderedManifest ?? (
+              <div role="alert" aria-live="assertive" className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {t('approval.securityManifestInvalid')}
+              </div>
+            )}
+            <div className="mt-2 text-[10px] text-text-tertiary font-mono break-all">
+              {t('approval.securityManifestRequest')}: {item.requestId}
+            </div>
+          </div>
+        ) : hasCustomRenderer && showMore ? (
+          <div className="bg-bg rounded px-2 py-1.5">
+            {renderer!(item.input) ?? <StructuredFallback data={item.input} />}
+          </div>
+        ) : (
+          <div className="bg-bg rounded px-2 py-1.5">
+            <StructuredFallback data={item.input} maxDepth={showMore ? undefined : 2} />
+          </div>
+        )}
+        {!isSecurityManifest && (isTruncated || hasCustomRenderer) && (
+          <button
+            onClick={() => setShowMore(!showMore)}
+            className="text-xs text-accent hover:underline mt-1"
+          >
+            {showMore ? t('approval.showLess') : t('approval.showMore')}
+          </button>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Button onClick={onAllow} disabled={isResolving || invalidSecurityManifest} size="sm" autoFocus={!isDeclaration}>
+          {isResolving ? (
+            <span className="flex items-center gap-1">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              …
+            </span>
+          ) : (
+            isDeclaration ? t('approval.browserDeclaration.confirmAction') : t('approval.allow')
+          )}
+        </Button>
+        {hasSuggestions && !isDeclaration && (
+          <Button
+            onClick={onAllowAlways}
+            disabled={isResolving}
+            variant="secondary"
+            size="sm"
+          >
+            {t('approval.allowAlways')}
+          </Button>
+        )}
+        {isDeclaration && (
+          <Button onClick={onDecideLater} disabled={isResolving} variant="secondary" size="sm" autoFocus>
+            {t('approval.browserDeclaration.decideLater')}
+          </Button>
+        )}
+        <Button
+          onClick={() => onDeny('User denied this tool call.')}
+          disabled={isResolving}
+          variant="destructive"
+          size="sm"
+        >
+          {t('approval.deny')}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+type FocusedOption = { qIdx: number; oIdx: number } | null
+
+function QuestionView({
+  workspaceId,
+  sessionId,
+  item,
+  isResolving,
+  stepIndex,
+  onStepChange,
+  onAnswerQuestion,
+  onChatAbout,
+}: {
+  workspaceId: string
+  sessionId?: string
+  item: PendingQuestion
+  isResolving: boolean
+  stepIndex: number
+  onStepChange: (index: number) => void
+  onAnswerQuestion: (answers: Record<string, string>) => void
+  onChatAbout: () => void
+}) {
+  const { t } = useTranslation('chat')
+  const [selections, setSelections] = useState<Record<string, string[]>>({})
+  const [otherSelected, setOtherSelected] = useState<Record<string, boolean>>(
+    {},
+  )
+  const [otherText, setOtherText] = useState<Record<string, string>>({})
+
+  const isStepper = item.questions.length >= 2
+  const currentQuestion = isStepper
+    ? item.questions[stepIndex]
+    : item.questions[0]
+
+  const hasPreviews = useMemo(
+    () => item.questions.some((q) => q.options.some((o) => !!o.preview)),
+    [item.questions],
+  )
+
+  const currentHasPreviews = useMemo(
+    () => currentQuestion?.options.some((o) => !!o.preview) ?? false,
+    [currentQuestion],
+  )
+
+  const findInitialFocus = useCallback((): FocusedOption => {
+    if (isStepper) {
+      const q = item.questions[stepIndex]
+      if (!q) return null
+      for (let oi = 0; oi < q.options.length; oi++) {
+        if (q.options[oi].preview) return { qIdx: stepIndex, oIdx: oi }
+      }
+      return q.options[0] ? { qIdx: stepIndex, oIdx: 0 } : null
+    }
+    for (let qi = 0; qi < item.questions.length; qi++) {
+      const opts = item.questions[qi].options
+      for (let oi = 0; oi < opts.length; oi++) {
+        if (opts[oi].preview) return { qIdx: qi, oIdx: oi }
+      }
+    }
+    return item.questions[0]?.options[0]
+      ? { qIdx: 0, oIdx: 0 }
+      : null
+  }, [item.questions, isStepper, stepIndex])
+
+  const [focused, setFocused] = useState<FocusedOption>(findInitialFocus)
+  const [lastInteractionMode, setLastInteractionMode] = useState<
+    'mouse' | 'keyboard'
+  >('keyboard')
+
+  // Reset state on requestId change (DO NOT add stepIndex here)
+  useEffect(() => {
+    setSelections({})
+    setOtherSelected({})
+    setOtherText({})
+    setFocused(findInitialFocus())
+    setLastInteractionMode('keyboard')
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- findInitialFocus excluded to avoid clearing answers on step navigation
+  }, [item.requestId])
+
+  // Re-scope focus on step change
+  useEffect(() => {
+    if (!isStepper) return
+    const initial = findInitialFocus()
+    setFocused(initial)
+    setLastInteractionMode('keyboard')
+    if (initial) {
+      requestAnimationFrame(() => {
+        const el = document.querySelector<HTMLElement>(
+          `[data-option-key="${initial.qIdx}:${initial.oIdx}"]`,
+        )
+        el?.focus()
+      })
+    }
+  }, [stepIndex, isStepper, findInitialFocus])
+
+  const toggleOption = useCallback(
+    (questionText: string, optionLabel: string, multiSelect: boolean) => {
+      setSelections((prev) => {
+        const current = prev[questionText] || []
+        if (multiSelect) {
+          const next = current.includes(optionLabel)
+            ? current.filter((l) => l !== optionLabel)
+            : [...current, optionLabel]
+          return { ...prev, [questionText]: next }
+        }
+        const next = current.includes(optionLabel) ? [] : [optionLabel]
+        // Single-select: selecting an option clears Other
+        if (next.length > 0) {
+          setOtherSelected((p) => ({ ...p, [questionText]: false }))
+        }
+        return { ...prev, [questionText]: next }
+      })
+    },
+    [],
+  )
+
+  const toggleOther = useCallback(
+    (questionText: string, multiSelect: boolean) => {
+      setOtherSelected((prev) => {
+        const next = !prev[questionText]
+        if (next && !multiSelect) {
+          // Single-select: deselecting Other clears regular options
+          setSelections((sp) => ({ ...sp, [questionText]: [] }))
+        }
+        return { ...prev, [questionText]: next }
+      })
+      // When deselecting Other, discard its typed value
+      setOtherText((prev) => {
+        if (prev[questionText] === undefined) return prev
+        const next = { ...prev }
+        delete next[questionText]
+        return next
+      })
+    },
+    [],
+  )
+
+  const setOtherTextFor = useCallback(
+    (questionText: string, value: string) => {
+      setOtherText((prev) => ({ ...prev, [questionText]: value }))
+    },
+    [],
+  )
+
+  const allAnswered = item.questions.every((q) => {
+    const selected = selections[q.question] || []
+    const hasOther = otherSelected[q.question]
+    if (hasOther) {
+      const text = (otherText[q.question] || '').trim()
+      if (!text) return false
+      return true
+    }
+    return selected.length > 0
+  })
+
+  const currentAnswered = (() => {
+    if (!currentQuestion) return false
+    const selected = selections[currentQuestion.question] || []
+    const hasOther = otherSelected[currentQuestion.question]
+    if (hasOther) {
+      const text = (otherText[currentQuestion.question] || '').trim()
+      return !!text
+    }
+    return selected.length > 0
+  })()
+
+  const canConfirm = allAnswered && !isResolving
+  const canNext = currentAnswered
+
+  const handleConfirm = () => {
+    if (!canConfirm) return
+    const answers: Record<string, string> = {}
+    for (const q of item.questions) {
+      const selected = selections[q.question] || []
+      const hasOther = otherSelected[q.question]
+      const otherValue = (otherText[q.question] || '').trim()
+      const labels = [...selected]
+      let answer = labels.join(', ')
+      if (hasOther && otherValue) {
+        answer = answer ? `${answer}, ${otherValue}` : otherValue
+      }
+      answers[q.question] = answer
+    }
+    onAnswerQuestion(answers)
+  }
+
+  useCommandEnter(handleConfirm, canConfirm)
+
+  const focusedPreview = useMemo(() => {
+    if (!focused) return null
+    const effectiveQIdx = isStepper ? stepIndex : focused.qIdx
+    const q = item.questions[effectiveQIdx]
+    if (!q) return null
+    if (focused.oIdx >= q.options.length) return null
+    return q.options[focused.oIdx]?.preview ?? null
+  }, [focused, item.questions, isStepper, stepIndex])
+
+  const handleOptionFocus = (qIdx: number, oIdx: number) => {
+    if (lastInteractionMode === 'mouse') return
+    setFocused({ qIdx, oIdx })
+  }
+
+  const handleOptionMouseEnter = (qIdx: number, oIdx: number) => {
+    setLastInteractionMode('mouse')
+    setFocused({ qIdx, oIdx })
+  }
+
+  const handleOptionKey = (
+    e: React.KeyboardEvent,
+    qIdx: number,
+    oIdx: number,
+  ) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    e.preventDefault()
+    setLastInteractionMode('keyboard')
+    const q = item.questions[qIdx]
+    const total = q.options.length + 1 // +1 for Other
+    const nextOIdx =
+      e.key === 'ArrowDown'
+        ? (oIdx + 1) % total
+        : (oIdx - 1 + total) % total
+    setFocused({ qIdx, oIdx: nextOIdx })
+    requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>(
+        `[data-option-key="${qIdx}:${nextOIdx}"]`,
+      )
+      el?.focus()
+    })
+  }
+
+  const renderOption = (
+    q: QuestionPayload,
+    qIdx: number,
+    oIdx: number,
+    label: string,
+    description: string | undefined,
+    selected: boolean,
+    onClick: () => void,
+  ) => {
+    const isFocused =
+      focused && focused.qIdx === qIdx && focused.oIdx === oIdx
+    return (
+      <button
+        key={`${qIdx}:${oIdx}:${label}`}
+        type="button"
+        role={q.multiSelect ? undefined : 'radio'}
+        aria-checked={q.multiSelect ? undefined : selected}
+        data-option-key={`${qIdx}:${oIdx}`}
+        onClick={() => {
+          setLastInteractionMode('keyboard')
+          onClick()
+        }}
+        onFocus={() => handleOptionFocus(qIdx, oIdx)}
+        onMouseEnter={() => handleOptionMouseEnter(qIdx, oIdx)}
+        onKeyDown={(e) => handleOptionKey(e, qIdx, oIdx)}
+        disabled={isResolving}
+        className={`w-full text-left px-2 py-2 rounded-md text-xs transition-colors ${
+          selected
+            ? 'bg-accent/20 text-accent'
+            : 'bg-work text-text-secondary hover:bg-accent/10'
+        } ${isFocused ? 'ring-1 ring-inset ring-accent/30' : ''} disabled:opacity-50`}
+      >
+        <div className="flex items-center gap-2">
+          <span
+            className={`w-3.5 h-3.5 rounded-${q.multiSelect ? 'sm' : 'full'} border flex items-center justify-center flex-shrink-0 ${
+              selected
+                ? 'border-accent bg-accent'
+                : 'border-text-tertiary'
+            }`}
+          >
+            {selected && (
+              <svg
+                className="w-2.5 h-2.5 text-accent-foreground"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={3}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M5 13l4 4L19 7"
+                />
+              </svg>
+            )}
+          </span>
+          <span className="font-medium">{label}</span>
+        </div>
+        {description && (
+          <div className="mt-0.5 ml-5 text-text-tertiary">
+            <Streamdown className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5">
+              {description}
+            </Streamdown>
+          </div>
+        )}
+      </button>
+    )
+  }
+
+  const renderQuestion = (q: QuestionPayload, qIdx: number) => {
+    const selectedSet = selections[q.question] || []
+    const otherIsOn = !!otherSelected[q.question]
+    return (
+      <div
+        key={`${qIdx}:${q.question}`}
+        {...(isStepper
+          ? {
+              'aria-roledescription': 'step',
+              'aria-label': `Question ${stepIndex + 1} of ${item.questions.length}`,
+            }
+          : {})}
+      >
+        {q.header && (
+          <p className="text-xs font-semibold text-text-primary mb-1">
+            {q.header}
+          </p>
+        )}
+        <div className="text-sm text-text-secondary mb-2">
+          <Streamdown className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5">
+            {q.question}
+          </Streamdown>
+        </div>
+        <div
+          role={q.multiSelect ? 'group' : 'radiogroup'}
+          aria-label={q.question}
+          className="space-y-1"
+        >
+          {q.options.map((opt, oIdx) =>
+            renderOption(
+              q,
+              qIdx,
+              oIdx,
+              opt.label,
+              opt.description,
+              selectedSet.includes(opt.label),
+              () => toggleOption(q.question, opt.label, q.multiSelect),
+            ),
+          )}
+          {renderOption(
+            q,
+            qIdx,
+            q.options.length,
+            t('approval.other'),
+            undefined,
+            otherIsOn,
+            () => toggleOther(q.question, q.multiSelect),
+          )}
+        </div>
+        {otherIsOn && (
+          <OtherInput
+            workspaceId={workspaceId}
+            sessionId={sessionId}
+            value={otherText[q.question] || ''}
+            disabled={isResolving}
+            onChange={(v) => setOtherTextFor(q.question, v)}
+          />
+        )}
+      </div>
+    )
+  }
+
+  const isLastStep = stepIndex === item.questions.length - 1
+
+  const questionContent = isStepper
+    ? renderQuestion(currentQuestion, stepIndex)
+    : item.questions.map((q, qIdx) => renderQuestion(q, qIdx))
+
+  return (
+    <div>
+      {isResolving ? (
+        <div className="flex items-center gap-2 mb-3 text-sm text-text-tertiary">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          {t('approval.submitted')}
+        </div>
+      ) : currentHasPreviews ? (
+        <div className="flex gap-3 mb-3 max-h-[60vh]">
+          <div className="flex-1 min-w-0 overflow-y-auto pr-1">
+            {questionContent}
+          </div>
+          <div className="flex-1 min-w-0 bg-bg/50 border border-border/30 rounded-md overflow-hidden">
+            <PreviewPane html={focusedPreview} />
+          </div>
+        </div>
+      ) : (
+        <div className="mb-3 max-h-[60vh] overflow-y-auto">{questionContent}</div>
+      )}
+
+      <div className="flex items-center gap-2">
+        {isStepper && stepIndex > 0 && (
+          <Button
+            onClick={() => onStepChange(stepIndex - 1)}
+            variant="secondary"
+            size="sm"
+          >
+            {t('approval.back')}
+          </Button>
+        )}
+        {isStepper && !isLastStep && (
+          <Button
+            onClick={() => onStepChange(stepIndex + 1)}
+            disabled={!canNext}
+            size="sm"
+          >
+            {t('approval.next')}
+          </Button>
+        )}
+        {(!isStepper || isLastStep) && (
+          <Button onClick={handleConfirm} disabled={!canConfirm} size="sm">
+            {isResolving ? (
+              <span className="flex items-center gap-1">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                …
+              </span>
+            ) : (
+              t('approval.confirm')
+            )}
+          </Button>
+        )}
+        {hasPreviews && (
+          <Button
+            onClick={onChatAbout}
+            disabled={isResolving}
+            variant="secondary"
+            size="sm"
+          >
+            {t('approval.chatAboutThis')}
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+interface OtherInputProps {
+  workspaceId: string
+  sessionId?: string
+  value: string
+  disabled: boolean
+  onChange: (value: string) => void
+}
+
+function OtherInput({
+  workspaceId,
+  sessionId,
+  value,
+  disabled,
+  onChange,
+}: OtherInputProps) {
+  const { t } = useTranslation('chat')
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const commandHandleRef = useRef<CommandPickerHandle>(null)
+  const fileHandleRef = useRef<FilePickerHandle>(null)
+  const prevRef = useRef('')
+
+  const [commandOpen, setCommandOpen] = useState(false)
+  const [commandSource, setCommandSource] = useState<'slash' | 'button'>(
+    'slash',
+  )
+  const [commandFilter, setCommandFilter] = useState('')
+
+  const [fileOpen, setFileOpen] = useState(false)
+  const [fileSource, setFileSource] = useState<'at' | 'button'>('at')
+  const [fileFilter, setFileFilter] = useState('')
+  const [fileTriggerStart, setFileTriggerStart] = useState<number | null>(
+    null,
+  )
+
+  useEffect(() => {
+    const ta = textareaRef.current
+    if (!ta) return
+    ta.style.height = 'auto'
+    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`
+  }, [value])
+
+  const handleInputChange = (next: string, cursorPos: number) => {
+    const prev = prevRef.current
+    prevRef.current = next
+    onChange(next)
+
+    if (fileOpen) {
+      if (fileTriggerStart !== null) {
+        if (cursorPos <= fileTriggerStart || next[fileTriggerStart] !== '@') {
+          setFileOpen(false)
+          setFileTriggerStart(null)
+          return
+        }
+        const filterText = next.slice(fileTriggerStart + 1, cursorPos)
+        if (/\s/.test(filterText)) {
+          setFileOpen(false)
+          setFileTriggerStart(null)
+          return
+        }
+        setFileFilter(filterText)
+      }
+    }
+
+    if (commandOpen && commandSource === 'slash') {
+      if (next === '') {
+        setCommandOpen(false)
+      } else if (next.startsWith('/') && !/\s/.test(next)) {
+        setCommandFilter(next.slice(1))
+      } else {
+        setCommandOpen(false)
+      }
+    }
+
+    // Detect @ trigger when no command picker is open
+    if (!fileOpen && (!commandOpen || commandSource !== 'slash')) {
+      if (next === '@' && prev === '') {
+        setFileTriggerStart(0)
+        setFileSource('at')
+        setFileFilter('')
+        setFileOpen(true)
+        setCommandOpen(false)
+        return
+      }
+      if (
+        cursorPos > 0 &&
+        next[cursorPos - 1] === '@' &&
+        (cursorPos === 1 || /\s/.test(next[cursorPos - 2]))
+      ) {
+        setFileTriggerStart(cursorPos - 1)
+        setFileSource('at')
+        setFileFilter('')
+        setFileOpen(true)
+        setCommandOpen(false)
+      }
+    }
+
+    // Detect slash trigger from empty
+    if (
+      !fileOpen &&
+      !commandOpen &&
+      prev === '' &&
+      next.startsWith('/') &&
+      !/\s/.test(next)
+    ) {
+      setCommandSource('slash')
+      setCommandFilter(next.slice(1))
+      setCommandOpen(true)
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (fileOpen) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        fileHandleRef.current?.moveDown()
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        fileHandleRef.current?.moveUp()
+        return
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        fileHandleRef.current?.commitActive()
+        return
+      }
+      if (e.key === 'Escape' || e.key === 'Tab') {
+        e.preventDefault()
+        setFileOpen(false)
+        setFileTriggerStart(null)
+        return
+      }
+    }
+
+    if (commandOpen && commandSource === 'slash') {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        commandHandleRef.current?.moveDown()
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        commandHandleRef.current?.moveUp()
+        return
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        commandHandleRef.current?.commitActive()
+        return
+      }
+      if (e.key === 'Escape' || e.key === 'Tab') {
+        e.preventDefault()
+        setCommandOpen(false)
+        return
+      }
+    }
+
+    // Enter inserts a newline (default browser behavior) — surface Confirm is a separate button.
+  }
+
+  const handleCommandSelect = (command: SlashCommandDto) => {
+    const inserted = `/${command.name} `
+    onChange(inserted)
+    prevRef.current = inserted
+    setCommandOpen(false)
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current
+      if (!ta) return
+      ta.focus()
+      ta.setSelectionRange(inserted.length, inserted.length)
+    })
+  }
+
+  const handleFileSelect = (selectedPath: string) => {
+    const ta = textareaRef.current
+    if (!ta || fileTriggerStart === null) return
+    const cursorPos = ta.selectionStart
+    const before = value.slice(0, fileTriggerStart)
+    const after = value.slice(cursorPos)
+    const inserted = `@${selectedPath} `
+    const next = before + inserted + after
+    onChange(next)
+    prevRef.current = next
+    setFileOpen(false)
+    setFileTriggerStart(null)
+    requestAnimationFrame(() => {
+      const pos = fileTriggerStart + inserted.length
+      ta.focus()
+      ta.setSelectionRange(pos, pos)
+    })
+  }
+
+  const openCommandsExplicit = () => {
+    if (commandOpen) {
+      setCommandOpen(false)
+      return
+    }
+    setFileOpen(false)
+    setFileTriggerStart(null)
+    setCommandSource('button')
+    setCommandFilter('')
+    setCommandOpen(true)
+  }
+
+  const openFilesExplicit = () => {
+    if (fileOpen) {
+      setFileOpen(false)
+      setFileTriggerStart(null)
+      return
+    }
+    setCommandOpen(false)
+    setFileSource('button')
+    setFileFilter('')
+    setFileTriggerStart(null)
+    setFileOpen(true)
+  }
+
+  return (
+    <div className="mt-2 ml-5 relative bg-work border border-border/60 rounded-md">
+      <div className="flex items-center px-2 pt-1.5 gap-1">
+        <CommandPicker
+          ref={commandHandleRef}
+          workspaceId={workspaceId}
+          sessionId={sessionId}
+          open={commandOpen}
+          onOpenChange={setCommandOpen}
+          onSelect={handleCommandSelect}
+          side="top"
+          align="start"
+          initialFilter={commandFilter}
+          hideFilterInput={commandSource === 'slash'}
+          refetchOnOpen
+          anchor={
+            <button
+              type="button"
+              onClick={openCommandsExplicit}
+              disabled={disabled}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              title={t('commands')}
+            >
+              <SlashSquare className="w-3 h-3" />
+              <span>{t('commands')}</span>
+            </button>
+          }
+        />
+        <FilePicker
+          ref={fileHandleRef}
+          workspaceId={workspaceId}
+          open={fileOpen}
+          onOpenChange={(open) => {
+            setFileOpen(open)
+            if (!open) setFileTriggerStart(null)
+          }}
+          onSelect={handleFileSelect}
+          side="top"
+          align="start"
+          initialFilter={fileFilter}
+          hideFilterInput={fileSource === 'at'}
+          refetchOnOpen
+          anchor={
+            <button
+              type="button"
+              onClick={openFilesExplicit}
+              disabled={disabled || !workspaceId}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              title={t('files')}
+            >
+              <Paperclip className="w-3 h-3" />
+              <span>{t('files')}</span>
+            </button>
+          }
+        />
+      </div>
+      <textarea
+        ref={textareaRef}
+        value={value}
+        onChange={(e) =>
+          handleInputChange(e.target.value, e.target.selectionStart)
+        }
+        onKeyDown={handleKeyDown}
+        placeholder={t('approval.typeAnswer')}
+        disabled={disabled}
+        rows={1}
+        className="w-full bg-transparent border-0 px-3 py-2 text-xs text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:ring-0 overflow-y-auto"
+        style={{ minHeight: '36px', maxHeight: '160px' }}
+      />
+    </div>
+  )
+}

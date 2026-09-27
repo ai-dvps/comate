@@ -1,0 +1,59 @@
+---
+import { getCollection, render } from 'astro:content';
+import { getLocalizedEntries, type Lang } from '../i18n/utils.js';
+
+interface Props {
+  locale: Lang;
+}
+
+const { locale } = Astro.props;
+const allEntries = await getCollection('faq');
+const entries = getLocalizedEntries(allEntries, locale).sort((a, b) => a.data.order - b.data.order);
+const rendered = await Promise.all(
+  entries.map(async (entry) => {
+    const { Content } = await render(entry);
+    const id = entry.id.split('/').at(-1)?.replace(/^\d+-/, '') ?? entry.id;
+    return { data: entry.data, Content, id };
+  })
+);
+---
+
+<main class="mx-auto max-w-3xl px-4 py-16 md:py-24">
+  <h1 class="text-4xl font-bold text-text-primary md:text-5xl">
+    {locale === 'zh' ? '常见问题' : 'FAQ'}
+  </h1>
+  <p class="mt-4 max-w-2xl text-lg text-text-secondary">
+    {locale === 'zh'
+      ? '了解模型 Provider、数据与权限边界、企业集成、平台支持、许可和网站分析偏好。'
+      : 'Answers about model Providers, data and permission boundaries, enterprise integrations, platforms, licensing, and analytics preferences.'}
+  </p>
+
+  <div class="mt-12 space-y-6">
+    {
+      rendered.map(({ data, Content, id }) => (
+        <details id={id} class="group scroll-mt-24 rounded-lg border border-border bg-surface p-6">
+          <summary class="cursor-pointer list-none text-lg font-semibold text-text-primary">
+            <span class="flex items-center justify-between">
+              {data.question}
+              <svg
+                class="h-5 w-5 text-text-tertiary transition-transform group-open:rotate-180"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  fill-rule="evenodd"
+                  d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                  clip-rule="evenodd"
+                />
+              </svg>
+            </span>
+          </summary>
+          <div class="mt-4 text-text-secondary">
+            <Content />
+          </div>
+        </details>
+      ))
+    }
+  </div>
+</main>

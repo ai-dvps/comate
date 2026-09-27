@@ -1,0 +1,448 @@
+import { Router } from 'express';
+import { store } from '../storage/sqlite-store.js';
+import { wecomBotService } from '../services/wecom-bot-service.js';
+import { wecomUserResolver } from '../services/wecom-user-resolver.js';
+import { chatService } from '../services/chat-service.js';
+import { feishuBotService } from '../services/feishu-bot-service.js';
+import { botService } from '../services/bot-service.js';
+import { browserService } from '../services/browser-service.js';
+import { browserTaskStateService } from '../services/browser-task-state.js';
+import { browserAuditService } from '../services/browser-audit.js';
+import {
+  mergeSiteAuthForUpdate,
+  stripSiteAuthValues,
+} from '../services/browser-site-auth.js';
+import type { CreateWorkspaceInput, UpdateWorkspaceInput, Workspace } from '../models/workspace.js';
+
+import { redactChannelSettings, mapBotError } from '../routes/bots.js';
+
+const router = Router();
+
+/**
+ * Value-only-in discipline (KTD-8): browserSiteAuth session contexts are
+ * live replayable tokens — responses carry keys + metadata only. Applies to
+ * every workspace-bearing response (list/get/update/create).
+ */
+function stripWorkspaceForResponse(workspace: Workspace): Workspace {
+  if (!workspace.settings?.browserSiteAuth) return workspace;
+  return { ...workspace, settings: stripSiteAuthValues(workspace.settings) };
+}
+
+// GET /api/workspaces
+router.get('/', async (_req, res) => {
+  try {
+    const workspaces = await store.list();
+    res.json({ workspaces: workspaces.map(stripWorkspaceForResponse) });
+  } catch (error) {
+    console.error('Failed to list workspaces:', error);
+    res.status(500).json({ error: 'Failed to list workspaces' });
+  }
+});
+
+// POST /api/workspaces
+router.post('/', async (req, res) => {
+  try {
+    const input = req.body as CreateWorkspaceInput;
+
+    if (!input.name || !input.folderPath) {
+      res.status(400).json({ error: 'name and folderPath are required' });
+      return;
+    }
+
+    const workspace = await store.create(input);
+    res.status(201).json({ workspace: stripWorkspaceForResponse(workspace) });
+  } catch (error) {
+    console.error('Failed to create workspace:', error);
+    res.status(500).json({ error: 'Failed to create workspace' });
+  }
+});
+
+// GET /api/workspaces/:id
+router.get('/:id', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+    res.json({ workspace: stripWorkspaceForResponse(workspace) });
+  } catch (error) {
+    console.error('Failed to get workspace:', error);
+    res.status(500).json({ error: 'Failed to get workspace' });
+  }
+});
+
+// GET /api/workspaces/:id/bot
+router.get('/:id/bot', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+    const bot = botService.listBotsForWorkspace(req.params.id)[0] ?? null;
+    if (!bot) {
+      res.status(404).json({ error: 'No bot bound to this workspace' });
+      return;
+    }
+    res.json({ bot: { ...bot, channelSettings: redactChannelSettings(botService.getChannelSettings(bot.id)) } });
+  } catch (error) {
+    console.error('Failed to get workspace bot:', error);
+    res.status(500).json({ error: 'Failed to get workspace bot' });
+  }
+});
+
+// POST /api/workspaces/:id/open
+router.post('/:id/open', async (req, res) => {
+  try {
+    const workspace = await store.recordLastOpened(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+    res.json({ workspace: stripWorkspaceForResponse(workspace) });
+  } catch (error) {
+    console.error('Failed to record workspace last opened:', error);
+    res.status(500).json({ error: 'Failed to record workspace last opened' });
+  }
+});
+
+// PUT /api/workspaces/:id
+router.put('/:id', async (req, res) => {
+  try {
+    const input = req.body as UpdateWorkspaceInput;
+
+    // Field-level merge (KTD-8): a whole-bag settings save must neither
+    // clobber a concurrent remember-site write nor carry client-supplied
+    // browserSiteAuth values. When the client sends settings, the stored
+    // site-auth values are preserved (incoming key set prunes, if provided).
+    if (input.settings !== undefined) {
+      const existing = await store.get(req.params.id);
+      if (!existing) {
+        res.status(404).json({ error: 'Workspace not found' });
+        return;
+      }
+      input.settings = mergeSiteAuthForUpdate(existing.settings ?? {}, input.settings);
+    }
+
+    const workspace = await store.update(req.params.id, input);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    if (
+      input.settings?.wecomToolPermissions !== undefined ||
+      input.settings?.wecomBotIsolation !== undefined ||
+      input.settings?.sensitiveFileDenylist !== undefined
+    ) {
+      chatService.scheduleRebuildsForWorkspaceLegacyPolicy(req.params.id);
+    }
+
+    // U3 runtime kill switch: toggling the permission sandbox model changes
+    // the gate, sandbox, and settings pin for every bot session — rebuild all
+    // of this workspace's live bot runtimes so none keeps the old model's
+    // frozen configuration.
+    if (input.settings?.botPermissionSandboxDisabled !== undefined) {
+      chatService.scheduleRebuildsForWorkspaceBotSessions(req.params.id);
+    }
+
+    res.json({ workspace: stripWorkspaceForResponse(workspace) });
+  } catch (error) {
+    console.error('Failed to update workspace:', error);
+    res.status(500).json({ error: 'Failed to update workspace' });
+  }
+});
+
+// GET /api/workspaces/:id/bot/status
+router.get('/:id/bot/status', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+    const status = wecomBotService.getStatus(req.params.id);
+    res.json({ status });
+  } catch (error) {
+    console.error('Failed to get bot status:', error);
+    res.status(500).json({ error: 'Failed to get bot status' });
+  }
+});
+
+// GET /api/workspaces/:id/feishu/status
+router.get('/:id/feishu/status', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+    const status = feishuBotService.getStatus(req.params.id);
+    res.json({ status });
+  } catch (error) {
+    console.error('Failed to get Feishu bot status:', error);
+    res.status(500).json({ error: 'Failed to get Feishu bot status' });
+  }
+});
+
+// DELETE /api/workspaces/:id
+router.delete('/:id', async (req, res) => {
+  try {
+    const deleted = await store.delete(req.params.id);
+    if (!deleted) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    // Evict any cached bot runtimes for this workspace so they do not keep
+    // answering inbound messages against a workspace whose settings row is gone.
+    await chatService.closeRuntimesForWorkspace(req.params.id);
+
+    // Workspace-delete cascade (KTD-8): browser processes die with the
+    // workspace. The browserSiteAuth field dies with the settings row and
+    // browser_audit rows are deleted inside store.delete().
+    await browserService.teardownWorkspace(req.params.id);
+    browserTaskStateService.purgeWorkspace(req.params.id);
+
+    // Disconnect any Feishu bots bound to the deleted workspace.
+    for (const bot of botService.listBotsForWorkspace(req.params.id)) {
+      feishuBotService.disconnectBot(bot.id);
+    }
+
+    res.status(204).send();
+  } catch (error) {
+    console.error('Failed to delete workspace:', error);
+    res.status(500).json({ error: 'Failed to delete workspace' });
+  }
+});
+
+// DELETE /api/workspaces/:id/browser-site-auth/:siteKey
+// Revoke one remembered site (settings page management list). The stored
+// session context is destroyed; future sessions stop being injected.
+router.delete('/:id/browser-site-auth/:siteKey', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+    const siteKey = req.params.siteKey;
+    const removed = store.deleteWorkspaceSiteAuthEntry(req.params.id, siteKey);
+    if (!removed) {
+      res.status(404).json({ error: 'Remembered site not found' });
+      return;
+    }
+    browserAuditService.logSiteAuth({
+      workspaceId: req.params.id,
+      siteKey,
+      action: 'revoke',
+      outcome: 'ok',
+    });
+    res.status(204).send();
+  } catch (error) {
+    console.error('Failed to revoke remembered site:', error);
+    res.status(500).json({ error: 'Failed to revoke remembered site' });
+  }
+});
+
+// GET /api/workspaces/:id/wecom/users
+router.get('/:id/wecom/users', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const users = botService.listChannelUsersForWorkspace(req.params.id, 'wecom');
+
+    const result = users.map((u) => ({
+      encryptedUserId: u.channelUserId,
+      plaintextUserId: u.plaintextUserId ?? undefined,
+    }));
+
+    res.json({ users: result });
+  } catch (error) {
+    console.error('Failed to list WeCom workspace users:', error);
+    res.status(500).json({ error: 'Failed to list WeCom workspace users' });
+  }
+});
+
+// POST /api/workspaces/:id/wecom/users/:encryptedUserId/plaintext
+// Allows admins to manually set the plaintext enterprise userId for an existing
+// WeCom user. Duplicate plaintext IDs are rejected within the same workspace.
+router.post('/:id/wecom/users/:encryptedUserId/plaintext', async (req, res) => {
+  try {
+    const workspaceId = req.params.id;
+    const encryptedUserId = req.params.encryptedUserId;
+    const { plaintextUserId } = req.body as { plaintextUserId?: unknown };
+
+    const workspace = await store.get(workspaceId);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const existingUser = botService.listChannelUsersForWorkspace(workspaceId, 'wecom')
+      .find((u) => u.channelUserId === encryptedUserId);
+    if (!existingUser) {
+      res.status(400).json({ error: 'WeCom user not found in workspace' });
+      return;
+    }
+
+    if (!plaintextUserId || typeof plaintextUserId !== 'string') {
+      res.status(400).json({ error: 'plaintextUserId is required' });
+      return;
+    }
+
+    const trimmed = plaintextUserId.trim();
+    if (!trimmed) {
+      res.status(400).json({ error: 'plaintextUserId cannot be empty' });
+      return;
+    }
+
+    botService.setChannelUserPlaintextForWorkspace(workspaceId, 'wecom', encryptedUserId, trimmed);
+
+    res.json({ encryptedUserId, plaintextUserId: trimmed });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'BotUserPlaintextConflictError') {
+      const mapped = mapBotError(error);
+      res.status(mapped.status).json({ error: mapped.message, code: mapped.code });
+      return;
+    }
+    console.error('Failed to set WeCom user plaintext ID:', error);
+    res.status(500).json({ error: 'Failed to set WeCom user plaintext ID' });
+  }
+});
+
+// GET /api/workspaces/:id/wecom/resolver-status
+router.get('/:id/wecom/resolver-status', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const status = wecomUserResolver.getStatus();
+    const wsQueue = status.workspaceQueues.find((q) => q.workspaceId === req.params.id);
+
+    res.json({
+      initialized: status.initialized,
+      queueDepth: wsQueue?.depth ?? 0,
+      inFlightTokenRefresh: status.inFlightRefreshes > 0,
+      lastFlushAt: status.lastFlushAt,
+    });
+  } catch (error) {
+    console.error('Failed to get resolver status:', error);
+    res.status(500).json({ error: 'Failed to get resolver status' });
+  }
+});
+
+// POST /api/workspaces/:id/wecom/resolve-pending
+// Immediately flushes any pending WeCom user ID resolution jobs for the workspace.
+router.post('/:id/wecom/resolve-pending', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const result = await wecomUserResolver.flushWorkspaceNow(req.params.id);
+    res.json(result);
+  } catch (error) {
+    console.error('Failed to resolve pending WeCom user IDs:', error);
+    res.status(500).json({ error: 'Failed to resolve pending WeCom user IDs' });
+  }
+});
+
+// GET /api/workspaces/:id/prompt-history
+// Returns the workspace's sent-prompt history, pruning entries older than the
+// configured retention threshold first.
+router.get('/:id/prompt-history', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const retentionDays = workspace.settings?.promptHistoryRetentionDays ?? 30;
+    if (retentionDays > 0) {
+      store.prunePromptHistory(req.params.id, retentionDays as number);
+    }
+
+    const prompts = store.listPromptHistory(req.params.id);
+    res.json({ prompts });
+  } catch (error) {
+    console.error('Failed to list prompt history:', error);
+    res.status(500).json({ error: 'Failed to list prompt history' });
+  }
+});
+
+// POST /api/workspaces/:id/prompt-history
+// Records a user-sent prompt in the workspace-scoped history log.
+router.post('/:id/prompt-history', async (req, res) => {
+  try {
+    const workspaceId = req.params.id;
+    const { sessionId, prompt } = req.body;
+
+    if (!sessionId || typeof sessionId !== 'string') {
+      res.status(400).json({ error: 'sessionId is required' });
+      return;
+    }
+
+    if (!prompt || typeof prompt !== 'string') {
+      res.status(400).json({ error: 'prompt is required' });
+      return;
+    }
+
+    const trimmed = prompt.trim();
+    if (!trimmed) {
+      res.status(400).json({ error: 'prompt cannot be empty' });
+      return;
+    }
+
+    const workspace = await store.get(workspaceId);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const entry = store.createPromptHistory(workspaceId, sessionId, trimmed);
+    res.status(201).json(entry);
+  } catch (error) {
+    console.error('Failed to create prompt history:', error);
+    res.status(500).json({ error: 'Failed to create prompt history' });
+  }
+});
+
+// GET /api/workspaces/:id/feishu/users
+router.get('/:id/feishu/users', async (req, res) => {
+  try {
+    const workspace = await store.get(req.params.id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const users = botService.listChannelUsersForWorkspace(req.params.id, 'feishu')
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    const result = users.map((u) => ({
+      openId: u.channelUserId,
+      userId: u.plaintextUserId ?? undefined,
+      name: u.plaintextUserId ?? undefined,
+      namePending: !u.plaintextUserId,
+    }));
+
+    res.json({ users: result });
+  } catch (error) {
+    console.error('Failed to list Feishu workspace users:', error);
+    res.status(500).json({ error: 'Failed to list Feishu workspace users' });
+  }
+});
+
+export default router;

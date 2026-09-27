@@ -1,0 +1,96 @@
+---
+import { getCollection, render } from 'astro:content';
+import { getRelativeLocaleUrl } from 'astro:i18n';
+import { getLocalizedEntries, type Lang } from '../i18n/utils.js';
+import FeatureCard from './FeatureCard.astro';
+
+interface Props {
+  locale: Lang;
+}
+
+const { locale } = Astro.props;
+const allEntries = await getCollection('features');
+const localizedEntries = getLocalizedEntries(allEntries, locale).sort((a, b) => a.data.order - b.data.order);
+const entries = await Promise.all(localizedEntries.map(async (entry) => {
+  const { Content } = await render(entry);
+  return { ...entry, Content };
+}));
+
+const categories = [...new Set(entries.map((e) => e.data.category))];
+---
+
+<main class="mx-auto max-w-6xl px-4 py-16 md:py-24">
+  <div class="mb-12 flex flex-col items-start justify-between gap-6 md:flex-row md:items-end">
+    <div class="max-w-2xl">
+      <h1 class="text-4xl font-bold tracking-tight text-text-primary md:text-5xl">
+        {locale === 'zh' ? '功能特性' : 'Features'}
+      </h1>
+      <p class="mt-4 text-lg text-text-secondary">
+        {
+          locale === 'zh'
+            ? 'Comate 围绕任务结果组织上下文、Agent、模型、工具与权限，让个人效率与企业管控同时成立。'
+            : 'Comate organizes context, Agents, models, tools, and permissions around task outcomes—for individual momentum with enterprise control.'
+        }
+      </p>
+    </div>
+    <a
+      href={getRelativeLocaleUrl(locale, '/download/')}
+      data-analytics-event="download_cta_click"
+      data-analytics-locale={locale}
+      data-analytics-location="features_header"
+      data-analytics-platform="all"
+      data-analytics-stage="download_page"
+      class="inline-flex min-h-12 items-center justify-center rounded-lg bg-conversion px-6 py-3 text-base font-semibold text-conversion-foreground no-underline shadow-lg shadow-conversion/20 hover:bg-conversion-hover hover:shadow-conversion/30"
+    >
+      {locale === 'zh' ? '立即下载体验' : 'Download and try it now'}
+    </a>
+  </div>
+
+  {
+    categories.map((category, categoryIndex) => (
+      <section class="reveal mt-12 first:mt-0" data-feature-group data-feature-group-order={categoryIndex + 1} aria-labelledby={`feature-group-${categoryIndex + 1}`}>
+        <h2 id={`feature-group-${categoryIndex + 1}`} class="mb-4 text-xl font-semibold text-text-primary">{category}</h2>
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {entries
+            .filter((e) => e.data.category === category)
+            .map((entry) => (
+              <FeatureCard
+                title={entry.data.title}
+                description={entry.data.description}
+                category={entry.data.category}
+                icon={entry.data.icon}
+                image={entry.data.image}
+                imageAlt={entry.data.imageAlt}
+                gradientFrom={entry.data.gradientFrom}
+                gradientTo={entry.data.gradientTo}
+              >
+                <entry.Content />
+              </FeatureCard>
+            ))}
+        </div>
+      </section>
+    ))
+  }
+
+  <div class="reveal mt-16 rounded-2xl border border-border bg-surface p-8 text-center">
+    <h2 class="text-2xl font-bold text-text-primary md:text-3xl">
+      {locale === 'zh' ? '亲自体验这些能力' : 'Experience it yourself'}
+    </h2>
+    <p class="mx-auto mt-3 max-w-xl text-text-secondary">
+      {locale === 'zh'
+        ? '下载 Comate，配置你选择的模型 Provider，然后把第一个真实任务交给 Agent。'
+        : 'Download Comate, configure your chosen model Provider, and give an Agent your first real task.'}
+    </p>
+    <a
+      href={getRelativeLocaleUrl(locale, '/download/')}
+      data-analytics-event="download_cta_click"
+      data-analytics-locale={locale}
+      data-analytics-location="features_closing"
+      data-analytics-platform="all"
+      data-analytics-stage="download_page"
+      class="mt-6 inline-flex min-h-12 items-center justify-center rounded-lg bg-conversion px-8 py-3 text-base font-semibold text-conversion-foreground no-underline shadow-lg shadow-conversion/20 hover:bg-conversion-hover"
+    >
+      {locale === 'zh' ? '立即下载' : 'Download now'}
+    </a>
+  </div>
+</main>

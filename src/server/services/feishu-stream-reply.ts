@@ -1,0 +1,354 @@
+import type { Thread } from 'chat';
+import type * as lark from '@larksuiteoapi/node-sdk';
+import type { SseEvent } from '../types/message.js';
+
+export const FALLBACK_TEXT = '⚠️ 处理失败，请稍后重试。';
+import {
+  buildApprovalCard,
+  type FeishuCard,
+} from './feishu-card-builder.js';
+import { FeishuCardStream, hasVisibleChar } from './feishu-card-stream.js';
+import { getRandomAcknowledgment } from '../utils/bot-placeholder.js';
+import { sendPlainTextMessage } from './feishu-message-utils.js';
+import { diagLog } from '../utils/diag-logger.js';
+import { botToolStatusText, summarizeBotToolOperation } from '../utils/bot-tool-presentation.js';
+import { computeAlwaysAllowRules } from './bot-escalation-guard.js';
+
+export interface FeishuStreamReplyHandle {
+  handler: ((id: number, event: SseEvent) => void) & { cleanup: () => void };
+  finalize: () => Promise<void>;
+  interrupt: (message: string) => boolean;
+  setStatus: (message: string) => void;
+}
+
+interface FeishuStreamReplyOptions {
+  onWaiting?: () => void;
+  initialHint?: string;
+  onCardDeliveryFailure?: (requestId: string) => void;
+}
+
+export class FeishuStreamReply {
+  private thread: Thread;
+  private larkClient: lark.Client;
+  private openId: string;
+  private workspaceId: string;
+  private sessionId: string;
+  private onWaiting?: () => void;
+  private initialHint?: string;
+  private onCardDeliveryFailure?: FeishuStreamReplyOptions['onCardDeliveryFailure'];
+  private callbacks?: { onFinalized?: () => void; onCleanup?: () => void };
+
+  private controller: FeishuCardStream | null = null;
+  private finalized = false;
+  private finalizedNotified = false;
+  private finishPromise: Promise<void> | null = null;
+  private waitingSignaled = false;
+  private collecting = false;
+  private responseText = '';
+  private visiblePlaceholder = '';
+  private seenPendingApprovals = new Set<string>();
+
+  constructor(
+    thread: Thread,
+    larkClient: lark.Client,
+    openId: string,
+    workspaceId: string,
+    sessionId: string,
+    options?: FeishuStreamReplyOptions,
+  ) {
+    this.thread = thread;
+    this.larkClient = larkClient;
+    this.openId = openId;
+    this.workspaceId = workspaceId;
+    this.sessionId = sessionId;
+    this.onWaiting = options?.onWaiting;
+    this.initialHint = options?.initialHint;
+    this.onCardDeliveryFailure = options?.onCardDeliveryFailure;
+  }
+
+  async start(options?: {
+    onWaiting?: () => void;
+    onFinalized?: () => void;
+    onCleanup?: () => void;
+  }): Promise<FeishuStreamReplyHandle> {
+    this.onWaiting = options?.onWaiting ?? this.onWaiting;
+    this.callbacks = { onFinalized: options?.onFinalized, onCleanup: options?.onCleanup };
+
+    diagLog(`[FeishuStreamReply ${this.sessionId}] start openId=${this.openId}`);
+    this.controller = new FeishuCardStream(this.larkClient, this.openId);
+    try {
+      await this.controller.start(this.initialHint ?? getRandomAcknowledgment());
+      diagLog(`[FeishuStreamReply ${this.sessionId}] streaming card started`);
+    } catch (err) {
+      console.error('[FeishuStreamReply] Failed to start streaming card:', err);
+      diagLog(`[FeishuStreamReply ${this.sessionId}] streaming card start FAIL err=${err instanceof Error ? err.message : String(err)}`);
+      this.controller = null;
+      throw err;
+    }
+
+    const handler = Object.assign(
+      (_id: number, event: SseEvent) => {
+        this.handleEvent(event);
+      },
+      {
+        cleanup: () => {
+          diagLog(
+            `[FeishuStreamReply ${this.sessionId}] handler cleanup finalized=${this.finalized} (removes active stream-reply registration)`,
+          );
+          this.callbacks?.onCleanup?.();
+          void this.finalize();
+        },
+      },
+    );
+
+    return {
+      handler,
+      finalize: () => this.finalize(),
+      interrupt: (message: string) => this.interrupt(message),
+      setStatus: (message: string) => this.setPlaceholder(message),
+    };
+  }
+
+  private handleEvent(event: SseEvent): void {
+    if (this.finalized) {
+      return;
+    }
+
+    switch (event.type) {
+      case 'assistant_start':
+        diagLog(`[FeishuStreamReply ${this.sessionId}] handler event=assistant_start`);
+        this.collecting = true;
+        this.clearPlaceholderState();
+        if (this.responseText && !this.responseText.endsWith('\n\n')) {
+          this.responseText += '\n\n';
+        }
+        break;
+      case 'text_delta':
+        if (this.collecting) {
+          this.clearPlaceholderState();
+          this.responseText += event.text;
+          this.updateController();
+        }
+        break;
+      case 'thinking_start':
+        if (this.collecting) {
+          this.setPlaceholder('\n\n正在思考...');
+        }
+        break;
+      case 'tool_use_start':
+        if (this.collecting) {
+          this.setPlaceholder(`\n\n${botToolStatusText(event.toolName)}`);
+        }
+        break;
+      case 'tool_result':
+        this.clearPlaceholder();
+        break;
+      case 'subagent_start':
+        if (this.collecting) {
+          this.setPlaceholder('\n\n正在处理一个并行任务…');
+        }
+        break;
+      case 'subagent_done':
+        this.clearPlaceholder();
+        break;
+      case 'assistant_done':
+        this.collecting = false;
+        this.clearPlaceholder();
+        break;
+      case 'error_note':
+        diagLog(`[FeishuStreamReply ${this.sessionId}] handler event=error_note`);
+        this.clearPlaceholder();
+        if (event.text) {
+          this.responseText += `\n\n⚠️ ${event.text}`;
+        }
+        this.updateController();
+        void this.finalize();
+        break;
+      case 'result':
+        diagLog(`[FeishuStreamReply ${this.sessionId}] handler event=result isError=${event.isError}`);
+        this.clearPlaceholder();
+        if (event.isError) {
+          this.responseText += '\n\n⚠️ 处理失败，请稍后重试。';
+        }
+        this.updateController();
+        void this.finalize();
+        break;
+      case 'interrupted':
+        diagLog(`[FeishuStreamReply ${this.sessionId}] handler event=interrupted`);
+        this.clearPlaceholder();
+        this.updateController();
+        void this.finalize();
+        break;
+      case 'pending_approval':
+        diagLog(`[FeishuStreamReply ${this.sessionId}] handler event=pending_approval requestId=${event.requestId}`);
+        this.signalWaiting();
+        this.setPlaceholder('\n\n⏸️ 等待你确认一项操作…');
+        this.postApprovalCard(event);
+        break;
+      case 'approval_timeout':
+        this.sendTextMessage('⏰ 请求已超时，已按拒绝处理。');
+        break;
+      default:
+        break;
+    }
+  }
+
+  private setPlaceholder(text: string): void {
+    if (this.visiblePlaceholder === text) return;
+    this.visiblePlaceholder = text;
+    this.updateController();
+  }
+
+  private clearPlaceholder(): void {
+    if (!this.visiblePlaceholder) return;
+    this.clearPlaceholderState();
+    this.updateController();
+  }
+
+  private clearPlaceholderState(): void {
+    this.visiblePlaceholder = '';
+  }
+
+  private updateController(): void {
+    if (!this.controller) return;
+    const content = this.responseText + this.visiblePlaceholder;
+    // Feishu rejects empty/whitespace-only content updates (99992402 min len 1,
+    // and zero-width spaces are normalized away too). When there is nothing
+    // visible to show, skip the update entirely — the card keeps its last
+    // content until real answer text arrives and overwrites it.
+    if (!content || content.trim() === '') return;
+    this.controller.setContent(content);
+  }
+
+  public interrupt(message: string): boolean {
+    if (this.finalized) {
+      return false;
+    }
+    this.clearPlaceholderState();
+    if (this.responseText && !this.responseText.endsWith('\n\n')) {
+      this.responseText += '\n\n';
+    }
+    this.responseText += message;
+    this.updateController();
+    void this.finalize();
+    return true;
+  }
+
+  private signalWaiting(): void {
+    if (this.waitingSignaled || !this.onWaiting) return;
+    this.waitingSignaled = true;
+    this.onWaiting();
+  }
+
+  private finalize(): Promise<void> {
+    if (this.finalized) {
+      return this.finishPromise ?? Promise.resolve();
+    }
+    diagLog(
+      `[FeishuStreamReply ${this.sessionId}] finalize len=${this.responseText.length} hasController=${!!this.controller}`,
+    );
+    this.finalized = true;
+    this.collecting = false;
+    this.clearPlaceholderState();
+    this.updateController();
+
+    if (!hasVisibleChar(this.responseText)) {
+      this.responseText = FALLBACK_TEXT;
+    }
+
+    if (!this.controller) {
+      // If the controller was never started (should not happen in normal flow),
+      // there is nothing to finalize.
+      diagLog(`[FeishuStreamReply ${this.sessionId}] finalize skipped: no controller`);
+      this.emitFinalized();
+      return Promise.resolve();
+    }
+
+    this.finishPromise = this.controller
+      .finish(this.responseText)
+      .then(
+        (value) => {
+          diagLog(`[FeishuStreamReply ${this.sessionId}] finish OK len=${this.responseText.length}`);
+          return value;
+        },
+        (err: unknown) => {
+          diagLog(
+            `[FeishuStreamReply ${this.sessionId}] finish FAIL err=${err instanceof Error ? err.message : String(err)}`,
+          );
+          throw err;
+        },
+      )
+      .finally(() => {
+        this.emitFinalized();
+      });
+    return this.finishPromise;
+  }
+
+  private emitFinalized(): void {
+    if (this.finalizedNotified) return;
+    this.finalizedNotified = true;
+    this.callbacks?.onFinalized?.();
+  }
+
+  private postApprovalCard(event: Extract<SseEvent, { type: 'pending_approval' }>): void {
+    if (this.seenPendingApprovals.has(event.requestId)) return;
+    this.seenPendingApprovals.add(event.requestId);
+    const command = event.input && typeof event.input === 'object'
+      ? (event.input as Record<string, unknown>).command
+      : undefined;
+    const alwaysAllow = computeAlwaysAllowRules({
+      toolName: event.toolName,
+      command: typeof command === 'string' ? command : undefined,
+      suggestions: event.suggestions,
+    });
+    const card = buildApprovalCard({
+      requestId: event.requestId,
+      workspaceId: this.workspaceId,
+      sessionId: this.sessionId,
+      toolName: event.toolName,
+      title: event.title,
+      description: event.description,
+      operationSummary: summarizeBotToolOperation(
+        event.input,
+        event.inputSummary || event.toolName,
+        160,
+      ),
+      allowAlways: alwaysAllow.rules.length > 0,
+    });
+    this.sendCard(card).catch((err) => {
+      console.error('[FeishuStreamReply] Failed to post approval card:', err);
+      this.setPlaceholder('\n\n⚠️ 确认卡片发送失败，本次操作已取消。');
+      this.onCardDeliveryFailure?.(event.requestId);
+    });
+  }
+
+  private async sendCard(card: FeishuCard): Promise<void> {
+    const content = JSON.stringify(card);
+    diagLog(`[FeishuStreamReply ${this.sessionId}] send card openId=${this.openId} len=${content.length}`);
+    try {
+      await this.larkClient.im.v1.message.create({
+        params: { receive_id_type: 'open_id' },
+        data: {
+          receive_id: this.openId,
+          msg_type: 'interactive',
+          content,
+        },
+      });
+      diagLog(`[FeishuStreamReply ${this.sessionId}] send card OK`);
+    } catch (err) {
+      diagLog(`[FeishuStreamReply ${this.sessionId}] send card FAIL err=${err instanceof Error ? err.message : String(err)}`);
+      throw err;
+    }
+  }
+
+  private sendTextMessage(text: string): void {
+    diagLog(`[FeishuStreamReply ${this.sessionId}] send text openId=${this.openId} len=${text.length}`);
+    sendPlainTextMessage(this.larkClient, this.openId, text).then(
+      () => diagLog(`[FeishuStreamReply ${this.sessionId}] send text OK`),
+      (err: unknown) => {
+        console.error('[FeishuStreamReply] Failed to send text:', err);
+        diagLog(`[FeishuStreamReply ${this.sessionId}] send text FAIL err=${err instanceof Error ? err.message : String(err)}`);
+      },
+    );
+  }
+}

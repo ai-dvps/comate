@@ -1,0 +1,562 @@
+/**
+ * WeCom template card helpers: builders, key encoding/decoding, event parsing,
+ * and terminal-state card generation.
+ *
+ * Encapsulates all template-card payload construction so that wecom-bot-service
+ * and wecom-stream-reply do not duplicate card logic.
+ */
+
+import type { TemplateCard, TemplateCardEventData, WsFrame } from '@wecom/aibot-node-sdk';
+import type {
+  ToolApprovalAction,
+  DecodedKeyPayload,
+  NormalizedSelectedItem,
+  ParsedCardEvent,
+  ToolApprovalCardOptions,
+  SessionListCardOptions,
+  WorkspaceListCardOptions,
+  EscalationApprovalCardOptions,
+  EscalationNoticeCardOptions,
+  EscalationResultCardOptions,
+} from '../types/wecom-template-card.js';
+import { getBotToolCategory } from '../utils/bot-tool-presentation.js';
+
+const KEY_PREFIX = 'comate:1:';
+const MAX_KEY_BYTES = 1024;
+
+/**
+ * Runtime shape of a WeCom `template_card_event` callback.
+ * The SDK emits the raw body unchanged; the payload we care about is nested
+ * under `event.template_card_event`, not the typed `TemplateCardEventData`.
+ */
+interface RawTemplateCardEventWrapper {
+  eventtype: 'template_card_event';
+  template_card_event: {
+    card_type: string;
+    event_key: string;
+    task_id?: string;
+    selected_items?: {
+      selected_item: Array<{
+        question_key: string;
+        option_ids?: { option_id: string[] };
+      }>;
+    };
+  };
+}
+
+/** Normalized selected-item shape used by the event handler. */
+export type { NormalizedSelectedItem } from '../types/wecom-template-card.js';
+
+/**
+ * Extract the actionable detail from a raw template-card event.
+ * Handles both the observed runtime wrapper (`event.template_card_event`)
+ * and the flat SDK type in case a future SDK version flattens it.
+ */
+export function getTemplateCardEventDetail(
+  event: unknown,
+): {
+  card_type?: string;
+  event_key?: string;
+  task_id?: string;
+  selected_items?: NormalizedSelectedItem[];
+} | undefined {
+  const wrapper = event as RawTemplateCardEventWrapper | undefined;
+  if (wrapper?.template_card_event) {
+    const detail = wrapper.template_card_event;
+    return {
+      card_type: detail.card_type,
+      event_key: detail.event_key,
+      task_id: detail.task_id,
+      selected_items: detail.selected_items?.selected_item.map((item) => ({
+        question_key: item.question_key,
+        option_ids: item.option_ids?.option_id ?? [],
+      })),
+    };
+  }
+
+  const flat = event as
+    | (TemplateCardEventData & {
+        selected_items?: NormalizedSelectedItem[];
+      })
+    | undefined;
+  if (flat?.event_key) {
+    return {
+      event_key: flat.event_key,
+      task_id: flat.task_id,
+      card_type: (flat as { card_type?: string }).card_type,
+      selected_items: flat.selected_items,
+    };
+  }
+
+  return undefined;
+}
+
+/** Encode a compact JSON payload into a base64url string. */
+function encodePayload(payload: { r: string; a: ToolApprovalAction; s: string }): string {
+  const json = JSON.stringify(payload);
+  // base64url: replace + with -, / with _, drop trailing =
+  const base64 = Buffer.from(json, 'utf-8').toString('base64');
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** Decode a base64url string back to the original JSON payload. */
+function decodePayload(encoded: string): { r: string; a: ToolApprovalAction; s: string } {
+  // Restore base64 padding
+  const padLen = (4 - (encoded.length % 4)) % 4;
+  const base64 = encoded.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat(padLen);
+  const json = Buffer.from(base64, 'base64').toString('utf-8');
+  return JSON.parse(json) as { r: string; a: ToolApprovalAction; s: string };
+}
+
+/**
+ * Encode {requestId, action, sessionId} into a versioned button key.
+ * Returns the full key with the `comate:1:` prefix.
+ * Throws if the encoded key exceeds 1024 bytes.
+ */
+export function encodeButtonKey(
+  requestId: string,
+  action: ToolApprovalAction,
+  sessionId: string,
+): string {
+  const payload = encodePayload({ r: requestId, a: action, s: sessionId });
+  const key = `${KEY_PREFIX}${payload}`;
+  const byteLength = Buffer.byteLength(key, 'utf-8');
+  if (byteLength > MAX_KEY_BYTES) {
+    throw new Error(
+      `Encoded button key exceeds ${MAX_KEY_BYTES} bytes (${byteLength} bytes)`,
+    );
+  }
+  return key;
+}
+
+/**
+ * Decode a button key back to its payload.
+ * Returns undefined for non-Comate keys or malformed payloads.
+ */
+export function decodeButtonKey(key: string): DecodedKeyPayload | undefined {
+  if (!key.startsWith(KEY_PREFIX)) return undefined;
+  const encoded = key.slice(KEY_PREFIX.length);
+  if (!encoded) return undefined;
+  try {
+    const decoded = decodePayload(encoded);
+    if (
+      typeof decoded.r !== 'string' ||
+      typeof decoded.s !== 'string' ||
+      !isValidAction(decoded.a)
+    ) {
+      return undefined;
+    }
+    return { requestId: decoded.r, action: decoded.a, sessionId: decoded.s };
+  } catch {
+    return undefined;
+  }
+}
+
+function isValidAction(a: unknown): a is ToolApprovalAction {
+  return (
+    a === 'allow' ||
+    a === 'always_allow' ||
+    a === 'deny' ||
+    a === 'resume' ||
+    a === 'select_workspace' ||
+    a === 'escalate_approve' ||
+    a === 'escalate_always_allow' ||
+    a === 'escalate_deny'
+  );
+}
+
+/** True for the U11 admins-audience escalation action family (KTD-15). */
+export function isEscalationAction(a: ToolApprovalAction): boolean {
+  return a === 'escalate_approve' || a === 'escalate_always_allow' || a === 'escalate_deny';
+}
+
+/**
+ * Build a `button_interaction` template card for tool approvals.
+ * Shows the tool category, a brief description, and two or three buttons.
+ */
+export function buildToolApprovalCard(options: ToolApprovalCardOptions): TemplateCard {
+  const {
+    requestId,
+    sessionId,
+    toolName,
+    title,
+    description,
+    operationSummary,
+    allowAlways = false,
+    taskId,
+  } = options;
+
+  const mainTitle: string = title ?? `需要确认：${humanizeToolName(toolName)}`;
+  const descLines = [description ?? '请确认是否允许执行该操作'];
+  if (operationSummary?.trim()) {
+    descLines.push(`操作：${truncateFold(operationSummary.trim(), 160)}`);
+  }
+
+  const buttonList: Array<{ text: string; style: number; key: string }> = [
+    {
+      text: '仅本次允许',
+      style: 1,
+      key: encodeButtonKey(requestId, 'allow', sessionId),
+    },
+  ];
+  if (allowAlways) {
+    buttonList.push({
+      text: '对此规则始终允许',
+      style: 2,
+      key: encodeButtonKey(requestId, 'always_allow', sessionId),
+    });
+  }
+  buttonList.push({
+    text: '拒绝',
+    style: 4,
+    key: encodeButtonKey(requestId, 'deny', sessionId),
+  });
+
+  const card: TemplateCard = {
+    card_type: 'button_interaction',
+    source: {
+      desc: 'Comate',
+      desc_color: 0,
+    },
+    main_title: {
+      title: mainTitle,
+      desc: descLines.join('\n'),
+    },
+    task_id: taskId,
+    button_list: buttonList,
+  };
+
+  return card;
+}
+
+function humanizeToolName(toolName: string): string {
+  switch (getBotToolCategory(toolName)) {
+    case 'project_read': return '读取项目内容';
+    case 'command': return '执行命令';
+    case 'file_write': return '修改文件';
+    case 'web_research': return '查询资料';
+    case 'browser': return '操作浏览器';
+    default: return '执行操作';
+  }
+}
+
+/**
+ * Build the admins-audience escalation approval card (U11, KTD-15/KTD-18).
+ * Sent to owner/admin recipients; clicks carry the `escalate_*` action family
+ * and authorize against the escalation ledger + a fresh role check.
+ *
+ * KTD-18 content contract: the card shows the EXACT rule that "始终允许"
+ * would persist plus its match-semantics prose — what you see is what
+ * accumulates. The always-allow button is omitted when there is nothing
+ * persistable (no addRules-allow suggestions, suppressed suggestion types, or
+ * a composite command that exact-match rules cannot express).
+ */
+export function buildEscalationApprovalCard(options: EscalationApprovalCardOptions): TemplateCard {
+  const {
+    requestId,
+    sessionId,
+    toolName,
+    commandSummary,
+    requesterLabel,
+    requesterRoleLabel,
+    alwaysAllowRules,
+    ttlMinutes,
+    taskId,
+  } = options;
+
+  const descLines = [
+    `请求人:${requesterLabel}(${requesterRoleLabel})`,
+    `命令:${commandSummary}`,
+  ];
+  if (alwaysAllowRules.length > 0) {
+    for (const rule of alwaysAllowRules) {
+      descLines.push(`始终允许将写入直通名单:${rule}`);
+    }
+    descLines.push('匹配语义:仅精确匹配此命令,同工具不同参数不会命中');
+  }
+  descLines.push(`审批有效期:${ttlMinutes} 分钟`);
+
+  const buttonList: Array<{ text: string; style: number; key: string }> = [
+    { text: '允许一次', style: 1, key: encodeButtonKey(requestId, 'escalate_approve', sessionId) },
+  ];
+  if (alwaysAllowRules.length > 0) {
+    buttonList.push({
+      text: '始终允许',
+      style: 2,
+      key: encodeButtonKey(requestId, 'escalate_always_allow', sessionId),
+    });
+  }
+  buttonList.push({ text: '拒绝', style: 4, key: encodeButtonKey(requestId, 'escalate_deny', sessionId) });
+
+  return {
+    card_type: 'button_interaction',
+    source: { desc: 'Comate', desc_color: 0 },
+    main_title: {
+      title: `出沙箱审批:${toolName}`,
+      desc: descLines.join('\n'),
+    },
+    task_id: taskId,
+    button_list: buttonList,
+  };
+}
+
+/**
+ * Build the requester's READ-ONLY escalation notice card (U11, KTD-15): the
+ * requester learns their request is waiting on an owner/admin but gets no
+ * buttons — self-approval is not supervision. Pinned content: command
+ * summary, routing context, approver audience, TTL.
+ */
+export function buildEscalationNoticeCard(options: EscalationNoticeCardOptions): TemplateCard {
+  const { commandSummary, toolName, audienceLabel, ttlMinutes, taskId } = options;
+  return {
+    card_type: 'text_notice',
+    source: { desc: 'Comate', desc_color: 0 },
+    main_title: {
+      title: '出沙箱审批已发送',
+      desc: `命令:${commandSummary}\n该 ${toolName} 操作超出沙箱边界,需要${audienceLabel}审批\n审批有效期:${ttlMinutes} 分钟,结果将另行通知`,
+    },
+    task_id: taskId,
+    sub_title_text: '请等待审批结果,无需重复操作',
+  };
+}
+
+/**
+ * Build a terminal notification card (U11): requester + non-clicking
+ * recipients learn the resolution (approve/deny/expiry). The vendor API
+ * cannot terminate cards server-side for non-clickers, so notification cards
+ * are the terminal surface for everyone except the clicker (whose card is
+ * updated to a terminal state in the 5s click-response window).
+ */
+export function buildEscalationResultCard(options: EscalationResultCardOptions): TemplateCard {
+  const { title, desc, taskId } = options;
+  return {
+    card_type: 'text_notice',
+    source: { desc: 'Comate', desc_color: 0 },
+    main_title: { title, desc },
+    task_id: taskId,
+  };
+}
+
+/**
+ * Build a `multiple_interaction` card listing a user's sessions in a single
+ * dropdown selector for the `/resume` command. The target sessionId is encoded
+ * directly in each option's `id` so the submit callback can read it statelessly
+ * — mirroring Feishu's `select_session`. The submit-button key carries action
+ * `'resume'` so `handleTemplateCardEvent` can branch a resume submit apart from
+ * approvals. No pending store: the selected option id is the source of truth on
+ * submit.
+ */
+export function buildWecomSessionListCard(options: SessionListCardOptions): TemplateCard {
+  const { requestId, sessionId, taskId, title, desc, options: sessions } = options;
+
+  return {
+    card_type: 'multiple_interaction',
+    source: { desc: 'Comate', desc_color: 0 },
+    main_title: {
+      title: title ?? '选择会话',
+      desc: desc ?? '请选择要恢复的会话',
+    },
+    task_id: taskId,
+    select_list: [
+      {
+        question_key: encodeButtonKey(requestId, 'resume', sessionId),
+        title: '可恢复的会话',
+        option_list: sessions.map((s) => ({
+          id: s.sessionId,
+          text: s.isActive ? `${s.label} （当前）` : s.label,
+        })),
+      },
+    ],
+    submit_button: {
+      text: '恢复',
+      key: encodeButtonKey(requestId, 'resume', sessionId),
+    },
+  };
+}
+
+/**
+ * Build a `vote_interaction` card listing workspaces for the `/workspace` command.
+ * The target workspaceId is carried in each option's `id`; the submit key encodes
+ * the botId and action so the callback can verify the caller is the bot Owner.
+ */
+export function buildWecomWorkspaceListCard(options: WorkspaceListCardOptions): TemplateCard {
+  const { requestId, botId, taskId, workspaces } = options;
+
+  return {
+    card_type: 'vote_interaction',
+    source: { desc: 'Comate', desc_color: 0 },
+    main_title: {
+      title: '选择当前工作空间',
+      desc: '请选择该机器人要绑定的工作空间',
+    },
+    task_id: taskId,
+    checkbox: {
+      question_key: encodeButtonKey(requestId, 'select_workspace', botId),
+      mode: 0,
+      option_list: workspaces.map((ws) => ({
+        id: ws.workspaceId,
+        text: ws.isActive ? `${ws.name} （当前）` : ws.name,
+      })),
+    },
+    submit_button: {
+      text: '切换',
+      key: encodeButtonKey(requestId, 'select_workspace', botId),
+    },
+  };
+}
+
+/**
+ * Build a terminal-state card used to update an expired or resolved card.
+ *
+ * For `vote_interaction` and `multiple_interaction` cards, keeps the card_type
+ * and sets `replace_text` (greys out the submit button) + disables the
+ * interactive elements (`checkbox.disable` / `select_list[i].disable`). This is
+ * the only reliable way to disable these cards per WeCom doc /94888.
+ * Replacing them with a `text_notice` does NOT disable the interactive
+ * elements.
+ *
+ * For other card types (`button_interaction`, etc.), replaces with a
+ * `text_notice` carrying the same `task_id`.
+ */
+export function buildTerminalCard(
+  originalCardType: string,
+  notice: string,
+  taskId?: string,
+  context?: { title?: string; desc?: string; selectionText?: string },
+): TemplateCard {
+  const source = { desc: 'Comate', desc_color: 0 } as const;
+  const mainTitle = {
+    title: context?.title ?? notice,
+    desc: context?.desc ?? '',
+  };
+  const terminalButton = { text: notice, key: 'terminal' };
+
+  if (originalCardType === 'vote_interaction') {
+    return {
+      card_type: 'vote_interaction',
+      source,
+      main_title: mainTitle,
+      task_id: taskId,
+      checkbox: {
+        question_key: 'terminal',
+        mode: 0,
+        disable: true,
+        option_list: [{ id: '0', text: context?.selectionText ?? notice, is_checked: true }],
+      },
+      card_action: { type: 0 },
+      submit_button: terminalButton,
+      replace_text: notice,
+    } as TemplateCard;
+  }
+
+  if (originalCardType === 'multiple_interaction') {
+    return {
+      card_type: 'multiple_interaction',
+      source,
+      main_title: mainTitle,
+      task_id: taskId,
+      select_list: [
+        {
+          question_key: 'terminal',
+          title: context?.title ?? '已选择',
+          disable: true,
+          selected_id: '0',
+          option_list: [{ id: '0', text: context?.selectionText ?? notice }],
+        },
+      ],
+      card_action: { type: 0 },
+      submit_button: terminalButton,
+      replace_text: notice,
+    } as TemplateCard;
+  }
+
+  return {
+    card_type: 'text_notice',
+    source,
+    main_title: {
+      title: context?.title ?? '已处理',
+      desc: [context?.desc, notice].filter(Boolean).join('\n'),
+    },
+    card_action: { type: 0 },
+    task_id: taskId,
+  };
+}
+
+/**
+ * Parse a template-card event frame into a structured result.
+ * Validates the event_key is a Comate key and decodes the payload.
+ */
+export function parseTemplateCardEvent(
+  frame: WsFrame<{
+    event: TemplateCardEventData | RawTemplateCardEventWrapper;
+    from?: { userid?: string };
+  }>,
+): ParsedCardEvent | undefined {
+  const rawEvent = frame.body?.event;
+  if (!rawEvent) return undefined;
+
+  const detail = getTemplateCardEventDetail(rawEvent);
+  if (!detail?.event_key) return undefined;
+
+  const decoded = decodeButtonKey(detail.event_key);
+  if (!decoded) return undefined;
+
+  const wecomUserId = frame.body?.from?.userid ?? '';
+
+  return {
+    requestId: decoded.requestId,
+    action: decoded.action,
+    sessionId: decoded.sessionId,
+    wecomUserId,
+    taskId: detail.task_id,
+    cardType: detail.card_type,
+    selectedItems: detail.selected_items,
+  };
+}
+
+/**
+ * Verify that the clicking user owns the session.
+ * Returns true when the user is the owner, false otherwise.
+ */
+export function verifySessionOwner(
+  wecomUserId: string,
+  sessionId: string,
+  workspaceId: string,
+  getChannelUserIdBySession: (workspaceId: string, sessionId: string) => string | null | undefined,
+): boolean {
+  const ownerChannelUserId = getChannelUserIdBySession(workspaceId, sessionId);
+  if (!ownerChannelUserId) return false;
+  return ownerChannelUserId === wecomUserId;
+}
+
+/** Approximate character cap for a folded card summary line (KTD4). */
+const FOLD_PROMPT_MAX = 200;
+
+function truncateFold(text: string, max: number = FOLD_PROMPT_MAX): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}…`;
+}
+
+/** Permission outcomes that can be folded into the streaming reply. */
+export type PermissionFoldAction = 'allow' | 'deny' | 'always_allow';
+
+const PERMISSION_FOLD_OUTCOME: Record<PermissionFoldAction, string> = {
+  allow: '已允许',
+  deny: '已拒绝',
+  always_allow: '已始终允许',
+};
+
+/**
+ * Format the resolved permission fold line for the streaming reply (R3, KTD3).
+ *
+ * Intentionally accepts ONLY the tool name and the action — never the tool
+ * input, command, or file path — so long or sensitive arguments cannot be
+ * echoed into the persistent WeCom bubble. Returns `''` for an unrecognized
+ * action (caller skips the append). Pure function, no I/O.
+ */
+export function formatPermissionFold(toolName: string, action: PermissionFoldAction): string {
+  const outcome = PERMISSION_FOLD_OUTCOME[action];
+  if (!outcome) return '';
+  const tool = toolName && toolName.trim() ? toolName.trim() : 'unknown';
+  return `🔐 ${tool} → ${outcome}`;
+}

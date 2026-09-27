@@ -1,0 +1,120 @@
+---
+import { getImage } from 'astro:assets';
+import appIcon from '../../../build/icon.png';
+import '../styles/global.css';
+import AnalyticsConsent from '../components/AnalyticsConsent.astro';
+
+interface Props {
+  title: string;
+  description?: string;
+  ogImage?: string;
+}
+
+const { title, description, ogImage } = Astro.props;
+const locale = Astro.currentLocale ?? 'zh';
+const htmlLang = locale === 'zh' ? 'zh-CN' : 'en';
+const siteUrl = 'https://ai-dvps.github.io';
+const pageUrl = `${siteUrl}${Astro.url.pathname}`;
+const ogImageUrl = ogImage
+  ? ogImage.startsWith('http')
+    ? ogImage
+    : `${siteUrl}${ogImage}`
+  : undefined;
+const favicon = await getImage({ src: appIcon, width: 32, height: 32, format: 'png' });
+const touchIcon = await getImage({ src: appIcon, width: 180, height: 180, format: 'png' });
+---
+
+<!DOCTYPE html>
+<html lang={htmlLang} class="antialiased">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="generator" content={Astro.generator} />
+    <title>{title}</title>
+    {description && <meta name="description" content={description} />}
+    <link rel="canonical" href={pageUrl} />
+    <meta property="og:title" content={title} />
+    {description && <meta property="og:description" content={description} />}
+    <meta property="og:url" content={pageUrl} />
+    {ogImageUrl && <meta property="og:image" content={ogImageUrl} />}
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" type="image/png" sizes="32x32" href={favicon.src} />
+    <link rel="apple-touch-icon" sizes="180x180" href={touchIcon.src} />
+    <link rel="preconnect" href="https://fonts.bunny.net" />
+    <link
+      href="https://fonts.bunny.net/css?family=inter:300,400,500,600,700|jetbrains-mono:400,500,600&display=swap"
+      rel="stylesheet"
+    />
+    <script is:inline>
+      (function () {
+        const STORAGE_KEY = 'comate-website-theme';
+        const root = document.documentElement;
+        function apply(theme) {
+          if (theme === 'dark') {
+            root.classList.add('dark');
+          } else {
+            root.classList.remove('dark');
+          }
+          root.dataset.theme = theme;
+        }
+        let theme;
+        try {
+          theme = localStorage.getItem(STORAGE_KEY);
+        } catch {}
+        if (theme !== 'light' && theme !== 'dark') {
+          theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        apply(theme);
+        function onToggle() {
+          const isDark = root.classList.toggle('dark');
+          root.dataset.theme = isDark ? 'dark' : 'light';
+          try {
+            localStorage.setItem(STORAGE_KEY, isDark ? 'dark' : 'light');
+          } catch {}
+        }
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', attach);
+        } else {
+          attach();
+        }
+        function attach() {
+          document.querySelectorAll('[data-theme-toggle]').forEach((btn) => {
+            btn.addEventListener('click', onToggle);
+          });
+        }
+      })();
+    </script>
+    <script is:inline>
+      (function () {
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', init);
+        } else {
+          init();
+        }
+        function init() {
+          const nodes = document.querySelectorAll('.reveal');
+          if (!nodes.length) return;
+          const observer = new IntersectionObserver(
+            (entries) => {
+              entries.forEach((entry) => {
+                if (entry.isIntersecting) {
+                  entry.target.classList.add('is-visible');
+                  observer.unobserve(entry.target);
+                }
+              });
+            },
+            { threshold: 0.1, rootMargin: '0px 0px -50px 0px' }
+          );
+          nodes.forEach((node) => observer.observe(node));
+        }
+      })();
+    </script>
+    <slot name="head" />
+  </head>
+  <body class="min-h-screen bg-bg text-text-primary">
+    <slot />
+    <AnalyticsConsent />
+  </body>
+</html>

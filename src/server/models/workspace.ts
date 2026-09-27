@@ -1,0 +1,175 @@
+export interface WeComBotIsolationSettings {
+  /** Canonical WeCom user ids with the wider skill set. */
+  adminUserIds: string[];
+  /** Skills allowed to every bot user. */
+  defaultAllowedSkills: string[];
+  /** Additional skills allowed only to admin users. */
+  adminAllowedSkills: string[];
+}
+
+/**
+ * The browser session-context shape ("sessionContext"): a replayable login
+ * snapshot for one site. Cookie entries pass through CDP's Network.Cookie
+ * shape verbatim (the context export and our Network.setCookies injection
+ * speak the same protocol shape). Storage maps are keyed by page
+ * hostname (the export shape); values are string maps.
+ *
+ * SECURITY (KTD-8): this is a live, replayable session token — it must never
+ * leave the server. GET workspace responses strip `sessionContext` (keys and
+ * metadata only); it is consumed exclusively by the server-side injection
+ * path. IndexedDB is deliberately absent: v1 reinjection does not support it
+ * (R15 scope note — cookie-primary auth plus web storage).
+ */
+export interface BrowserSessionContext {
+  cookies: Array<Record<string, unknown>>;
+  localStorage?: Record<string, Record<string, string>>;
+  sessionStorage?: Record<string, Record<string, string>>;
+}
+
+/** One remembered site: the stored session context plus bookkeeping metadata. */
+export interface BrowserSiteAuthEntry {
+  sessionContext: BrowserSessionContext;
+  createdAt: string;
+  updatedAt: string;
+  /** Set on the last successful injection (server-side bookkeeping only). */
+  lastUsedAt?: string;
+  /**
+   * Optional bearer JWT carried by a global site-auth entry (e.g. the Kimi
+   * login), read by the usage query. Absent on plain workspace remember-site
+   * entries. Server-only — never returned to clients.
+   */
+  bearerToken?: string;
+}
+
+/** Versioned AES-GCM envelope persisted in SQLite. Replayable values only
+ * exist inside `ciphertext`; metadata remains available for value-free GETs. */
+export interface BrowserSiteAuthEnvelope {
+  kind: 'comate.browser-site-auth';
+  version: 1;
+  ciphertext: string;
+  /** Changes whenever remembered credential material is replaced. */
+  generation: string;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt?: string;
+}
+
+/** Legacy plaintext is accepted only so a server read can migrate it. */
+export type BrowserSiteAuthStoredEntry = BrowserSiteAuthEntry | BrowserSiteAuthEnvelope;
+
+/**
+ * The stripped, client-safe view of a remembered site (values-only-in: the
+ * sessionContext value never leaves the server — KTD-8).
+ */
+export interface BrowserSiteAuthMeta {
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt?: string;
+}
+
+export interface WorkspaceSettings {
+  wecomBotId?: string;
+  wecomBotSecret?: string;
+  wecomBotEnabled?: boolean;
+  wecomBotName?: string;
+  wecomCorpId?: string;
+  wecomCorpSecret?: string;
+  wecomFilePromptTemplate?: string;
+  /** Tool permission policy for WeCom bot sessions. When unset, the policy resolves to allow-all (grandfathered if bot enabled, default otherwise). */
+  wecomToolPermissions?: import('../services/tool-permission-policy.js').ToolPermissionPolicy;
+  /** Per-user isolation policy for WeCom bot sessions. When unset, bot sessions are not restricted by this feature (grandfathered allow-all). */
+  wecomBotIsolation?: WeComBotIsolationSettings;
+  /** Number of days to retain sent-prompt history for this workspace. Zero or negative disables pruning. */
+  promptHistoryRetentionDays?: number;
+  /** Configurable glob list of sensitive files that Normal bot users cannot read. Owner/Admin are not constrained. */
+  sensitiveFileDenylist?: string[];
+  /**
+   * Runtime kill switch for the bot permission sandbox model (U3, rollout
+   * canary): when true, bot sessions in this workspace fall back to the prior
+   * permission behavior (no SDK sandbox, no settingSources pin, legacy
+   * whitelist/skill gates). Absent/false = the new model is active.
+   */
+  botPermissionSandboxDisabled?: boolean;
+  /** Feishu (Lark) bot app credentials and admin list. */
+  feishuAppId?: string;
+  feishuAppSecret?: string;
+  feishuEncryptKey?: string;
+  feishuVerificationToken?: string;
+  feishuBotEnabled?: boolean;
+  feishuBotName?: string;
+  /** Feishu user IDs allowed to switch the bot's active workspace. */
+  feishuAdminUserIds?: string[];
+  /**
+   * "记住此站点" remembered login contexts, keyed by the PSL site key
+   * (eTLD+1; port-scoped for localhost/single-label hosts — see
+   * browser-site-key.ts). Values are write-only from the client's
+   * perspective: GET responses strip `sessionContext` down to
+   * BrowserSiteAuthMeta, and the PUT route never accepts client-supplied
+   * values (server-side field-level merge). Bot sessions never receive
+   * injections from this store.
+   */
+  browserSiteAuth?: Record<string, BrowserSiteAuthStoredEntry>;
+  /**
+   * Repositories this workspace associates with the global GitHub account
+   * (KTD5). `owner/repo` full names; a todo created here defaults its publish
+   * target to the first entry (overridable). Public list — repo *secrets*
+   * never live here; only the connection (in app_settings) holds a token.
+   */
+  githubRepoFullNames?: string[];
+}
+
+export interface Skill {
+  name: string;
+}
+
+export interface McpServer {
+  name: string;
+  command: string;
+  args?: string[];
+}
+
+export interface Hook {
+  name: string;
+  scriptPath: string;
+}
+
+export interface Workspace {
+  id: string;
+  name: string;
+  description: string;
+  folderPath: string;
+  settings: WorkspaceSettings;
+  skills: Skill[];
+  mcpServers: McpServer[];
+  hooks: Hook[];
+  createdAt: string;
+  updatedAt: string;
+  lastOpenedAt: string | null;
+  /**
+   * Server-persisted MRU ordering key (activity sort position stability, KTD1):
+   * epoch ms of the last turn start in any of this workspace's sessions.
+   * Initialized at creation, stamped when a session in this workspace admits a
+   * turn; the client treats server-carried values as authoritative.
+   */
+  lastTurnStartedAt?: number;
+}
+
+export interface CreateWorkspaceInput {
+  name: string;
+  description?: string;
+  folderPath: string;
+  settings?: WorkspaceSettings;
+  skills?: Skill[];
+  mcpServers?: McpServer[];
+  hooks?: Hook[];
+}
+
+export interface UpdateWorkspaceInput {
+  name?: string;
+  description?: string;
+  folderPath?: string;
+  settings?: WorkspaceSettings;
+  skills?: Skill[];
+  mcpServers?: McpServer[];
+  hooks?: Hook[];
+}

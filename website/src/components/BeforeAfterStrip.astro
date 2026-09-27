@@ -1,0 +1,15 @@
+---
+import type { Lang } from '../i18n/utils.js';
+interface Props { locale: Lang }
+const { locale } = Astro.props;
+const items = locale === 'zh'
+  ? [['信息散落在多个入口', '以 Workspace 汇集任务上下文与会话'], ['长任务必须一直盯着对话', '后台执行，在需要关注时主动通知'], ['工具调用与数据边界不清楚', '在执行前展示权限、来源与目的地']]
+  : [['Context is scattered across tools', 'A Workspace keeps task context and Sessions together'], ['Long tasks demand constant attention', 'Work continues in the background and notifies you when needed'], ['Tool and data boundaries are unclear', 'Permissions, sources, and destinations are visible before execution']];
+---
+
+<section class="mx-auto max-w-6xl px-4 py-16 md:py-24" aria-labelledby="outcomes-heading">
+  <h2 id="outcomes-heading" class="max-w-3xl text-3xl font-bold tracking-tight text-text-primary md:text-4xl">{locale === 'zh' ? '少盯过程，多拿结果' : 'Spend less time watching, more time using the result'}</h2>
+  <div class="mt-10 grid gap-6 md:grid-cols-3">
+    {items.map(([before, after]) => <article class="reveal rounded-xl border border-border bg-surface p-6"><p class="text-sm leading-6 text-text-tertiary"><span class="sr-only">{locale === 'zh' ? '之前：' : 'Before: '}</span>{before}</p><div class="my-4 h-px bg-border" aria-hidden="true"></div><p class="font-medium leading-7 text-text-primary"><span class="mr-2 text-accent" aria-hidden="true">→</span>{after}</p></article>)}
+  </div>
+</section>

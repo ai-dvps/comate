@@ -1,0 +1,504 @@
+/**
+ * Message-shape types shared between client store, server emitter, and renderers.
+ *
+ * IMPORTANT: This file is duplicated as-is at:
+ *   - src/client/types/message.ts
+ *   - src/server/types/message.ts
+ * The server `tsconfig.server.json` pins `rootDir: "./src/server"` with
+ * `composite: true`, so it cannot import a single source from outside its
+ * rootDir. Keep both copies byte-identical; CI verifies via
+ * `diff src/client/types/message.ts src/server/types/message.ts`.
+ */
+
+// Local mirror of the claude-agent-sdk `PermissionUpdate` union (KTD-8 type
+// decoupling): structurally compatible so SDK values assign directly without
+// mapping code, but free of the SDK import so any agent backend can produce
+// or consume these shapes.
+export type PermissionRuleValue = { toolName: string; ruleContent?: string }
+export type PermissionBehavior = 'allow' | 'deny' | 'ask'
+export type PermissionUpdateDestination =
+  | 'userSettings'
+  | 'projectSettings'
+  | 'localSettings'
+  | 'session'
+  | 'cliArg'
+export type PermissionMode =
+  | 'default'
+  | 'acceptEdits'
+  | 'bypassPermissions'
+  | 'plan'
+  | 'dontAsk'
+  | 'auto'
+export type PermissionSuggestion =
+  | {
+      type: 'addRules'
+      rules: PermissionRuleValue[]
+      behavior: PermissionBehavior
+      destination: PermissionUpdateDestination
+    }
+  | {
+      type: 'replaceRules'
+      rules: PermissionRuleValue[]
+      behavior: PermissionBehavior
+      destination: PermissionUpdateDestination
+    }
+  | {
+      type: 'removeRules'
+      rules: PermissionRuleValue[]
+      behavior: PermissionBehavior
+      destination: PermissionUpdateDestination
+    }
+  | { type: 'setMode'; mode: PermissionMode; destination: PermissionUpdateDestination }
+  | { type: 'addDirectories'; directories: string[]; destination: PermissionUpdateDestination }
+  | {
+      type: 'removeDirectories'
+      directories: string[]
+      destination: PermissionUpdateDestination
+    }
+
+export type MessageRole = 'user' | 'assistant' | 'system'
+
+export type TokenUsageQuality = 'exact' | 'estimated' | 'unavailable'
+
+export interface TokenUsageBreakdown {
+  inputTokens?: number
+  outputTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  thinkingTokens?: number
+}
+
+/** Token settlement for one completed semantic assistant turn. */
+export type TurnTokenUsage =
+  | ({ quality: 'exact' | 'estimated'; totalTokens: number } & TokenUsageBreakdown)
+  | { quality: 'unavailable'; reason?: string }
+
+export interface ContextUsageSnapshot {
+  totalTokens: number
+  maxTokens: number
+  percentage: number
+  categories: { name: string; tokens: number; isDeferred?: boolean }[]
+  model?: string
+  rawMaxTokens?: number
+  overLimit?: { tokensOver: number; kind: 'hard_limit' | 'compaction_window' }
+  autoCompactThreshold?: number
+  mcpTools?: { name: string; serverName: string; tokens: number }[]
+  memoryFiles?: { path: string; type: string; tokens: number }[]
+  agents?: { agentType: string; source: string; tokens: number }[]
+  skills?: { name: string; source: string; tokens: number }[]
+}
+
+export type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+
+/** Normalized image bytes submitted in one ordered user turn. */
+export interface UserTurnImage {
+  id: string
+  mediaType: ImageMediaType
+  data: string
+  width: number
+  height: number
+  name?: string
+}
+
+/** Images remain adjacent to, never embedded in, the editable text string. */
+export interface UserTurnContent {
+  text?: string
+  images: UserTurnImage[]
+}
+
+export type ImageInputValidationCode =
+  | 'unsupported_media_type'
+  | 'invalid_base64'
+  | 'media_signature_mismatch'
+  | 'invalid_dimensions'
+  | 'image_too_large'
+  | 'too_many_images'
+  | 'batch_too_large'
+  | 'model_unsupported'
+
+export interface ImageInputValidationError {
+  kind: 'image_input_validation'
+  code: ImageInputValidationCode
+  message: string
+  imageIndex?: number
+  limit?: number
+  actual?: number
+}
+
+export type MessagePart =
+  | { type: 'text'; text: string }
+  | {
+      type: 'image'
+      mediaType: ImageMediaType
+      name?: string
+      width?: number
+      height?: number
+      source:
+        | { type: 'base64'; data: string }
+        | { type: 'url'; url: string }
+        | { type: 'unavailable'; reason?: string }
+    }
+  | {
+      type: 'tool_use'
+      toolUseId: string
+      toolName: string
+      input: unknown
+      inputJsonStream?: string
+      state: 'streaming' | 'complete'
+      meta?: {
+        displayName?: string
+        iconUrl?: string
+      }
+    }
+  | {
+      type: 'tool_result'
+      toolUseId: string
+      output: string
+      isError: boolean
+      toolUseResult?: unknown
+    }
+  | {
+      type: 'thinking'
+      text: string
+      state: 'streaming' | 'complete'
+    }
+
+export interface ChatMessage {
+  id: string
+  role: MessageRole
+  parts: MessagePart[]
+  timestamp: number
+  isStreaming?: boolean
+  isCompactBoundary?: boolean
+  subType?: string
+  tokenUsage?: TurnTokenUsage
+}
+
+/**
+ * AI Elements `<Tool>` lifecycle vocabulary. Distinct from
+ * `MessagePart['tool_use'].state`: this 4-state enum is what the renderer
+ * derives from co-located tool_use/tool_result parts.
+ */
+export type ToolState =
+  | 'input-streaming'
+  | 'input-available'
+  | 'output-available'
+  | 'output-error'
+
+export type ToolPart = {
+  type: string
+  state: ToolState
+  input?: unknown
+  output?: unknown
+  errorText?: string
+}
+
+export interface QuestionPayload {
+  question: string
+  header?: string
+  options: { label: string; description?: string; preview?: string }[]
+  multiSelect: boolean
+}
+
+export interface TaskItem {
+  id: string
+  subject: string
+  description?: string
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'killed' | 'paused'
+  activeForm?: string
+}
+
+export type SubagentPart =
+  | { type: 'text'; text: string }
+  | { type: 'thinking'; text: string }
+  | { type: 'tool_use'; toolUseId: string; toolName: string; input: unknown }
+  | { type: 'tool_result'; toolUseId: string; output: string; isError: boolean }
+
+export interface SubagentMessage {
+  id: string
+  role: 'assistant' | 'user'
+  parts: SubagentPart[]
+}
+
+export interface SubagentState {
+  parentToolUseId: string
+  description: string
+  state: 'running' | 'completed' | 'error'
+  startTime: number
+  endTime?: number
+  toolCount: number
+  progressHint: string
+  messages: SubagentMessage[]
+}
+
+export interface WorkflowPhase {
+  title: string
+  detail?: string
+}
+
+export type WorkflowStatus = 'running' | 'completed' | 'error' | 'killed'
+
+export interface WorkflowProgressAgent {
+  type: 'workflow_agent'
+  index: number
+  label?: string
+  phaseIndex?: number
+  phaseTitle?: string
+  agentId: string
+  model?: string
+  state?: 'running' | 'done'
+  startedAt?: number
+  queuedAt?: number
+  lastProgressAt?: number
+  attempt?: number
+  tokens?: number
+  toolCalls?: number
+  durationMs?: number
+  lastToolName?: string
+  lastToolSummary?: string
+  promptPreview?: string
+  resultPreview?: string
+}
+
+export interface WorkflowProgressPhase {
+  type: 'workflow_phase'
+  index: number
+  title: string
+}
+
+export type WorkflowProgressItem = WorkflowProgressAgent | WorkflowProgressPhase
+
+export interface WorkflowState {
+  runId: string
+  sessionId: string
+  toolUseId?: string
+  workflowName?: string
+  status: WorkflowStatus
+  summary?: string
+  error?: string
+  startTime: number
+  durationMs?: number
+  totalTokens?: number
+  totalToolCalls?: number
+  agentCount: number
+  phases: WorkflowPhase[]
+  progress: WorkflowProgressItem[]
+  subagents: SubagentState[]
+}
+
+/**
+ * Discriminated union of every SSE event emitted by the chat stream route.
+ * The server emits these via `event: <type>` + `data: <JSON>` SSE frames.
+ * U4 owns the emitter rewrite; U5 owns the consumer.
+ */
+export type SessionActivityPhase = 'idle' | 'foreground' | 'background' | 'stopping'
+
+export type SessionBackgroundTask = {
+  id: string
+  type: string
+  description: string
+}
+
+export type SessionActivityInterruption = {
+  reason: 'runtime_failure' | 'user_stop'
+  message: string
+  foregroundInterrupted: boolean
+  backgroundTasks: SessionBackgroundTask[]
+}
+
+export type SessionActivitySnapshot = {
+  phase: SessionActivityPhase
+  active: boolean
+  backgroundTasks: SessionBackgroundTask[]
+  interruption?: SessionActivityInterruption
+}
+
+export type SseEvent =
+  | {
+      type: 'system_init'
+      model: string
+      tools: string[]
+      sessionId: string
+      mcpServers?: { name: string; status: string }[]
+      /** SDK 2.1.237+ (CLI system/init): effort the session sends on its next request; null when none is sent. */
+      effort?: string | null
+      /** SDK 2.1.237+ (CLI system/init): active output style (e.g. 'default', 'concise'). */
+      outputStyle?: string
+      /** SDK 2.1.237+ (CLI system/init): protocol capabilities for feature detection. */
+      capabilities?: string[]
+    }
+  | { type: 'session_title'; title: string }
+  | { type: 'assistant_start'; messageId: string }
+  | { type: 'text_delta'; messageId: string; partIndex: number; text: string }
+  | {
+      type: 'tool_use_start'
+      messageId: string
+      partIndex: number
+      toolUseId: string
+      toolName: string
+    }
+  | { type: 'tool_use_done'; toolUseId: string; input: unknown }
+  | {
+      type: 'tool_use_meta'
+      toolUseId: string
+      meta: {
+        displayName?: string
+        iconUrl?: string
+      }
+    }
+  | {
+      type: 'tool_input_delta'
+      messageId: string
+      partIndex: number
+      toolUseId: string
+      partialJson: string
+    }
+  | { type: 'tool_result'; toolUseId: string; output: string; isError: boolean; toolUseResult?: unknown }
+  | { type: 'thinking_start'; messageId: string; partIndex: number }
+  | {
+      type: 'thinking_delta'
+      messageId: string
+      partIndex: number
+      text: string
+    }
+  | { type: 'thinking_done'; messageId: string; partIndex: number }
+  | { type: 'assistant_done'; messageId: string }
+  | {
+      type: 'result'
+      /** Terminal assistant message for this turn; absent when no assistant started. */
+      messageId?: string
+      subtype: string
+      isError: boolean
+      result?: string
+      errors?: unknown
+      usage?: unknown
+      tokenUsage?: TurnTokenUsage
+      modelUsage?: unknown
+      stopReason?: string | null
+      terminalReason?: string
+      origin?: string
+    }
+  | {
+      type: 'context_usage'
+      totalTokens: number
+      maxTokens: number
+      percentage: number
+      categories: { name: string; tokens: number; isDeferred?: boolean }[]
+      /** SDK getContextUsage / context_usage twin: model the usage was computed for. */
+      model?: string
+      /** Raw model/context window before autocompact policy narrowing. */
+      rawMaxTokens?: number
+      /** Present when totalTokens exceeds the measured window. */
+      overLimit?: { tokensOver: number; kind: 'hard_limit' | 'compaction_window' }
+      /** Token threshold autocompact triggers at, when reported. */
+      autoCompactThreshold?: number
+      mcpTools?: { name: string; serverName: string; tokens: number }[]
+      memoryFiles?: { path: string; type: string; tokens: number }[]
+      agents?: { agentType: string; source: string; tokens: number }[]
+      skills?: { name: string; source: string; tokens: number }[]
+    }
+  | { type: 'error'; message: string }
+  | {
+      type: 'rate_limit'
+      errorCode?: string
+      canUserPurchaseCredits?: boolean
+      hasChargeableSavedPaymentMethod?: boolean
+      retryAfter?: number
+      rateLimitType?: string
+    }
+  | {
+      type: 'model_fallback'
+      trigger: string
+      direction: string
+      originalModel: string
+      fallbackModel: string
+      category?: string | null
+      explanation?: string | null
+      retractedMessageIds?: string[]
+      text?: string
+    }
+  | {
+      type: 'api_retry'
+      attempt: number
+      maxRetries: number
+      retryDelayMs: number
+      errorStatus: number | null
+    }
+  | { type: 'done' }
+  | { type: 'subscription_ack'; serverNonce: string; sessionId: string }
+  | {
+      type: 'pending_approval'
+      requestId: string
+      toolName: string
+      toolUseId: string
+      input: unknown
+      inputSummary: string
+      title?: string
+      description?: string
+      suggestions?: PermissionSuggestion[]
+      expiresAt?: number
+      denialReason?: 'safetyCheck' | 'asyncAgent' | string
+      /** U11 (KTD-15): escalation audience; undefined = legacy self flow. */
+      audience?: 'self' | 'admins'
+    }
+  | { type: 'pending_question'; requestId: string; questions: QuestionPayload[]; expiresAt?: number }
+  | { type: 'approval_resolved'; requestId: string }
+  | { type: 'approval_timeout'; requestId: string }
+  | { type: 'auto_approval'; toolUseId: string; toolName: string; mode: 'auto' | 'readonly' }
+  | { type: 'interrupted'; messageId: string | null }
+  | { type: 'error_note'; text: string }
+  | { type: 'server_restarted'; serverNonce: string }
+  | {
+      type: 'subagent_start'
+      parentToolUseId: string
+      description?: string
+    }
+  | {
+      type: 'subagent_delta'
+      parentToolUseId: string
+      delta:
+        | { kind: 'text'; text: string }
+        | { kind: 'thinking'; text: string }
+        | {
+            kind: 'tool_use'
+            toolUseId: string
+            toolName: string
+            input?: unknown
+          }
+        | {
+            kind: 'tool_result'
+            toolUseId: string
+            output: string
+            isError: boolean
+          }
+    }
+  | {
+      type: 'subagent_done'
+      parentToolUseId: string
+      state: 'completed' | 'error'
+    }
+  | { type: 'task_started'; taskId: string; description: string }
+  | ({ type: 'session_activity' } & SessionActivitySnapshot)
+  | { type: 'session_processing'; processing: boolean; backgroundTaskCount: number }
+  | {
+      type: 'task_updated'
+      taskId: string
+      patch: { status?: string; description?: string; error?: string }
+    }
+  | {
+      type: 'workflow_start'
+      runId: string
+      sessionId: string
+      toolUseId: string
+      workflowName?: string
+    }
+  | { type: 'workflow_update'; runId: string; sessionId: string }
+  | {
+      type: 'workflow_done'
+      runId: string
+      sessionId: string
+      status: WorkflowStatus
+    }
+  | { type: 'compact_boundary' }
+  | { type: 'compact_status'; active: boolean }
+  | { type: 'heartbeat' }

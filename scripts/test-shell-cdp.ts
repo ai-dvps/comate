@@ -1,0 +1,922 @@
+/**
+ * U7 shell-CDP contract suite (proof-first per the plan's execution note):
+ * runs the native CDP-peer layer (`browser-cdp.ts` connectShellPage family +
+ * `browser-fingerprint.ts`) against a REAL Chromium launched with a debug
+ * port — the exact transport the Electron shell exposes (KTD-6) and the R8
+ * external fallback endpoint speaks.
+ *
+ * PART A (this suite): transport/peer contract — target selection via /json,
+ * flatten attach, page ops, network capture, fingerprint parity (KTD-12),
+ * browser-context isolation (partition stand-in, KTD-10), cold-start retry,
+ * target-destroyed detection, session-context export.
+ * PART B (tool parity, appended by the U7 service work): the 13 comate-browser
+ * tools driven through BrowserToolContext + BrowserService against the same
+ * endpoint via COMATE_BROWSER_CDP_TARGET (AE2 mechanism, R8).
+ *
+ * The Chromium binary comes from the Playwright dev dependency (U9: the pinned
+ * Chrome for Testing bundle left the repo with the legacy browser stack; the
+ * contract under test is version-agnostic — version assertions derive from
+ * the resolved binary itself). The suite drives the chrome-headless-shell
+ * binary: the full Chromium's headless mode never answers
+ * Page.captureScreenshot over raw CDP (Playwright itself launches the
+ * headless shell for headless work). Skips with a message when no Chromium
+ * is installed; --required (or COMATE_REQUIRE_SHELL_CDP=1) turns a skip into
+ * a failure (release gate).
+ */
+
+import { spawn, type ChildProcess } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+import { chromium as playwrightChromium } from 'playwright';
+
+import { createGateHarness } from './lib/gate-harness.js';
+import { waitForChildProcessClose } from './lib/process-cleanup.js';
+import { dynamicSpaBrowserFixtureHtml } from './fixtures/dynamic-spa-browser-fixture.js';
+import { dynamicPublishingTaskFixtureHtml } from './fixtures/dynamic-publishing-task-fixture.js';
+
+const { unavailable, check, assert, results } = createGateHarness({
+  gateName: 'shell CDP contract suite',
+  requiredEnvVar: 'COMATE_REQUIRE_SHELL_CDP',
+});
+
+/**
+ * Resolve Playwright's chrome-headless-shell next to the full chromium
+ * executable: <cache>/chromium-<rev>/<platform-dir>/<binary> →
+ * <cache>/chromium_headless_shell-<rev>/chrome-headless-shell-<platform>/<bin>.
+ * `npx playwright install chromium` installs both.
+ */
+function resolveHeadlessShellExecutable(): string | undefined {
+  let full: string;
+  try {
+    full = playwrightChromium.executablePath();
+  } catch {
+    return undefined;
+  }
+  const match = /^(.*[/\\]chromium)-(\d+)[/\\]/.exec(full);
+  if (!match) return undefined;
+  const [, cacheRoot, rev] = match;
+  const platformDir =
+    process.platform === 'darwin'
+      ? `chrome-headless-shell-mac${process.arch === 'arm64' ? '-arm64' : ''}`
+      : process.platform === 'win32'
+        ? 'chrome-headless-shell-win64'
+        : `chrome-headless-shell-linux${process.arch === 'arm64' ? '-arm64' : '64'}`;
+  const binary = `chrome-headless-shell${process.platform === 'win32' ? '.exe' : ''}`;
+  const candidate = path.join(
+    `${cacheRoot}_headless_shell-${rev}`,
+    platformDir,
+    binary,
+  );
+  return existsSync(candidate) ? candidate : undefined;
+}
+
+const chromiumPath = resolveHeadlessShellExecutable();
+if (!chromiumPath) {
+  unavailable('no Playwright Chromium installed (run `npx playwright install chromium`)');
+}
+
+const tempDir = mkdtempSync(path.join(tmpdir(), 'comate-shell-cdp-'));
+process.env.COMATE_DATA_DIR = tempDir;
+const fixtureUploadPath = path.join(tempDir, 'fixture-upload.png');
+writeFileSync(fixtureUploadPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]));
+
+// ---------------------------------------------------------------------------
+// Fixture origin
+// ---------------------------------------------------------------------------
+
+const fixture = createServer((req, res) => {
+  const url = new URL(req.url ?? '/', 'http://fixture');
+  const cookieEcho = `cookies=${req.headers.cookie ?? ''}`;
+  if (url.pathname === '/redirect') {
+    res.writeHead(302, { location: '/quota' });
+    res.end();
+    return;
+  }
+  if (url.pathname === '/quota') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ remaining: 42 }));
+    return;
+  }
+  if (url.pathname === '/frame-data') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ frame: true }));
+    return;
+  }
+  if (url.pathname === '/frame') {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    // Retry the probe fetch: the capture's auto-attach races the frame load,
+    // and a single-shot fetch makes the OOPIF-capture assertion flaky.
+    res.end(`<!doctype html><script>
+      var tries = 0;
+      var timer = setInterval(() => {
+        tries += 1;
+        fetch('/frame-data?try=' + tries).then(r => r.json()).then(() => parent.postMessage('frame-ready', '*'));
+        if (tries > 30) clearInterval(timer);
+      }, 100);
+    </script>frame`);
+    return;
+  }
+  if (url.pathname === '/echo') {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(`<!doctype html><title>echo</title><body>${cookieEcho}</body><script>
+      document.body.textContent += ' ls=' + (localStorage.getItem('session') || '');
+    </script>`);
+    return;
+  }
+  if (url.pathname === '/login') {
+    res.writeHead(200, {
+      'content-type': 'text/html',
+      'set-cookie': 'fixture_auth=secret-token; Path=/; SameSite=Lax',
+    });
+    res.end(`<!doctype html><title>login</title><script>localStorage.setItem('session', 'abc123');</script>logged in`);
+    return;
+  }
+  if (url.pathname === '/interaction') {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(`<!doctype html><title>interaction</title><body>
+      <label>Article body <textarea name="article">old textarea</textarea></label>
+      <div role="textbox" aria-label="Rich body" contenteditable="true">old rich body</div>
+      <button type="button" aria-label="Trusted click">Trusted click</button>
+      <script>
+        window.fixtureEvents = { clickCount: 0, clickTrusted: false, beforeinput: 0, input: 0, change: 0 };
+        document.querySelector('[aria-label="Trusted click"]').addEventListener('click', (event) => {
+          window.fixtureEvents.clickCount += 1;
+          window.fixtureEvents.clickTrusted = event.isTrusted;
+        });
+        document.querySelectorAll('textarea,[contenteditable]').forEach((element) => {
+          element.addEventListener('beforeinput', () => { window.fixtureEvents.beforeinput += 1; });
+          element.addEventListener('input', () => { window.fixtureEvents.input += 1; });
+          element.addEventListener('change', () => { window.fixtureEvents.change += 1; });
+        });
+      </script>
+    </body>`);
+    return;
+  }
+  if (url.pathname === '/dynamic-spa') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(dynamicSpaBrowserFixtureHtml());
+    return;
+  }
+  if (url.pathname === '/task-fixture') {
+    const kind = url.searchParams.get('kind') === 'admin' ? 'admin' : 'publishing';
+    const scenario = url.searchParams.get('scenario') === 'below-viewport' ? 'below-viewport' : 'happy';
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(dynamicPublishingTaskFixtureHtml({ kind, scenario }));
+    return;
+  }
+  if (url.pathname === '/form') {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(`<!doctype html><title>form</title><body>
+      <form action="/submitted" method="get">
+        <label>Name <input name="name" type="text"></label>
+        <label>Plan <select name="plan"><option value="free">Free</option><option value="pro">Pro</option></select></label>
+        <label>Agree <input name="agree" type="checkbox" value="yes"></label>
+        <button type="submit">Send</button>
+      </form>
+      <a href="/echo">echo link</a>
+    </body>`);
+    return;
+  }
+  if (url.pathname === '/submitted') {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(`<!doctype html><title>submitted</title><body>submitted name=${url.searchParams.get('name')} plan=${url.searchParams.get('plan')}</body>`);
+    return;
+  }
+  // Root: redirect chain + same-origin iframe fetch (network-capture fixture).
+  res.writeHead(200, { 'content-type': 'text/html' });
+  res.end(`<!doctype html><title>root</title><script>
+    window.captureState = { redirect: false, frame: false };
+    const frame = document.createElement('iframe');
+    frame.src = 'http://localhost:' + location.port + '/frame';
+    document.documentElement.appendChild(frame);
+    addEventListener('message', (event) => { if (event.data === 'frame-ready') window.captureState.frame = true; });
+    fetch('/redirect').then(r => r.json()).then(() => { window.captureState.redirect = true; });
+  </script>ready`);
+});
+
+await new Promise<void>((resolve, reject) => {
+  fixture.once('error', reject);
+  // Dual-stack bind: PART A drives 127.0.0.1, PART B drives localhost (site
+  // keys reject IP literals by design).
+  fixture.listen(0, () => resolve());
+});
+const fixtureAddress = fixture.address();
+if (!fixtureAddress || typeof fixtureAddress === 'string') throw new Error('fixture did not bind');
+const fixtureOrigin = `http://127.0.0.1:${fixtureAddress.port}`;
+const fixtureHttp = `http://localhost:${fixtureAddress.port}`;
+
+// ---------------------------------------------------------------------------
+// Chromium with a debug port (the shell's CDP peer shape: loopback only, no
+// --remote-allow-origins, OS-assigned port discovered via DevToolsActivePort)
+// ---------------------------------------------------------------------------
+
+const chromeUserData = mkdtempSync(path.join(tmpdir(), 'comate-shell-cdp-profile-'));
+// SHELL_CDP_HEADED=1 swaps in the full Chromium for a visible debugging run;
+// the default headless-shell binary is headless by itself (no flag needed —
+// and the full Chromium's --headless=new never answers Page.captureScreenshot
+// over raw CDP). --site-per-process forces real OOPIFs (the headless shell
+// otherwise keeps cross-site iframes in-process) so the flattened iframe
+// session capture in A6 exercises the production code path.
+const headed = process.env.SHELL_CDP_HEADED === '1';
+const executable = headed ? playwrightChromium.executablePath() : chromiumPath;
+const chrome: ChildProcess = spawn(
+  executable,
+  [
+    '--remote-debugging-port=0',
+    '--remote-debugging-address=127.0.0.1',
+    `--user-data-dir=${chromeUserData}`,
+    '--site-per-process',
+    '--no-first-run',
+    '--disable-extensions',
+    'about:blank',
+  ],
+  { stdio: ['ignore', 'ignore', 'pipe'] },
+);
+const chromeClosed = waitForChildProcessClose(chrome);
+let chromeStderr = '';
+chrome.stderr?.on('data', (chunk) => {
+  chromeStderr += String(chunk);
+});
+
+async function discoverDebugPort(): Promise<number> {
+  const portFile = path.join(chromeUserData, 'DevToolsActivePort');
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      const [line] = readFileSync(portFile, 'utf8').split('\n');
+      const port = Number(line);
+      if (Number.isInteger(port) && port > 0) return port;
+    } catch {
+      // not written yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Chromium never wrote DevToolsActivePort: ${chromeStderr.slice(-400)}`);
+}
+
+const debugPort = await discoverDebugPort();
+
+const {
+  CdpConnection,
+  buildCdpPageBaseUrl,
+  connectBrowserPage,
+  connectShellPage,
+  createShellTarget,
+  closeShellTarget,
+  exportCdpSessionContext,
+  fetchCdpBrowserInfo,
+  findCdpTargetIdByMarker,
+  listCdpTargets,
+  parseCdpPageBaseUrl,
+} = await import('../src/server/services/browser-cdp.js');
+const { BrowserNetworkCaptureManager } = await import(
+  '../src/server/services/browser-network-capture.js'
+);
+const { distillPageModel, RefTable } = await import('../src/server/services/browser-page-model.js');
+
+// Version assertions derive from the resolved binary itself (the contract is
+// version-agnostic): "Chrome/141.0.…" → "141.0.…".
+const chromeVersion = (await fetchCdpBrowserInfo({ port: debugPort })).product?.split('/')[1];
+if (!chromeVersion) {
+  throw new Error('could not determine the Chromium version from /json/version');
+}
+
+const markerA = `comate-view-${Math.random().toString(36).slice(2)}`;
+const targetA = await createShellTarget({ port: debugPort, url: `about:blank#${markerA}` });
+let defaultStore: { close(): void } | undefined;
+
+try {
+  console.log(`shell CDP contract suite: Chromium ${chromeVersion} on 127.0.0.1:${debugPort}`);
+
+  await check('A1 browser info + marker target resolution via /json', async () => {
+    const info = await fetchCdpBrowserInfo({ port: debugPort });
+    assert(info.browserWsUrl.startsWith('ws://127.0.0.1:'), `unexpected browser ws ${info.browserWsUrl}`);
+    assert(info.product?.includes('Chrome/'), `unexpected product ${info.product}`);
+    const found = await findCdpTargetIdByMarker({ port: debugPort }, markerA);
+    assert(found === targetA.targetId, `marker lookup returned ${found}, want ${targetA.targetId}`);
+    const parsed = parseCdpPageBaseUrl(
+      buildCdpPageBaseUrl({ host: '127.0.0.1', port: debugPort, targetId: targetA.targetId }),
+    );
+    assert(parsed?.targetId === targetA.targetId, 'base-url round-trip lost the targetId');
+    const parsedMarker = parseCdpPageBaseUrl(
+      buildCdpPageBaseUrl({ host: '127.0.0.1', port: debugPort, urlMarker: markerA }),
+    );
+    assert(parsedMarker?.urlMarker === markerA, 'base-url round-trip lost the marker');
+    assert(parseCdpPageBaseUrl('http://127.0.0.1:8080/') === null, 'plain baseUrl must not parse as CDP page');
+  });
+
+  await check('A2 trusted backend click + Chinese textarea/contenteditable replacement', async () => {
+    const page = await connectShellPage({ port: debugPort, targetId: targetA.targetId });
+    try {
+      assert((await page.evaluate<number>('1 + 1')) === 2, 'evaluate failed');
+      await page.navigate(`${fixtureOrigin}/interaction`);
+      const title = await page.evaluate<string>('document.title');
+      assert(title === 'interaction', `title ${title}`);
+      const axTree = await page.getFullAXTree();
+      assert(axTree.length > 3, `AX tree too small: ${axTree.length}`);
+      const clickNode = axTree.find((node) => node.name?.value === 'Trusted click');
+      let textareaBackendNodeId: number | undefined;
+      let richBackendNodeId: number | undefined;
+      for (const node of axTree) {
+        if (typeof node.backendDOMNodeId !== 'number') continue;
+        const identity = await page.callBackendNode?.<{ tag: string; label: string }>(
+          node.backendDOMNodeId,
+          `function () { return { tag: (this.tagName || '').toLowerCase(), label: this.getAttribute && this.getAttribute('aria-label') || '' }; }`,
+        );
+        if (identity?.tag === 'textarea') textareaBackendNodeId = node.backendDOMNodeId;
+        if (identity?.label === 'Rich body') richBackendNodeId = node.backendDOMNodeId;
+      }
+      assert(typeof clickNode?.backendDOMNodeId === 'number', 'no backend node id for trusted button');
+      assert(typeof textareaBackendNodeId === 'number', 'no backend node id for textarea');
+      assert(typeof richBackendNodeId === 'number', 'no backend node id for contenteditable');
+      const screenshot = await page.captureScreenshot();
+      assert(screenshot.length > 1000 && !screenshot.startsWith('data:'), 'screenshot shape wrong');
+      const clickReceipt = await page.clickBackendNode(clickNode.backendDOMNodeId);
+      assert(clickReceipt?.outcome === 'dispatched_verified', `click receipt ${JSON.stringify(clickReceipt)}`);
+      const clickState = await page.evaluate<{ clickCount: number; clickTrusted: boolean }>('window.fixtureEvents');
+      assert(clickState.clickCount === 1, `click count ${clickState.clickCount}`);
+      assert(clickState.clickTrusted === true, 'pointer click was not trusted');
+
+      const textareaText = `第一段\n第二段 😀\n${'长文本'.repeat(2_000)}`;
+      const richText = '富文本第一段\n富文本第二段 👩🏽‍💻';
+      const textareaReceipt = await page.fillBackendNode?.(textareaBackendNodeId, textareaText);
+      const richReceipt = await page.fillBackendNode?.(richBackendNodeId, richText);
+      assert(textareaReceipt?.outcome === 'dispatched_verified', `textarea receipt ${JSON.stringify(textareaReceipt)}`);
+      assert(richReceipt?.outcome === 'dispatched_verified', `rich receipt ${JSON.stringify(richReceipt)}`);
+      assert(JSON.stringify(textareaReceipt).includes('第一段') === false, 'textarea receipt echoed body text');
+      const textState = await page.evaluate<{ textarea: string; rich: string; beforeinput: number; input: number }>(`({
+        textarea: document.querySelector('textarea').value,
+        rich: document.querySelector('[contenteditable]').innerText,
+        beforeinput: window.fixtureEvents.beforeinput,
+        input: window.fixtureEvents.input
+      })`);
+      assert(textState.textarea === textareaText, 'textarea replacement mismatch');
+      assert(textState.rich === richText, 'contenteditable replacement mismatch');
+      assert(textState.beforeinput >= 2 && textState.input >= 2, `input events ${JSON.stringify(textState)}`);
+    } finally {
+      page.close();
+    }
+  });
+
+  await check('A2b dynamic SPA discovery, long-form editing, file assignment, and trusted activation', async () => {
+    const page = await connectShellPage({ port: debugPort, targetId: targetA.targetId });
+    try {
+      await page.navigate(`${fixtureOrigin}/dynamic-spa`);
+      const initialRefs = new RefTable();
+      const initial = await distillPageModel(page, initialRefs);
+      const entry = initial.actions.find((action) => action.name === 'Open long form');
+      assert(entry, `DOM-only entry missing: ${JSON.stringify(initial.actions)}`);
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const entryBackend = initialRefs.get(entry!.ref)?.backendNodeId;
+      assert(typeof entryBackend === 'number', 'entry backend identity missing');
+      assert((await page.clickBackendNode(entryBackend!)).outcome === 'dispatched_verified', 'entry activation failed');
+
+      const refs = new RefTable();
+      const model = await distillPageModel(page, refs);
+      const fields = model.forms.flatMap((form) => form.fields);
+      const title = fields.find((field) => field.name === 'title');
+      const body = fields.find((field) => field.label === 'Primary content');
+      const media = fields.find((field) => field.type === 'file');
+      const publish = model.actions.find((action) => action.name === 'Release document');
+      assert(title && body && media && publish, `authoring controls missing: ${JSON.stringify({ fields, actions: model.actions })}`);
+      const titleBackend = refs.get(title!.ref)?.backendNodeId;
+      const bodyBackend = refs.get(body!.ref)?.backendNodeId;
+      const mediaBackend = refs.get(media!.ref)?.backendNodeId;
+      assert([titleBackend, bodyBackend, mediaBackend, refs.get(publish!.ref)?.backendNodeId].every((value) => typeof value === 'number'), 'backend refs missing');
+      const titleText = '真实 Chromium 长文标题';
+      const bodyText = `第一段正文\n第二段含 emoji 🚀\n${'长文内容'.repeat(1_000)}`;
+      assert((await page.fillBackendNode?.(titleBackend!, titleText))?.outcome === 'dispatched_verified', 'title fill failed');
+      assert((await page.fillBackendNode?.(bodyBackend!, bodyText))?.outcome === 'dispatched_verified', 'body fill failed');
+      assert((await page.setFileInputFiles?.(mediaBackend!, [fixtureUploadPath]))?.outcome === 'dispatched_verified', 'file assignment failed');
+      // File assignment may refresh the document identity. Observe again,
+      // exactly as the agent contract requires before the later activation.
+      const postUploadRefs = new RefTable();
+      const postUpload = await distillPageModel(page, postUploadRefs);
+      const freshPublish = postUpload.actions.find((action) => action.name === 'Release document');
+      const publishBackend = freshPublish ? postUploadRefs.get(freshPublish.ref)?.backendNodeId : undefined;
+      assert(typeof publishBackend === 'number', 'fresh publish backend ref missing after upload');
+      const publishIdentity = await page.callBackendNode?.<{ tag: string; text: string; connected: boolean }>(
+        publishBackend!,
+        `function () { return { tag: (this.tagName || '').toLowerCase(), text: (this.textContent || '').trim(), connected: this.isConnected }; }`,
+      );
+      const publishReceipt = await page.clickBackendNode(publishBackend!);
+      assert(publishReceipt.outcome === 'dispatched_verified', `publish activation failed: ${JSON.stringify({ publishReceipt, publishIdentity })}`);
+      const state = await page.evaluate<{
+        title: string; body: string; files: number; entryClicks: number; publishClicks: number;
+        entryTrusted: boolean; publishTrusted: boolean; fileChanges: number; fileInputs: number;
+      }>(`({
+        title: document.querySelector('[name="title"]').value,
+        body: document.getElementById('body').innerText,
+        files: document.getElementById('media').files.length,
+        ...window.fixtureState
+      })`);
+      assert(state.title === titleText && state.body === bodyText, 'dynamic editor content mismatch');
+      assert(state.files === 1 && state.fileChanges + state.fileInputs >= 1, `file events missing: ${JSON.stringify(state)}`);
+      assert(state.entryClicks === 1 && state.entryTrusted === true, 'entry click was not one trusted event');
+      assert(state.publishClicks === 1 && state.publishTrusted === true, 'publish click was not one trusted event');
+      await page.navigate(`${fixtureOrigin}/interaction`);
+    } finally {
+      page.close();
+    }
+  });
+
+  await check('A2c neutral cross-domain fixture and typed off-viewport recovery use real CDP', async () => {
+    const page = await connectShellPage({ port: debugPort, targetId: targetA.targetId });
+    try {
+      await page.navigate(`${fixtureOrigin}/task-fixture?kind=admin&scenario=happy`);
+      let refs = new RefTable();
+      let model = await distillPageModel(page, refs);
+      const mode = model.actions.find((action) => action.name === 'Detailed record');
+      assert(mode, 'administrative entry was not discovered without publishing vocabulary');
+      const modeBackend = refs.get(mode!.ref)?.backendNodeId;
+      assert(typeof modeBackend === 'number', 'administrative entry backend identity missing');
+      assert((await page.clickBackendNode(modeBackend!)).outcome === 'dispatched_verified', 'administrative entry activation failed');
+      refs = new RefTable();
+      model = await distillPageModel(page, refs);
+      assert(model.forms.flatMap((form) => form.fields).some((field) => field.label === 'Compliance note'), 'administrative primary field missing');
+
+      await page.navigate(`${fixtureOrigin}/task-fixture?kind=publishing&scenario=below-viewport`);
+      refs = new RefTable();
+      model = await distillPageModel(page, refs);
+      const longForm = model.actions.find((action) => action.name === 'Long-form document');
+      const longFormBackend = longForm ? refs.get(longForm.ref)?.backendNodeId : undefined;
+      assert(typeof longFormBackend === 'number', 'long-form entry missing');
+      await page.clickBackendNode(longFormBackend!);
+      refs = new RefTable();
+      model = await distillPageModel(page, refs);
+      const media = model.forms.flatMap((form) => form.fields).find((field) => field.type === 'file');
+      const mediaBackend = media ? refs.get(media.ref)?.backendNodeId : undefined;
+      assert(typeof mediaBackend === 'number', 'below-viewport media input missing');
+      const before = await page.inspectBackendNodeState?.(mediaBackend!);
+      assert(before?.status === 'off_viewport', `expected off_viewport, got ${JSON.stringify(before)}`);
+      assert((await page.revealBackendNode?.(mediaBackend!))?.revealed === true, 'trusted reveal failed');
+      const probe = await page.evaluate<{ finalActivations: number }>('window.__fixtureProbe');
+      assert(probe.finalActivations === 0, 'reveal dispatched an activation');
+      await page.navigate(`${fixtureOrigin}/interaction`);
+    } finally {
+      page.close();
+    }
+  });
+
+  await check('A3 attach by URL marker (pre-navigation view discovery)', async () => {
+    const marker = `comate-view-${Math.random().toString(36).slice(2)}`;
+    const target = await createShellTarget({ port: debugPort, url: `about:blank#${marker}` });
+    const page = await connectShellPage({ port: debugPort, urlMarker: marker });
+    try {
+      assert((await page.evaluate<number>('6 * 7')) === 42, 'marker attach evaluate failed');
+    } finally {
+      page.close();
+      await closeShellTarget({ port: debugPort, targetId: target.targetId });
+    }
+  });
+
+  await check('A4 connectBrowserPage dispatcher routes __comate-cdp__ baseUrls', async () => {
+    const baseUrl = buildCdpPageBaseUrl({ host: '127.0.0.1', port: debugPort, targetId: targetA.targetId });
+    const page = await connectBrowserPage(baseUrl);
+    try {
+      const href = await page.evaluate<string>('location.href');
+      assert(href.startsWith(`${fixtureOrigin}/interaction`), `dispatcher attached to wrong target: ${href}`);
+    } finally {
+      page.close();
+    }
+  });
+
+  await check('A5 fingerprint (KTD-12): UA override + init script on every new document', async () => {
+    const target = await createShellTarget({ port: debugPort, url: 'about:blank' });
+    const page = await connectShellPage({ port: debugPort, targetId: target.targetId });
+    try {
+      const readSurface = `JSON.stringify({
+        ua: navigator.userAgent,
+        webdriver: navigator.webdriver === undefined ? 'undefined' : String(navigator.webdriver),
+        brands: (navigator.userAgentData && navigator.userAgentData.brands || []).map(b => b.brand).join(','),
+        platform: navigator.platform,
+        uaDataPlatform: navigator.userAgentData && navigator.userAgentData.platform,
+        hardwareConcurrency: navigator.hardwareConcurrency,
+        deviceMemory: navigator.deviceMemory,
+        vendor: navigator.vendor,
+      })`;
+      const assertSurface = (raw: string, where: string) => {
+        const surface = JSON.parse(raw) as Record<string, string | number>;
+        assert(
+          typeof surface.ua === 'string' &&
+            surface.ua.includes(`Chrome/${chromeVersion}`) &&
+            !surface.ua.includes('HeadlessChrome') &&
+            !surface.ua.includes('Electron'),
+          `${where}: UA not synthetic desktop Chrome: ${surface.ua}`,
+        );
+        assert(surface.webdriver === 'undefined', `${where}: navigator.webdriver leaked: ${surface.webdriver}`);
+        assert(
+          String(surface.brands).includes('Google Chrome') && String(surface.brands).includes('Chromium'),
+          `${where}: UA-CH brands wrong: ${surface.brands}`,
+        );
+        assert(surface.uaDataPlatform === (process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : 'Linux'),
+          `${where}: UA-CH platform wrong: ${surface.uaDataPlatform}`);
+        assert(surface.hardwareConcurrency === 8 && surface.deviceMemory === 8, `${where}: hw surface wrong`);
+        assert(surface.vendor === 'Google Inc.', `${where}: vendor wrong: ${surface.vendor}`);
+      };
+      // The target's initial about:blank predates script registration (a
+      // registered init script only covers documents created afterwards);
+      // navigate first.
+      await page.navigate(`${fixtureOrigin}/form`);
+      assertSurface(await page.evaluate<string>(readSurface), 'after navigation');
+      await page.navigate(`${fixtureOrigin}/echo`);
+      assertSurface(await page.evaluate<string>(readSurface), 'second navigation');
+      const highEntropy = await page.evaluate<string>(
+        `navigator.userAgentData.getHighEntropyValues(['architecture','bitness','platformVersion','uaFullVersion','fullVersionList']).then(JSON.stringify)`,
+      );
+      const entropy = JSON.parse(highEntropy) as { uaFullVersion?: string; fullVersionList?: Array<{ brand: string; version: string }> };
+      assert(entropy.uaFullVersion === chromeVersion, `uaFullVersion ${entropy.uaFullVersion}`);
+      assert(
+        entropy.fullVersionList?.some((b) => b.brand === 'Google Chrome' && b.version === chromeVersion),
+        'fullVersionList missing real engine version',
+      );
+    } finally {
+      page.close();
+      await closeShellTarget({ port: debugPort, targetId: target.targetId });
+    }
+  });
+
+  await check('A6 network capture over native attach (redirect chain + iframe session)', async () => {
+    const target = await createShellTarget({ port: debugPort, url: 'about:blank' });
+    const page = await connectShellPage({ port: debugPort, targetId: target.targetId });
+    try {
+      const transport = page.createNetworkCaptureTransport?.();
+      assert(transport, 'native page session exposes no capture transport');
+      const capture = new BrowserNetworkCaptureManager(transport, { quietMs: 50, hardDeadlineMs: 5_000 });
+      await capture.start();
+      await page.navigate(`${fixtureOrigin}/`);
+      for (let i = 0; i < 100; i += 1) {
+        const state = await page.evaluate<{ redirect?: boolean; frame?: boolean }>('window.captureState || {}');
+        if (state.redirect && state.frame) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      const result = await capture.stop();
+      const redirect = result.chains.find((chain) =>
+        chain.hops.some((hop) => hop.request.url.endsWith('/redirect')),
+      );
+      const hops = redirect?.hops.map((hop) => new URL(hop.request.url).pathname);
+      assert(JSON.stringify(hops) === JSON.stringify(['/redirect', '/quota']), `redirect hops ${JSON.stringify(hops)}`);
+      const body = redirect?.hops.at(-1)?.responseBody?.body;
+      assert(body && JSON.parse(body).remaining === 42, 'redirect final body missing');
+      const frameChain = result.chains.find((chain) =>
+        chain.hops.some((hop) => hop.request.url.includes('/frame-data')),
+      );
+      assert(frameChain, 'iframe request not captured');
+      assert(
+        frameChain.sessionId !== transport.primarySessionId,
+        'OOPIF request not captured in a flattened iframe session',
+      );
+    } finally {
+      page.close();
+      await closeShellTarget({ port: debugPort, targetId: target.targetId });
+    }
+  });
+
+  await check('A7 per-session isolation via browser contexts (KTD-10 partition stand-in)', async () => {
+    const one = await createShellTarget({ port: debugPort, url: 'about:blank', isolate: true });
+    const two = await createShellTarget({ port: debugPort, url: 'about:blank', isolate: true });
+    const pageOne = await connectShellPage({ port: debugPort, targetId: one.targetId });
+    const pageTwo = await connectShellPage({ port: debugPort, targetId: two.targetId });
+    try {
+      await pageOne.setCookies([{ name: 'jar', value: 'one', url: `${fixtureOrigin}/` }]);
+      await pageTwo.setCookies([{ name: 'jar', value: 'two', url: `${fixtureOrigin}/` }]);
+      const jarOne = await pageOne.getCookiesForUrls?.([`${fixtureOrigin}/`]);
+      const jarTwo = await pageTwo.getCookiesForUrls?.([`${fixtureOrigin}/`]);
+      assert(jarOne?.some((c) => c.name === 'jar' && c.value === 'one'), `context one jar: ${JSON.stringify(jarOne)}`);
+      assert(jarTwo?.some((c) => c.name === 'jar' && c.value === 'two'), `context two jar: ${JSON.stringify(jarTwo)}`);
+      assert(!jarOne?.some((c) => c.value === 'two'), 'cookie cross-talk into context one');
+      assert(!jarTwo?.some((c) => c.value === 'one'), 'cookie cross-talk into context two');
+    } finally {
+      pageOne.close();
+      pageTwo.close();
+      await closeShellTarget({ port: debugPort, targetId: one.targetId, browserContextId: one.browserContextId });
+      await closeShellTarget({ port: debugPort, targetId: two.targetId, browserContextId: two.browserContextId });
+    }
+  });
+
+  await check('A8 cold-start retry: marker target appearing mid-connect (10s/300ms budget)', async () => {
+    const marker = `comate-view-late-${Math.random().toString(36).slice(2)}`;
+    const started = Date.now();
+    const connecting = connectShellPage({ port: debugPort, urlMarker: marker });
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    const target = await createShellTarget({ port: debugPort, url: `about:blank#${marker}` });
+    const page = await connecting;
+    try {
+      assert(Date.now() - started >= 600, 'did not actually wait for the late target');
+      assert((await page.evaluate<number>('2 + 2')) === 4, 'late attach broken');
+    } finally {
+      page.close();
+      await closeShellTarget({ port: debugPort, targetId: target.targetId });
+    }
+  });
+
+  await check('A9 targetDestroyed watcher (external-fallback session_lost signal)', async () => {
+    const info = await fetchCdpBrowserInfo({ port: debugPort });
+    const connection = await CdpConnection.connect(info.browserWsUrl, {});
+    try {
+      await connection.send('Target.setDiscoverTargets', { discover: true });
+      const target = await createShellTarget({ port: debugPort, url: 'about:blank' });
+      const destroyed = new Promise<string>((resolve) => {
+        const off = connection.onEvent((event) => {
+          if (event.method !== 'Target.targetDestroyed') return;
+          const id = (event.params as { targetId?: string }).targetId;
+          if (id === target.targetId) {
+            off();
+            resolve(id);
+          }
+        });
+      });
+      await closeShellTarget({ port: debugPort, targetId: target.targetId });
+      const id = await Promise.race([
+        destroyed,
+        new Promise<never>((_r, reject) => setTimeout(() => reject(new Error('no targetDestroyed within 3s')), 3_000)),
+      ]);
+      assert(id === target.targetId, `wrong target destroyed ${id}`);
+    } finally {
+      connection.close();
+    }
+  });
+
+  await check('A10 session-context export (cookies + hostname-keyed storage)', async () => {
+    const target = await createShellTarget({ port: debugPort, url: 'about:blank', isolate: true });
+    const page = await connectShellPage({ port: debugPort, targetId: target.targetId });
+    try {
+      await page.navigate(`${fixtureOrigin}/login`);
+      await page.evaluate("new Promise((r) => setTimeout(r, 100))");
+    } finally {
+      page.close();
+    }
+    const baseUrl = buildCdpPageBaseUrl({ host: '127.0.0.1', port: debugPort, targetId: target.targetId });
+    const context = (await exportCdpSessionContext(baseUrl)) as {
+      cookies: Array<Record<string, unknown>>;
+      localStorage: Record<string, Record<string, string>>;
+      sessionStorage: Record<string, Record<string, string>>;
+    };
+    assert(
+      context.cookies.some((c) => c.name === 'fixture_auth' && c.value === 'secret-token'),
+      `auth cookie missing: ${JSON.stringify(context.cookies)}`,
+    );
+    assert(
+      context.localStorage['127.0.0.1']?.session === 'abc123',
+      `localStorage not keyed by hostname: ${JSON.stringify(context.localStorage)}`,
+    );
+    await closeShellTarget({ port: debugPort, targetId: target.targetId, browserContextId: target.browserContextId });
+  });
+
+  // -------------------------------------------------------------------------
+  // PART B — tool parity (AE2 mechanism): the 13 comate-browser tools driven
+  // through BrowserToolContext + BrowserService against this same Chromium as
+  // an EXTERNAL CDP endpoint (COMATE_BROWSER_CDP_TARGET, R8). No release —
+  // the tools keep serving off a plain debug-port Chromium.
+  // -------------------------------------------------------------------------
+
+  process.env.COMATE_BROWSER_CDP_TARGET = `http://127.0.0.1:${debugPort}`;
+  const { BrowserService } = await import('../src/server/services/browser-service.js');
+  defaultStore = (await import('../src/server/storage/sqlite-store.js')).store;
+  const { BrowserToolContext } = await import('../src/server/services/browser-mcp.js');
+  const { BrowserControlService } = await import('../src/server/services/browser-control.js');
+  const { siteKeyForUrl } = await import('../src/server/services/browser-site-key.js');
+
+  const toolService = new BrowserService({ storageDir: tempDir });
+  const toolResults: string[] = [];
+  let handlerApprovalCount = 0;
+  const makeCtx = (sessionId: string) =>
+    new BrowserToolContext({
+      sessionId,
+      workspaceId: 'ws-e2e',
+      browserService: toolService,
+      handoffControl: new BrowserControlService({ browserService: toolService }),
+      approvalRequester: async () => { handlerApprovalCount += 1; return { behavior: 'allow' }; },
+    });
+  interface ToolResult {
+    isError?: boolean;
+    content?: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+  }
+  const resultJson = (res: ToolResult): Record<string, unknown> => {
+    const text = res.content?.find((c) => c.type === 'text')?.text ?? '';
+    toolResults.push(text);
+    if (res.isError) throw new Error(`tool error: ${text}`);
+    return JSON.parse(text) as Record<string, unknown>;
+  };
+  interface PageModelShape {
+    url: string;
+    title: string;
+    forms: Array<{
+      ref: string;
+      formIndex: number;
+      fields: Array<{ ref: string; name?: string; submitSemantics: boolean; tag: string; type: string }>;
+    }>;
+    actions: Array<{ ref: string; role: string; name: string }>;
+    content: { text: string };
+  }
+
+  const ctxA = makeCtx('cdp-tool-a');
+
+  await check('B1 open: navigate + distill a form page', async () => {
+    const out = resultJson(await ctxA.handleOpen({ url: `${fixtureHttp}/form` }));
+    assert(out.ok === true, 'open not ok');
+    const model = out['model'] as PageModelShape;
+    assert(model.url.includes('/form'), `model url ${model.url}`);
+    assert(model.forms.length === 1 && model.forms[0]!.fields.length >= 4, 'form not distilled');
+  });
+
+  let echoLinkRef = '';
+  let nameFieldRef = '';
+  await check('B2 findElements + getElementDetails: fresh refs resolve to live elements', async () => {
+    const found = resultJson(await ctxA.handleFindElements({ text: 'echo link', role: 'link', exact: true }));
+    const matches = found['matches'] as Array<{ ref: string; name: string }>;
+    echoLinkRef = matches[0]?.ref ?? '';
+    assert(echoLinkRef, `link ref missing: ${JSON.stringify(matches)}`);
+    const inspected = resultJson(await ctxA.handleGetElementDetails({ ref: echoLinkRef }));
+    assert(inspected['ok'] === true, `getElementDetails failed: ${JSON.stringify(inspected)}`);
+    const fieldFound = resultJson(await ctxA.handleFindElements({ text: 'Name', role: 'textbox', exact: true }));
+    const fieldMatches = fieldFound['matches'] as Array<{ ref: string; name: string }>;
+    nameFieldRef = fieldMatches[0]?.ref ?? '';
+    assert(nameFieldRef, `name field ref missing: ${JSON.stringify(fieldMatches)}`);
+  });
+
+  await check('B3 act: fill/select/check through backend-node + in-page scripts', async () => {
+    const filled = resultJson(await ctxA.handleAct({ ref: nameFieldRef, action: 'fill', value: 'Ada' }));
+    assert(filled['ok'] === true, `fill failed: ${JSON.stringify(filled)}`);
+  });
+
+  await check('B4 submit-semantics guard: act(click) on a submit control is refused', async () => {
+    // Refs rotate on every distill (B3's act re-distilled) — re-read state.
+    const pageState = resultJson(await ctxA.handleGetPageState({}));
+    const state = pageState['state'] as { elements: Array<{ ref: string; submitSemantics?: boolean }> };
+    const submit = state.elements.find((element) => element.submitSemantics)!;
+    const res = (await ctxA.handleAct({ ref: submit.ref, action: 'click' })) as ToolResult;
+    toolResults.push(res.content?.find((c) => c.type === 'text')?.text ?? '');
+    assert(res.isError === true, 'submit control click must be gated');
+    assert(
+      res.content?.[0]?.text?.includes('browser_use_submit_tool'),
+      `unexpected gate: ${res.content?.[0]?.text}`,
+    );
+  });
+
+  await check('B5 submit: approval-gated form submission navigates', async () => {
+    const pageState = resultJson(await ctxA.handleGetPageState({}));
+    const state = pageState['state'] as { elements: Array<{ ref: string; kind: string }> };
+    const form = state.elements.find((element) => element.kind === 'form')!;
+    const out = resultJson(await ctxA.handleSubmit({ ref: form.ref, fields: {} }));
+    assert(out['submitted'] === true, `submit failed: ${JSON.stringify(out)}`);
+    const submitted = out['model'] as PageModelShape | undefined;
+    assert(
+      (submitted?.url ?? '').includes('/submitted') && (submitted?.url ?? '').includes('name=Ada'),
+      `submit did not land on /submitted: ${submitted?.url}`,
+    );
+  });
+
+  await check('B6 extract: schema-driven field extraction', async () => {
+    const out = resultJson(
+      await ctxA.handleExtract({ schema: { pageTitle: { source: 'title' }, pageUrl: { source: 'url' } } }),
+    );
+    assert(out['ok'] === true, `extract failed: ${JSON.stringify(out)}`);
+    const data = out['data'] as Record<string, unknown>;
+    assert(data?.pageTitle === 'submitted', `extract missed title: ${JSON.stringify(out)}`);
+    assert(String(data?.pageUrl).includes('/submitted'), `extract missed url: ${JSON.stringify(out)}`);
+  });
+
+  await check('B7 network capture: start → action → stop runs the full pipeline', async () => {
+    const started = resultJson(await ctxA.handleStartNetworkCapture({ action: 'open the root page' }));
+    assert(started['ok'] === true, 'capture start failed');
+    resultJson(await ctxA.handleOpen({ url: `${fixtureHttp}/` }));
+    // Let the page's fetch/iframe traffic settle into chains before stopping.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const stopped = resultJson(await ctxA.handleStopNetworkCapture());
+    assert(stopped['ok'] === true, 'capture stop failed');
+    // Candidates are HTTPS-gated by the sanitizer (candidateFromChain drops
+    // http:// chains), so an http fixture asserts the pipeline state, not the
+    // candidate list; redirect-chain CONTENT is verified in A6.
+    assert(stopped['state'] === 'complete', `capture did not settle: ${JSON.stringify(stopped).slice(0, 400)}`);
+    assert(typeof stopped['captureId'] === 'string', 'no captureId');
+  });
+
+  await check('B8 takeScreenshot returns an image block', async () => {
+    const res = (await ctxA.handleTakeScreenshot()) as ToolResult;
+    assert(!res.isError, 'takeScreenshot errored');
+    const image = res.content?.find((c) => c.type === 'image');
+    assert(image?.data && image.mimeType === 'image/jpeg', 'no jpeg image block');
+  });
+
+  await check('B8b handler-approved dynamic SPA entry and publish activation stay single-dispatch', async () => {
+    const approvalsBefore = handlerApprovalCount;
+    const opened = resultJson(await ctxA.handleOpen({ url: `${fixtureHttp}/dynamic-spa` }));
+    const entry = (opened['model'] as PageModelShape).actions.find((action) => action.name === 'Open long form');
+    assert(entry, 'dynamic SPA entry was not discovered through the tool model');
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const entryResult = resultJson(await ctxA.handleActivate({ ref: entry!.ref }));
+    assert(entryResult['ok'] === true, `entry activation failed: ${JSON.stringify(entryResult)}`);
+    const observed = resultJson(await ctxA.handleGetPageState({}));
+    const elements = (observed['state'] as { elements: Array<{ ref: string; kind: string; name: string }> }).elements;
+    const title = elements.find((element) => element.kind === 'field' && element.name === 'Title');
+    const body = elements.find((element) => element.kind === 'field' && element.name === 'Primary content');
+    const publish = elements.find((element) => element.kind === 'action' && element.name === 'Release document');
+    assert(title && body && publish, `tool model missed authoring controls: ${JSON.stringify(elements)}`);
+    resultJson(await ctxA.handleAct({ ref: title!.ref, action: 'fill', value: 'MCP 动态长文标题' }));
+    resultJson(await ctxA.handleAct({ ref: body!.ref, action: 'fill', value: 'MCP 第一段\nMCP 第二段 😀' }));
+    const publishResult = resultJson(await ctxA.handleActivate({ ref: publish!.ref }));
+    assert(publishResult['ok'] === true, `publish activation failed: ${JSON.stringify(publishResult)}`);
+    assert(handlerApprovalCount - approvalsBefore === 2, `expected two bound handler approvals, got ${handlerApprovalCount - approvalsBefore}`);
+    const session = toolService.getSession('cdp-tool-a');
+    assert(session, 'tool session disappeared');
+    const live = await connectBrowserPage(session!.baseUrl);
+    try {
+      const state = await live.evaluate<{ entryClicks: number; publishClicks: number; publishTrusted: boolean }>('window.fixtureState');
+      assert(state.entryClicks === 1 && state.publishClicks === 1 && state.publishTrusted === true, `unexpected activation state: ${JSON.stringify(state)}`);
+    } finally {
+      live.close();
+    }
+  });
+
+  const ctxC = makeCtx('cdp-tool-c');
+  await check('B9 concurrent session isolation: fresh session has an empty cookie jar', async () => {
+    const out = resultJson(await ctxC.handleOpen({ url: `${fixtureHttp}/echo` }));
+    const model = out['model'] as PageModelShape;
+    assert(
+      model.content.text.includes('cookies=') && !model.content.text.includes('fixture_auth'),
+      `unexpected cookie cross-talk: ${model.content.text}`,
+    );
+  });
+
+  await check('B10 AE3: auth material capture → opaque binding → resolve reuses credentials', async () => {
+    resultJson(await ctxA.handleOpen({ url: `${fixtureHttp}/login` }));
+    const bindingId = await toolService.captureCandidateAuthBinding('cdp-tool-a', `${fixtureHttp}/quota`);
+    assert(bindingId, 'no binding captured from the logged-in session');
+    assert(!bindingId!.includes('secret-token'), 'binding id leaks credential material');
+    const resolved = toolService.resolveAuthBinding('cdp-tool-a', bindingId!, `${fixtureHttp}/quota`);
+    assert(
+      resolved.cookies.some((c) => (c as Record<string, unknown>)['name'] === 'fixture_auth'),
+      'resolved material lost the login cookie',
+    );
+    // Credentials never reach model context: no tool result so far may carry the token.
+    assert(
+      !toolResults.some((text) => text.includes('secret-token')),
+      'credential material leaked into a tool result',
+    );
+  });
+
+  await check('B11 remembered site replays into a rebuilt session before the first navigation', async () => {
+    const key = siteKeyForUrl(`${fixtureHttp}/login`);
+    assert(key.ok, `fixture site has no key: ${JSON.stringify(key)}`);
+    await toolService.rememberGlobalSiteAuth('cdp-tool-a', key.ok ? key.key : '');
+    // Teardown disposes A's browser context — the cookie is GONE from Chromium.
+    await toolService.teardownSession('cdp-tool-a');
+    const ctxB = makeCtx('cdp-tool-b');
+    const out = resultJson(await ctxB.handleOpen({ url: `${fixtureHttp}/echo` }));
+    const model = out['model'] as PageModelShape;
+    assert(
+      model.content.text.includes('fixture_auth=secret-token'),
+      `remembered cookie not injected pre-navigation: ${model.content.text}`,
+    );
+    assert(
+      model.content.text.includes('ls=abc123'),
+      `remembered localStorage not replayed: ${model.content.text}`,
+    );
+    await toolService.teardownSession('cdp-tool-b');
+  });
+
+  await check('B12 requestHandoff: two-card flow completes and control returns', async () => {
+    const out = resultJson(await ctxC.handleRequestHandoff({ reason: 'contract check' }));
+    assert(out['ok'] === true, `handoff failed: ${JSON.stringify(out)}`);
+    assert(
+      toolService.getControlState('cdp-tool-c') === 'agent_in_control',
+      `control not returned: ${toolService.getControlState('cdp-tool-c')}`,
+    );
+  });
+
+  await check('B13 close: approval-confirmed teardown closes the external target', async () => {
+    const out = resultJson(await ctxC.handleClose({ reason: 'done' }));
+    assert(out['ok'] === true, `close failed: ${JSON.stringify(out)}`);
+    assert(toolService.getSession('cdp-tool-c') === undefined, 'session still live after close');
+    for (let i = 0; i < 50; i += 1) {
+      const targets = await listCdpTargets({ port: debugPort });
+      const pages = targets.filter((t) => t.type === 'page' && t.url.includes('about:blank#comate-view-'));
+      if (pages.length === 0) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error('session targets survived close');
+  });
+
+  await toolService.shutdown().catch(() => undefined);
+} finally {
+  defaultStore?.close();
+  await closeShellTarget({ port: debugPort, targetId: targetA.targetId }).catch(() => undefined);
+  chrome.kill('SIGKILL');
+  await chromeClosed;
+  await new Promise<void>((resolve) => {
+    fixture.closeAllConnections?.();
+    fixture.close(() => resolve());
+  });
+  rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  rmSync(chromeUserData, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}
+
+const failed = results.filter((r) => !r.ok);
+if (failed.length > 0) {
+  console.error(`\nFAIL shell CDP contract suite: ${failed.length}/${results.length} failed`);
+  process.exit(1);
+}
+console.log(`\nPASS shell CDP contract suite: ${results.length} checks, Chromium ${chromeVersion}`);

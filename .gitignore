@@ -1,0 +1,33 @@
+node_modules
+dist
+dist-electron
+*.log
+.env
+.env.local
+.DS_Store
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.claude/worktrees/
+.worktrees/
+# Staged runtime resources (build output of scripts/build-sidecar.ts; shipped
+# via electron-builder extraResources)
+resources/*
+!resources/.gitkeep
+# electron-builder output + staged sidecar binaries (build output; build/ also
+# holds tracked icons/entitlements, so ignore only the staging subdirs)
+release/
+build/sidecar/
+# Per-arch macOS resource trees staged by scripts/build-sidecar.ts (step 11)
+build/resources-darwin-*/
+*.tsbuildinfo
+__screenshots__/
+.vitest-attachments/
+*-test-results.json
+/.claude/wecom-context.json
+/.claude/settings.local.json
+
+# electron-updater dev feed config (local update testing only, U5)
+dev-app-update.yml

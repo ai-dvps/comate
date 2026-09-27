@@ -1,0 +1,58 @@
+---
+import { getRelativeLocaleUrl } from 'astro:i18n';
+import { useTranslations, type Lang } from '../i18n/utils.js';
+import { providerPrerequisite } from '../lib/site-facts.js';
+
+interface Props {
+  locale: Lang;
+}
+
+const { locale } = Astro.props;
+const t = useTranslations(locale);
+const providerSetupHref = `${getRelativeLocaleUrl(locale, '/usage/')}#provider-setup`;
+---
+
+<section class="reveal mx-auto max-w-6xl px-4 py-16 md:py-24">
+  <div class="relative overflow-hidden rounded-2xl bg-surface px-6 py-12 text-center md:px-12 md:py-16">
+    <div
+      class="pointer-events-none absolute inset-0 -z-10 opacity-40 dark:opacity-30"
+      aria-hidden="true"
+    >
+      <div class="absolute left-1/2 top-0 h-[300px] w-[500px] -translate-x-1/2 rounded-full bg-accent/20 blur-[100px]"
+      ></div>
+    </div>
+
+    <h2 class="mx-auto max-w-2xl text-3xl font-bold tracking-tight text-text-primary md:text-4xl">
+      {locale === 'zh' ? '让下一个复杂任务，从一个清晰的 Workspace 开始' : 'Start your next complex task in a clear Workspace'}
+    </h2>
+
+    <p class="mx-auto mt-4 max-w-xl text-lg text-text-secondary">
+      {locale === 'zh' ? '下载 Comate，先创建 Workspace，再按环境配置模型服务。' : 'Download Comate, create your Workspace, then configure the model service for your environment.'}
+    </p>
+
+    <div class="mt-8 flex flex-wrap items-center justify-center gap-4">
+      <a
+        href={getRelativeLocaleUrl(locale, '/download/')}
+        data-analytics-event="download_cta_click"
+        data-analytics-locale={locale}
+        data-analytics-location="home_closing"
+        data-analytics-platform="all"
+        data-analytics-stage="download_page"
+        class="inline-flex min-h-12 items-center justify-center rounded-lg bg-conversion px-8 py-3 text-base font-semibold text-conversion-foreground no-underline shadow-lg shadow-conversion/20 hover:bg-conversion-hover hover:shadow-conversion/30"
+      >
+        {t('nav.downloadCta')}
+      </a>
+      <a
+        href={getRelativeLocaleUrl(locale, '/faq/')}
+        class="inline-flex min-h-12 items-center justify-center rounded-lg border border-border bg-bg px-8 py-3 text-base font-semibold text-text-primary no-underline hover:border-border-hover hover:bg-surface-hover"
+      >
+        {t('nav.faq')}
+      </a>
+    </div>
+
+    <p class="mx-auto mt-6 max-w-2xl text-sm leading-6 text-text-tertiary" data-provider-disclosure="home_closing">
+      {providerPrerequisite.disclosure[locale]}{' '}
+      <a href={providerSetupHref} class="font-medium">{locale === 'zh' ? '查看配置说明' : 'View setup guidance'}</a>
+    </p>
+  </div>
+</section>

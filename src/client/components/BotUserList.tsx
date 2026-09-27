@@ -1,0 +1,440 @@
+import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Trash2, AlertTriangle, Loader2, Crown, RefreshCw } from 'lucide-react';
+import type { BotUser, BotChannel, BotRole } from '../stores/bot-store';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+
+interface BotUserListProps {
+  botId: string;
+  members: BotUser[];
+  isLoading?: boolean;
+  isSaving?: boolean;
+  error?: string | null;
+  onSetRole: (channel: BotChannel, channelUserId: string, role: BotRole) => Promise<unknown>;
+  onTransferOwnership: (channel: BotChannel, newOwnerChannelUserId: string) => Promise<unknown>;
+  onRemoveMember: (channel: BotChannel, channelUserId: string) => Promise<unknown>;
+  onRefreshMembers: () => Promise<unknown>;
+  onResolvePending: () => Promise<unknown>;
+  onSetPlaintext: (channel: BotChannel, channelUserId: string, plaintextUserId: string) => Promise<unknown>;
+}
+
+const CHANNELS: BotChannel[] = ['wecom', 'feishu'];
+
+export default function BotUserList({
+  botId,
+  members,
+  isLoading,
+  isSaving,
+  error,
+  onSetRole,
+  onTransferOwnership,
+  onRemoveMember,
+  onRefreshMembers,
+  onResolvePending,
+  onSetPlaintext,
+}: BotUserListProps) {
+  const { t } = useTranslation('settings');
+  const [formError, setFormError] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [confirmRemoveKey, setConfirmRemoveKey] = useState<string | null>(null);
+  const [transferTarget, setTransferTarget] = useState<{
+    channel: BotChannel;
+    newOwnerChannelUserId: string;
+    priorOwnerChannelUserId: string | null;
+  } | null>(null);
+  const [transferring, setTransferring] = useState(false);
+  const [editingPlaintext, setEditingPlaintext] = useState<Record<string, string>>({});
+  const [savingPlaintextKey, setSavingPlaintextKey] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [resolving, setResolving] = useState(false);
+
+  useEffect(() => {
+    setFormError(null);
+    setConfirmRemoveKey(null);
+    setTransferTarget(null);
+    setEditingPlaintext({});
+    setSavingPlaintextKey(null);
+  }, [botId]);
+
+  const channelHasOwner = (c: BotChannel) =>
+    members.some((m) => m.channelKey === c && m.roleKey === 'owner');
+
+  const channelOwnerCount = (c: BotChannel) =>
+    members.filter((m) => m.channelKey === c && m.roleKey === 'owner').length;
+
+  const handleRemove = async (member: BotUser) => {
+    const key = `${member.channelKey}:${member.channelUserId}`;
+    if (member.roleKey === 'owner' && channelOwnerCount(member.channelKey) <= 1) {
+      setConfirmRemoveKey(key);
+      return;
+    }
+    setRemoving(key);
+    setConfirmRemoveKey(null);
+    await onRemoveMember(member.channelKey, member.channelUserId);
+    setRemoving(null);
+  };
+
+  const handleConfirmRemove = async (member: BotUser) => {
+    const key = `${member.channelKey}:${member.channelUserId}`;
+    setRemoving(key);
+    setConfirmRemoveKey(null);
+    await onRemoveMember(member.channelKey, member.channelUserId);
+    setRemoving(null);
+  };
+
+  // Picking "owner" for a non-owner member in a channel that already has an
+  // owner opens a confirm: the prior owner is demoted to admin atomically. On
+  // an owner-less channel it assigns the owner directly (no demotion).
+  const handleConfirmTransfer = async () => {
+    if (!transferTarget) return;
+    setTransferring(true);
+    try {
+      await onTransferOwnership(transferTarget.channel, transferTarget.newOwnerChannelUserId);
+    } finally {
+      setTransferring(false);
+      setTransferTarget(null);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await onRefreshMembers();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleResolvePending = async () => {
+    setResolving(true);
+    try {
+      await onResolvePending();
+    } finally {
+      setResolving(false);
+    }
+  };
+
+  const handleStartEdit = (member: BotUser) => {
+    const key = `${member.channelKey}:${member.channelUserId}`;
+    setEditingPlaintext((prev) => ({ ...prev, [key]: member.plaintextUserId ?? '' }));
+    setFormError(null);
+  };
+
+  const handlePlaintextChange = (key: string, value: string) => {
+    setEditingPlaintext((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handlePlaintextSave = async (member: BotUser) => {
+    const key = `${member.channelKey}:${member.channelUserId}`;
+    const value = editingPlaintext[key]?.trim() ?? '';
+    if (!value) {
+      setFormError(t('bots.plaintextUserIdRequired'));
+      return;
+    }
+    setSavingPlaintextKey(key);
+    setFormError(null);
+    try {
+      await onSetPlaintext(member.channelKey, member.channelUserId, value);
+      setEditingPlaintext((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    } finally {
+      setSavingPlaintextKey(null);
+    }
+  };
+
+  const handlePlaintextCancel = (member: BotUser) => {
+    const key = `${member.channelKey}:${member.channelUserId}`;
+    setEditingPlaintext((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const handlePlaintextBlur = (member: BotUser) => {
+    const key = `${member.channelKey}:${member.channelUserId}`;
+    const value = editingPlaintext[key]?.trim() ?? '';
+    if (value && value !== (member.plaintextUserId ?? '')) {
+      handlePlaintextSave(member);
+    } else {
+      handlePlaintextCancel(member);
+    }
+  };
+
+  const handlePlaintextKeyDown = (member: BotUser, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handlePlaintextSave(member);
+    } else if (e.key === 'Escape') {
+      handlePlaintextCancel(member);
+    }
+  };
+
+  const groupedMembers = CHANNELS.map((c) => ({
+    channel: c,
+    items: members.filter((m) => m.channelKey === c).sort((a, b) => {
+      const roleOrder = { owner: 0, admin: 1, normal: 2 };
+      if (roleOrder[a.roleKey] !== roleOrder[b.roleKey]) return roleOrder[a.roleKey] - roleOrder[b.roleKey];
+      return a.channelUserId.localeCompare(b.channelUserId);
+    }),
+  }));
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h4 className="text-xs font-medium text-text-secondary">{t('bots.membersTitle')}</h4>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleResolvePending}
+            disabled={resolving || isSaving}
+            className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium bg-accent hover:bg-accent-hover disabled:opacity-50 text-accent-foreground rounded-lg transition-colors"
+          >
+            {resolving ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3 h-3" />
+            )}
+            {t('bots.resolvePending')}
+          </button>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={refreshing || isLoading}
+            className="p-1.5 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-50"
+            title={t('bots.refreshMembers')}
+          >
+            {refreshing ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5" />
+            )}
+          </button>
+          <span className="text-[10px] text-text-tertiary">
+            {t('bots.memberCount', { count: members.length })}
+          </span>
+        </div>
+      </div>
+
+      {(error || formError) && (
+        <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-destructive">{formError || error}</p>
+        </div>
+      )}
+
+      {isLoading && members.length === 0 && (
+        <div className="flex items-center justify-center py-6">
+          <Loader2 className="w-5 h-5 animate-spin text-text-tertiary" />
+        </div>
+      )}
+
+      {!isLoading && members.length === 0 && (
+        <div className="text-center py-6 border border-dashed border-border rounded-lg">
+          <p className="text-xs text-text-secondary">{t('bots.noMembers')}</p>
+        </div>
+      )}
+
+      {groupedMembers.map(({ channel: groupChannel, items }) => {
+        const hasOwner = channelHasOwner(groupChannel);
+        return (
+          <div key={groupChannel} className="border border-border rounded-lg overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 bg-surface-hover border-b border-border/50">
+              <span className="text-xs font-medium text-text-secondary">
+                {t(`bots.channel${groupChannel.charAt(0).toUpperCase() + groupChannel.slice(1)}` as const)}
+              </span>
+              {hasOwner ? (
+                <span className="inline-flex items-center gap-1 text-[10px] text-text-tertiary">
+                  <Crown className="w-3 h-3 text-warning" />
+                  {t('bots.ownerAssigned')}
+                </span>
+              ) : items.length > 0 ? (
+                <span className="inline-flex items-center gap-1 text-[10px] text-destructive">
+                  <AlertTriangle className="w-3 h-3" />
+                  {t('bots.ownerlessChannel')}
+                </span>
+              ) : null}
+            </div>
+
+            {items.length === 0 ? (
+              <div className="px-3 py-4 text-center">
+                <p className="text-xs text-text-tertiary">{t('bots.noMembersInChannel')}</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-border/50">
+                {items.map((member) => {
+                  const key = `${member.channelKey}:${member.channelUserId}`;
+                  const isConfirming = confirmRemoveKey === key;
+                  const isTransferConfirm =
+                    transferTarget?.channel === member.channelKey &&
+                    transferTarget?.newOwnerChannelUserId === member.channelUserId;
+                  const isPending = member.resolutionStatus === 'pending';
+                  const isEditingPlaintext = key in editingPlaintext;
+                  return (
+                    <div key={key} className="px-3 py-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex flex-col gap-1.5 min-w-0">
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-surface-hover text-text-tertiary">
+                              {member.channelKey}
+                            </span>
+                            <span className="text-xs text-text-primary font-mono">{member.channelUserId}</span>
+                            {member.roleKey === 'owner' ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-warning">
+                                <Crown className="w-3 h-3" />
+                                {t('bots.roleOwner')}
+                              </span>
+                            ) : (
+                              <Select
+                                value={member.roleKey}
+                                onValueChange={(value) => {
+                                  if (value === 'owner' && channelHasOwner(member.channelKey)) {
+                                    const priorOwner = items.find((m) => m.roleKey === 'owner');
+                                    setTransferTarget({
+                                      channel: member.channelKey,
+                                      newOwnerChannelUserId: member.channelUserId,
+                                      priorOwnerChannelUserId: priorOwner?.channelUserId ?? null,
+                                    });
+                                    return;
+                                  }
+                                  onSetRole(member.channelKey, member.channelUserId, value as BotRole);
+                                }}
+                                disabled={isSaving}
+                              >
+                                <SelectTrigger className="w-auto min-w-[80px] text-xs py-1 px-2 h-auto">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="normal">{t('bots.roleNormal')}</SelectItem>
+                                  <SelectItem value="admin">{t('bots.roleAdmin')}</SelectItem>
+                                  <SelectItem value="owner">{t('bots.roleOwner')}</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            )}
+                            <span
+                              className={`text-[10px] px-1.5 py-0.5 rounded ${
+                                isPending
+                                  ? 'bg-warning/10 text-warning'
+                                  : 'bg-success/10 text-success'
+                              }`}
+                            >
+                              {isPending ? t('bots.pending') : t('bots.resolved')}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {isEditingPlaintext ? (
+                              <input
+                                autoFocus
+                                value={editingPlaintext[key] ?? ''}
+                                onChange={(e) => handlePlaintextChange(key, e.target.value)}
+                                onBlur={() => handlePlaintextBlur(member)}
+                                onKeyDown={(e) => handlePlaintextKeyDown(member, e)}
+                                placeholder={t('bots.plaintextUserIdPlaceholder')}
+                                disabled={savingPlaintextKey === key || isSaving}
+                                className="min-w-[120px] px-2 py-1 text-xs bg-bg border border-border rounded focus:outline-none focus:border-accent text-text-primary placeholder:text-text-tertiary"
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleStartEdit(member)}
+                                disabled={isSaving}
+                                className="inline-flex items-center gap-2 text-left disabled:opacity-50"
+                              >
+                                {member.plaintextUserId ? (
+                                  <>
+                                    <span className="text-[11px] font-mono text-text-secondary">
+                                      {member.plaintextUserId}
+                                    </span>
+                                    {member.displayName && (
+                                      <span className="text-[11px] text-text-secondary">
+                                        ({member.displayName})
+                                      </span>
+                                    )}
+                                  </>
+                                ) : (
+                                  <span className="text-[11px] text-text-tertiary italic">
+                                    {t('bots.plaintextUserIdPlaceholder')}
+                                  </span>
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemove(member)}
+                          disabled={removing === key || isSaving}
+                          className="p-1.5 rounded-md text-text-tertiary hover:text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
+                        >
+                          {removing === key ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+
+                      {isConfirming && (
+                        <div className="mt-2 p-2 bg-destructive/10 border border-destructive/20 rounded-lg flex items-center justify-between gap-2">
+                          <p className="text-[11px] text-destructive">{t('bots.lastOwnerRemoveWarning')}</p>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setConfirmRemoveKey(null)}
+                              className="px-2 py-1 text-[10px] font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-md transition-colors"
+                            >
+                              {t('actions.cancel')}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleConfirmRemove(member)}
+                              className="px-2 py-1 text-[10px] font-medium bg-destructive hover:bg-destructive/90 text-destructive-foreground rounded-md transition-colors"
+                            >
+                              {t('actions.confirm')}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {isTransferConfirm && transferTarget && (
+                        <div className="mt-2 p-2 bg-warning/10 border border-warning/30 rounded-lg flex items-center justify-between gap-2">
+                          <p className="text-[11px] text-text-secondary">
+                            {t('bots.transferOwnershipBody', {
+                              newOwner: member.channelUserId,
+                              priorOwner: transferTarget.priorOwnerChannelUserId ?? '',
+                            })}
+                          </p>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setTransferTarget(null)}
+                              disabled={transferring}
+                              className="px-2 py-1 text-[10px] font-medium text-text-secondary hover:text-text-primary bg-surface-hover hover:bg-surface-active rounded-md transition-colors disabled:opacity-50"
+                            >
+                              {t('actions.cancel')}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleConfirmTransfer}
+                              disabled={transferring || isSaving}
+                              className="px-2 py-1 text-[10px] font-medium bg-accent hover:bg-accent-hover text-accent-foreground rounded-md transition-colors disabled:opacity-50"
+                            >
+                              {transferring ? <Loader2 className="w-3 h-3 animate-spin" /> : t('actions.confirm')}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}

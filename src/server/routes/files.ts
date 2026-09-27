@@ -1,0 +1,442 @@
+import { Router } from 'express';
+import { createReadStream } from 'fs';
+import { realpath, readdir, readFile, stat } from 'fs/promises';
+import path from 'path';
+import { pipeline } from 'stream/promises';
+import { store } from '../storage/sqlite-store.js';
+import { searchFiles } from '../services/file-search.js';
+import { sidecarError } from '../utils/sidecar-logger.js';
+
+const router = Router({ mergeParams: true });
+
+interface FileNode {
+  name: string;
+  type: 'file' | 'folder';
+  children?: FileNode[];
+}
+
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  '.avif': 'image/avif',
+  '.bmp': 'image/bmp',
+  '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.webp': 'image/webp',
+};
+
+const VIDEO_MIME_TYPES: Record<string, string> = {
+  '.m4v': 'video/mp4',
+  '.mkv': 'video/x-matroska',
+  '.mov': 'video/quicktime',
+  '.mp4': 'video/mp4',
+  '.ogg': 'video/ogg',
+  '.ogv': 'video/ogg',
+  '.webm': 'video/webm',
+};
+
+const AUDIO_MIME_TYPES: Record<string, string> = {
+  '.aac': 'audio/aac',
+  '.flac': 'audio/flac',
+  '.m4a': 'audio/mp4',
+  '.mp3': 'audio/mpeg',
+  '.oga': 'audio/ogg',
+  '.opus': 'audio/ogg',
+  '.wav': 'audio/wav',
+  '.weba': 'audio/webm',
+};
+
+const MAX_IMAGE_PREVIEW_BYTES = 20 * 1024 * 1024;
+const MAX_RESOLVE_PATHS = 64;
+const MAX_RESOLVE_PATH_LENGTH = 4096;
+const MAX_RESOLVE_PATH_TEXT = 64 * 1024;
+
+function isWithinWorkspace(workspacePath: string, requestedPath: string): boolean {
+  return requestedPath === workspacePath || requestedPath.startsWith(`${workspacePath}${path.sep}`);
+}
+
+async function validatePathFromResolvedBase(
+  resolvedBase: string,
+  requestedPath: string,
+): Promise<string | null> {
+  const requestedCandidate = path.resolve(resolvedBase, requestedPath);
+
+  if (!isWithinWorkspace(resolvedBase, requestedCandidate)) {
+    return null;
+  }
+
+  const resolvedRequested = await realpath(requestedCandidate);
+  if (!isWithinWorkspace(resolvedBase, resolvedRequested)) {
+    return null;
+  }
+
+  return resolvedRequested;
+}
+
+async function validatePath(workspacePath: string, requestedPath: string): Promise<string | null> {
+  return validatePathFromResolvedBase(await realpath(workspacePath), requestedPath);
+}
+
+function parseResolvePaths(body: unknown): string[] | null {
+  if (!body || typeof body !== 'object' || !('paths' in body)) return null;
+  const paths = (body as { paths?: unknown }).paths;
+  if (!Array.isArray(paths) || paths.some((candidate) => typeof candidate !== 'string')) {
+    return null;
+  }
+
+  const uniquePaths = [...new Set(paths as string[])];
+  if (
+    uniquePaths.length > MAX_RESOLVE_PATHS ||
+    uniquePaths.some((candidate) => candidate.length > MAX_RESOLVE_PATH_LENGTH) ||
+    uniquePaths.reduce((total, candidate) => total + candidate.length, 0) > MAX_RESOLVE_PATH_TEXT
+  ) {
+    return null;
+  }
+  return uniquePaths;
+}
+
+function parseByteRange(rangeHeader: string, size: number): { start: number; end: number } | null {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+  if (!match || size <= 0) return null;
+
+  const [, startText, endText] = match;
+  if (!startText && !endText) return null;
+
+  if (!startText) {
+    const suffixLength = Number(endText);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return null;
+    return { start: Math.max(size - suffixLength, 0), end: size - 1 };
+  }
+
+  const start = Number(startText);
+  const requestedEnd = endText ? Number(endText) : size - 1;
+  if (
+    !Number.isSafeInteger(start)
+    || !Number.isSafeInteger(requestedEnd)
+    || start < 0
+    || start >= size
+    || requestedEnd < start
+  ) {
+    return null;
+  }
+  return { start, end: Math.min(requestedEnd, size - 1) };
+}
+
+// POST /api/workspaces/:id/files/resolve
+router.post('/resolve', async (req, res) => {
+  try {
+    const workspace = await store.get((req.params as { id: string }).id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const candidates = parseResolvePaths(req.body);
+    if (!candidates) {
+      res.status(400).json({ error: 'Invalid paths request' });
+      return;
+    }
+
+    const resolvedBase = await realpath(workspace.folderPath);
+    const existing: string[] = [];
+    for (const candidate of candidates) {
+      if (!candidate || candidate.includes('\0') || path.isAbsolute(candidate)) continue;
+      try {
+        const resolved = await validatePathFromResolvedBase(resolvedBase, candidate);
+        const resolvedStat = resolved ? await stat(resolved) : null;
+        if (resolvedStat?.isFile() || resolvedStat?.isDirectory()) {
+          existing.push(candidate);
+        }
+      } catch (error) {
+        if (
+          error &&
+          typeof error === 'object' &&
+          'code' in error &&
+          (error.code === 'ENOENT' || error.code === 'ENOTDIR')
+        ) {
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    res.json({ paths: existing });
+  } catch (error) {
+    sidecarError('[files/resolve] failed:', error instanceof Error ? (error.stack || error.message) : error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to resolve files' });
+    }
+  }
+});
+
+// GET /api/workspaces/:id/files/search?q=&limit=
+router.get('/search', async (req, res) => {
+  try {
+    const workspace = await store.get((req.params as { id: string }).id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const query = typeof req.query.q === 'string' ? req.query.q : '';
+    const limitParam = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : NaN;
+    const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 200;
+
+    const controller = new AbortController();
+    req.on('close', () => {
+      if (!res.writableEnded) controller.abort();
+    });
+
+    try {
+      const result = await searchFiles({
+        workspaceRoot: workspace.folderPath,
+        query,
+        limit,
+        signal: controller.signal,
+      });
+      res.json(result);
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        // Client disconnected; nothing to send.
+        return;
+      }
+      throw err;
+    }
+  } catch (error) {
+    sidecarError('[files/search] failed:', error instanceof Error ? (error.stack || error.message) : error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to search files' });
+    }
+  }
+});
+
+// GET /api/workspaces/:id/files?path=
+router.get('/', async (req, res) => {
+  try {
+    const workspace = await store.get((req.params as { id: string }).id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const relativePath = (req.query.path as string) || '';
+    const targetPath = await validatePath(workspace.folderPath, relativePath);
+
+    if (!targetPath) {
+      res.status(403).json({ error: 'Path outside workspace' });
+      return;
+    }
+
+    const entries = await readdir(targetPath, { withFileTypes: true });
+    const nodes: FileNode[] = entries.map(entry => ({
+      name: entry.name,
+      type: entry.isDirectory() ? 'folder' : 'file',
+    }));
+
+    // Sort: folders first, then files, both alphabetically
+    nodes.sort((a, b) => {
+      if (a.type === b.type) return a.name.localeCompare(b.name);
+      return a.type === 'folder' ? -1 : 1;
+    });
+
+    res.json({ path: relativePath, nodes });
+  } catch (error) {
+    console.error('Failed to list files:', error);
+    res.status(500).json({ error: 'Failed to list files' });
+  }
+});
+
+// GET /api/workspaces/:id/files/media?path=
+router.get('/media', async (req, res) => {
+  try {
+    const workspace = await store.get((req.params as { id: string }).id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const relativePath = req.query.path as string;
+    if (!relativePath) {
+      res.status(400).json({ error: 'path is required' });
+      return;
+    }
+
+    const targetPath = await validatePath(workspace.folderPath, relativePath);
+    if (!targetPath) {
+      res.status(403).json({ error: 'Path outside workspace' });
+      return;
+    }
+
+    const extension = path.extname(targetPath).toLowerCase();
+    const mimeType = VIDEO_MIME_TYPES[extension] ?? AUDIO_MIME_TYPES[extension];
+    if (!mimeType) {
+      res.status(415).json({ error: 'Unsupported media format' });
+      return;
+    }
+
+    const fileStat = await stat(targetPath);
+    if (!fileStat.isFile()) {
+      res.status(400).json({ error: 'Not a file' });
+      return;
+    }
+
+    const commonHeaders = {
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'private, no-store',
+      'Content-Type': mimeType,
+      'X-Content-Type-Options': 'nosniff',
+    };
+    const rangeHeader = req.headers.range;
+    if (rangeHeader) {
+      const range = parseByteRange(rangeHeader, fileStat.size);
+      if (!range) {
+        res.status(416).set({
+          ...commonHeaders,
+          'Content-Range': `bytes */${fileStat.size}`,
+        }).end();
+        return;
+      }
+
+      res.status(206).set({
+        ...commonHeaders,
+        'Content-Length': String(range.end - range.start + 1),
+        'Content-Range': `bytes ${range.start}-${range.end}/${fileStat.size}`,
+      });
+      await pipeline(createReadStream(targetPath, range), res);
+      return;
+    }
+
+    res.status(200).set({
+      ...commonHeaders,
+      'Content-Length': String(fileStat.size),
+    });
+    await pipeline(createReadStream(targetPath), res);
+  } catch (error) {
+    if (req.aborted || res.destroyed) {
+      return;
+    }
+    console.error('Failed to stream media:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to stream media' });
+    } else {
+      res.destroy(error instanceof Error ? error : undefined);
+    }
+  }
+});
+
+// GET /api/workspaces/:id/files/content?path=
+router.get('/content', async (req, res) => {
+  try {
+    const workspace = await store.get((req.params as { id: string }).id);
+    if (!workspace) {
+      res.status(404).json({ error: 'Workspace not found' });
+      return;
+    }
+
+    const relativePath = req.query.path as string;
+    if (!relativePath) {
+      res.status(400).json({ error: 'path is required' });
+      return;
+    }
+
+    const targetPath = await validatePath(workspace.folderPath, relativePath);
+
+    if (!targetPath) {
+      res.status(403).json({ error: 'Path outside workspace' });
+      return;
+    }
+
+    const fileStat = await stat(targetPath);
+    if (!fileStat.isFile()) {
+      res.status(400).json({ error: 'Not a file' });
+      return;
+    }
+
+    // Include ctime and inode so atomic replacement and same-size writes count.
+    const version = `${fileStat.dev}:${fileStat.ino}:${fileStat.size}:${fileStat.mtimeMs}:${fileStat.ctimeMs}`;
+    if (req.query.ifVersion === version) {
+      res.status(204).end();
+      return;
+    }
+
+    const extension = path.extname(targetPath).toLowerCase();
+    const videoMimeType = VIDEO_MIME_TYPES[extension];
+    if (videoMimeType) {
+      res.json({
+        path: relativePath, version,
+        content: null,
+        mimeType: videoMimeType,
+        isBinary: true,
+        size: fileStat.size,
+      });
+      return;
+    }
+
+    const audioMimeType = AUDIO_MIME_TYPES[extension];
+    if (audioMimeType) {
+      res.json({
+        path: relativePath, version,
+        content: null,
+        mimeType: audioMimeType,
+        isBinary: true,
+        size: fileStat.size,
+      });
+      return;
+    }
+
+    const imageMimeType = IMAGE_MIME_TYPES[extension];
+    if (imageMimeType) {
+      if (fileStat.size > MAX_IMAGE_PREVIEW_BYTES) {
+        res.json({
+          path: relativePath, version,
+          content: null,
+          mimeType: imageMimeType,
+          isBinary: true,
+          size: fileStat.size,
+          previewUnavailable: 'too_large',
+        });
+        return;
+      }
+
+      const buffer = await readFile(targetPath);
+      res.json({
+        path: relativePath, version,
+        content: buffer.toString('base64'),
+        encoding: 'base64',
+        mimeType: imageMimeType,
+        isBinary: true,
+        size: fileStat.size,
+      });
+      return;
+    }
+
+    // Check if binary (simple heuristic: check for null bytes in first 8KB)
+    const buffer = await readFile(targetPath);
+    const sample = buffer.slice(0, 8192);
+    const isBinary = sample.includes(0);
+
+    if (isBinary) {
+      res.json({
+        path: relativePath, version,
+        content: null,
+        isBinary: true,
+        size: fileStat.size
+      });
+      return;
+    }
+
+    const content = buffer.toString('utf-8');
+    res.json({ path: relativePath, version, content, isBinary: false, size: fileStat.size });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      res.status(404).json({ error: 'File not found' });
+      return;
+    }
+    console.error('Failed to read file:', error);
+    res.status(500).json({ error: 'Failed to read file' });
+  }
+});
+
+export default router;

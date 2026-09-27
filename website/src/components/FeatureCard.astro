@@ -1,0 +1,99 @@
+---
+import { cn } from '../lib/cn.js';
+import ProductScreenshot from './ProductScreenshot.astro';
+
+export interface Props {
+  title: string;
+  description: string;
+  category: string;
+  icon?: string;
+  image?: string;
+  imageAlt?: string;
+  gradientFrom?: string;
+  gradientTo?: string;
+  compact?: boolean;
+}
+
+const { title, description, category, icon, image, imageAlt, gradientFrom, gradientTo, compact } = Astro.props;
+
+const icons: Record<string, string> = {
+  workspaces:
+    'M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2Zm4 0v12 M11 7v12',
+  chat:
+    'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
+  'file-explorer':
+    'M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z',
+  'interactive-surfaces':
+    'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z',
+  'prompt-input':
+    'M4 7V4h3 M4 17v3h3 M20 7V4h-3 M20 17v3h-3 M9 9h6v6H9z',
+  'desktop-experience':
+    'M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.5 3H2.5L4 16',
+  'wecom-bot':
+    'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 7a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',
+  'task-tracking':
+    'M9 11l3 3L22 4 M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11',
+  skills:
+    'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5',
+  security:
+    'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z',
+};
+
+const iconPath = icon && icons[icon] ? icons[icon] : icons['prompt-input'];
+const from = gradientFrom ?? '24 95% 38%';
+const to = gradientTo ?? '28 82% 48%';
+---
+
+<article
+  data-feature-card
+  class={cn(
+    'group flex flex-col rounded-xl border border-border bg-surface p-5 shadow-sm transition-all duration-200 ease-out hover:-translate-y-1 hover:border-border-hover hover:shadow-lg',
+    compact ? 'gap-3' : 'gap-4'
+  )}
+>
+  {
+    image ? (
+      <ProductScreenshot
+        src={image}
+        alt={imageAlt ?? title}
+        width={960}
+        height={600}
+        loading="lazy"
+        class="mb-1 aspect-[16/10] w-full rounded-lg bg-white object-cover object-top"
+      />
+    ) : (
+      <div
+        class="mb-1 flex h-12 w-12 items-center justify-center rounded-xl text-accent-foreground"
+        style={`background: linear-gradient(135deg, hsl(${from}), hsl(${to}))`}
+      >
+        <svg
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d={iconPath} />
+        </svg>
+      </div>
+    )
+  }
+  <div class="flex flex-col gap-1">
+    <p class="text-xs font-medium uppercase tracking-wide text-text-tertiary">
+      {category}
+    </p>
+    <h3 class={cn('font-semibold text-text-primary', compact ? 'text-base' : 'text-lg')}>
+      {title}
+    </h3>
+    <p class={cn('leading-relaxed text-text-secondary', compact ? 'text-sm' : 'text-sm')}>
+      {description}
+    </p>
+    <div class="feature-detail prose prose-sm mt-3 max-w-none border-t border-border pt-3 text-text-secondary">
+      <slot />
+    </div>
+  </div>
+</article>

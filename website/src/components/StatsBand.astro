@@ -1,0 +1,33 @@
+---
+import type { Lang } from '../i18n/utils.js';
+
+interface Props { locale: Lang }
+const { locale } = Astro.props;
+
+const facts = locale === 'zh'
+  ? [
+      { value: 'Workspace', label: '任务、会话与上下文集中管理' },
+      { value: 'Provider', label: '按环境配置模型服务' },
+      { value: 'Skills + MCP', label: '按需连接工具与专业能力' },
+    ]
+  : [
+      { value: 'Workspace', label: 'Tasks, Sessions, and context in one place' },
+      { value: 'Provider', label: 'Configure model services for your environment' },
+      { value: 'Skills + MCP', label: 'Connect tools and specialist capabilities' },
+    ];
+---
+
+<div class="mx-auto max-w-6xl px-4">
+  <div class="grid gap-4 md:grid-cols-3" aria-label={locale === 'zh' ? '产品事实' : 'Product facts'}>
+    {
+      facts.map((fact) => (
+        <div class="reveal border-t border-border py-5">
+          <div>
+            <p class="font-mono text-sm font-semibold text-accent">{fact.value}</p>
+            <p class="mt-2 text-sm leading-6 text-text-secondary">{fact.label}</p>
+          </div>
+        </div>
+      ))
+    }
+  </div>
+</div>

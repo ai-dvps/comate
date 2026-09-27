@@ -1,0 +1,158 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { renderHook, act } from '@testing-library/react'
+import { useAppSettings, getInitialSettings } from './use-app-settings'
+
+const storage = new Map<string, string>()
+
+beforeEach(() => {
+  storage.clear()
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+    removeItem: (key: string) => storage.delete(key),
+  })
+})
+
+describe('getInitialSettings', () => {
+  it('defaults chat and UI font sizes to their previous pixel equivalents', () => {
+    const settings = getInitialSettings()
+    expect(settings.chatFontSize).toBe(12)
+    expect(settings.uiFontSize).toBe(14)
+  })
+
+  it('migrates stored font-size presets to pixel values', () => {
+    storage.set('app-settings', JSON.stringify({ chatFontSize: 'large', uiFontSize: 'small' }))
+
+    const settings = getInitialSettings()
+
+    expect(settings.chatFontSize).toBe(16)
+    expect(settings.uiFontSize).toBe(12)
+  })
+
+  it('loads valid numeric font sizes and rejects out-of-range values', () => {
+    storage.set('app-settings', JSON.stringify({ chatFontSize: 18, uiFontSize: 99 }))
+
+    const settings = getInitialSettings()
+
+    expect(settings.chatFontSize).toBe(18)
+    expect(settings.uiFontSize).toBe(14)
+  })
+
+  it('defaults notificationSoundsVolume to 100 when nothing is stored', () => {
+    const settings = getInitialSettings()
+    expect(settings.notificationSoundsVolume).toBe(100)
+  })
+
+  it('loads outputStyle as an app-global preference', () => {
+    storage.set('app-settings', JSON.stringify({ outputStyle: 'concise' }))
+    expect(getInitialSettings().outputStyle).toBe('concise')
+  })
+
+  it('defaults the global permission mode to auto and validates stored values', () => {
+    expect(getInitialSettings().approvalMode).toBe('auto')
+
+    storage.set('app-settings', JSON.stringify({ approvalMode: 'readonly' }))
+    expect(getInitialSettings().approvalMode).toBe('readonly')
+
+    storage.set('app-settings', JSON.stringify({ approvalMode: 'unsafe' }))
+    expect(getInitialSettings().approvalMode).toBe('auto')
+  })
+
+  it('loads a valid stored notificationSoundsVolume', () => {
+    storage.set(
+      'app-settings',
+      JSON.stringify({ notificationSoundsEnabled: true, notificationSoundsVolume: 50 }),
+    )
+    const settings = getInitialSettings()
+    expect(settings.notificationSoundsVolume).toBe(50)
+  })
+
+  it('falls back to 100 for an invalid stored volume', () => {
+    storage.set(
+      'app-settings',
+      JSON.stringify({ notificationSoundsEnabled: true, notificationSoundsVolume: 'loud' }),
+    )
+    const settings = getInitialSettings()
+    expect(settings.notificationSoundsVolume).toBe(100)
+  })
+
+  it('falls back to 100 for an out-of-range stored volume', () => {
+    storage.set(
+      'app-settings',
+      JSON.stringify({ notificationSoundsEnabled: true, notificationSoundsVolume: 150 }),
+    )
+    const settings = getInitialSettings()
+    expect(settings.notificationSoundsVolume).toBe(100)
+  })
+})
+
+describe('useAppSettings', () => {
+  it('updates font sizes as clamped pixel values', () => {
+    const { result } = renderHook(() => useAppSettings())
+
+    act(() => {
+      result.current.setChatFontSize(8)
+      result.current.setUiFontSize(17.6)
+    })
+
+    expect(result.current.chatFontSize).toBe(10)
+    expect(result.current.uiFontSize).toBe(18)
+  })
+
+  it('returns 100 by default', () => {
+    const { result } = renderHook(() => useAppSettings())
+    expect(result.current.notificationSoundsVolume).toBe(100)
+  })
+
+  it('updates notificationSoundsVolume and persists to localStorage', () => {
+    const { result } = renderHook(() => useAppSettings())
+
+    act(() => {
+      result.current.setNotificationSoundsVolume(42)
+    })
+
+    expect(result.current.notificationSoundsVolume).toBe(42)
+    const stored = JSON.parse(storage.get('app-settings')!)
+    expect(stored.notificationSoundsVolume).toBe(42)
+  })
+
+  it('clamps notificationSoundsVolume to 0-100', () => {
+    const { result } = renderHook(() => useAppSettings())
+
+    act(() => {
+      result.current.setNotificationSoundsVolume(-10)
+    })
+    expect(result.current.notificationSoundsVolume).toBe(0)
+
+    act(() => {
+      result.current.setNotificationSoundsVolume(120)
+    })
+    expect(result.current.notificationSoundsVolume).toBe(100)
+  })
+
+  it('updates outputStyle for every hook consumer and persists it', () => {
+    const first = renderHook(() => useAppSettings())
+    const second = renderHook(() => useAppSettings())
+
+    act(() => {
+      first.result.current.setOutputStyle('learning')
+    })
+
+    expect(first.result.current.outputStyle).toBe('learning')
+    expect(second.result.current.outputStyle).toBe('learning')
+    expect(JSON.parse(storage.get('app-settings')!).outputStyle).toBe('learning')
+  })
+
+  it('updates the global permission mode for every hook consumer and persists it', () => {
+    const first = renderHook(() => useAppSettings())
+    const second = renderHook(() => useAppSettings())
+
+    act(() => {
+      first.result.current.setApprovalMode('manual')
+    })
+
+    expect(first.result.current.approvalMode).toBe('manual')
+    expect(second.result.current.approvalMode).toBe('manual')
+    expect(JSON.parse(storage.get('app-settings')!).approvalMode).toBe('manual')
+  })
+})

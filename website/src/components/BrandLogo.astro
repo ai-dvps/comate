@@ -1,0 +1,25 @@
+---
+import { Image } from 'astro:assets';
+import appIcon from '../../../build/icon.png';
+
+interface Props {
+  size?: number;
+  class?: string;
+}
+
+const { size = 32, class: className = '' } = Astro.props;
+---
+
+<Image
+  src={appIcon}
+  alt=""
+  width={size}
+  height={size}
+  densities={[1.5, 2]}
+  format="webp"
+  quality={90}
+  loading="eager"
+  decoding="async"
+  aria-hidden="true"
+  class:list={['shrink-0 rounded-[22%]', className]}
+/>
