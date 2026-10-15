@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Load restored conversations on startup** — Conversation history now loads when session metadata becomes available, without needing to switch away and back to clear the loading screen.
+
 ## [0.4.8] - 2026-09-07
 
 - 移除 WeSkillHub 搜索与安装适配，保留其他四个 Skill 搜索来源。

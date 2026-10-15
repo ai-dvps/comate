@@ -214,6 +214,40 @@ describe('ChatPanel', () => {
     expect(screen.queryByTestId('message-list')).not.toBeInTheDocument()
   })
 
+  it.each(['missing', 'draft'])('loads history when %s session metadata becomes ready without switching sessions', (initialState) => {
+    const session = {
+      id: 's1',
+      workspaceId: 'ws1',
+      name: 'Restored session',
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
+      isDraft: false,
+    }
+    mockChatStore.activeSessionIds = { ws1: 's1' }
+    mockChatStore.domCache = { ws1: ['s1'] }
+    mockChatStore.sessions = initialState === 'draft'
+      ? { ws1: [{ ...session, isDraft: true }] }
+      : {}
+
+    const rendered = renderWithI18n(<ChatPanel workspaceId="ws1" />)
+    expect(mockChatStore.loadMessages).not.toHaveBeenCalled()
+
+    mockChatStore.sessions = { ws1: [session] }
+    rendered.rerender(<I18nextProvider i18n={i18n}><ChatPanel workspaceId="ws1" /></I18nextProvider>)
+
+    expect(mockChatStore.loadMessages).toHaveBeenCalledExactlyOnceWith('ws1', 's1')
+    expect(screen.getByRole('status')).toHaveTextContent('Loading conversation history')
+    expect(screen.queryByTestId('message-list')).not.toBeInTheDocument()
+
+    mockChatStore.messages = { s1: [] }
+    mockChatStore.historyLoadState = { s1: 'loaded' }
+    rendered.rerender(<I18nextProvider i18n={i18n}><ChatPanel workspaceId="ws1" /></I18nextProvider>)
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByTestId('message-list')).toBeInTheDocument()
+    expect(mockChatStore.loadMessages).toHaveBeenCalledTimes(1)
+  })
+
   it('renders the message list after complete history is loaded', () => {
     mockChatStore.activeSessionIds = { ws1: 's1' }
     mockChatStore.domCache = { ws1: ['s1'] }
