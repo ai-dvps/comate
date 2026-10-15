@@ -147,7 +147,7 @@ export default function ChatPanel({ workspaceId }: ChatPanelProps) {
 
   useEffect(() => {
     if (!activeSessionId || !activeSession || activeSession.isDraft) {
-      historyLoadAttemptRef.current = activeSessionId ?? null
+      historyLoadAttemptRef.current = null
       return
     }
     if (historyLoadState) {
