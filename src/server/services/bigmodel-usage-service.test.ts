@@ -75,9 +75,9 @@ describe('BigModelUsageService', () => {
     }) as unknown) as FetchImpl;
   }
 
-  function makeProvider(baseUrl: string): string {
+  function makeProvider(baseUrl: string, authToken = 'sk-key'): string {
     const configuration = baseUrl.includes('bigmodel.cn') ? applyProviderPreset('bigmodel') : undefined;
-    return sqlite.createProvider({ name: `BM-${baseUrl}`, baseUrl, authToken: 'sk-key', configuration }).id;
+    return sqlite.createProvider({ name: `BM-${baseUrl}`, baseUrl, authToken, configuration }).id;
   }
 
   test('non-bigmodel provider is unsupported', async () => {
@@ -87,10 +87,23 @@ describe('BigModelUsageService', () => {
     assert.equal(result.status, 'unsupported');
   });
 
-  test('bigmodel provider with no captured login is idle', async () => {
+  test('provider credential queries the API quota endpoint without a captured web login', async () => {
     const id = makeProvider('https://open.bigmodel.cn/api/anthropic');
+    trackFetch(() => jsonResponse(200, REAL_RESPONSE));
     const result = await svc.runUsageCheck(id);
-    assert.equal(result.status, 'idle');
+    assert.equal(result.status, 'ready');
+    assert.deepEqual(fetchedUrls, ['https://open.bigmodel.cn/api/monitor/usage/quota/limit']);
+    assert.equal(fetchHeaders?.authorization, 'sk-key');
+    assert.equal(fetchInit?.method, 'GET');
+    assert.equal(fetchInit?.body, undefined);
+  });
+
+  test('missing provider credential is an error without fetching or requesting web login', async () => {
+    const id = makeProvider('https://open.bigmodel.cn/api/anthropic', '   ');
+    seedBearer('stale-web-token');
+    trackFetch(() => jsonResponse(200, REAL_RESPONSE));
+    assert.equal((await svc.runUsageCheck(id)).status, 'error');
+    assert.equal(fetchedUrls.length, 0);
   });
 
   test('happy path returns a ready summary from weekly + 5h coding limits', async () => {
@@ -108,30 +121,59 @@ describe('BigModelUsageService', () => {
     assert.equal(result.summary?.rolling?.remaining, 67);
   });
 
-  test('auth is raw token (no Bearer prefix)', async () => {
+  test('saved web token does not override the raw provider API key', async () => {
     const id = makeProvider('https://open.bigmodel.cn/api/anthropic');
     seedBearer('bm-token');
     trackFetch(() => jsonResponse(200, REAL_RESPONSE));
     await svc.runUsageCheck(id);
-    assert.equal(fetchHeaders?.authorization, 'bm-token');
+    assert.equal(fetchHeaders?.authorization, 'sk-key');
     assert.equal(fetchInit?.redirect, 'error');
     assert.ok(fetchInit?.signal instanceof AbortSignal);
   });
 
-  test('401 surfaces relogin', async () => {
+  test('401 and 403 surface credential errors rather than an unrelated web relogin', async () => {
     const id = makeProvider('https://open.bigmodel.cn/api/anthropic');
     seedBearer('bm-token');
-    trackFetch(() => jsonResponse(401, { code: 401 }));
-    const result = await svc.runUsageCheck(id);
-    assert.equal(result.status, 'relogin');
+    for (const status of [401, 403]) {
+      trackFetch(() => jsonResponse(status, { code: status }));
+      assert.equal((await svc.runUsageCheck(id)).status, 'error');
+    }
   });
 
-  test('a response with no TIME_LIMIT is no-plan', async () => {
+  test('a valid quota response with no coding limits is no-plan', async () => {
     const id = makeProvider('https://open.bigmodel.cn/api/anthropic');
     seedBearer('bm-token');
     trackFetch(() => jsonResponse(200, { code: 200, data: { limits: [], level: 'free' } }));
     const result = await svc.runUsageCheck(id);
     assert.equal(result.status, 'no-plan');
+  });
+
+  test('empty or malformed HTTP 200 responses are errors, not evidence of no coding plan', async () => {
+    const id = makeProvider('https://open.bigmodel.cn/api/anthropic');
+    seedBearer('bm-token');
+    for (const response of [
+      new Response('', { status: 200 }),
+      jsonResponse(200, null),
+      jsonResponse(200, {}),
+      jsonResponse(200, { data: {} }),
+      jsonResponse(200, { data: { limits: {} } }),
+      jsonResponse(200, { success: false, data: { limits: [] } }),
+      jsonResponse(200, { code: 401, data: { limits: [] } }),
+    ]) {
+      trackFetch(() => response);
+      assert.equal((await svc.runUsageCheck(id)).status, 'error');
+    }
+  });
+
+  test('editable endpoint URLs cannot redirect the provider credential', async () => {
+    const id = makeProvider('https://open.bigmodel.cn/api/anthropic');
+    seedBearer('bm-token');
+    const configuration = structuredClone(sqlite.getProvider(id)!.configuration!);
+    configuration.endpoints.anthropic!.baseUrl = 'https://attacker.example/';
+    sqlite.updateProvider(id, { configuration });
+    trackFetch(() => jsonResponse(200, REAL_RESPONSE));
+    await svc.runUsageCheck(id);
+    assert.deepEqual(fetchedUrls, ['https://open.bigmodel.cn/api/monitor/usage/quota/limit']);
   });
 
   test('network failure surfaces error', async () => {
