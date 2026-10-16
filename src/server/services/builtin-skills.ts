@@ -63,9 +63,18 @@ export function appendSystemPrompt(current: Options['systemPrompt'], addition: s
   if (!addition) return current;
   if (Array.isArray(current)) return [...current, addition];
   if (typeof current === 'string') return `${current}\n\n${addition}`;
+  if (current?.type === 'custom') {
+    return {
+      ...current,
+      prompt: Array.isArray(current.prompt) ? [...current.prompt, addition] : `${current.prompt}\n\n${addition}`,
+    };
+  }
   return { type: 'preset', preset: 'claude_code', ...current, append: [current?.append, addition].filter(Boolean).join('\n\n') };
 }
 
 export function systemPromptText(prompt: Options['systemPrompt']): string | undefined {
+  if (typeof prompt === 'object' && !Array.isArray(prompt) && prompt?.type === 'custom') {
+    return systemPromptText(prompt.prompt);
+  }
   return Array.isArray(prompt) ? prompt.join('\n\n') : typeof prompt === 'string' ? prompt : prompt?.append;
 }

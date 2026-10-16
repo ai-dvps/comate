@@ -247,6 +247,7 @@ describe('loopback-auth contract (V10: real sandboxed CLI vs authenticated /api)
 
     const queryOptions: Options = {
       model: 'probe-model',
+      permissionMode: 'default',
       cwd,
       settingSources: [],
       env: {

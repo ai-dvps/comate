@@ -4,6 +4,7 @@ import assert from 'node:assert';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type {
   CanUseTool,
@@ -126,6 +127,20 @@ function extractReadOnlyCommandSet(): { commands: string[]; occurrences: number 
 }
 
 describe('sdk-parity (bot gate contracts)', { concurrency: false }, () => {
+  it('ships the lockfile SDK version and its matching native executable', () => {
+    const sdk = JSON.parse(fs.readFileSync(path.join(resolveSdkPackageDir(), 'package.json'), 'utf8'));
+    const lock = JSON.parse(fs.readFileSync(new URL('../../../package-lock.json', import.meta.url), 'utf8'));
+    assert.strictEqual(sdk.version, lock.packages['node_modules/@anthropic-ai/claude-agent-sdk'].version);
+    for (const [name, version] of Object.entries(sdk.optionalDependencies)) {
+      assert.strictEqual(version, sdk.version);
+      assert.strictEqual(lock.packages[`node_modules/${name}`].version, sdk.version);
+    }
+    const binaryPath = resolveSdkBinary();
+    assert.ok(binaryPath);
+    assert.strictEqual(execFileSync(binaryPath, ['--version'], { encoding: 'utf8', timeout: 15_000 }).trim(),
+      `${sdk.claudeCodeVersion} (Claude Code)`);
+  });
+
   it('Options.sandbox accepts SandboxSettings and failIfUnavailable defaults per the documented contract', async () => {
     // Type-surface contract: Options exposes the sandbox channel and the
     // SandboxSettings schema carries the filesystem/network/credentials groups

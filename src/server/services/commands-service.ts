@@ -290,6 +290,7 @@ export class CommandsService {
       settings: { enabledPlugins: { 'wecom@comate-built-in': false } },
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
       model: resolved.model,
+      permissionMode: 'default',
       pathToClaudeCodeExecutable: claudePath,
       stderr: (data) => {
         const trimmed = data.trim();

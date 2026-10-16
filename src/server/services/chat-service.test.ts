@@ -1403,6 +1403,7 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
 
     await service.getOrCreateRuntime('s1', 'ws-1', true, undefined, identity?.botUserId);
     assert.ok(capturedOptions?.canUseTool, 'canUseTool must be set for bot sessions');
+    assert.strictEqual(capturedOptions.permissionMode, 'default');
     return capturedOptions.canUseTool;
   }
 
@@ -1429,6 +1430,7 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
 
     await service.getOrCreateRuntime('s1', 'ws-1', true, undefined, botUserId);
     assert.ok(capturedOptions, 'options must be captured');
+    assert.strictEqual(capturedOptions.permissionMode, 'default');
     return capturedOptions;
   }
 
@@ -1512,6 +1514,7 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
       !(capturedOptions.disallowedTools ?? []).includes('AskUserQuestion'),
       `GUI sessions must keep AskUserQuestion, got ${JSON.stringify(capturedOptions.disallowedTools)}`,
     );
+    assert.strictEqual(capturedOptions.permissionMode, 'default');
   });
 
   it('scheduled session keeps AskUserQuestion available', async () => {
@@ -1532,6 +1535,7 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
       !(capturedOptions.disallowedTools ?? []).includes('AskUserQuestion'),
       `scheduled sessions must keep AskUserQuestion, got ${JSON.stringify(capturedOptions.disallowedTools)}`,
     );
+    assert.strictEqual(capturedOptions.permissionMode, 'default');
   });
 
   it('bot session with policy denying Shell: canUseTool returns deny for Bash with generic message', async () => {
@@ -2462,7 +2466,7 @@ describe('chat-service loadMessages subagents', { concurrency: false }, () => {
             },
           ],
         },
-        toolUseResult: { description: 'Fallback agent' },
+        tool_use_result: { description: 'Fallback agent' },
       } as unknown as SessionMessage,
     ];
 
