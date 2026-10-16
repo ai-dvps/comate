@@ -2032,6 +2032,59 @@ describe('session-runtime authoritative activity', { concurrency: false }, () =>
     );
   });
 
+  it('keeps foreground ownership when a subagent result arrives', async () => {
+    const sdk = createActivitySdkClient();
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, sdk.client);
+    runtime.pushMessage('start');
+    sdk.pushMessage({
+      type: 'result', subtype: 'success', is_error: false, result: 'child finished',
+      parent_tool_use_id: 'agent-tool-1', uuid: 'child-result', session_id: 's1',
+    } as unknown as SDKMessage);
+    await tick();
+    assert.deepStrictEqual(runtime.getActivitySnapshot(), {
+      phase: 'foreground', active: true, backgroundTasks: [],
+    });
+    sdk.pushMessage({
+      type: 'result', subtype: 'success', is_error: false, result: 'parent finished',
+      uuid: 'parent-result', session_id: 's1',
+    } as SDKMessage);
+    await tick();
+    assert.strictEqual(runtime.getActivitySnapshot().active, false);
+  });
+
+  it('retains background activity and correlation until the final completion snapshot', async () => {
+    const sdk = createActivitySdkClient();
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, sdk.client);
+    sdk.pushMessage({
+      type: 'system', subtype: 'background_tasks_changed',
+      tasks: [{ task_id: 'agent-1', task_type: 'agent', description: 'Research', run_id: 'run-1' }],
+      uuid: 'snapshot-1', session_id: 's1',
+    } as unknown as SDKMessage);
+    sdk.pushMessage({
+      type: 'system', subtype: 'task_started', task_id: 'agent-1',
+      tool_use_id: 'agent-tool-1', run_id: 'run-1', description: 'Research',
+      uuid: 'start-1', session_id: 's1',
+    } as unknown as SDKMessage);
+    sdk.pushMessage({
+      type: 'system', subtype: 'task_updated', task_id: 'agent-1', patch: { status: 'completed' },
+      uuid: 'update-1', session_id: 's1',
+    } as SDKMessage);
+    sdk.pushMessage({
+      type: 'system', subtype: 'task_notification', task_id: 'agent-1', status: 'completed',
+      tool_use_id: 'agent-tool-1', run_id: 'run-1', uuid: 'notification-1', session_id: 's1',
+    } as unknown as SDKMessage);
+    await tick();
+    assert.strictEqual(runtime.getActivitySnapshot().phase, 'background');
+    assert.strictEqual(runtime.isSubagentRunning('agent-tool-1'), true);
+    sdk.pushMessage({
+      type: 'system', subtype: 'background_tasks_changed', tasks: [],
+      uuid: 'snapshot-2', session_id: 's1',
+    } as SDKMessage);
+    await tick();
+    assert.strictEqual(runtime.getActivitySnapshot().active, false);
+    assert.strictEqual(runtime.isSubagentRunning('agent-tool-1'), false);
+  });
+
   it('correlates a live background subagent with its parent tool use', async () => {
     const sdk = createActivitySdkClient();
     runtime = SessionRuntime.open(
@@ -2309,7 +2362,7 @@ describe('session-runtime fenced stop', { concurrency: false }, () => {
     };
   }
 
-  function snapshot(tasks: Array<{ id: string; type?: string; description?: string }>): SDKMessage {
+  function snapshot(tasks: Array<{ id: string; type?: string; description?: string; runId?: string }>): SDKMessage {
     return {
       type: 'system',
       subtype: 'background_tasks_changed',
@@ -2317,6 +2370,7 @@ describe('session-runtime fenced stop', { concurrency: false }, () => {
         task_id: task.id,
         task_type: task.type ?? 'agent',
         description: task.description ?? task.id,
+        ...(task.runId && { run_id: task.runId }),
       })),
       uuid: randomTestUuid(),
       session_id: 's1',
@@ -2473,6 +2527,59 @@ describe('session-runtime fenced stop', { concurrency: false }, () => {
 
     assert.deepStrictEqual(sdk.calls.stopTask, ['a', 'a']);
     assert.strictEqual(sdk.calls.interrupt, 0);
+  });
+
+  it('allows stopping a resumed run with the same task ID before an empty snapshot', async () => {
+    const sdk = createStopSdk();
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, sdk.client);
+    sdk.push(snapshot([{ id: 'a', runId: 'run-1' }]));
+    await tick();
+    await runtime.stopBackgroundTask('a');
+    sdk.push(snapshot([{ id: 'a', runId: 'run-2' }]));
+    await tick();
+    await runtime.stopBackgroundTask('a');
+    assert.deepStrictEqual(sdk.calls.stopTask, ['a', 'a']);
+  });
+
+  it('does not reuse an in-flight stop from a previous task run', async () => {
+    const completions: Array<() => void> = [];
+    const sdk = createStopSdk({ stopTask: () => new Promise<void>(resolve => completions.push(resolve)) });
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, sdk.client);
+    sdk.push(snapshot([{ id: 'a', runId: 'run-1' }]));
+    await tick();
+    const first = runtime.stopBackgroundTask('a');
+    sdk.push(snapshot([{ id: 'a', runId: 'run-2' }]));
+    await tick();
+    const second = runtime.stopBackgroundTask('a');
+    assert.deepStrictEqual(sdk.calls.stopTask, ['a', 'a']);
+    completions[0]();
+    await first;
+    assert.strictEqual(runtime.stopBackgroundTask('a'), second);
+    completions[1]();
+    await second;
+  });
+
+  it('whole-Session Stop cancels the new run while the previous run stop is pending', async () => {
+    let completePreviousStop!: () => void;
+    let stopCalls = 0;
+    const sdk = createStopSdk({ stopTask: () => {
+      stopCalls++;
+      return stopCalls === 1 ? new Promise<void>(resolve => { completePreviousStop = resolve; }) : Promise.resolve();
+    } });
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, sdk.client);
+    sdk.push(snapshot([{ id: 'a', runId: 'run-1' }]));
+    await tick();
+    const previousStop = runtime.stopBackgroundTask('a');
+    sdk.push(snapshot([{ id: 'a', runId: 'run-2' }]));
+    await tick();
+    const sessionStop = runtime.stopAll();
+    await tick();
+    assert.deepStrictEqual(sdk.calls.stopTask, ['a', 'a']);
+    sdk.push(snapshot([]));
+    await sessionStop;
+    completePreviousStop();
+    await previousStop;
+    assert.strictEqual(runtime.getActivitySnapshot().active, false);
   });
 
   it('treats a task removed by an SDK snapshot during stop as already finished', async () => {

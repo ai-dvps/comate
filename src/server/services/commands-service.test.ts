@@ -66,7 +66,7 @@ describe('CommandsService Provider resolution', () => {
   });
 
   it('passes the same resolved endpoint, model, and both Claude credential variables', async () => {
-    let captured: { env?: NodeJS.ProcessEnv; model?: string } | undefined;
+    let captured: { env?: NodeJS.ProcessEnv; model?: string; permissionMode?: string } | undefined;
     const sdk = { fetchInitialization: async (options: typeof captured) => {
       captured = options;
       return { commands: [], availableOutputStyles: [] };
@@ -86,6 +86,7 @@ describe('CommandsService Provider resolution', () => {
     assert.equal(captured?.env?.ANTHROPIC_API_KEY, 'secret');
     assert.equal(captured?.env?.ANTHROPIC_AUTH_TOKEN, 'secret');
     assert.equal(captured?.model, 'claude-model');
+    assert.equal(captured?.permissionMode, 'default');
   });
 
   it('drops cached discovery when Provider configuration changes', async () => {

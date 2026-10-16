@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Upgrade the Claude runtime** — Comate now bundles Claude Agent SDK 0.3.301 and Claude Code 2.1.301, keeping approvals under Comate's control across desktop, scheduled, and Bot sessions.
+
 ### Fixed
 
+- **Keep Claude task results and activity in sync** — Structured tool results survive live and restored conversations, subagent results no longer end the main task, and resumed background tasks can be stopped again.
 - **Restore GLM Coding Plan usage** — Quota checks now use the Provider API key with BigModel's API endpoint instead of a captured website login. Empty or invalid responses no longer appear as “No coding plan”.
 - **Start chat runtimes only when needed** — Restoring workspaces and viewing Claude conversation history no longer starts a Claude runtime. Event subscriptions attach to existing tasks, and a new runtime binds subscribers before admitting the first message.
 - **Load restored conversations on startup** — Conversation history now loads when session metadata becomes available, without needing to switch away and back to clear the loading screen.

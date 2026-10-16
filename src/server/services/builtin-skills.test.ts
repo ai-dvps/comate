@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { getBuiltinSkills, isBuiltinSkillFile, skillCatalogPrompt, appendSystemPrompt } from './builtin-skills.js';
+import { getBuiltinSkills, isBuiltinSkillFile, skillCatalogPrompt, appendSystemPrompt, systemPromptText } from './builtin-skills.js';
 
 describe('bundled standard Skills', () => {
   it('discovers complete skills without a plugin manifest', () => {
@@ -35,5 +35,20 @@ describe('bundled standard Skills', () => {
       assert.equal(isBuiltinSkillFile(path.join(skills, 'escape'), skills), false);
       assert.equal(isBuiltinSkillFile(path.join(root, 'missing'), skills), false);
     } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('preserves custom prompt text and snapshot policy when adding the Skill catalog', () => {
+    const prompt = { type: 'custom' as const, prompt: 'Bot persona', snapshot: false };
+    const appended = appendSystemPrompt(prompt, 'Skill catalog');
+    assert.deepEqual(appended, { ...prompt, prompt: 'Bot persona\n\nSkill catalog' });
+    assert.equal(systemPromptText(appended), 'Bot persona\n\nSkill catalog');
+  });
+
+  it('preserves custom prompt array boundaries when adding the Skill catalog', () => {
+    const prompt = { type: 'custom' as const, prompt: ['Shared instructions', 'Bot persona'], snapshot: true };
+    const appended = appendSystemPrompt(prompt, 'Skill catalog');
+    assert.deepEqual(appended, { ...prompt, prompt: ['Shared instructions', 'Bot persona', 'Skill catalog'] });
+    assert.equal(systemPromptText(appended), 'Shared instructions\n\nBot persona\n\nSkill catalog');
+    assert.deepEqual(prompt.prompt, ['Shared instructions', 'Bot persona']);
   });
 });

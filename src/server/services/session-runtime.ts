@@ -177,13 +177,14 @@ export class SessionRuntime {
   private foregroundMessageUuid?: string;
   private backgroundTasks = new Map<string, SessionBackgroundTask>();
   private backgroundTaskToolUseIds = new Map<string, string>();
+  private backgroundTaskRunIds = new Map<string, string>();
   private stopping = false;
   private stopFenceActive = false;
   private stopOperation?: Promise<void>;
   private resolveStopOperation?: () => void;
   private stopDeadlineTimer?: NodeJS.Timeout;
   private stopRequestedTaskIds = new Set<string>();
-  private backgroundTaskStopOperations = new Map<string, Promise<boolean>>();
+  private backgroundTaskStopOperations = new Map<string, { runId?: string; operation: Promise<boolean> }>();
   private individuallyStoppedTaskIds = new Set<string>();
   private stopForegroundInterrupted = false;
   private activityInterruption?: SessionActivityInterruption;
@@ -361,6 +362,7 @@ export class SessionRuntime {
     ));
     this.backgroundTasks.clear();
     this.backgroundTaskToolUseIds.clear();
+    this.backgroundTaskRunIds.clear();
     this.evaluateActivity();
     const { query, messages } = this.driver.createStreamingQuery(
       this.input,
@@ -387,7 +389,7 @@ export class SessionRuntime {
           this.evaluateActivity();
         }
         this.emitter.handle(msg);
-        if (msg.type === 'result') {
+        if (msg.type === 'result' && !(msg as { parent_tool_use_id?: string | null }).parent_tool_use_id) {
           this.foregroundMessageUuid = undefined;
           this.evaluateActivity();
         }
@@ -444,6 +446,7 @@ export class SessionRuntime {
         this.foregroundMessageUuid = undefined;
         this.backgroundTasks.clear();
         this.backgroundTaskToolUseIds.clear();
+        this.backgroundTaskRunIds.clear();
         this.activityInterruption = unexpectedlyInterrupted
           ? {
               reason: 'runtime_failure',
@@ -467,21 +470,19 @@ export class SessionRuntime {
       return;
     }
 
-    if (message.subtype === 'task_notification') {
-      this.backgroundTaskToolUseIds.delete(message.task_id);
-      return;
-    }
-
-    if (message.subtype === 'task_updated') {
-      const status = message.patch.status;
-      if (status && ['completed', 'failed', 'killed'].includes(status)) {
-        this.backgroundTaskToolUseIds.delete(message.task_id);
-      }
-      return;
-    }
-
     if (message.subtype !== 'background_tasks_changed') return;
 
+    const runIds = new Map<string, string>();
+    for (const task of message.tasks) {
+      if (!task.run_id) continue;
+      runIds.set(task.task_id, task.run_id);
+      const previousRunId = this.backgroundTaskRunIds.get(task.task_id);
+      if (previousRunId && previousRunId !== task.run_id) {
+        this.individuallyStoppedTaskIds.delete(task.task_id);
+        this.stopRequestedTaskIds.delete(task.task_id);
+      }
+    }
+    this.backgroundTaskRunIds = runIds;
     this.backgroundTasks = new Map(
       message.tasks.map((task) => [
         task.task_id,
@@ -1357,8 +1358,9 @@ export class SessionRuntime {
     }
     if (!this.backgroundTasks.has(taskId)) return Promise.resolve(false);
 
+    const runId = this.backgroundTaskRunIds.get(taskId);
     const existing = this.backgroundTaskStopOperations.get(taskId);
-    if (existing) return existing;
+    if (existing && existing.runId === runId) return existing.operation;
     if (this.individuallyStoppedTaskIds.has(taskId)) return Promise.resolve(true);
 
     this.individuallyStoppedTaskIds.add(taskId);
@@ -1374,15 +1376,18 @@ export class SessionRuntime {
     const operation = stopRequest
       .then(() => true)
       .catch((error) => {
+        if (this.backgroundTaskRunIds.get(taskId) !== runId) return false;
         this.individuallyStoppedTaskIds.delete(taskId);
         if (!this.backgroundTasks.has(taskId)) return false;
         throw error;
       })
       .finally(() => {
         if (timeout) clearTimeout(timeout);
-        this.backgroundTaskStopOperations.delete(taskId);
+        if (this.backgroundTaskStopOperations.get(taskId)?.operation === operation) {
+          this.backgroundTaskStopOperations.delete(taskId);
+        }
       });
-    this.backgroundTaskStopOperations.set(taskId, operation);
+    this.backgroundTaskStopOperations.set(taskId, { runId, operation });
     return operation;
   }
 
@@ -1439,8 +1444,8 @@ export class SessionRuntime {
       if (this.stopRequestedTaskIds.has(taskId)) continue;
       this.stopRequestedTaskIds.add(taskId);
       const individualOperation = this.backgroundTaskStopOperations.get(taskId);
-      if (individualOperation) {
-        void individualOperation.catch((error) => {
+      if (individualOperation && individualOperation.runId === this.backgroundTaskRunIds.get(taskId)) {
+        void individualOperation.operation.catch((error) => {
           this.hardCloseForStop(
             `stopTask(${taskId}) failed: ${error instanceof Error ? error.message : String(error)}`,
           );

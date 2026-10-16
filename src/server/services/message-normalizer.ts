@@ -3,6 +3,7 @@ import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { ChatMessage, MessagePart, MessageRole, TaskItem, TurnTokenUsage } from '../types/message.js';
 import { isImageMediaType } from '../utils/image-input-profile.js';
 import { isTurnTokenUsage, normalizeProviderTokenUsage, sumTurnTokenUsages } from './token-usage.js';
+import { readSdkToolResult } from './sdk-tool-result.js';
 
 /**
  * Track unknown SDK block types we've already warned about, to avoid log
@@ -239,7 +240,7 @@ export function normalizeSessionMessage(
   }
 
   const raw = sessionMessage.message as RawMessage | null | undefined;
-  const toolUseResult = (sessionMessage as Record<string, unknown>).toolUseResult;
+  const toolUseResult = readSdkToolResult(sessionMessage as Record<string, unknown>);
   const rawMessage = sessionMessage.message as Record<string, unknown> | undefined;
   const toolUseMeta = rawMessage?.tool_use_meta;
   const directUsage = (sessionMessage as Record<string, unknown>).tokenUsage ?? rawMessage?.tokenUsage;

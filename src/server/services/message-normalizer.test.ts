@@ -107,6 +107,41 @@ describe('message-normalizer historical images', () => {
   });
 });
 
+describe('message-normalizer tool result metadata', () => {
+  for (const field of ['tool_use_result', 'toolUseResult']) {
+    it(`preserves ${field} in restored tool results`, () => {
+      const metadata = { status: 'async_launched', agentId: 'agent-1' };
+      const normalized = normalizeSessionMessage({
+        type: 'user', uuid: 'result-1', session_id: 's1',
+        message: { role: 'user', content: [
+          { type: 'tool_result', tool_use_id: 'tool-1', content: 'launched' },
+        ] },
+        [field]: metadata,
+      } as unknown as SessionMessage);
+      assert.deepStrictEqual(normalized?.parts, [
+        { type: 'tool_result', toolUseId: 'tool-1', output: 'launched', isError: false, toolUseResult: metadata },
+      ]);
+    });
+  }
+
+  for (const canonical of [{ status: 'completed' }, null]) {
+    it(`prefers the canonical result over legacy metadata (${JSON.stringify(canonical)})`, () => {
+      const normalized = normalizeSessionMessage({
+        type: 'user', uuid: 'result-1', session_id: 's1',
+        message: { role: 'user', content: [
+          { type: 'tool_result', tool_use_id: 'tool-1', content: 'done', is_error: true },
+        ] },
+        tool_use_result: canonical,
+        toolUseResult: { status: 'async_launched' },
+      } as unknown as SessionMessage);
+      const part = normalized?.parts[0];
+      assert.ok(part?.type === 'tool_result');
+      assert.strictEqual(part.toolUseResult, canonical);
+      assert.strictEqual(part.isError, true);
+    });
+  }
+});
+
 describe('message-normalizer tool_use_meta', () => {
   it('attaches block-level tool_use_meta to tool_use parts', () => {
     const parts = partsFromSdkContent([

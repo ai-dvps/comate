@@ -2,6 +2,7 @@ import { sessionSkillOptions } from './session-skills.js';
 import { permittedSkills } from './skill-input.js';
 import { resolveSkillsCliPath } from '../utils/resolve-skills-cli.js';
 import { appendSystemPrompt, getBuiltinSkills, skillCatalogPrompt, resolveBuiltinSkillsRoot, builtinSkillRoots } from './builtin-skills.js';
+import { readSdkToolResult } from './sdk-tool-result.js';
 import { spawn } from 'child_process';
 import { createHash, randomUUID, type UUID } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
@@ -1353,7 +1354,7 @@ export class ChatService {
             if (toolUseId) {
               parentToolUseIdByAgentId.set(agentId, toolUseId);
               toolResultIndexByToolUseId.set(toolUseId, msgIdx);
-              const toolUseResult = (msg as Record<string, unknown>).toolUseResult as
+              const toolUseResult = readSdkToolResult(msg as Record<string, unknown>) as
                 | Record<string, unknown>
                 | undefined;
               if (typeof toolUseResult?.description === 'string') {
@@ -2989,6 +2990,7 @@ export class ChatService {
       },
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
       model: resolvedProvider?.model || (isBotSession ? BOT_SESSION_PINNED_MODEL : undefined),
+      permissionMode: 'default',
       includePartialMessages: false,
       pathToClaudeCodeExecutable: claudePath,
       stderr: (data) => {

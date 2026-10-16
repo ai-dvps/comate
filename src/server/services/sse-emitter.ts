@@ -11,6 +11,7 @@ import type {
 import type { PermissionSuggestion } from '../types/message.js';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import { isTurnTokenUsage, normalizeProviderTokenUsage } from './token-usage.js';
+import { readSdkToolResult } from './sdk-tool-result.js';
 
 /**
  * Tracks the in-flight type for each SDK content-block index inside the
@@ -858,7 +859,7 @@ export class SseEmitter {
   private handleUser(msg: SDKMessage & { type: 'user' }): void {
     const content = (msg.message as { content?: unknown }).content;
     if (!Array.isArray(content)) return;
-    const toolUseResult = (msg as Record<string, unknown>).toolUseResult;
+    const toolUseResult = readSdkToolResult(msg);
     for (const block of content) {
       if (!block || typeof block !== 'object') continue;
       const b = block as Record<string, unknown>;
@@ -885,7 +886,7 @@ export class SseEmitter {
         }
 
         const pendingWorkflow = this.pendingWorkflows.get(toolUseId);
-        if (pendingWorkflow && toolUseResult !== undefined) {
+        if (pendingWorkflow && toolUseResult && typeof toolUseResult === 'object') {
           const result = toolUseResult as Record<string, unknown>;
           if (result.status === 'async_launched') {
             const runId = typeof result.runId === 'string' ? result.runId : '';

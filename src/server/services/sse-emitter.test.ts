@@ -323,7 +323,7 @@ describe('SseEmitter workflow events', { concurrency: false }, () => {
         role: 'user',
         content: [{ type: 'tool_result', tool_use_id: 'tu-wf-1', content: 'Workflow launched', is_error: false }],
       },
-      toolUseResult: {
+      tool_use_result: {
         status: 'async_launched',
         taskId: 'task-1',
         taskType: 'local_workflow',
@@ -476,6 +476,30 @@ describe('SseEmitter diagnostics', { concurrency: false }, () => {
 });
 
 describe('SseEmitter async subagent lifecycle', { concurrency: false }, () => {
+  it('preserves canonical async metadata instead of finalizing the subagent', () => {
+    const events: SseEvent[] = [];
+    const emitter = new SseEmitter(null, (_id, event) => events.push(event));
+    emitter.handle({
+      type: 'assistant',
+      message: { id: 'parent-1', content: [
+        { type: 'tool_use', id: 'agent-tool-1', name: 'Agent', input: { prompt: 'Research' } },
+      ] },
+    } as unknown as SDKMessage);
+    const metadata = { status: 'async_launched', agentId: 'agent-1' };
+    emitter.handle({
+      type: 'user',
+      message: { role: 'user', content: [
+        { type: 'tool_result', tool_use_id: 'agent-tool-1', content: 'launched' },
+      ] },
+      tool_use_result: metadata,
+      toolUseResult: { status: 'completed' },
+    } as unknown as SDKMessage);
+    const result = events.find(event => event.type === 'tool_result');
+    assert.ok(result?.type === 'tool_result');
+    assert.deepStrictEqual(result.toolUseResult, metadata);
+    assert.ok(!events.some(event => event.type === 'subagent_done'));
+  });
+
   it('does not emit subagent_done on an async_launched Agent tool_result', () => {
     const events: SseEvent[] = [];
     const emitter = new SseEmitter(null, (_id, event) => events.push(event));

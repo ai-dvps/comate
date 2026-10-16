@@ -15,9 +15,19 @@ it('native Claude discovers the bundled manager through an app-owned additional 
   try {
     const result = await new SdkClient().fetchInitialization({
       cwd: workspace, pathToClaudeCodeExecutable: resolveSdkBinary(),
+      permissionMode: 'default',
+      model: 'fixture-model',
       additionalDirectories: builtinSkillRoots(['skill-manager']).map(root => path.dirname(path.dirname(root))),
       settingSources: ['project'],
-      env: { HOME: home, CLAUDE_CONFIG_DIR: path.join(home, '.claude'), ANTHROPIC_API_KEY: 'fixture-not-used-for-a-model-request' },
+      env: {
+        HOME: home,
+        CLAUDE_CONFIG_DIR: path.join(home, '.claude'),
+        ANTHROPIC_API_KEY: 'fixture-not-used-for-a-model-request',
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:1',
+        DISABLE_TELEMETRY: '1',
+        DISABLE_ERROR_REPORTING: '1',
+        DISABLE_NON_ESSENTIAL_MODEL_CALLS: '1',
+      },
     });
     assert.ok(result.commands.some(command => command.name === 'skill-manager'), 'native initialization must expose the standard Skill');
   } finally { await rm(home, { recursive: true, force: true }); }

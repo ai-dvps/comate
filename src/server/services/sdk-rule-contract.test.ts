@@ -159,6 +159,7 @@ async function runRuleProbe(options: {
 
   const queryOptions: Options = {
     model: 'probe-model',
+    permissionMode: 'default',
     cwd,
     settingSources: [],
     env: {
@@ -172,7 +173,7 @@ async function runRuleProbe(options: {
       DISABLE_NON_ESSENTIAL_MODEL_CALLS: '1',
       NO_COLOR: '1',
     },
-    settings: { permissions: { allow: options.allowRules } },
+    settings: { permissions: { defaultMode: 'auto', allow: options.allowRules } },
     canUseTool: async (toolName, input) => {
       const command = typeof input.command === 'string' ? input.command : undefined;
       const escape = input.dangerouslyDisableSandbox === true;
