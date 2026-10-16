@@ -2021,6 +2021,12 @@ export function handleWsEvent(set: SseSetter, get: SseGetter, msg: WsEventMessag
     useScheduledTaskStore.getState().handleSchedulerEvent(msg.data as SchedulerRunEventPayload)
     return
   } else if (msg.eventType === 'runtime_closed' && msg.sessionId) {
+    if ((msg.data as { subscriptionRetained?: boolean } | null)?.subscriptionRetained === true) {
+      // Event interest survives process replacement. Its replay cursor belongs
+      // to the old runtime; the next runtime starts a fresh event sequence.
+      lastEventId.delete(msg.sessionId)
+      return
+    }
     // The server closed this session's runtime (e.g. idle timeout). Tear down
     // the stale local subscription and clear the server nonce so the next
     // sendMessage re-subscribes to a fresh runtime instead of posting to the

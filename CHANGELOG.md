@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Start chat runtimes only when needed** — Restoring workspaces and viewing Claude conversation history no longer starts a Claude runtime. Event subscriptions attach to existing tasks, and a new runtime binds subscribers before admitting the first message.
 - **Load restored conversations on startup** — Conversation history now loads when session metadata becomes available, without needing to switch away and back to clear the loading screen.
 
 ## [0.4.8] - 2026-09-07

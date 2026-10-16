@@ -1881,6 +1881,34 @@ describe('runtime_closed WebSocket event', () => {
     })
   })
 
+  it('preserves a retained event subscription and clears the old replay cursor when its runtime closes', async () => {
+    const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
+    const set = useChatStore.setState as unknown as SseSetter
+    try {
+      useChatStore.getState().setActiveSession('ws-1', 's1')
+      await new Promise((r) => setTimeout(r, 0))
+      handleWsEvent(set, useChatStore.getState, {
+        type: 'event', eventType: 'sse', workspaceId: 'ws-1', sessionId: 's1', eventId: '100',
+        data: { type: 'subscription_ack', serverNonce: 'nonce-1' },
+      })
+      assert.strictEqual(getLastEventId('s1'), '100')
+      requestSpy.mockClear()
+      handleWsEvent(set, useChatStore.getState, {
+        type: 'event', eventType: 'runtime_closed', workspaceId: 'ws-1', sessionId: 's1',
+        data: { subscriptionRetained: true },
+      })
+      assert.strictEqual(getLastEventId('s1'), undefined)
+      assert.strictEqual(useChatStore.getState().serverNonce.s1, 'nonce-1')
+      useChatStore.getState().sendMessage('ws-1', 's1', 'first after replacement')
+      await new Promise((r) => setTimeout(r, 0))
+      assert.strictEqual(requestSpy.mock.calls.filter((call) => call[0] === 'subscribe' || call[0] === 'unsubscribe').length, 0)
+      assert.strictEqual(requestSpy.mock.calls.filter((call) => call[0] === 'sendMessage').length, 1)
+    } finally {
+      clearAllSessionSubscriptions(set)
+      requestSpy.mockRestore()
+    }
+  })
+
   it('clears subscription state so the next sendMessage re-subscribes', async () => {
     const requestSpy = vi.spyOn(wsClient, 'request').mockResolvedValue({})
     const set = useChatStore.setState as unknown as SseSetter

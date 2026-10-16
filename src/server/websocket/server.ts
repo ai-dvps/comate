@@ -3,6 +3,7 @@ import type { Server } from 'http';
 import { createHash, randomUUID, type UUID } from 'node:crypto';
 import { diagLog, diagWarn } from '../utils/diag-logger.js';
 import { chatService } from '../services/chat-service.js';
+import type { SessionRuntime } from '../services/session-runtime.js';
 import { todoRunEvents, type TodoRunEvent } from '../services/todo-execution-service.js';
 import { browserControlService } from '../services/browser-control.js';
 import { browserService } from '../services/browser-service.js';
@@ -119,6 +120,13 @@ export class ComateWebSocketServer {
     });
     this.wss.on('connection', (socket) => this.handleConnection(socket));
     chatService.setOnRuntimeClose((sessionId) => this.notifyRuntimeClosed(sessionId));
+    chatService.setOnRuntimeCreated((sessionId, workspaceId, runtime) => {
+      for (const ctx of this.clients.values()) {
+        if (ctx.subscriptions.get(sessionId) === workspaceId) {
+          this.bindRuntime(ctx, workspaceId, sessionId, runtime);
+        }
+      }
+    });
     this.relaySchedulerEvents();
     diagLog('[WebSocket] server attached on /ws');
   }
@@ -266,14 +274,41 @@ export class ComateWebSocketServer {
     const { workspaceId, sessionId, lastEventId } = req.payload as unknown as SubscribePayload;
     const startedAt = Date.now();
     diagLog(`[WebSocket] subscribe request received sessionId=${sessionId} workspaceId=${workspaceId}`);
+    await this.subscribeSession(ctx, workspaceId, sessionId, lastEventId);
+    this.sendOk(ctx.socket, req.id, { subscribed: true });
+    diagLog(`[WebSocket] subscribe response sent sessionId=${sessionId} elapsed=${Date.now() - startedAt}ms`);
+  }
 
-    const runtime = await chatService.getOrCreateRuntime(sessionId, workspaceId);
-    diagLog(`[WebSocket] subscribe runtime ready sessionId=${sessionId} elapsed=${Date.now() - startedAt}ms`);
+  private async subscribeSession(ctx: ClientContext, workspaceId: string, sessionId: string, lastEventId?: string): Promise<void> {
+    if (!workspaceId || !sessionId || !await chatService.getSession(sessionId, workspaceId)) {
+      throw new Error('Session not found');
+    }
+    // Validation can finish after a disconnect. Do not retain a dead socket.
+    if (ctx.socket.readyState !== WebSocket.OPEN) throw new Error('Socket closed during subscription');
 
-    // Register client subscription context
+    // Event interest outlives a runtime. Restoring history must never start one.
     ctx.subscriptions.set(sessionId, workspaceId);
+    const runtime = chatService.getRuntimeIfExists(sessionId);
+    if (runtime) {
+      this.bindRuntime(ctx, workspaceId, sessionId, runtime, lastEventId);
+    } else {
+      // Acknowledge the event channel independently of the agent process so
+      // the client can submit its first message. Runtime creation binds this
+      // socket synchronously before pushMessage admits that turn.
+      this.sendEvent(ctx.socket, {
+        type: 'event', eventType: 'sse', sessionId, workspaceId,
+        data: { type: 'subscription_ack', serverNonce: chatService.serverNonce, sessionId },
+      });
+    }
+  }
 
-    // Subscribe to runtime events through an in-memory callback.
+  private bindRuntime(
+    ctx: ClientContext,
+    workspaceId: string,
+    sessionId: string,
+    runtime: SessionRuntime,
+    lastEventId?: string,
+  ): void {
     let unsubscribersBySession = this.runtimeEventUnsubscribers.get(sessionId);
     if (!unsubscribersBySession) {
       unsubscribersBySession = new Map();
@@ -300,9 +335,6 @@ export class ComateWebSocketServer {
 
     runtime.subscribeWebSocket(handler, lastEventId);
     unsubscribersBySession.set(ctx.socket, () => runtime.unsubscribeWebSocket(handler));
-
-    this.sendOk(ctx.socket, req.id, { subscribed: true });
-    diagLog(`[WebSocket] subscribe response sent sessionId=${sessionId} elapsed=${Date.now() - startedAt}ms`);
   }
 
   private async handleUnsubscribe(ctx: ClientContext, req: WsRequest): Promise<void> {
@@ -342,13 +374,12 @@ export class ComateWebSocketServer {
         eventType: 'runtime_closed',
         sessionId,
         workspaceId,
-        data: {},
+        data: { subscriptionRetained: true },
       });
 
-      // The runtime is gone; remove the stale handler so a future subscribe
-      // creates a fresh binding instead of being treated as a duplicate.
+      // Keep passive interest so replacements and future turns rebind before
+      // admission. The client must not unsubscribe when this process closes.
       unsub();
-      ctx.subscriptions.delete(sessionId);
     }
     this.runtimeEventUnsubscribers.delete(sessionId);
   }
@@ -361,6 +392,9 @@ export class ComateWebSocketServer {
 
   private async handleSendMessage(ctx: ClientContext, req: WsRequest): Promise<void> {
     const { workspaceId, sessionId, clientTurnId, content, images } = parseSendMessagePayload(req.payload);
+    if (ctx.subscriptions.get(sessionId) !== workspaceId) {
+      await this.subscribeSession(ctx, workspaceId, sessionId);
+    }
     const fingerprint = createHash('sha256')
       .update(JSON.stringify({ workspaceId, sessionId, content, images }))
       .digest('hex');
