@@ -135,6 +135,9 @@ describe('chat-service complete history loading', { concurrency: false }, () => 
     ] as SessionMessage[];
 
     class PaginationSdkClient extends SdkClient {
+      override createStreamingQuery(): never {
+        throw new Error('Viewing history must not start a Claude runtime');
+      }
       override async getSessionMessages(): Promise<SessionMessage[]> {
         return sdkMessages;
       }
@@ -149,6 +152,7 @@ describe('chat-service complete history loading', { concurrency: false }, () => 
     const result = await service.loadMessages('s1', 'ws-1');
 
     assert.strictEqual(result.total, 6);
+    assert.strictEqual(service.getActiveSessionCount(), 0);
     assert.strictEqual('start' in result, false);
     assert.strictEqual('end' in result, false);
     assert.deepStrictEqual(result.messages.map((message) => message.id), ['u1', 'a1', 'r1', 'a2', 'u2', 'a3']);
@@ -248,6 +252,38 @@ describe('chat-service idle-close', { concurrency: false }, () => {
 
     const timeouts = (service as unknown as { idleTimeouts: Map<string, NodeJS.Timeout> }).idleTimeouts;
     assert.ok(timeouts.has('s1'), 'idle timeout should be scheduled immediately after runtime creation');
+  });
+
+  it('binds runtime-created subscribers before admitting the first message and only notifies once on reuse', async () => {
+    class TestChatService extends ChatService {
+      protected override async testClaudeBinary(): Promise<void> {}
+    }
+    service = new TestChatService();
+    setupStoreMocks();
+    let bound = false;
+    let creations = 0;
+    const admitted: string[] = [];
+    const runtime = createMockRuntime();
+    runtime.pushMessage = async (message) => {
+      assert.equal(bound, true, 'event subscribers must be bound before the backend receives any message');
+      admitted.push(message as string);
+    };
+    SessionRuntime.open = () => { creations += 1; return runtime; };
+    let notifications = 0;
+    service.setOnRuntimeCreated((sessionId, workspaceId, created) => {
+      assert.equal(sessionId, 's1');
+      assert.equal(workspaceId, 'ws-1');
+      assert.equal(created, runtime);
+      assert.equal(service.getRuntimeIfExists(sessionId), runtime);
+      bound = true;
+      notifications += 1;
+    });
+
+    await service.pushMessage('s1', 'ws-1', 'first');
+    await service.pushMessage('s1', 'ws-1', 'second');
+    assert.deepEqual(admitted, ['first', 'second']);
+    assert.equal(creations, 1);
+    assert.equal(notifications, 1);
   });
 
   it('emits diagnostic timing logs during runtime creation', async () => {

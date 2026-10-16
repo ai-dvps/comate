@@ -446,6 +446,7 @@ export class ChatService {
    */
   private sessionMcpToolAnnotations = new Map<string, Promise<McpToolAnnotationMap>>();
   private onRuntimeClose?: (sessionId: string) => void;
+  private onRuntimeCreated?: (sessionId: string, workspaceId: string, runtime: SessionRuntime) => void;
   private historyTimestampBases = new Map<string, number>();
   /**
    * Chained PRE-close listeners (KTD-5): the single-slot onRuntimeClose stays
@@ -588,6 +589,11 @@ export class ChatService {
 
   setOnRuntimeClose(callback: (sessionId: string) => void): void {
     this.onRuntimeClose = callback;
+  }
+
+  /** Bind passive event subscribers before the first message is admitted. */
+  setOnRuntimeCreated(callback: (sessionId: string, workspaceId: string, runtime: SessionRuntime) => void): void {
+    this.onRuntimeCreated = callback;
   }
 
   /**
@@ -2017,6 +2023,7 @@ export class ChatService {
         runtime.setApprovalMode(session.approvalMode);
       }
 
+      this.onRuntimeCreated?.(sessionId, workspaceId, runtime);
       return runtime;
     })();
 

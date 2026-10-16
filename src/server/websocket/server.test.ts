@@ -5,6 +5,9 @@ import http from 'http';
 import { WebSocket } from 'ws';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService } from '../services/chat-service.js';
+import type { SessionRuntime } from '../services/session-runtime.js';
+import type { SdkClient, QueryResult, Query, SDKMessage } from '../services/sdk-client.js';
+import { PushableIterator } from '../services/pushable-iterator.js';
 import { browserStateChannel } from './browser-state-channel.js';
 import { ComateWebSocketServer } from './server.js';
 import type { WsResponse, WsErrorResponse, WsEventMessage, StatusResult } from './types.js';
@@ -16,6 +19,9 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
   let webSocketServer: ComateWebSocketServer;
   let lastRuntimeCloseCallback: ((sessionId: string) => void) | undefined;
   let originalSetOnRuntimeClose: typeof chatService.setOnRuntimeClose;
+  let originalSetOnRuntimeCreated: typeof chatService.setOnRuntimeCreated;
+  let lastRuntimeCreatedCallback: Parameters<typeof chatService.setOnRuntimeCreated>[0];
+  let originalGetSession: typeof chatService.getSession;
 
   beforeEach(async () => {
     workspaceStore.resetData();
@@ -24,6 +30,12 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
     chatService.setOnRuntimeClose = (cb) => {
       lastRuntimeCloseCallback = cb;
     };
+    originalSetOnRuntimeCreated = chatService.setOnRuntimeCreated;
+    chatService.setOnRuntimeCreated = (cb) => { lastRuntimeCreatedCallback = cb; };
+    originalGetSession = chatService.getSession;
+    chatService.getSession = async (id, workspaceId) => ({
+      id, workspaceId, name: 'Existing session', createdAt: '', updatedAt: '',
+    });
 
     webSocketServer = new ComateWebSocketServer();
     server = http.createServer();
@@ -37,6 +49,8 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
 
   afterEach(async () => {
     chatService.setOnRuntimeClose = originalSetOnRuntimeClose;
+    chatService.setOnRuntimeCreated = originalSetOnRuntimeCreated;
+    chatService.getSession = originalGetSession;
     ws?.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
@@ -71,6 +85,170 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
   function sendRequest(socket: WebSocket, id: string, type: string, payload: Record<string, unknown>): void {
     socket.send(JSON.stringify({ id, type, payload }));
   }
+
+  it('restores six session subscriptions and loads history without creating a runtime', async () => {
+    const originalGetSession = chatService.getSession;
+    const originalGetOrCreateRuntime = chatService.getOrCreateRuntime;
+    const originalLoadMessages = chatService.loadMessages;
+    let runtimeCreations = 0;
+    chatService.getSession = async (id, workspaceId) => ({
+      id, workspaceId, name: 'Restored session', createdAt: '', updatedAt: '',
+    });
+    chatService.getOrCreateRuntime = async () => {
+      runtimeCreations += 1;
+      throw new Error('Restoring a session must not start its runtime');
+    };
+    chatService.loadMessages = async () => ({
+      messages: [], tasks: [], subagents: [], workflows: [], total: 0,
+    });
+    try {
+      ws = await connect();
+      for (let index = 0; index < 6; index += 1) {
+        const payload = { workspaceId: `ws-${index}`, sessionId: `session-${index}` };
+        const ackPromise = waitForMessage<WsEventMessage>(ws, (message) =>
+          message.sessionId === payload.sessionId
+          && (message.data as { type?: string })?.type === 'subscription_ack',
+        );
+        void ackPromise.catch(() => {});
+        const responsePromise = waitForMessage<WsResponse>(ws, (message) => message.id === `restore-${index}`);
+        sendRequest(ws, `restore-${index}`, 'subscribe', payload);
+        const response = await responsePromise;
+        assert.equal(response.ok, true, 'a passive subscription must succeed without starting Claude');
+        const ack = await ackPromise;
+        assert.equal((ack.data as { serverNonce: string }).serverNonce, chatService.serverNonce);
+        const historyPromise = waitForMessage<WsResponse>(ws, (message) => message.id === `history-${index}`);
+        sendRequest(ws, `history-${index}`, 'loadMessages', payload);
+        assert.equal((await historyPromise).ok, true);
+      }
+      assert.equal(runtimeCreations, 0);
+    } finally {
+      chatService.getSession = originalGetSession;
+      chatService.getOrCreateRuntime = originalGetOrCreateRuntime;
+      chatService.loadMessages = originalLoadMessages;
+    }
+  });
+
+  it('binds every passive subscriber before the first reply, including sends without a prior subscription', async () => {
+    // Keep the real service, runtime, emitter and sockets; replace only the
+    // CLI boundary so the test cannot call a model or launch agent processes.
+    const internals = chatService as unknown as { sdkClient: SdkClient; testClaudeBinary: () => Promise<void> };
+    const originalQuery = internals.sdkClient.createStreamingQuery;
+    const originalProbe = internals.testClaudeBinary;
+    const originalGetSession = chatService.getSession;
+    const workspace = await workspaceStore.create({ name: 'Lazy runtime', folderPath: process.env.COMATE_DATA_DIR! });
+    workspaceStore.createProvider({ name: 'Test', baseUrl: 'https://example.invalid', authToken: 'test', model: 'test-model', isDefault: true });
+    const session = workspaceStore.createLocalSession(workspace.id, 'Restored', 'manual', undefined, 'gui', undefined, undefined, 'claude');
+    chatService.getSession = async (id, workspaceId) => id === session.id && workspaceId === workspace.id ? session : null;
+    originalSetOnRuntimeCreated.call(chatService, lastRuntimeCreatedCallback);
+    internals.testClaudeBinary = async () => {};
+    let queries = 0;
+    internals.sdkClient.createStreamingQuery = (input): QueryResult => {
+      queries += 1;
+      const output = new PushableIterator<SDKMessage>();
+      void (async () => {
+        for await (const message of input) {
+          output.push({
+            type: 'assistant', uuid: 'reply', parent_tool_use_id: null, session_id: session.id,
+            message: { id: 'reply', role: 'assistant', content: [{ type: 'text', text: `reply:${message.message.content}` }] },
+          } as SDKMessage);
+          output.push({ type: 'result', subtype: 'success', is_error: false } as SDKMessage);
+        }
+      })();
+      return {
+        query: {
+          close: () => output.close(),
+          interrupt: async () => {},
+          getContextUsage: async () => ({ totalTokens: 0, maxTokens: 1, percentage: 0, categories: [] }),
+        } as unknown as Query,
+        messages: (async function* () { yield* output; })(),
+      };
+    };
+    const second = await connect();
+    try {
+      ws = await connect();
+      const payload = { workspaceId: workspace.id, sessionId: session.id };
+      const subscribed = waitForMessage<WsResponse>(second, (message) => message.id === 'observer');
+      sendRequest(second, 'observer', 'subscribe', payload);
+      assert.equal((await subscribed).ok, true);
+      assert.equal(queries, 0);
+      assert.equal(chatService.getActiveSessionCount(), 0);
+      const isFirstReply = (message: WsEventMessage) =>
+        (message.data as { type?: string; text?: string })?.type === 'text_delta'
+        && (message.data as { text?: string }).text === 'reply:hello';
+      const reply = waitForMessage<WsEventMessage>(second, isFirstReply);
+      const senderReply = waitForMessage<WsEventMessage>(ws, isFirstReply);
+      const sent = waitForMessage<WsResponse>(ws, (message) => message.id === 'first-send');
+      sendRequest(ws, 'first-send', 'sendMessage', { ...payload, content: 'hello' });
+      assert.equal((await sent).ok, true);
+      await Promise.all([reply, senderReply]);
+      assert.equal(queries, 1);
+      assert.equal(chatService.getActiveSessionCount(), 1);
+    } finally {
+      second.close();
+      await chatService.closeAllRuntimes();
+      internals.sdkClient.createStreamingQuery = originalQuery;
+      internals.testClaudeBinary = originalProbe;
+      chatService.getSession = originalGetSession;
+      originalSetOnRuntimeCreated.call(chatService, () => {});
+    }
+  });
+
+  it('binds a runtime started outside the socket after a passive subscription', async () => {
+    let bound = false;
+    const runtime = {
+      subscribeWebSocket: () => { bound = true; },
+      unsubscribeWebSocket: () => {},
+    } as unknown as SessionRuntime;
+    ws = await connect();
+    const subscribed = waitForMessage<WsResponse>(ws, (message) => message.id === 'passive');
+    sendRequest(ws, 'passive', 'subscribe', { workspaceId: 'ws-1', sessionId: 'session-a' });
+    await subscribed;
+    assert.equal(bound, false);
+    lastRuntimeCreatedCallback('session-a', 'another-workspace', runtime);
+    assert.equal(bound, false);
+    lastRuntimeCreatedCallback('session-a', 'ws-1', runtime);
+    assert.equal(bound, true);
+  });
+
+  it('keeps event interest across runtime replacement and removes it on explicit unsubscribe', async () => {
+    let bindings = 0;
+    let removals = 0;
+    const runtime = {
+      subscribeWebSocket: () => { bindings += 1; },
+      unsubscribeWebSocket: () => { removals += 1; },
+    } as unknown as SessionRuntime;
+    ws = await connect();
+    const payload = { workspaceId: 'ws-1', sessionId: 'session-a' };
+    const subscribed = waitForMessage<WsResponse>(ws, (message) => message.id === 'passive');
+    sendRequest(ws, 'passive', 'subscribe', payload);
+    await subscribed;
+    lastRuntimeCreatedCallback('session-a', 'ws-1', runtime);
+    const closed = waitForMessage<WsEventMessage>(ws, (message) => message.eventType === 'runtime_closed');
+    lastRuntimeCloseCallback!('session-a');
+    assert.deepEqual((await closed).data, { subscriptionRetained: true });
+    assert.equal(removals, 1);
+    lastRuntimeCreatedCallback('session-a', 'ws-1', runtime);
+    assert.equal(bindings, 2, 'the replacement must inherit the passive subscription');
+    const unsubscribed = waitForMessage<WsResponse>(ws, (message) => message.id === 'leave');
+    sendRequest(ws, 'leave', 'unsubscribe', payload);
+    await unsubscribed;
+    lastRuntimeCreatedCallback('session-a', 'ws-1', runtime);
+    assert.equal(bindings, 2, 'explicitly cancelled subscriptions must not rebind');
+    assert.equal(removals, 2);
+  });
+
+  it('rejects a missing session without registering event interest', async () => {
+    chatService.getSession = originalGetSession;
+    ws = await connect();
+    const result = waitForMessage<WsErrorResponse>(ws, (message) => message.id === 'invalid');
+    sendRequest(ws, 'invalid', 'subscribe', { workspaceId: 'missing', sessionId: 'missing' });
+    assert.equal((await result).ok, false);
+    let bound = false;
+    lastRuntimeCreatedCallback('missing', 'missing', {
+      subscribeWebSocket: () => { bound = true; },
+    } as unknown as SessionRuntime);
+    assert.equal(bound, false);
+  });
 
   it('handles status requests over the same connection', async () => {
     const original = chatService.getSessionsStatus.bind(chatService);
@@ -429,26 +607,29 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
 
   it('forwards runtime events to subscribed sockets', async () => {
     let eventHandler: ((id: number, event: { type: string }) => void) | undefined;
+    let replayCursor: string | undefined;
 
-    const originalGetOrCreateRuntime = chatService.getOrCreateRuntime.bind(chatService);
-    chatService.getOrCreateRuntime = async () =>
+    const originalGetRuntimeIfExists = chatService.getRuntimeIfExists.bind(chatService);
+    chatService.getRuntimeIfExists = () =>
       ({
-        subscribeWebSocket: (handler: (id: number, event: { type: string }) => void) => {
+        subscribeWebSocket: (handler: (id: number, event: { type: string }) => void, lastEventId?: string) => {
           eventHandler = handler;
+          replayCursor = lastEventId;
         },
         removeWebEventHandler: () => {},
         unsubscribeWebSocket: () => {},
         unsubscribe: () => {},
-      }) as unknown as ReturnType<typeof originalGetOrCreateRuntime>;
+      }) as unknown as ReturnType<typeof originalGetRuntimeIfExists>;
 
     try {
       ws = await connect();
-      sendRequest(ws, 'sub-1', 'subscribe', { workspaceId: 'ws-1', sessionId: 'session-a' });
+      sendRequest(ws, 'sub-1', 'subscribe', { workspaceId: 'ws-1', sessionId: 'session-a', lastEventId: '42' });
 
       const subOk = await waitForMessage<WsResponse>(ws, (msg) => 'id' in msg && (msg as WsResponse).id === 'sub-1');
       assert.strictEqual(subOk.ok, true);
 
       assert.ok(eventHandler);
+      assert.equal(replayCursor, '42', 'reconnecting to a live task must preserve its replay cursor');
       eventHandler!(1, { type: 'text' });
 
       const event = await waitForMessage<WsEventMessage>(ws, (msg) => (msg as WsEventMessage).type === 'event');
@@ -456,20 +637,20 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
       assert.strictEqual(event.sessionId, 'session-a');
       assert.strictEqual((event.data as { type: string }).type, 'text');
     } finally {
-      chatService.getOrCreateRuntime = originalGetOrCreateRuntime;
+      chatService.getRuntimeIfExists = originalGetRuntimeIfExists;
     }
   });
 
   it('notifies subscribed sockets when a runtime closes', async () => {
-    const originalGetOrCreateRuntime = chatService.getOrCreateRuntime.bind(chatService);
+    const originalGetRuntimeIfExists = chatService.getRuntimeIfExists.bind(chatService);
 
-    chatService.getOrCreateRuntime = async () =>
+    chatService.getRuntimeIfExists = () =>
       ({
         subscribeWebSocket: () => {},
         removeWebEventHandler: () => {},
         unsubscribeWebSocket: () => {},
         unsubscribe: () => {},
-      }) as unknown as ReturnType<typeof originalGetOrCreateRuntime>;
+      }) as unknown as ReturnType<typeof originalGetRuntimeIfExists>;
 
     try {
       ws = await connect();
@@ -485,16 +666,16 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
       assert.strictEqual(event.sessionId, 'session-a');
       assert.strictEqual(event.workspaceId, 'ws-1');
     } finally {
-      chatService.getOrCreateRuntime = originalGetOrCreateRuntime;
+      chatService.getRuntimeIfExists = originalGetRuntimeIfExists;
     }
   });
 
   it('does not call runtime.unsubscribe when one of several WebSocket sockets disconnects', async () => {
-    const originalGetOrCreateRuntime = chatService.getOrCreateRuntime.bind(chatService);
+    const originalGetRuntimeIfExists = chatService.getRuntimeIfExists.bind(chatService);
     let unsubscribeWebSocketCalls = 0;
     let unsubscribeCalls = 0;
 
-    chatService.getOrCreateRuntime = async () =>
+    chatService.getRuntimeIfExists = () =>
       ({
         subscribeWebSocket: () => {},
         removeWebEventHandler: () => {},
@@ -504,7 +685,7 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
         unsubscribe: () => {
           unsubscribeCalls++;
         },
-      }) as unknown as ReturnType<typeof originalGetOrCreateRuntime>;
+      }) as unknown as ReturnType<typeof originalGetRuntimeIfExists>;
 
     try {
       const ws1 = await connect();
@@ -530,7 +711,7 @@ describe('ComateWebSocketServer', { concurrency: false }, () => {
       assert.strictEqual(unsubscribeWebSocketCalls, 2);
       assert.strictEqual(unsubscribeCalls, 0);
     } finally {
-      chatService.getOrCreateRuntime = originalGetOrCreateRuntime;
+      chatService.getRuntimeIfExists = originalGetRuntimeIfExists;
     }
   });
 
