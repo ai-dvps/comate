@@ -4,11 +4,10 @@ import { store as sqliteStoreSingleton } from '../storage/sqlite-store.js';
 import type { SqliteStore } from '../storage/sqlite-store.js';
 import { asRecord, asNum } from './kimi-usage-service.js';
 import { diagLog } from '../utils/diag-logger.js';
-import { BrowserSiteAuthReadError, readGlobalSiteAuthEntry } from './browser-site-auth.js';
 import { providerVendorFromProvenance } from './provider-presets.js';
 
 export const BIGMODEL_LOGIN_URL = 'https://bigmodel.cn';
-export const BIGMODEL_USAGE_URL = 'https://bigmodel.cn/api/monitor/usage/quota/limit';
+export const BIGMODEL_USAGE_URL = 'https://open.bigmodel.cn/api/monitor/usage/quota/limit';
 export const BIGMODEL_SITE_KEY = 'bigmodel.cn';
 /** The cookie name that holds the BigModel access JWT. */
 export const BIGMODEL_TOKEN_COOKIE = 'bigmodel_token_production';
@@ -69,17 +68,6 @@ function parseBigModelUsage(body: unknown): UsageSummary | null {
   return { used, total, remaining, resetDate, rolling, lastUpdated: new Date().toISOString() };
 }
 
-/** Read the captured BigModel bearer from global_site_auth. */
-function readBigModelBearer(sqlite: SqliteStore): string | null {
-  try {
-    const entry = readGlobalSiteAuthEntry(sqlite, BIGMODEL_SITE_KEY)?.entry;
-    return entry?.bearerToken && entry.bearerToken.length > 0 ? entry.bearerToken : null;
-  } catch (error) {
-    if (!(error instanceof BrowserSiteAuthReadError)) throw error;
-    return null;
-  }
-}
-
 export class BigModelUsageService {
   /** Always queries the quota endpoint live — no server-side cache. */
   constructor(private readonly sqlite: SqliteStore = sqliteStoreSingleton) {}
@@ -90,12 +78,11 @@ export class BigModelUsageService {
       return { status: 'unsupported' };
     }
 
-    const token = readBigModelBearer(this.sqlite);
+    // The API quota endpoint accepts the Provider key, independently of web login.
+    const token = provider.authToken.trim();
     if (!token) {
-      return { status: 'idle' };
+      return { status: 'error' };
     }
-
-    // No exp claim in the BigModel JWT — rely on 401 for relogin.
 
     try {
       const response = await fetch(BIGMODEL_USAGE_URL, {
@@ -105,14 +92,16 @@ export class BigModelUsageService {
         signal: AbortSignal.timeout(USAGE_TIMEOUT_MS),
       });
 
-      if (response.status === 401 || response.status === 403) {
-        return { status: 'relogin' };
-      }
       if (response.status < 200 || response.status >= 300) {
         return { status: 'error' };
       }
 
       const body = await response.json().catch(() => null) as unknown;
+      const root = asRecord(body);
+      if (!Array.isArray(asRecord(root?.data)?.limits) || root?.success === false ||
+          (root?.code !== undefined && root.code !== 200)) {
+        return { status: 'error' };
+      }
       const summary = parseBigModelUsage(body);
       if (!summary) {
         return { status: 'no-plan' };
