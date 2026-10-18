@@ -1,4 +1,5 @@
 import { z } from 'zod';
+export * from './mcp.js';
 
 /** The only wire version understood by this release. Unknown versions fail closed. */
 export const CONTRACT_VERSION = 1 as const;

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, copyFileSync, chmodSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import Database from 'better-sqlite3';
+import { McpConfigStore } from './mcp-config-store.js';
 import { v4 as uuidv4 } from 'uuid';
 import type { Workspace, WorkspaceSettings, CreateWorkspaceInput, UpdateWorkspaceInput, BrowserSiteAuthEntry, BrowserSiteAuthStoredEntry } from '../models/workspace.js';
 import { BrowserSiteAuthReadError, decodeSiteAuthEntry, encodeSiteAuthEntry, isEncryptedSiteAuthEntry } from '../services/browser-site-auth.js';
@@ -83,6 +84,7 @@ function getDatabaseOptions(): Database.Options | undefined {
 }
 
 export class SqliteStore {
+  readonly mcp: McpConfigStore;
   private db: Database.Database;
   private analyticsCache?: AnalyticsCache;
   private readonly inMemory: boolean;
@@ -97,6 +99,7 @@ export class SqliteStore {
     }
     const options = getDatabaseOptions();
     this.db = new Database(dbFile, options);
+    this.mcp = new McpConfigStore(this.db);
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec('PRAGMA busy_timeout = 5000');
     this.db.exec(`
@@ -2352,6 +2355,7 @@ export class SqliteStore {
   async delete(id: string): Promise<boolean> {
     const result = this.db.prepare('DELETE FROM workspaces WHERE id = ?').run(id);
     if (result.changes > 0) {
+      this.mcp.deleteScope(`workspace:${id}`);
       this.db.prepare(`
         DELETE FROM user_sessions WHERE session_id IN (SELECT id FROM sessions WHERE workspace_id = ?)
       `).run(id);
