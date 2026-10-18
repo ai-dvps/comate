@@ -7,6 +7,8 @@ import { Popover, PopoverTrigger, PopoverContent } from './ui/popover'
 import CommandPicker, { type CommandPickerHandle } from './CommandPicker'
 import FilePicker, { type FilePickerHandle } from './FilePicker'
 import HistoryPicker, { type HistoryPickerHandle } from './HistoryPicker'
+import BackgroundTaskList from './BackgroundTaskList'
+import type { SessionBackgroundTask } from '../types/message'
 import { useCommands, type SlashCommandDto } from '../stores/commands-store'
 import {
   newChatDraftSessionId,
@@ -123,8 +125,8 @@ function getToolbarVisibility(width: number | undefined) {
   }
 }
 
-function getBackgroundTaskStopKey(sessionId: string, taskId: string): string {
-  return JSON.stringify([sessionId, taskId])
+function getBackgroundTaskStopKey(sessionId: string, taskId: string, runId?: string): string {
+  return JSON.stringify([sessionId, taskId, runId])
 }
 
 interface PromptInputCommonProps {
@@ -240,7 +242,7 @@ export default function PromptInput(props: PromptInputProps) {
   const defaultBackend = useBackendStore((s) => s.defaultBackend)
   const activeBackend = (isNewChat ? props.backendId : sessionBackend) ?? defaultBackend ?? 'claude'
   const backgroundTasks = activity?.backgroundTasks ?? []
-  const backgroundTaskCount = backgroundTasks.length
+  const backgroundTaskCount = backgroundTasks.filter(task => !task.ambient).length
   const isForegroundActive = isStreaming && activity?.phase !== 'background'
   const isComposerLocked = (isForegroundActive && !hasPendingTurn) || isInterrupting
   const {
@@ -1457,11 +1459,12 @@ export default function PromptInput(props: PromptInputProps) {
   const imageRailError = imageErrors[imageDraftKey]
     ?? (normalizedActiveBackend && !imageInputAvailable ? imageUnsupportedReason : null)
 
-  const handleStopBackgroundTask = async (taskId: string) => {
-    const stopKey = getBackgroundTaskStopKey(sessionId, taskId)
+  const handleStopBackgroundTask = async (task: SessionBackgroundTask) => {
+    const stopKey = getBackgroundTaskStopKey(sessionId, task.id, task.runId)
     setStoppingBackgroundTaskIds((current) => new Set(current).add(stopKey))
     try {
-      await stopBackgroundTask(workspaceId, sessionId, taskId)
+      if (task.runId === undefined) await stopBackgroundTask(workspaceId, sessionId, task.id)
+      else await stopBackgroundTask(workspaceId, sessionId, task.id, task.runId)
     } finally {
       setStoppingBackgroundTaskIds((current) => {
         const next = new Set(current)
@@ -1626,43 +1629,14 @@ export default function PromptInput(props: PromptInputProps) {
                   <div className="font-medium leading-6 text-text-primary">
                     {activity?.phase === 'stopping'
                       ? t('activity.stopping')
-                      : t('activity.backgroundRunning', { count: backgroundTasks.length })}
+                      : backgroundTaskCount > 0 ? t('activity.backgroundRunning', { count: backgroundTaskCount }) : t('activity.maintenanceOnly')}
                   </div>
                   {backgroundTasks.length > 0 && (
-                    <div className="mt-0.5 space-y-1">
-                      {backgroundTasks.map((task) => {
-                        const isStopping = stoppingBackgroundTaskIds.has(
-                          getBackgroundTaskStopKey(sessionId, task.id),
-                        )
-                        const stopTaskLabel = t(
-                          isStopping ? 'activity.stoppingTask' : 'activity.stopTask',
-                          { description: task.description },
-                        )
-
-                        return <div key={task.id} className="flex min-w-0 items-start gap-1.5 leading-4">
-                          <span className="flex-shrink-0 text-text-tertiary">
-                            {getBackgroundTaskTypeLabel(task.type, t)}
-                          </span>
-                          <span className="min-w-0 flex-1 break-words">{task.description}</span>
-                          {sessionBackend === 'claude' && activity?.phase !== 'stopping' && (
-                            <button
-                              type="button"
-                              onClick={() => void handleStopBackgroundTask(task.id)}
-                              disabled={isStopping}
-                              aria-label={stopTaskLabel}
-                              title={stopTaskLabel}
-                              className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-text-tertiary transition-colors hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {isStopping ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <Square className="h-2.5 w-2.5 fill-current" />
-                              )}
-                            </button>
-                          )}
-                        </div>
-                      })}
-                    </div>
+                    <BackgroundTaskList tasks={backgroundTasks}
+                      supportsStop={sessionBackend === 'claude' && activity?.phase !== 'stopping'}
+                      typeLabel={type => getBackgroundTaskTypeLabel(type, t)}
+                      isStopping={task => stoppingBackgroundTaskIds.has(getBackgroundTaskStopKey(sessionId, task.id, task.runId))}
+                      onStop={task => void handleStopBackgroundTask(task)} />
                   )}
                 </div>
               </div>

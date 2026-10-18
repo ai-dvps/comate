@@ -1057,6 +1057,32 @@ describe('session-runtime U8 audience + resolution provenance', { concurrency: f
     assert.strictEqual(runtime.getPendingCardState('req-aud'), undefined);
   });
 
+  it('preserves approval constraints on reconnect and rejects permanent permission updates', async () => {
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
+    const constraints = { defaultToNo: true, suppressAlwaysAllowRule: true };
+    const promise = runtime.requestToolApproval('restricted', 'Bash', 'tool-1', {}, constraints);
+    const events: SseEvent[] = [];
+    runtime.subscribeWebSocket((_id, event) => events.push(event));
+    const pending = events.find(event => event.type === 'pending_approval');
+    assert.ok(pending?.type === 'pending_approval');
+    assert.strictEqual((pending as unknown as Record<string, unknown>).defaultToNo, true);
+    assert.strictEqual((pending as unknown as Record<string, unknown>).suppressAlwaysAllowRule, true);
+    const ordinary = runtime.requestToolApproval('ordinary', 'Bash', 'tool-2', {});
+    const ordinaryState = runtime.getPendingCardState('ordinary');
+    assert.ok(ordinaryState?.type === 'approval' && !ordinaryState.suppressAlwaysAllowRule);
+    assert.strictEqual(runtime.resolveApproval('restricted', {
+      behavior: 'allow',
+      updatedPermissions: [{ type: 'setMode', mode: 'bypassPermissions', destination: 'session' }],
+    }), false);
+    assert.ok(runtime.getPendingCardState('restricted'));
+    assert.strictEqual(runtime.resolveApproval('restricted', { behavior: 'allow' }), true);
+    assert.strictEqual((await promise).behavior, 'allow');
+    assert.strictEqual(runtime.resolveApproval('ordinary', {
+      behavior: 'allow', updatedPermissions: [{ type: 'setMode', mode: 'bypassPermissions', destination: 'session' }],
+    }), true);
+    assert.strictEqual((await ordinary).behavior, 'allow');
+  });
+
   it('pendings without an audience report undefined (non-escalation flow unchanged)', async () => {
     runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, createMockSdkClient());
     const promise = runtime.requestToolApproval('req-plain', 'Bash', 'req-plain', { command: 'ls' }, {
@@ -1530,14 +1556,15 @@ describe('session-runtime context_usage emission', { concurrency: false }, () =>
       'ws1',
       'nonce',
       {} as Options,
-      createMockSdkClient(() =>
-        Promise.resolve({
+      createMockSdkClient((options) => {
+        assert.deepStrictEqual(options, { detail: 'summary' });
+        return Promise.resolve({
           totalTokens: 100,
           maxTokens: 200000,
           percentage: 5,
           categories: [{ name: 'messages', tokens: 100, color: '#000' }],
-        } as Awaited<ReturnType<Query['getContextUsage']>>),
-      ),
+        } as Awaited<ReturnType<Query['getContextUsage']>>);
+      }),
       (_id, event) => events.push(event),
     );
     runtime.subscribe(createMockResponse());
@@ -1558,7 +1585,7 @@ describe('session-runtime context_usage emission', { concurrency: false }, () =>
     assert.strictEqual(contextUsage.categories[0].tokens, 100);
   });
 
-  it('emits context_usage for each lifecycle event type', async () => {
+  it('coalesces a burst of lifecycle events into current context usage', async () => {
     const events: SseEvent[] = [];
     runtime = SessionRuntime.open(
       's1',
@@ -1584,7 +1611,7 @@ describe('session-runtime context_usage emission', { concurrency: false }, () =>
     emitter.emitEvent({ type: 'compact_boundary' });
     await new Promise((r) => setTimeout(r, 50));
 
-    assert.strictEqual(events.filter((e) => e.type === 'context_usage').length, 4);
+    assert.strictEqual(events.filter((e) => e.type === 'context_usage').length, 1);
   });
 
   it('does not emit context_usage when getContextUsage rejects', async () => {
@@ -1605,6 +1632,94 @@ describe('session-runtime context_usage emission', { concurrency: false }, () =>
 
     assert.ok(!events.some((e) => e.type === 'context_usage'));
     assert.ok(!events.some((e) => e.type === 'error_note'));
+  });
+
+  it('keeps a detailed report until new work and drops an older in-flight summary', async () => {
+    const events: SseEvent[] = [];
+    let resolveSummary!: (usage: Awaited<ReturnType<Query['getContextUsage']>>) => void;
+    let calls = 0;
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options,
+      createMockSdkClient(() => {
+        calls += 1;
+        return new Promise(resolve => { resolveSummary = resolve; });
+      }), (_id, event) => events.push(event));
+    const emitter = getEmitter(runtime);
+    emitter.emitEvent({ type: 'assistant_start', messageId: 'before' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    emitter.emitEvent({ type: 'context_usage', detail: 'full', totalTokens: 200, maxTokens: 1000, percentage: 20, categories: [] });
+    emitter.emitEvent({ type: 'assistant_start', messageId: 'context-report' });
+    emitter.emitEvent({ type: 'assistant_done', messageId: 'context-report' });
+    emitter.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    resolveSummary({ totalTokens: 100, maxTokens: 1000, percentage: 10, categories: [] } as unknown as Awaited<ReturnType<Query['getContextUsage']>>);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.strictEqual(calls, 1);
+    assert.deepStrictEqual(events.filter(event => event.type === 'context_usage').map(event => event.totalTokens), [200]);
+    emitter.emitEvent({ type: 'tool_result', toolUseId: 'new-tool', output: '', isError: false });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.strictEqual(calls, 2);
+    resolveSummary({ totalTokens: 300, maxTokens: 1000, percentage: 30, categories: [] } as unknown as Awaited<ReturnType<Query['getContextUsage']>>);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.deepStrictEqual(events.filter(event => event.type === 'context_usage').map(event => event.totalTokens), [200, 300]);
+  });
+
+  it('runs one trailing summary for in-flight changes and ignores results after close', async () => {
+    const events: SseEvent[] = [];
+    type Usage = Awaited<ReturnType<Query['getContextUsage']>>;
+    const pending: Array<(usage: Usage) => void> = [];
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options,
+      createMockSdkClient(() => new Promise(resolve => pending.push(resolve))),
+      (_id, event) => events.push(event));
+    const emitter = getEmitter(runtime);
+    emitter.emitEvent({ type: 'assistant_start', messageId: 'first' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    emitter.emitEvent({ type: 'tool_result', toolUseId: 'tool', output: '', isError: false });
+    emitter.emitEvent({ type: 'assistant_done', messageId: 'first' });
+    assert.strictEqual(pending.length, 1);
+    pending[0]({ totalTokens: 100, maxTokens: 1000, percentage: 10, categories: [] } as unknown as Usage);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.strictEqual(pending.length, 2);
+    assert.strictEqual(events.filter(event => event.type === 'context_usage').length, 0);
+    pending[1]({ totalTokens: 200, maxTokens: 1000, percentage: 20, categories: [] } as unknown as Usage);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.deepStrictEqual(events.filter(event => event.type === 'context_usage').map(event => event.totalTokens), [200]);
+    emitter.emitEvent({ type: 'assistant_start', messageId: 'second' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await runtime.close();
+    pending[2]({ totalTokens: 300, maxTokens: 1000, percentage: 30, categories: [] } as unknown as Usage);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.deepStrictEqual(events.filter(event => event.type === 'context_usage').map(event => event.totalTokens), [200]);
+  });
+
+  it('resumes summary sampling on a new user turn even without an assistant response', async () => {
+    const events: SseEvent[] = [];
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options,
+      createMockSdkClient(() => Promise.resolve({
+        totalTokens: 300, maxTokens: 1000, percentage: 30, categories: [],
+      } as unknown as Awaited<ReturnType<Query['getContextUsage']>>)),
+      (_id, event) => events.push(event));
+    const emitter = getEmitter(runtime);
+    emitter.emitEvent({ type: 'context_usage', detail: 'full', totalTokens: 200, maxTokens: 1000, percentage: 20, categories: [] });
+    await runtime.pushMessage('A new user prompt');
+    emitter.emitEvent({ type: 'result', subtype: 'error_during_execution', isError: true });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.deepStrictEqual(events.filter(event => event.type === 'context_usage').map(event => event.totalTokens), [200, 300]);
+  });
+
+  it('samples again on the next event after a summary failure', async () => {
+    const events: SseEvent[] = [];
+    let calls = 0;
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options,
+      createMockSdkClient(() => ++calls === 1 ? Promise.reject(new Error('temporary diagnostic failure')) : Promise.resolve({
+        totalTokens: 100, maxTokens: 1000, percentage: 10, categories: [],
+      } as unknown as Awaited<ReturnType<Query['getContextUsage']>>)),
+      (_id, event) => events.push(event));
+    const emitter = getEmitter(runtime);
+    emitter.emitEvent({ type: 'assistant_start', messageId: 'first' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    emitter.emitEvent({ type: 'assistant_done', messageId: 'first' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.strictEqual(calls, 2);
+    assert.strictEqual(events.filter(event => event.type === 'context_usage').length, 1);
   });
 });
 
@@ -2362,7 +2477,7 @@ describe('session-runtime fenced stop', { concurrency: false }, () => {
     };
   }
 
-  function snapshot(tasks: Array<{ id: string; type?: string; description?: string; runId?: string }>): SDKMessage {
+  function snapshot(tasks: Array<{ id: string; type?: string; description?: string; runId?: string; ambient?: boolean; parentTaskId?: string; subagentType?: string }>): SDKMessage {
     return {
       type: 'system',
       subtype: 'background_tasks_changed',
@@ -2371,6 +2486,9 @@ describe('session-runtime fenced stop', { concurrency: false }, () => {
         task_type: task.type ?? 'agent',
         description: task.description ?? task.id,
         ...(task.runId && { run_id: task.runId }),
+        ...(task.ambient !== undefined && { ambient: task.ambient }),
+        ...(task.parentTaskId && { parent_task_id: task.parentTaskId }),
+        ...(task.subagentType && { subagent_type: task.subagentType }),
       })),
       uuid: randomTestUuid(),
       session_id: 's1',
@@ -2380,6 +2498,50 @@ describe('session-runtime fenced stop', { concurrency: false }, () => {
   function randomTestUuid(): string {
     return `00000000-0000-4000-8000-${String(Math.random()).slice(2, 14).padEnd(12, '0')}`;
   }
+
+  it('keeps maintenance tasks out of business activity but drains them on Stop', async () => {
+    const sdk = createStopSdk();
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, sdk.client);
+    sdk.push(snapshot([{ id: 'watcher', runId: 'run-a', ambient: true }]));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.strictEqual(runtime.getActivitySnapshot().active, false);
+    assert.deepStrictEqual(runtime.getActivitySnapshot().backgroundTasks, [{
+      id: 'watcher', type: 'agent', description: 'watcher', runId: 'run-a', ambient: true,
+    }]);
+    const stopped = runtime.stopAll();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.deepStrictEqual(sdk.calls.stopTask, ['watcher']);
+    sdk.push(snapshot([]));
+    await stopped;
+  });
+
+  it('refuses a stale run stop without dispatching a task-id-only SDK stop', async () => {
+    const sdk = createStopSdk();
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, sdk.client);
+    sdk.push(snapshot([{ id: 'agent', runId: 'run-b' }]));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    await assert.rejects(async () => runtime!.stopBackgroundTask('agent', 'run-a'), /run changed/i);
+    assert.deepStrictEqual(sdk.calls.stopTask, []);
+  });
+
+  it('updates business activity when only task metadata changes', async () => {
+    const sdk = createStopSdk();
+    const events: SseEvent[] = [];
+    runtime = SessionRuntime.open('s1', 'ws1', 'nonce', {} as Options, sdk.client, (_id, event) => events.push(event));
+    const task = { id: 'agent', runId: 'run-a', parentTaskId: 'parent', subagentType: 'researcher', ambient: false };
+    sdk.push(snapshot([task]));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.strictEqual(runtime.getActivitySnapshot().active, true);
+    assert.deepStrictEqual(runtime.getActivitySnapshot().backgroundTasks[0], {
+      id: 'agent', type: 'agent', description: 'agent', runId: 'run-a', parentTaskId: 'parent', subagentType: 'researcher', ambient: false,
+    });
+    const count = events.filter(event => event.type === 'session_activity').length;
+    sdk.push(snapshot([{ ...task, ambient: true }]));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.strictEqual(runtime.getActivitySnapshot().active, false);
+    assert.strictEqual(runtime.getActivitySnapshot().backgroundTasks.length, 1);
+    assert.strictEqual(events.filter(event => event.type === 'session_activity').length, count + 1);
+  });
 
   const tick = () => new Promise((resolve) => setTimeout(resolve, 20));
 
@@ -2939,7 +3101,7 @@ describe('session-runtime pending approval fresh-subscription replay (U6, KTD-23
       'Bash',
       'toolu-1',
       { command: 'curl https://example.com' },
-      { timeout: 60_000 },
+      { timeout: 60_000, defaultToNo: true, suppressAlwaysAllowRule: true },
     );
 
     // Fresh subscription AFTER the approval was requested — the original
@@ -2954,6 +3116,8 @@ describe('session-runtime pending approval fresh-subscription replay (U6, KTD-23
     assert.strictEqual(pending[0].requestId, 'req-1');
     assert.strictEqual(pending[0].toolName, 'Bash');
     assert.strictEqual(pending[0].toolUseId, 'toolu-1');
+    assert.strictEqual(pending[0].defaultToNo, true);
+    assert.strictEqual(pending[0].suppressAlwaysAllowRule, true);
     assert.deepStrictEqual(pending[0].input, { command: 'curl https://example.com' });
     assert.strictEqual(typeof pending[0].expiresAt, 'number', 'TTL rides the replay');
 

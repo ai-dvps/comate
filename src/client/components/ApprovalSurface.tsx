@@ -97,6 +97,8 @@ interface PendingApproval {
   title?: string
   description?: string
   suggestions?: PermissionSuggestion[]
+  defaultToNo?: boolean
+  suppressAlwaysAllowRule?: boolean
   expiresAt?: number
   denialReason?: 'safetyCheck' | 'asyncAgent' | string
 }
@@ -361,8 +363,13 @@ function ApprovalView({
   const isDeclaration = item.toolName === BROWSER_TOOL_NAMES.setDeclaration
   const renderedManifest = isSecurityManifest && renderer ? renderer(item.input) : null
   const invalidSecurityManifest = isSecurityManifest && renderedManifest == null
+  const denyButtonRef = useRef<HTMLButtonElement>(null)
 
-  useCommandEnter(onAllow, !isResolving && !isDeclaration)
+  useEffect(() => {
+    if (item.defaultToNo && !isDeclaration && !isResolving) denyButtonRef.current?.focus()
+  }, [item.requestId, item.defaultToNo, isDeclaration, isResolving])
+
+  useCommandEnter(onAllow, !isResolving && !isDeclaration && !item.defaultToNo)
 
   // Reset Show more across pendingItem swaps
   useEffect(() => {
@@ -426,7 +433,7 @@ function ApprovalView({
       </div>
 
       <div className="flex items-center gap-2">
-        <Button onClick={onAllow} disabled={isResolving || invalidSecurityManifest} size="sm" autoFocus={!isDeclaration}>
+        <Button onClick={onAllow} disabled={isResolving || invalidSecurityManifest} size="sm" autoFocus={!isDeclaration && !item.defaultToNo}>
           {isResolving ? (
             <span className="flex items-center gap-1">
               <Loader2 className="w-3 h-3 animate-spin" />
@@ -436,7 +443,7 @@ function ApprovalView({
             isDeclaration ? t('approval.browserDeclaration.confirmAction') : t('approval.allow')
           )}
         </Button>
-        {hasSuggestions && !isDeclaration && (
+        {hasSuggestions && !isDeclaration && !item.suppressAlwaysAllowRule && (
           <Button
             onClick={onAllowAlways}
             disabled={isResolving}
@@ -452,7 +459,9 @@ function ApprovalView({
           </Button>
         )}
         <Button
+          ref={denyButtonRef}
           onClick={() => onDeny('User denied this tool call.')}
+          autoFocus={Boolean(item.defaultToNo) && !isDeclaration}
           disabled={isResolving}
           variant="destructive"
           size="sm"

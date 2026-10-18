@@ -930,15 +930,19 @@ describe('SseEmitter context_usage twin (CLI 2.1.237)', { concurrency: false }, 
 
     const usage = events.find((e) => e.type === 'context_usage');
     assert.ok(usage && usage.type === 'context_usage');
+    assert.strictEqual(usage.detail, 'full');
     assert.strictEqual(usage.totalTokens, 120000);
     assert.strictEqual(usage.maxTokens, 200000);
     assert.strictEqual(usage.model, 'claude-opus-4-8');
     assert.deepStrictEqual(usage.overLimit, { tokensOver: 5000, kind: 'compaction_window' });
     const deferred = usage.categories.find((c) => c.name === 'MCP tools (deferred)');
     assert.ok(deferred);
+    assert.strictEqual(deferred.kind, 'deferred');
     assert.strictEqual(deferred.isDeferred, true);
     const used = usage.categories.find((c) => c.name === 'Messages');
     assert.ok(used);
+    assert.strictEqual(used.kind, 'used');
+    assert.strictEqual(usage.categories.find(category => category.name === 'Free space')?.kind, 'free');
     assert.strictEqual(used.isDeferred, undefined);
     assert.strictEqual(usage.mcpTools?.[0].serverName, 'linear');
     assert.strictEqual(usage.memoryFiles?.[0].path, '/repo/CLAUDE.md');

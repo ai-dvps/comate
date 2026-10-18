@@ -34,6 +34,8 @@
     "stopping": "正在停止..."
   },
   "activity": {
+    "maintenance": "维护任务（{{count}}）",
+    "maintenanceOnly": "没有正在运行的业务任务",
     "backgroundRunning_one": "{{count}} 个后台任务正在运行",
     "backgroundRunning_other": "{{count}} 个后台任务正在运行",
     "backgroundTaskCount_one": "{{count}} 个后台任务",
@@ -293,6 +295,12 @@
     "dayAgo_plural": "{{count}} 天前"
   },
   "tokenUsage": {
+    "summary": "摘要估算",
+    "detailed": "详细诊断",
+    "savedSnapshot": "已保存快照",
+    "contextCommand": "运行 /context 查看详细诊断",
+    "reserve": "预留",
+    "deferred": "延迟工具（不占用当前上下文）",
     "turn": "本轮",
     "session": "累计",
     "context": "上下文",

@@ -393,6 +393,7 @@ export class SseEmitter {
     expiresAt?: number,
     denialReason?: string,
     audience?: 'self' | 'admins',
+    constraints: { defaultToNo?: boolean; suppressAlwaysAllowRule?: boolean } = {},
   ): void {
     const inputSummary = this.summarizeInput(input);
     this.send({
@@ -408,6 +409,8 @@ export class SseEmitter {
       ...(expiresAt !== undefined && { expiresAt }),
       ...(denialReason !== undefined && { denialReason }),
       ...(audience !== undefined && { audience }),
+      ...(constraints.defaultToNo === true && { defaultToNo: true }),
+      ...(constraints.suppressAlwaysAllowRule === true && { suppressAlwaysAllowRule: true }),
     });
   }
 
@@ -950,12 +953,14 @@ export class SseEmitter {
 
     this.send({
       type: 'context_usage',
+      detail: 'full',
       totalTokens,
       maxTokens: rawMaxTokens,
       percentage,
       categories: mapArrayField(twin.categories, (c) => ({
         name: typeof c.name === 'string' ? c.name : '',
         tokens: typeof c.tokens === 'number' ? c.tokens : 0,
+        ...(['used', 'free', 'buffer', 'deferred'].includes(String(c.kind)) && { kind: c.kind as 'used' | 'free' | 'buffer' | 'deferred' }),
         ...(c.kind === 'deferred' && { isDeferred: true }),
       })).filter((c: { name: string }) => c.name !== ''),
       ...(typeof twin.model === 'string' && { model: twin.model }),

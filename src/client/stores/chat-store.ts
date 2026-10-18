@@ -109,7 +109,12 @@ function parseBackgroundTasks(value: unknown): SessionActivitySnapshot['backgrou
       typeof item.type !== 'string' ||
       typeof item.description !== 'string'
     ) return []
-    return [{ id: item.id, type: item.type, description: item.description }]
+    return [{ id: item.id, type: item.type, description: item.description,
+      ...(typeof item.runId === 'string' && { runId: item.runId }),
+      ...(typeof item.parentTaskId === 'string' && { parentTaskId: item.parentTaskId }),
+      ...(typeof item.subagentType === 'string' && { subagentType: item.subagentType }),
+      ...(typeof item.ambient === 'boolean' && { ambient: item.ambient }),
+    }]
   })
 }
 
@@ -121,7 +126,9 @@ function activitySnapshotsEqual(
   if (left.backgroundTasks.length !== right.backgroundTasks.length) return false
   if (left.backgroundTasks.some((task, index) => {
     const other = right.backgroundTasks[index]
-    return task.id !== other.id || task.type !== other.type || task.description !== other.description
+    return task.id !== other.id || task.type !== other.type || task.description !== other.description ||
+      task.runId !== other.runId || task.parentTaskId !== other.parentTaskId ||
+      task.subagentType !== other.subagentType || task.ambient !== other.ambient
   })) return false
 
   const leftInterruption = left.interruption
@@ -444,6 +451,8 @@ interface PendingApproval {
   title?: string
   description?: string
   suggestions?: PermissionSuggestion[]
+  defaultToNo?: boolean
+  suppressAlwaysAllowRule?: boolean
   expiresAt?: number
   denialReason?: 'safetyCheck' | 'asyncAgent' | string
 }
@@ -479,9 +488,11 @@ export interface ContextUsageCategory {
   name: string
   tokens: number
   isDeferred?: boolean
+  kind?: 'used' | 'free' | 'buffer' | 'deferred'
 }
 
 export interface ContextUsage {
+  detail?: 'summary' | 'full'
   totalTokens: number
   maxTokens: number
   percentage: number
@@ -622,7 +633,7 @@ export interface ChatState {
     result: { behavior: 'allow' | 'deny' | 'later'; updatedPermissions?: PermissionSuggestion[]; answers?: Record<string, string>; questions?: QuestionPayload[]; message?: string },
   ) => Promise<void>
   interruptSession: (workspaceId: string, sessionId: string) => Promise<void>
-  stopBackgroundTask: (workspaceId: string, sessionId: string, taskId: string) => Promise<void>
+  stopBackgroundTask: (workspaceId: string, sessionId: string, taskId: string, runId?: string) => Promise<void>
   cleanupWorkspace: (workspaceId: string) => void
   /**
    * Seed the workspace ordering map from server-carried workspace rows
@@ -836,6 +847,7 @@ function sanitizeContextUsageSnapshot(value: unknown): ContextUsage | undefined 
       const category = entry as Record<string, unknown>
       if (typeof category.name !== 'string' || typeof category.tokens !== 'number') return []
       return [{ name: category.name, tokens: category.tokens,
+        ...(['used', 'free', 'buffer', 'deferred'].includes(String(category.kind)) ? { kind: category.kind as ContextUsageCategory['kind'] } : {}),
         ...(category.isDeferred === true ? { isDeferred: true } : {}) }]
     }),
     ...(typeof raw.model === 'string' ? { model: raw.model } : {}),
@@ -2538,11 +2550,13 @@ export function handleSseEvent(
                 name: typeof cx.name === 'string' ? cx.name : '',
                 tokens: typeof cx.tokens === 'number' ? cx.tokens : 0,
                 ...(cx.isDeferred === true && { isDeferred: true }),
+                ...(['used', 'free', 'buffer', 'deferred'].includes(String(cx.kind)) && { kind: cx.kind as ContextUsageCategory['kind'] }),
               }
             })
           : [],
       }
       if (typeof data.model === 'string') usage.model = data.model
+      if (data.detail === 'summary' || data.detail === 'full') usage.detail = data.detail
       if (typeof data.rawMaxTokens === 'number') usage.rawMaxTokens = data.rawMaxTokens
       if (typeof data.autoCompactThreshold === 'number') {
         usage.autoCompactThreshold = data.autoCompactThreshold
@@ -2682,6 +2696,8 @@ export function handleSseEvent(
             title: typeof data.title === 'string' ? data.title : undefined,
             description: typeof data.description === 'string' ? data.description : undefined,
             suggestions: Array.isArray(data.suggestions) ? data.suggestions : undefined,
+            defaultToNo: data.defaultToNo === true,
+            suppressAlwaysAllowRule: data.suppressAlwaysAllowRule === true,
             expiresAt,
             denialReason: typeof data.denialReason === 'string' ? data.denialReason : undefined,
           },
@@ -4584,14 +4600,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  stopBackgroundTask: async (workspaceId: string, sessionId: string, taskId: string) => {
+  stopBackgroundTask: async (workspaceId: string, sessionId: string, taskId: string, runId?: string) => {
+    const activityAtRequest = get().sessionActivity[sessionId]
     try {
       const res = await fetch(
         `/api/workspaces/${workspaceId}/sessions/${sessionId}/tasks/${encodeURIComponent(taskId)}/stop`,
-        { method: 'POST' },
+        { method: 'POST', ...(runId !== undefined && { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ runId }) }) },
       )
       if (!res.ok) {
         const error = await res.json().catch(() => ({ error: i18next.t('common:requestFailed', 'Request failed') }))
+        if (error.code === 'TASK_RUN_CHANGED' && error.activity && get().sessionActivity[sessionId] === activityAtRequest) {
+          handleSseEvent(set, workspaceId, sessionId, 'session_activity', error.activity)
+        }
         throw new Error(error.error || i18next.t('common:requestFailed', 'Request failed'))
       }
     } catch (err) {

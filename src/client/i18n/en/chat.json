@@ -34,6 +34,8 @@
     "stopping": "Stopping..."
   },
   "activity": {
+    "maintenance": "Maintenance tasks ({{count}})",
+    "maintenanceOnly": "No business tasks running",
     "backgroundRunning_one": "{{count}} background task running",
     "backgroundRunning_other": "{{count}} background tasks running",
     "backgroundTaskCount_one": "{{count}} background task",
@@ -294,6 +296,12 @@
     "dayAgo_plural": "{{count}} days ago"
   },
   "tokenUsage": {
+    "summary": "Summary estimate",
+    "detailed": "Detailed diagnostic",
+    "savedSnapshot": "Saved snapshot",
+    "contextCommand": "Run /context for a detailed diagnostic",
+    "reserve": "reserved",
+    "deferred": "Deferred tools (outside the used context)",
     "turn": "Turn",
     "session": "Session",
     "context": "Context",

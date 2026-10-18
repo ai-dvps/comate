@@ -1103,12 +1103,15 @@ describe('handleSseEvent context_usage', () => {
       totalTokens: 100,
       maxTokens: 200000,
       percentage: 5,
-      categories: [{ name: 'messages', tokens: 100 }],
+      categories: [{ name: 'messages', tokens: 100, kind: 'used' }],
+      detail: 'summary',
     })
     const state = useChatStore.getState()
     assert.strictEqual(state.contextUsage['s1'].percentage, 5)
     assert.strictEqual(state.contextUsage['s1'].totalTokens, 100)
     assert.strictEqual(state.contextUsage['s1'].categories[0].name, 'messages')
+    assert.strictEqual(state.contextUsage['s1'].categories[0].kind, 'used')
+    assert.strictEqual(state.contextUsage['s1'].detail, 'summary')
   })
 
   it('clears contextUsage on compact_boundary', () => {
@@ -1411,6 +1414,25 @@ describe('bot session guards', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+
+  it('sends the selected run and does not replace newer activity with a late stop-conflict response', async () => {
+    const response = deferred<Response>()
+    const fetchFn = vi.fn<typeof fetch>(() => response.promise)
+    vi.stubGlobal('fetch', fetchFn)
+    try {
+      const stopped = useChatStore.getState().stopBackgroundTask('ws-1', 's1', 'task-2', 'run-a')
+      const body = fetchFn.mock.calls[0][1]?.body
+      assert.ok(typeof body === 'string')
+      assert.deepStrictEqual(JSON.parse(body), { runId: 'run-a' })
+      const newerActivity = { phase: 'background' as const, active: true, backgroundTasks: [{ id: 'task-2', type: 'agent', description: 'New run', runId: 'run-c' }] }
+      useChatStore.setState({ sessionActivity: { s1: newerActivity } })
+      response.resolve({ ok: false, status: 409, json: async () => ({ code: 'TASK_RUN_CHANGED', error: 'Task run changed',
+        activity: { phase: 'background', active: true, backgroundTasks: [{ id: 'task-2', type: 'agent', description: 'Older run', runId: 'run-b' }] },
+      }) } as Response)
+      await stopped
+      assert.strictEqual(useChatStore.getState().sessionActivity.s1, newerActivity)
+    } finally { vi.unstubAllGlobals() }
   })
 
   it('marks complete history ready when a draft sends its first message', () => {
@@ -3782,6 +3804,15 @@ describe('session_activity authoritative slice', () => {
       backgroundTasks: [{ id: 'bg-1', type: 'agent', description: 'Research' }],
     })
     assert.strictEqual(useChatStore.getState().isStreaming.s1, true)
+  })
+
+  it('preserves maintenance and run metadata even when business activity is idle', () => {
+    const tasks = [{ id: 'watcher', type: 'monitor', description: 'Watching', runId: 'run-1', ambient: true, parentTaskId: 'parent', subagentType: 'researcher' }]
+    handleSseEvent(useChatStore.setState as unknown as SseSetter, 'ws-1', 's1', 'session_activity', {
+      phase: 'idle', active: false, backgroundTasks: tasks,
+    })
+    assert.deepStrictEqual(useChatStore.getState().sessionActivity.s1.backgroundTasks, tasks)
+    assert.strictEqual(useChatStore.getState().isStreaming.s1, false)
   })
 
   it('keeps the session active across foreground result until the idle snapshot', () => {

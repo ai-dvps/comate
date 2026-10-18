@@ -1329,7 +1329,7 @@ describe('PromptInput browser', () => {
       phase: 'background',
       active: true,
       backgroundTasks: [
-        { id: 'agent-1', type: 'agent', description: 'Review the runtime lifecycle' },
+        { id: 'agent-1', type: 'agent', description: 'Review the runtime lifecycle', runId: 'run-a' },
         { id: 'command-1', type: 'command', description: 'Run focused tests' },
       ],
     }
@@ -1350,6 +1350,7 @@ describe('PromptInput browser', () => {
       DEFAULT_PROPS.workspaceId,
       DEFAULT_PROPS.sessionId,
       'agent-1',
+      'run-a',
     )
     expect(DEFAULT_PROPS.onStop).not.toHaveBeenCalled()
     expect(screen.getByRole('button', {
@@ -1367,6 +1368,32 @@ describe('PromptInput browser', () => {
         name: 'Stop task: Review the runtime lifecycle',
       })).toBeEnabled()
     })
+  })
+
+  it('keeps a newer run pending when the previous run stop finishes', async () => {
+    let resolveFirstStop!: () => void
+    let resolveSecondStop!: () => void
+    const state = chatStoreMock.getState()
+    state.sessions[DEFAULT_PROPS.workspaceId] = [{ id: DEFAULT_PROPS.sessionId, backend: 'claude' }]
+    const activity = (runId: string): SessionActivitySnapshot => ({
+      phase: 'background', active: true,
+      backgroundTasks: [{ id: 'agent-1', type: 'agent', description: 'Review task', runId }],
+    })
+    state.sessionActivity[DEFAULT_PROPS.sessionId] = activity('run-a')
+    state.stopBackgroundTask
+      .mockImplementationOnce(() => new Promise<void>(resolve => { resolveFirstStop = resolve }))
+      .mockImplementationOnce(() => new Promise<void>(resolve => { resolveSecondStop = resolve }))
+    const view = renderWithI18n(<PromptInput {...DEFAULT_PROPS} isStreaming />)
+    await userEvent.click(screen.getByRole('button', { name: 'Stop task: Review task' }))
+
+    state.sessionActivity[DEFAULT_PROPS.sessionId] = activity('run-b')
+    view.rerender(<I18nextProvider i18n={i18n}><PromptInput {...DEFAULT_PROPS} isStreaming /></I18nextProvider>)
+    await userEvent.click(screen.getByRole('button', { name: 'Stop task: Review task' }))
+    expect(state.stopBackgroundTask).toHaveBeenLastCalledWith('ws-1', 'session-1', 'agent-1', 'run-b')
+    await act(async () => { resolveFirstStop() })
+    expect(screen.getByRole('button', { name: 'Stopping task: Review task' })).toBeDisabled()
+    await act(async () => { resolveSecondStop() })
+    expect(screen.getByRole('button', { name: 'Stop task: Review task' })).toBeEnabled()
   })
 
   it('does not offer individual task stopping for OpenCode sessions', () => {
