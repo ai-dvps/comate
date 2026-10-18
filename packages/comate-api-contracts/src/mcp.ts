@@ -62,6 +62,8 @@ export interface McpConnectionStatus {
 }
 export interface McpSessionApplication {
   sessionId: string;
+  entryId?: string;
+  name: string;
   backend: string;
   desired: number;
   applied: number;

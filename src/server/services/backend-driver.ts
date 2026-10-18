@@ -76,6 +76,8 @@ export interface BackendDriver {
   prepareUserContent?(content: unknown): unknown;
   /** Route backend-native approvals and questions through the shared policy/UI. */
   bindToolRequestHandler?(handler: BackendToolRequestHandler): void;
+  /** Verify native state after the managed MCP protocol inventory changed. */
+  verifyManagedMcpInventory?(expected: string[]): Promise<void>;
   createStreamingQuery(
     input: AsyncIterable<SDKUserMessage>,
     options: Options,

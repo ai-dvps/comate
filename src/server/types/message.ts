@@ -319,6 +319,7 @@ export type SessionActivitySnapshot = {
 }
 
 export type SseEvent =
+  | { type: 'mcp_application'; applications: import('@comate/api-contracts').McpSessionApplication[] }
   | {
       type: 'system_init'
       model: string

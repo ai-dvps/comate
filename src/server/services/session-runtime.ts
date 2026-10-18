@@ -37,6 +37,7 @@ import {
   isBrowserUploadClassified,
 } from './browser-gate-state.js';
 import { browserAuditService } from './browser-audit.js';
+import { MANAGED_MCP_SERVER_KEY } from './managed-mcp-gateway.js';
 
 
 const RING_BUFFER_CAP = 500;
@@ -368,10 +369,14 @@ export class SessionRuntime {
     const hooks: Options['hooks'] = { ...this.options.hooks };
     const optionsWithCallback: Options = {
       ...this.options,
-      canUseTool,
+      // The managed gateway owns approval so direct authenticated HTTP calls
+      // cannot bypass it. Native backend approval must not prompt twice.
+      canUseTool: (name, input, extra) => name.startsWith(`mcp__${MANAGED_MCP_SERVER_KEY}__`)
+        ? Promise.resolve({ behavior: 'allow' as const, updatedInput: input })
+        : canUseTool(name, input, extra),
       ...(Object.keys(hooks).length > 0 ? { hooks } : {}),
     };
-    this.driver.bindToolRequestHandler?.((request) => canUseTool(
+    this.driver.bindToolRequestHandler?.((request) => optionsWithCallback.canUseTool!(
       request.toolName,
       request.input,
       {
@@ -699,6 +704,16 @@ export class SessionRuntime {
     };
   }
 
+  async authorizeManagedMcpTool(name: string, input: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
+    if (this.closed || signal.aborted) throw new Error('MCP call cancelled');
+    const id = randomUUID();
+    const decision = await this.buildCanUseToolCallback()(name, input, {
+      signal, toolUseID: id, requestId: id, suppressAlwaysAllowRule: true,
+    });
+    if (decision?.behavior !== 'allow' || this.closed || signal.aborted) throw new Error('MCP call was not approved');
+    return decision.updatedInput ?? input;
+  }
+
   private wrapCanUseToolWithKimiLoopDetection(
     baseCanUseTool: (
       toolName: string,
@@ -967,6 +982,17 @@ export class SessionRuntime {
   emitSessionTitle(title: string): void {
     if (this.closed) return;
     this.emitter.emitEvent({ type: 'session_title', title });
+  }
+
+  emitMcpApplication(applications: import('@comate/api-contracts').McpSessionApplication[]): void {
+    if (!this.closed) this.emitter.emitEvent({ type: 'mcp_application', applications });
+  }
+
+  async verifyManagedMcpInventory(expected: string[]): Promise<void> {
+    if (this.driver.verifyManagedMcpInventory) return this.driver.verifyManagedMcpInventory(expected);
+    const server = (await this.query.mcpServerStatus()).find(server => server.name === MANAGED_MCP_SERVER_KEY);
+    const tools = (server?.tools ?? []).map(tool => tool.name).sort();
+    if (server?.status !== 'connected' || tools.join('\0') !== [...expected].sort().join('\0')) throw new Error('MCP inventory is stale');
   }
 
   async getContextUsage(): Promise<SDKControlGetContextUsageResponse> {

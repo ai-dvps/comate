@@ -13,6 +13,8 @@ import chatRoutes from './routes/chat.js';
 import backendRoutes from './routes/backends.js';
 import { createBrowserMcpHttpRouter } from './services/browser-mcp-http.js';
 import { createMcpRouter } from './routes/mcp.js';
+import { managedMcpGateway } from './services/managed-mcp-gateway.js';
+import { mcpOAuthService } from './services/mcp-oauth-service.js';
 import { createScheduledTasksMcpHttpRouter, resolveScheduledTasksMcpDeps } from './services/scheduled-tasks-mcp.js';
 import { chatService } from './services/chat-service.js';
 import { browserUploadStagingService } from './services/browser-upload-staging.js';
@@ -159,6 +161,9 @@ app.use('/mcp/browser', createBrowserMcpHttpRouter((sessionId) => chatService.re
 // U7: HTTP-hosted scheduled-task MCP (Bearer token auth, loopback; same
 // pre-guard mount rationale as the browser MCP).
 app.use('/mcp/scheduled-tasks', createScheduledTasksMcpHttpRouter((sessionId) => resolveScheduledTasksMcpDeps(sessionId)));
+app.use('/mcp/managed', managedMcpGateway.router((token, sessionId, runtimeGeneration) =>
+  Boolean(sessionCapabilityService.resolveForAudience(token, 'managed-mcp', { sessionId, runtimeGeneration }))));
+managedMcpGateway.authProvider = record => mcpOAuthService.provider(record);
 
 app.use(cors({ origin: createCorsOriginCallback({ getSelfPort }) }));
 app.use(stateChangingRequestGuard({ getSelfPort }));

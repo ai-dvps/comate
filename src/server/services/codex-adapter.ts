@@ -13,6 +13,7 @@ import {
 } from './codex-app-server-manager.js';
 import { CodexEventMapper } from './codex-event-mapper.js';
 import { CodexRpcError } from './codex-rpc-client.js';
+import { MANAGED_MCP_SERVER_KEY, MANAGED_MCP_AUTH_ENV } from './managed-mcp-gateway.js';
 import type { TurnTokenUsage } from '../types/message.js';
 
 interface CodexTokenCounts {
@@ -178,15 +179,9 @@ export class CodexBackendDriver implements BackendDriver {
         };
       },
       mcpServerStatus: async () => {
-        const response = await this.manager.request<{
-          data: Array<{
-            name: string;
-            tools: Record<string, { name: string; annotations?: unknown }>;
-          }>;
-        }>('mcpServerStatus/list', {});
-        return response.data.map((server) => ({
+        return (await this.mcpInventory()).map((server) => ({
           name: server.name,
-          status: 'connected',
+          status: server.serverInfo ? 'connected' : 'failed',
           tools: Object.values(server.tools).map((tool) => ({
             name: tool.name,
             annotations: codexToolAnnotations(tool.annotations),
@@ -199,6 +194,24 @@ export class CodexBackendDriver implements BackendDriver {
 
   bindToolRequestHandler(handler: BackendToolRequestHandler): void {
     this.toolRequestHandler = handler;
+  }
+
+  private async mcpInventory() {
+    const servers: Array<{ name: string; serverInfo?: unknown; tools: Record<string, { name: string; annotations?: unknown }> }> = [];
+    let cursor: string | undefined;
+    do {
+      const response = await this.manager.request<{ data: typeof servers; nextCursor?: string | null }>(
+        'mcpServerStatus/list', { threadId: this.threadId, cursor });
+      servers.push(...response.data);
+      cursor = response.nextCursor ?? undefined;
+    } while (cursor);
+    return servers;
+  }
+
+  async verifyManagedMcpInventory(expected: string[]): Promise<void> {
+    const server = (await this.mcpInventory()).find(server => server.name === MANAGED_MCP_SERVER_KEY);
+    const actual = Object.values(server?.tools ?? {}).map(tool => tool.name).sort();
+    if (!server?.serverInfo || actual.join('\0') !== [...expected].sort().join('\0')) throw new Error('Codex MCP inventory is stale');
   }
 
   private async run(input: AsyncIterable<SDKUserMessage>, options: Options): Promise<void> {
@@ -516,6 +529,11 @@ export function codexThreadConfig(
   const mcpServers: Record<string, Record<string, unknown>> = {};
   for (const [name, rawConfig] of Object.entries(options.mcpServers ?? {})) {
     const config = rawConfig as Record<string, unknown>;
+    if (name === MANAGED_MCP_SERVER_KEY && config.type === 'http' && typeof config.url === 'string' &&
+        /^http:\/\/127\.0\.0\.1:\d+\/mcp\/managed\/[A-Za-z0-9_-]+$/.test(config.url)) {
+      mcpServers[name] = { url: config.url, env_http_headers: { Authorization: MANAGED_MCP_AUTH_ENV } };
+      continue;
+    }
     if (config.type !== undefined && config.type !== 'stdio') continue;
     if (typeof config.command !== 'string' || config.command.length === 0) continue;
     mcpServers[name] = {
