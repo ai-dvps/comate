@@ -26,6 +26,7 @@ import { getLaunchAtLogin, isDesktop, setLaunchAtLogin } from '../lib/desktop-ap
 import type { Workspace } from '../stores/workspace-store'
 import ProviderSection from './ProviderSection'
 import BackendSection from './BackendSection'
+import McpSettingsPage, { type McpSettingsPageHandle } from './McpSettingsPage'
 import DeleteWorkspaceDialog from './DeleteWorkspaceDialog'
 import BotManagementPage, { type BotManagementPageHandle } from './BotManagementPage'
 import UnsavedChangesDialog from './UnsavedChangesDialog'
@@ -242,7 +243,7 @@ interface SettingsPanelProps {
   initialWorkspaceId?: string
 }
 
-type SettingsTab = 'general' | 'appearance' | 'workspace' | 'backend' | 'providers' | 'bots'
+type SettingsTab = 'general' | 'appearance' | 'workspace' | 'backend' | 'providers' | 'bots' | 'mcp'
 
 type WorkspaceSection = 'general' | 'bot' | 'security' | 'danger'
 
@@ -251,7 +252,6 @@ interface WorkspaceFormState {
   description: string
   folderPath: string
   skills: { name: string }[]
-  mcpServers: { name: string; command: string; args: string }[]
   hooks: { name: string; scriptPath: string }[]
   wecomFilePromptTemplate: string
   promptHistoryRetentionDays: string
@@ -264,10 +264,6 @@ function buildWorkspaceFormState(workspace: Workspace): WorkspaceFormState {
     description: workspace.description,
     folderPath: workspace.folderPath,
     skills: [...workspace.skills],
-    mcpServers: workspace.mcpServers.map((m) => ({
-      ...m,
-      args: m.args?.join(' ') || '',
-    })),
     hooks: [...workspace.hooks],
     wecomFilePromptTemplate: (workspace.settings?.wecomFilePromptTemplate as string) || '',
     promptHistoryRetentionDays: String(workspace.settings?.promptHistoryRetentionDays ?? 30),
@@ -304,6 +300,8 @@ export default function SettingsPanel({
   const [pendingClose, setPendingClose] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const botPageRef = useRef<BotManagementPageHandle>(null)
+  const mcpPageRef = useRef<McpSettingsPageHandle>(null)
+  const [pendingTab, setPendingTab] = useState<SettingsTab | null>(null)
 
   // App-level form state
   const [appReopen, setAppReopen] = useState(reopenLastWorkspace)
@@ -395,6 +393,7 @@ export default function SettingsPanel({
       activeTab !== 'workspace' &&
       activeTab !== 'backend' &&
       activeTab !== 'providers' &&
+      activeTab !== 'mcp' &&
       activeTab !== 'bots'
     ) {
       setActiveTab('workspace')
@@ -453,6 +452,7 @@ export default function SettingsPanel({
   }, [selectedWorkspaceId, workspaceState])
 
   const isDirty = useCallback(() => {
+    if (activeTab === 'mcp' && mcpPageRef.current?.isDirty()) return true
     if (activeTab === 'bots' && botPageRef.current?.isDirty()) return true
     return isAppDirty() || workspaceDirty
   }, [activeTab, isAppDirty, workspaceDirty])
@@ -560,11 +560,6 @@ export default function SettingsPanel({
         sensitiveFileDenylist: ws.sensitiveFileDenylist,
       },
       skills: ws.skills,
-      mcpServers: ws.mcpServers.map((m) => ({
-        name: m.name,
-        command: m.command,
-        args: m.args ? m.args.split(' ').filter(Boolean) : undefined,
-      })),
       hooks: ws.hooks,
     })
 
@@ -628,6 +623,11 @@ export default function SettingsPanel({
   const handleSaveAll = async () => {
     setIsSaving(true)
     try {
+      if (activeTab === 'mcp' && mcpPageRef.current?.isDirty()) await mcpPageRef.current.save()
+      if (pendingTab) {
+        setActiveTab(pendingTab); setPendingTab(null); setShowUnsavedDialog(false)
+        return
+      }
       if (activeTab === 'bots' && botPageRef.current?.isDirty()) {
         await botPageRef.current.save()
       }
@@ -648,6 +648,11 @@ export default function SettingsPanel({
   }
 
   const handleDiscardAll = () => {
+    mcpPageRef.current?.discard()
+    if (pendingTab) {
+      setActiveTab(pendingTab); setPendingTab(null); setShowUnsavedDialog(false)
+      return
+    }
     if (activeTab === 'bots') {
       botPageRef.current?.discard()
     }
@@ -688,6 +693,7 @@ export default function SettingsPanel({
     { id: 'workspace', label: t('tabs.workspace') },
     { id: 'backend', label: t('tabs.backend') },
     { id: 'providers', label: t('tabs.providers') },
+    { id: 'mcp', label: 'MCP' },
     { id: 'bots', label: t('tabs.bots') },
   ]
 
@@ -715,11 +721,15 @@ export default function SettingsPanel({
           </div>
 
           {/* Tabs */}
-          <div className="flex border-b border-border/50 flex-shrink-0 px-6 bg-surface">
+          <div className="flex overflow-x-auto border-b border-border/50 flex-shrink-0 px-6 bg-surface">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => {
+                  if (activeTab === 'mcp' && tab.id !== 'mcp' && mcpPageRef.current?.isDirty()) {
+                    setPendingTab(tab.id); setPendingClose(false); setShowUnsavedDialog(true)
+                  } else setActiveTab(tab.id)
+                }}
                 className={`py-3 px-4 text-[11px] font-medium transition-all ${
                   activeTab === tab.id
                     ? 'text-text-primary border-b-2 border-accent'
@@ -774,6 +784,7 @@ export default function SettingsPanel({
             {activeTab === 'backend' && <BackendSection />}
 
             {activeTab === 'providers' && <ProviderSection />}
+            {activeTab === 'mcp' && <McpSettingsPage ref={mcpPageRef} />}
 
             {activeTab === 'bots' && <BotManagementPage ref={botPageRef} />}
 

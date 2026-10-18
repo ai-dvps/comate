@@ -123,6 +123,9 @@ import { getSidecarBaseUrl } from '../utils/self-port.js';
 import { buildBrowserMcpClientConnection } from './browser-mcp-client-config.js';
 import { SCHEDULED_TASKS_MCP_KEY, getScheduledTasksMcpToken } from './scheduled-tasks-mcp.js';
 import { makeScheduledRunStopHook } from './goal-stop-hook.js';
+import { managedMcpGateway, MANAGED_MCP_SERVER_KEY, MANAGED_MCP_AUTH_ENV } from './managed-mcp-gateway.js';
+import { mcpSessionCoordinator } from './mcp-session-coordinator.js';
+import { mcpConfigService } from './mcp-config-service.js';
 import { getOutputStyle } from './output-style-app-settings.js';
 import {
   SESSION_TOKEN_ENV,
@@ -1862,7 +1865,7 @@ export class ChatService {
         await ensureSandboxProbe();
       }
 
-      const options = await this.buildSdkOptions(workspace, session, isBotSession, botUserId, providerResolution);
+      const options = await this.buildSdkOptions(workspace, session, isBotSession, botUserId, providerResolution, true);
       if (session.source === 'scheduled' && backend === 'claude') {
         // U4 (KTD-3, path B): scheduled runs get the completion evaluator —
         // a programmatic Stop hook that continues the session until the goal
@@ -2011,6 +2014,31 @@ export class ChatService {
       );
       diagLog(`[ChatService] runtime ${sessionId} SessionRuntime.open elapsed=${Date.now() - openStart}ms`);
       this.runtimes.set(sessionId, runtime);
+      const managedContext = managedMcpGateway.contexts().find(context => context.sessionId === sessionId);
+      if (managedContext) {
+        managedContext.authorizeTool = (name, input, signal) => runtime.authorizeManagedMcpTool(name, input, signal);
+        managedContext.refreshInventory = async expected => {
+          const deadline = Date.now() + 15_000;
+          for (;;) {
+            try { await runtime.verifyManagedMcpInventory(expected.map(tool => tool.name)); break; }
+            catch (error) {
+              if (Date.now() >= deadline || runtime.isClosed()) throw error;
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+          }
+          if (backend !== 'codex') await managedMcpGateway.confirmInventory(sessionId, expected);
+        };
+        const onMcpChange = (changedId: string) => {
+          if (changedId === sessionId) runtime.emitMcpApplication(mcpSessionCoordinator.status(sessionId));
+        };
+        mcpSessionCoordinator.on('change', onMcpChange);
+        const onClose = (closedId: string) => {
+          if (closedId !== sessionId) return;
+          mcpSessionCoordinator.off('change', onMcpChange);
+          managedMcpGateway.off('closed', onClose);
+        };
+        managedMcpGateway.on('closed', onClose);
+      }
       this.runtimeProviderSnapshots.set(sessionId, {
         source: providerResolution.source,
         providerId: providerResolution.providerId,
@@ -2037,6 +2065,8 @@ export class ChatService {
       // early-returns and would never clear the bot-gate bookkeeping
       // (sessionSpawnRoles is set inside buildSdkOptions) — drop it here.
       if (!this.runtimes.has(sessionId)) {
+        await managedMcpGateway.close(sessionId);
+        sessionCapabilityService.revokeForSession(sessionId);
         this.releaseProviderRoute(this.runtimeProviderRoutes.get(sessionId), 'RUNTIME_CREATION_FAILED');
         this.sessionSpawnRoles.delete(sessionId);
         this.demotionRebuilds.delete(sessionId);
@@ -2054,9 +2084,10 @@ export class ChatService {
     // Runtime replacement is terminal for capture drains, opaque auth handles,
     // and exact-operation approvals. The browser process/page may stay alive.
     this.disposeBrowserRuntimeEphemera(sessionId);
+    const managedClose = managedMcpGateway.close(sessionId);
     const session = workspaceStore.getLocalSession(sessionId);
     if (session) browserTaskStateService.invalidateRuntime(session.workspaceId, sessionId);
-    if (!runtime) return;
+    if (!runtime) { await managedClose; return; }
     this.clearPendingRebuild(sessionId);
     this.runtimeContexts.delete(sessionId);
     this.sessionSpawnRoles.delete(sessionId);
@@ -2093,6 +2124,7 @@ export class ChatService {
     }
     await runtime.close();
     this.onRuntimeClose?.(sessionId);
+    await managedClose;
   }
 
   private releaseProviderRoute(lease: ProviderRouteLease | undefined, failureCode?: string): void {
@@ -2779,6 +2811,7 @@ export class ChatService {
     isBotSession?: boolean,
     botUserId?: string,
     providerResolution?: RuntimeProviderResolution,
+    managedRuntime = false,
   ): Promise<import('@anthropic-ai/claude-agent-sdk').Options> {
     const claudeSettings = loadClaudeSettings();
     let { env } = buildClaudeEnv(claudeSettings);
@@ -2810,6 +2843,7 @@ export class ChatService {
     // mint their own token below.
     delete env[SESSION_TOKEN_ENV];
     delete env[WECOM_CONTEXT_FILE_ENV];
+    delete env[MANAGED_MCP_AUTH_ENV];
     if (!browserEligible) {
       delete env.COMATE_CLI_PATH;
       delete env.COMATE_SERVER_URL;
@@ -2836,6 +2870,15 @@ export class ChatService {
       });
       taskCapabilityToken = browserCapability.token;
       env[SESSION_TOKEN_ENV] = brokerCapability.token;
+      if (managedRuntime) {
+        const capability = sessionCapabilityService.mintForSession({
+          sessionId: session.id, workspaceId: workspace.id, botId: null,
+          kind: 'managed-mcp', audiences: ['managed-mcp'], runtimeGeneration,
+        });
+        env[MANAGED_MCP_AUTH_ENV] = `Bearer ${capability.token}`;
+        await managedMcpGateway.register({ sessionId: session.id, workspaceId: workspace.id,
+          directory: workspace.folderPath, generation: runtimeGeneration, backend: session.backend ?? 'claude' });
+      }
     }
 
     const canonicalProvider = providerResolution?.provider;
@@ -2910,7 +2953,7 @@ export class ChatService {
     sidecarLog(`[ChatService.buildSdkOptions] enriched PATH=${env[pathKey]}`);
 
     const mcpServers: Record<string, import('@anthropic-ai/claude-agent-sdk').McpServerConfig> = {};
-    for (const mcp of workspace.mcpServers) {
+    for (const mcp of managedRuntime && browserEligible ? [] : workspace.mcpServers) {
       mcpServers[mcp.name] = {
         type: 'stdio',
         command: mcp.command,
@@ -2918,11 +2961,20 @@ export class ChatService {
       };
     }
 
+    if (managedRuntime && browserEligible) {
+      mcpServers[MANAGED_MCP_SERVER_KEY] = { type: 'http',
+        url: `${getSidecarBaseUrl()}/mcp/managed/${session.id}`,
+        headers: { Authorization: env[MANAGED_MCP_AUTH_ENV]! },
+      };
+    }
+
     // Merge plugin MCP servers (workspace-defined servers override plugin-defined)
     try {
+      const managedNames = new Set(managedRuntime && browserEligible
+        ? (await mcpConfigService.records(workspace.id, true)).map(record => record.name) : []);
       const pluginMcpServers = this.loadPluginMcpServers(workspace.folderPath);
       for (const [name, config] of Object.entries(pluginMcpServers)) {
-        if (!mcpServers[name]) {
+        if (!mcpServers[name] && !managedNames.has(name)) {
           mcpServers[name] = config;
         }
       }
@@ -2989,12 +3041,14 @@ export class ChatService {
         ...(outputStyle !== undefined && { outputStyle }),
       },
       mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
+      ...(managedRuntime && browserEligible ? { strictMcpConfig: true } : {}),
       model: resolvedProvider?.model || (isBotSession ? BOT_SESSION_PINNED_MODEL : undefined),
       permissionMode: 'default',
       includePartialMessages: false,
       pathToClaudeCodeExecutable: claudePath,
       stderr: (data) => {
-        const trimmed = data.trim();
+        const capabilities = [taskCapabilityToken, env[SESSION_TOKEN_ENV], env[MANAGED_MCP_AUTH_ENV]?.replace(/^Bearer /, '')].filter((value): value is string => Boolean(value));
+        const trimmed = capabilities.reduce((text, token) => text.split(token).join('[REDACTED]'), data.trim());
         if (trimmed) sidecarLog(`[ChatService.claude.stderr] ${trimmed}`);
       },
     };

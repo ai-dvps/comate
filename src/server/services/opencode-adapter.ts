@@ -28,6 +28,7 @@ import type {
 import type { BackendDriver } from './backend-driver.js';
 import type { EffectiveProviderConfiguration } from './provider-resolver.js';
 import { BROWSER_MCP_SERVER_KEY } from './browser-mcp.js';
+import { MANAGED_MCP_SERVER_KEY, MANAGED_MCP_AUTH_ENV } from './managed-mcp-gateway.js';
 import { getSidecarBaseUrl } from '../utils/self-port.js';
 import { buildBrowserMcpClientConnection } from './browser-mcp-client-config.js';
 import {
@@ -330,6 +331,14 @@ export class OpencodeBackendDriver implements BackendDriver {
     return { query, messages: this.run(input, options) };
   }
 
+  async verifyManagedMcpInventory(): Promise<void> {
+    if (!this.instance) throw new Error('OpenCode is not connected');
+    const response = await opencodeFetch(this.instance, '/mcp');
+    if (!response.ok) throw new Error('OpenCode MCP status is unavailable');
+    const states = await response.json() as Record<string, { status: string }>;
+    if (states[MANAGED_MCP_SERVER_KEY]?.status !== 'connected') throw new Error('OpenCode MCP is not connected');
+  }
+
   private async *run(
     input: AsyncIterable<SDKUserMessage>,
     options: Options,
@@ -371,9 +380,15 @@ export class OpencodeBackendDriver implements BackendDriver {
         config: {
           ...buildServeConfig({ ...this.deps.provider, model: this.modelID }, this.deps.providerName),
           skills: { paths: builtinSkillRoots(options.env?.COMATE_BUILTIN_SKILLS?.split(',')) },
-          mcp: browserEnabled
-            ? buildSessionMcpConfig(this.deps.comateSessionId, taskToken!)
-            : {},
+          mcp: {
+            ...(browserEnabled ? buildSessionMcpConfig(this.deps.comateSessionId, taskToken!) : {}),
+            ...(options.mcpServers?.[MANAGED_MCP_SERVER_KEY] ? {
+              [MANAGED_MCP_SERVER_KEY]: { type: 'remote', oauth: false,
+                url: `${getSidecarBaseUrl()}/mcp/managed/${this.deps.comateSessionId}`,
+                headers: { Authorization: `{env:${MANAGED_MCP_AUTH_ENV}}` },
+              },
+            } : {}),
+          },
         },
         env: this.deps.env,
       },

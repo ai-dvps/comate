@@ -9,6 +9,7 @@ import { chatService } from './services/chat-service.js';
 import { browserService } from './services/browser-service.js';
 import { shutdown as shutdownGithubAuth } from './services/github-auth.js';
 import { providerRouteRegistry } from './services/provider-route-registry.js';
+import { mcpOAuthService } from './services/mcp-oauth-service.js';
 
 /**
  * Graceful service teardown for sidecar shutdown (SIGTERM/SIGINT and the
@@ -23,6 +24,7 @@ export async function teardownServices(): Promise<void> {
   // Zero the GitHub token holder first (R13/KTD3) — cheap, and ensures the
   // decrypted token never outlives the sidecar process.
   shutdownGithubAuth();
+  mcpOAuthService.dispose();
   // Revoke route capabilities and abort upstream work before runtime teardown.
   // closeAll is synchronous and generation-safe; late runtime closes are no-ops.
   providerRouteRegistry.closeAll();

@@ -18,6 +18,9 @@ const textPart = (over: Record<string, unknown> = {}) => ({
 });
 
 describe('mapToolName', () => {
+  it('normalizes managed MCP names for the shared gateway approval owner', () => {
+    assert.equal(mapToolName('comate-managed_t_abcdef'), 'mcp__comate-managed__t_abcdef');
+  });
   it('maps known opencode tools to claude display names', () => {
     assert.equal(mapToolName('bash'), 'Bash');
     assert.equal(mapToolName('todowrite'), 'TodoWrite');

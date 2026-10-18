@@ -193,6 +193,17 @@ describe('CodexBackendDriver interactions', () => {
     assert.doesNotMatch(JSON.stringify(config), /top-secret|browser-secret|Authorization|PROJECT_TOKEN/);
   });
 
+  it('passes only the managed loopback endpoint and an environment reference to Codex', () => {
+    const config = codexThreadConfig({ mcpServers: { 'comate-managed': { type: 'http',
+      url: 'http://127.0.0.1:1234/mcp/managed/session1', headers: { Authorization: 'Bearer managed-secret' },
+    } } } as Options);
+    assert.deepEqual(config.mcp_servers, { 'comate-managed': {
+      url: 'http://127.0.0.1:1234/mcp/managed/session1', env_http_headers: { Authorization: 'COMATE_MANAGED_MCP_AUTH' },
+      default_tools_approval_mode: 'approve',
+    } });
+    assert.ok(!JSON.stringify(config).includes('managed-secret'));
+  });
+
   it('reapplies an in-memory enterprise provider when resuming a Codex thread', async () => {
     const client = new FakeClient();
     const requests: Array<{ method: string; params?: unknown }> = [];

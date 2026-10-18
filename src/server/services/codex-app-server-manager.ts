@@ -113,6 +113,7 @@ export class CodexAppServerManager extends EventEmitter {
         clientInfo: { name: 'comate', title: 'Comate', version: '0.4.8' },
         capabilities: null,
       }, 10_000);
+      client.notify('initialized');
     } catch (error) {
       if (this.process === child) this.process = undefined;
       if (this.client === client) this.client = undefined;
