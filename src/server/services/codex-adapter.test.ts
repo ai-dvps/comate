@@ -199,6 +199,7 @@ describe('CodexBackendDriver interactions', () => {
     } } } as Options);
     assert.deepEqual(config.mcp_servers, { 'comate-managed': {
       url: 'http://127.0.0.1:1234/mcp/managed/session1', env_http_headers: { Authorization: 'COMATE_MANAGED_MCP_AUTH' },
+      default_tools_approval_mode: 'approve',
     } });
     assert.ok(!JSON.stringify(config).includes('managed-secret'));
   });

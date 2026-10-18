@@ -36,6 +36,7 @@ import { SqliteStore, store as workspaceStore } from '../../storage/sqlite-store
 import { createBrowserBinding } from '../../utils/credential-crypto.js';
 import { BrowserMutationCoordinator } from '../browser-mutation-coordinator.js';
 import { SESSION_TOKEN_ENV, sessionCapabilityService } from '../session-capability-service.js';
+import { MANAGED_MCP_SERVER_KEY, MANAGED_MCP_AUTH_ENV, managedMcpGateway } from '../managed-mcp-gateway.js';
 import type { BrowserAuditToolInput } from '../browser-audit.js';
 import { BrowserUploadStagingService } from '../browser-upload-staging.js';
 import { BrowserTaskStateService } from '../browser-task-state.js';
@@ -3034,11 +3035,16 @@ describe('chat-service browser MCP injection (KTD-3, KTD-4 ③)', { concurrency:
     return captured;
   }
 
-  it('GUI sessions get the HTTP browser server alongside stdio servers plus the stream timeout', async () => {
+  it('GUI sessions get separate managed and browser authorities while migrating their stdio services', async () => {
     const options = await captureOptions(false);
     const servers = options.mcpServers as Record<string, { type?: string; name?: string }>;
     assert.ok(servers, 'mcpServers present');
-    assert.strictEqual(servers['stdio-server']?.type, 'stdio', 'existing stdio server preserved');
+    assert.strictEqual(servers[MANAGED_MCP_SERVER_KEY]?.type, 'http');
+    assert.strictEqual(servers['stdio-server'], undefined);
+    assert.ok(managedMcpGateway.contexts().some(context => [...context.records.values()].some(record => record.name === 'stdio-server')));
+    const managedToken = (options.env as Record<string, string>)[MANAGED_MCP_AUTH_ENV].replace(/^Bearer /, '');
+    assert.ok(sessionCapabilityService.resolveForAudience(managedToken, 'managed-mcp'));
+    assert.equal(sessionCapabilityService.resolveForAudience(managedToken, 'browser-mcp'), null);
     const browser = servers[BROWSER_MCP_SERVER_KEY] as unknown as {
       type: string;
       url: string;
@@ -3085,12 +3091,15 @@ describe('chat-service browser MCP injection (KTD-3, KTD-4 ③)', { concurrency:
       undefined,
     );
     assert.strictEqual((options.env as Record<string, string | undefined>).COMATE_CLI_PATH, undefined);
+    assert.equal(servers[MANAGED_MCP_SERVER_KEY], undefined);
+    assert.equal((options.env as Record<string, string | undefined>)[MANAGED_MCP_AUTH_ENV], undefined);
   });
 
   it('scheduled sessions never mint or inject the browser surface', async () => {
     const options = await captureOptions(false, undefined, 'scheduled');
     const servers = options.mcpServers as Record<string, { type?: string }> | undefined;
     assert.equal(servers?.[BROWSER_MCP_SERVER_KEY], undefined);
+    assert.equal(servers?.[MANAGED_MCP_SERVER_KEY], undefined);
     assert.equal((options.env as Record<string, string | undefined>)[SESSION_TOKEN_ENV], undefined);
     assert.equal((options.env as Record<string, string | undefined>).COMATE_CLI_PATH, undefined);
   });

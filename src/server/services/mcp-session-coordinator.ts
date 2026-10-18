@@ -48,7 +48,7 @@ export class McpSessionCoordinator extends EventEmitter {
       for (const id of new Set([old?.id, record?.id, current.get(name)?.id].filter((id): id is string => Boolean(id)))) {
         if (!releases.has(id)) session.fences.set(id, new Promise<void>(resolve => releases.set(id, resolve)));
       }
-      applications.set(name, { sessionId: session.sessionId, backend: session.backend, name,
+      applications.set(name, { sessionId: session.sessionId, workspaceId: session.workspaceId, backend: session.backend, name,
         entryId: record?.id ?? old?.id, desired: epoch, applied: applications.get(name)?.applied ?? 0, state: 'pending' });
     }
     if (!changed) return;
@@ -56,10 +56,15 @@ export class McpSessionCoordinator extends EventEmitter {
     this.releases.set(session.sessionId, releases);
     this.pending.set(session.sessionId, { epoch, records: next });
     this.emit('change', session.sessionId, this.status(session.sessionId));
-    if (!this.running.has(session.sessionId)) {
-      const work = Promise.resolve().then(() => this.apply(session)).finally(() => this.running.delete(session.sessionId));
-      this.running.set(session.sessionId, work);
-    }
+    this.start(session);
+  }
+  private start(session: ManagedMcpSession): void {
+    if (this.running.has(session.sessionId)) return;
+    const work = Promise.resolve().then(() => this.apply(session)).finally(() => {
+      this.running.delete(session.sessionId);
+      if (!session.closed && this.pending.has(session.sessionId)) this.start(session);
+    });
+    this.running.set(session.sessionId, work);
   }
   private async drained(session: ManagedMcpSession, ids: string[]): Promise<void> {
     while (!session.closed && ids.some(id => (session.leases.get(id) ?? 0) > 0)) {
@@ -83,15 +88,24 @@ export class McpSessionCoordinator extends EventEmitter {
       this.emit('change', session.sessionId, this.status(session.sessionId));
       try {
         for (const record of update.records.values()) if (ids.includes(record.id)) await this.gateway.client(session, record);
-        session.records = new Map([...update.records.values()].map(record => [record.id, record]));
+        const records = new Map(session.records);
+        for (const application of affected) {
+          for (const [id, record] of records) if (record.name === application.name) records.delete(id);
+          const replacement = update.records.get(application.name);
+          if (replacement) records.set(replacement.id, replacement);
+        }
+        session.records = records;
         for (const [alias, target] of session.aliases) if (ids.includes(target.recordId)) session.aliases.delete(alias);
         const tools = await this.gateway.listTools(session.sessionId);
+        if (ids.some(id => session.records.has(id) && session.statuses.get(id)?.state === 'failed')) throw new Error('MCP tool discovery failed');
         await this.gateway.notify(session);
         if (!session.refreshInventory) throw new Error('Backend inventory is unavailable');
-        await session.refreshInventory(tools.map(tool => tool.name));
+        await session.refreshInventory(tools);
         if (session.closed) return;
         for (const [key, client] of session.clients) {
-          const record = session.records.get(key.split(':')[0]);
+          const id = key.split(':')[0];
+          if (!ids.includes(id)) continue;
+          const record = session.records.get(id);
           if (!record || key !== `${record.id}:${record.revision}:${record.oauthState?.obtainedAt ?? 0}`) { session.clients.delete(key); await (await client).close(); }
         }
         for (const id of ids) session.blocked.delete(id);
@@ -113,7 +127,7 @@ export class McpSessionCoordinator extends EventEmitter {
       this.emit('change', session.sessionId, this.status(session.sessionId));
     }
   }
-  async settled(sessionId: string): Promise<void> { await this.running.get(sessionId); }
+  async settled(sessionId: string): Promise<void> { while (this.running.has(sessionId)) await this.running.get(sessionId); }
   private onClosed = (id: string) => {
     this.pending.delete(id); this.applications.delete(id);
     for (const release of this.releases.get(id)?.values() ?? []) release();

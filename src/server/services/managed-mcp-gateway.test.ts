@@ -17,6 +17,7 @@ it('serves isolated real MCP tools, prompts and resources over authenticated HTT
   await service.save({ scope: 'global', name: 'example', enabled: true, connection: {
     type: 'stdio', command: process.execPath,
     args: ['--import', path.resolve('node_modules/tsx/dist/loader.mjs'), path.resolve('scripts/fixtures/managed-mcp-fixture.ts')],
+    env: { MCP_FIXTURE_SECRET: 'resource-credential-sentinel' },
   } });
   const gateway = new ManagedMcpGateway(service);
   const context = await gateway.register({ sessionId: 'session1', workspaceId: workspace.id, directory: process.cwd(), generation: 'g1', backend: 'test' });
@@ -40,9 +41,13 @@ it('serves isolated real MCP tools, prompts and resources over authenticated HTT
     const prompt = (await client.listPrompts()).prompts[0];
     assert.equal((await client.getPrompt({ name: prompt.name, arguments: { name: 'World' } })).messages[0].content.text, 'Hello World');
     const resource = (await client.listResources()).resources[0];
+    assert.ok(!JSON.stringify(resource).includes('resource-credential-sentinel'));
     const read = await client.readResource({ uri: resource.uri });
     assert.equal(read.contents[0].uri, resource.uri);
     assert.equal(read.contents[0].text, 'fixture resource');
+    const linked = await client.callTool({ name: tools.tools[0].name, arguments: { message: 'linked', link: true } });
+    const reference = (linked.content as Array<{ type: string; uri?: string }>).find(content => content.type === 'resource_link')!;
+    assert.equal((await client.readResource({ uri: reference.uri! })).contents[0].text, 'fixture resource');
   } finally {
     await client.close();
     await gateway.close('session1');
@@ -50,4 +55,28 @@ it('serves isolated real MCP tools, prompts and resources over authenticated HTT
     await new Promise<void>(resolve => server.close(() => resolve()));
     store.close();
   }
+});
+
+it('cancels a queued call while the previous configuration is still draining', async () => {
+  const store = new SqliteStore(':memory:');
+  const workspace = await store.create({ name: 'cancel', folderPath: process.cwd() });
+  const service = new McpConfigService(store);
+  const entry = await service.save({ scope: 'global', name: 'example', enabled: true, connection: {
+    type: 'stdio', command: process.execPath,
+    args: ['--import', path.resolve('node_modules/tsx/dist/loader.mjs'), path.resolve('scripts/fixtures/managed-mcp-fixture.ts')],
+  } });
+  const gateway = new ManagedMcpGateway(service);
+  const context = await gateway.register({ sessionId: 'cancel', workspaceId: workspace.id, directory: process.cwd(), generation: 'g', backend: 'test' });
+  context.authorizeTool = async (_name, input) => input;
+  let release!: () => void;
+  try {
+    const tool = (await gateway.listTools('cancel'))[0].name;
+    context.fences.set(entry.id, new Promise<void>(resolve => { release = resolve; }));
+    const abort = new AbortController();
+    const outcome = gateway.callTool('cancel', tool, { message: 'never-dispatch' }, abort.signal).then(() => 'called', () => 'cancelled');
+    await new Promise(resolve => setImmediate(resolve));
+    abort.abort();
+    assert.equal(await Promise.race([outcome, new Promise(resolve => setTimeout(() => resolve('still-waiting'), 100))]), 'cancelled');
+    assert.equal(context.leases.get(entry.id) ?? 0, 0);
+  } finally { context.fences.delete(entry.id); release?.(); await gateway.close('cancel'); store.close(); }
 });

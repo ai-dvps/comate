@@ -13,7 +13,7 @@ import {
 } from './codex-app-server-manager.js';
 import { CodexEventMapper } from './codex-event-mapper.js';
 import { CodexRpcError } from './codex-rpc-client.js';
-import { MANAGED_MCP_SERVER_KEY, MANAGED_MCP_AUTH_ENV } from './managed-mcp-gateway.js';
+import { MANAGED_MCP_SERVER_KEY, MANAGED_MCP_AUTH_ENV, MANAGED_MCP_DISCOVER, MANAGED_MCP_INVOKE } from './managed-mcp-gateway.js';
 import type { TurnTokenUsage } from '../types/message.js';
 
 interface CodexTokenCounts {
@@ -211,7 +211,11 @@ export class CodexBackendDriver implements BackendDriver {
   async verifyManagedMcpInventory(expected: string[]): Promise<void> {
     const server = (await this.mcpInventory()).find(server => server.name === MANAGED_MCP_SERVER_KEY);
     const actual = Object.values(server?.tools ?? {}).map(tool => tool.name).sort();
-    if (!server?.serverInfo || actual.join('\0') !== [...expected].sort().join('\0')) throw new Error('Codex MCP inventory is stale');
+    if (!server?.serverInfo || ![MANAGED_MCP_DISCOVER, MANAGED_MCP_INVOKE].every(tool => actual.includes(tool))) throw new Error('Codex MCP bridge is unavailable');
+    const response = await this.manager.request<{ structuredContent?: { tools?: Array<{ name: string }> } }>(
+      'mcpServer/tool/call', { threadId: this.threadId, server: MANAGED_MCP_SERVER_KEY, tool: MANAGED_MCP_DISCOVER, arguments: {} });
+    const discovered = response.structuredContent?.tools?.map(tool => tool.name).sort();
+    if (!discovered || discovered.join('\0') !== [...expected].sort().join('\0')) throw new Error('Codex MCP catalog is stale');
   }
 
   private async run(input: AsyncIterable<SDKUserMessage>, options: Options): Promise<void> {
@@ -531,7 +535,9 @@ export function codexThreadConfig(
     const config = rawConfig as Record<string, unknown>;
     if (name === MANAGED_MCP_SERVER_KEY && config.type === 'http' && typeof config.url === 'string' &&
         /^http:\/\/127\.0\.0\.1:\d+\/mcp\/managed\/[A-Za-z0-9_-]+$/.test(config.url)) {
-      mcpServers[name] = { url: config.url, env_http_headers: { Authorization: MANAGED_MCP_AUTH_ENV } };
+      // The authenticated host gateway owns approval for every upstream call.
+      mcpServers[name] = { url: config.url, env_http_headers: { Authorization: MANAGED_MCP_AUTH_ENV },
+        default_tools_approval_mode: 'approve' };
       continue;
     }
     if (config.type !== undefined && config.type !== 'stdio') continue;

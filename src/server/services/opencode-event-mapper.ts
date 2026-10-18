@@ -93,6 +93,7 @@ const TOOL_NAME_MAP: Record<string, string> = {
 };
 
 export function mapToolName(opencodeTool: string): string {
+  if (opencodeTool.startsWith('comate-managed_')) return `mcp__comate-managed__${opencodeTool.slice('comate-managed_'.length)}`;
   return (
     TOOL_NAME_MAP[opencodeTool] ??
     opencodeTool.charAt(0).toUpperCase() + opencodeTool.slice(1)

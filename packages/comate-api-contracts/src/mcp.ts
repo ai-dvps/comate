@@ -20,7 +20,9 @@ export type McpConnection = z.infer<typeof mcpConnectionSchema>;
 export type McpScope = string;
 export interface McpOAuthState {
   identity: string;
-  tokens?: { access_token: string; token_type: string; refresh_token?: string; expires_in?: number; scope?: string };
+  credentialGeneration?: string;
+  reauthorizationRequired?: boolean;
+  tokens?: { access_token: string; token_type: string; refresh_token?: string; id_token?: string; expires_in?: number; scope?: string };
   obtainedAt?: number;
   clientInformation?: Record<string, unknown>;
   discovery?: Record<string, unknown>;
@@ -62,6 +64,7 @@ export interface McpConnectionStatus {
 }
 export interface McpSessionApplication {
   sessionId: string;
+  workspaceId: string;
   entryId?: string;
   name: string;
   backend: string;

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Manage third-party MCP services** — Add local or remote services through forms or JSON, share global settings, and override or disable them per workspace. OAuth and manual credentials stay encrypted; Claude, Codex, and OpenCode apply changes to existing desktop conversations after active calls finish.
+
 ### Changed
 
 - **Explain Claude context and background work** — Automatic context updates use coalesced summary estimates; detailed `/context` reports distinguish reserved and deferred tokens. Background activity shows task hierarchy and separates maintenance watchers from business work.

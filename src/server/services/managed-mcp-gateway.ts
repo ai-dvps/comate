@@ -15,6 +15,14 @@ import { connectManagedMcp, managedMcpError, sanitizeMcpValue, type ManagedMcpCl
 
 export const MANAGED_MCP_SERVER_KEY = 'comate-managed';
 export const MANAGED_MCP_AUTH_ENV = 'COMATE_MANAGED_MCP_AUTH';
+export const MANAGED_MCP_DISCOVER = 'discover';
+export const MANAGED_MCP_INVOKE = 'invoke';
+const CODEX_TOOLS: Tool[] = [
+  { name: MANAGED_MCP_DISCOVER, description: 'Discover currently configured MCP tools, their source service, opaque tool IDs and JSON input schemas. Call before using invoke: the available services and schemas can change during this chat.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true } },
+  { name: MANAGED_MCP_INVOKE, description: 'Call an MCP tool using its opaque ID and arguments from a fresh discover result. Comate applies the current service configuration and asks for approval when required.',
+    inputSchema: { type: 'object', properties: { tool: { type: 'string' }, arguments: { type: 'object', additionalProperties: true } }, required: ['tool', 'arguments'], additionalProperties: false } },
+];
 export interface ManagedMcpSession {
   sessionId: string; workspaceId: string; directory: string; generation: string; backend: string;
   records: Map<string, ManagedMcpRecord>;
@@ -22,12 +30,14 @@ export interface ManagedMcpSession {
   leases: Map<string, number>;
   fences: Map<string, Promise<void>>;
   statuses: Map<string, McpConnectionStatus>;
-  bridges: Map<string, { server: Server; transport: StreamableHTTPServerTransport; inventory?: string[] }>;
+  bridges: Map<string, { server: Server; transport: StreamableHTTPServerTransport }>;
   aliases: Map<string, { recordId: string; name: string; kind: 'tool' | 'prompt' }>;
   closed: boolean;
   blocked: Set<string>;
+  inventoryGeneration: number;
+  inventoryReceipt?: string;
   authorizeTool?: (name: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<Record<string, unknown>>;
-  refreshInventory?: (expected: string[]) => Promise<void>;
+  refreshInventory?: (expected: Tool[]) => Promise<void>;
 }
 type SessionInput = Pick<ManagedMcpSession, 'sessionId' | 'workspaceId' | 'directory' | 'generation' | 'backend'>;
 
@@ -38,6 +48,14 @@ export class ManagedMcpGateway extends EventEmitter {
   constructor(readonly config: McpConfigService) { super(); }
 
   contexts(): ManagedMcpSession[] { return [...this.sessions.values()]; }
+  ownsApproval(id: string): boolean { return Boolean(this.sessions.get(id)?.authorizeTool); }
+  displayName(id: string, name: string): string | undefined {
+    const prefix = `mcp__${MANAGED_MCP_SERVER_KEY}__`;
+    const session = this.sessions.get(id);
+    const alias = name.startsWith(prefix) ? session?.aliases.get(name.slice(prefix.length)) : undefined;
+    const record = alias ? session?.records.get(alias.recordId) : undefined;
+    return record && alias ? this.sanitize(record, `${record.name} / ${alias.name}`) : undefined;
+  }
   context(id: string): ManagedMcpSession {
     const session = this.sessions.get(id);
     if (!session || session.closed) throw new McpError(ErrorCode.InvalidRequest, 'MCP session is closed');
@@ -50,7 +68,7 @@ export class ManagedMcpGateway extends EventEmitter {
     if (old) await this.close(input.sessionId);
     const records = await this.config.effective(input.workspaceId);
     const context: ManagedMcpSession = { ...input, records: new Map(records.map(record => [record.id, record])),
-      clients: new Map(), leases: new Map(), fences: new Map(), statuses: new Map(), bridges: new Map(), aliases: new Map(), blocked: new Set(), closed: false };
+      clients: new Map(), leases: new Map(), fences: new Map(), statuses: new Map(), bridges: new Map(), aliases: new Map(), blocked: new Set(), inventoryGeneration: 0, closed: false };
     this.sessions.set(input.sessionId, context);
     return context;
   }
@@ -101,17 +119,22 @@ export class ManagedMcpGateway extends EventEmitter {
   }
 
   async notify(session: ManagedMcpSession): Promise<void> {
+    session.inventoryGeneration++;
+    session.inventoryReceipt = undefined;
     await Promise.allSettled([...session.bridges.values()].flatMap(({ server }) => [
       server.sendToolListChanged(), server.sendResourceListChanged(), server.sendPromptListChanged(),
     ]));
   }
 
-  async confirmInventory(id: string, expected: string[]): Promise<void> {
-    const wanted = [...expected].sort().join('\0');
+  private inventoryDigest(tools: Tool[]): string {
+    return createHash('sha256').update(JSON.stringify([...tools].sort((a, b) => a.name.localeCompare(b.name)))).digest('hex');
+  }
+  async confirmInventory(id: string, expected: Tool[]): Promise<void> {
+    const wanted = this.inventoryDigest(expected);
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline) {
       const session = this.context(id);
-      if (session.bridges.size > 0 && [...session.bridges.values()].every(bridge => bridge.inventory?.join('\0') === wanted)) return;
+      if (session.inventoryReceipt === wanted) return;
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     throw new Error('Backend tool inventory has not updated');
@@ -126,18 +149,22 @@ export class ManagedMcpGateway extends EventEmitter {
         const tools: Tool[] = [];
         let cursor: string | undefined;
         do {
-          const page = this.sanitize(record, await client.listTools({ cursor }));
-          tools.push(...page.tools.map(tool => ({ ...tool,
+          const page = await client.listTools({ cursor });
+          tools.push(...page.tools.map(tool => ({ ...this.sanitize(record, tool),
             name: this.alias(session, record, tool.name, 'tool'),
-            description: `${record.name} / ${tool.name}${tool.description ? `: ${tool.description}` : ''}`,
-            _meta: { ...tool._meta, 'comate/source': { server: record.name, tool: tool.name } },
+            description: this.sanitize(record, `${record.name} / ${tool.name}${tool.description ? `: ${tool.description}` : ''}`),
+            _meta: this.sanitize(record, { ...tool._meta, 'comate/source': { server: record.name, tool: tool.name } }),
           })));
           cursor = page.nextCursor;
         } while (cursor);
         const status = session.statuses.get(record.id);
         if (status) status.tools = tools.map(tool => ({ name: tool.name, description: tool.description }));
         return tools;
-      } catch { return []; }
+      } catch {
+        session.statuses.set(record.id, { state: 'failed', error: 'Unable to discover MCP tools. Check the service connection.' });
+        this.emit('status', session.sessionId);
+        return [];
+      }
     }));
     return batches.flat();
   }
@@ -151,14 +178,44 @@ export class ManagedMcpGateway extends EventEmitter {
     return sanitizeMcpValue(record, current ? sanitizeMcpValue(current, value) : value);
   }
 
-  private async leased<T>(session: ManagedMcpSession, recordId: string, fn: (connected: ManagedMcpClient, record: ManagedMcpRecord) => Promise<T>): Promise<T> {
-    while (session.fences.has(recordId) && !session.closed) await session.fences.get(recordId);
+  private resourceReferences<T>(recordId: string, value: T): T {
+    if (!value || typeof value !== 'object') return value;
+    const block = (input: unknown): unknown => {
+      if (!input || typeof input !== 'object') return input;
+      const content = input as Record<string, unknown>;
+      if (content.type === 'resource_link' && typeof content.uri === 'string') return { ...content, uri: this.resourceUri(recordId, content.uri) };
+      if (content.type === 'resource' && content.resource && typeof content.resource === 'object') {
+        const resource = content.resource as Record<string, unknown>;
+        if (typeof resource.uri === 'string') return { ...content, resource: { ...resource, uri: this.resourceUri(recordId, resource.uri) } };
+      }
+      return input;
+    };
+    const result = value as Record<string, unknown>;
+    return { ...result,
+      ...(Array.isArray(result.content) ? { content: result.content.map(block) } : {}),
+      ...(Array.isArray(result.messages) ? { messages: result.messages.map(message => ({ ...message, content: block(message.content) })) } : {}),
+    } as T;
+  }
+
+  private async leased<T>(session: ManagedMcpSession, recordId: string, fn: (connected: ManagedMcpClient, record: ManagedMcpRecord) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    while (session.fences.has(recordId) && !session.closed) {
+      const fence = session.fences.get(recordId)!;
+      if (!signal) { await fence; continue; }
+      let onAbort!: () => void;
+      try {
+        await Promise.race([fence, new Promise<never>((_resolve, reject) => {
+          onAbort = () => reject(new McpError(ErrorCode.InvalidRequest, 'MCP operation was cancelled.'));
+          signal.addEventListener('abort', onAbort, { once: true });
+          if (signal.aborted) onAbort();
+        })]);
+      } finally { signal.removeEventListener('abort', onAbort); }
+    }
     if (session.closed) throw new McpError(ErrorCode.InvalidRequest, 'MCP session is closed');
     const record = session.records.get(recordId);
     if (!record) throw new McpError(ErrorCode.InvalidParams, 'MCP service is no longer available');
     if (session.blocked.has(recordId)) throw new McpError(ErrorCode.InvalidRequest, 'MCP configuration is not applied. Retry from MCP settings.');
     session.leases.set(recordId, (session.leases.get(recordId) ?? 0) + 1);
-    try { return this.sanitize(record, await fn(await this.client(session, record), record)); }
+    try { return this.sanitize(record, this.resourceReferences(recordId, await fn(await this.client(session, record), record))); }
     catch { throw new McpError(ErrorCode.InternalError, 'MCP operation failed. Check the service connection and authentication.'); }
     finally {
       session.leases.set(recordId, (session.leases.get(recordId) ?? 1) - 1);
@@ -172,9 +229,12 @@ export class ManagedMcpGateway extends EventEmitter {
     const target = session.aliases.get(name);
     if (!target || target.kind !== 'tool') throw new McpError(ErrorCode.InvalidParams, 'MCP tool is unavailable. Refresh the tool list.');
     if (!session.authorizeTool) throw new McpError(ErrorCode.InvalidRequest, 'MCP session permission gate is unavailable');
+    const revision = session.records.get(target.recordId)?.revision;
     const approved = await session.authorizeTool(`mcp__${MANAGED_MCP_SERVER_KEY}__${name}`, args ?? {}, signal ?? new AbortController().signal);
-    return this.leased(session, target.recordId, ({ client }) => client.callTool({ name: target.name, arguments: approved }, undefined,
-      { signal, timeout: 300_000, onprogress }));
+    return this.leased(session, target.recordId, ({ client }, record) => {
+      if (record.revision !== revision || signal?.aborted) throw new Error('MCP call changed before dispatch');
+      return client.callTool({ name: target.name, arguments: approved }, undefined, { signal, timeout: 300_000, onprogress });
+    }, signal);
   }
 
   private async listPrompts(session: ManagedMcpSession): Promise<Prompt[]> {
@@ -186,8 +246,8 @@ export class ManagedMcpGateway extends EventEmitter {
         let cursor: string | undefined;
         do {
           const page = await client.listPrompts({ cursor });
-          prompts.push(...page.prompts.map(prompt => ({ ...prompt, name: this.alias(session, record, prompt.name, 'prompt'),
-            description: `${record.name} / ${prompt.name}${prompt.description ? `: ${prompt.description}` : ''}` })));
+          prompts.push(...page.prompts.map(prompt => ({ ...this.sanitize(record, prompt), name: this.alias(session, record, prompt.name, 'prompt'),
+            description: this.sanitize(record, `${record.name} / ${prompt.name}${prompt.description ? `: ${prompt.description}` : ''}`) })));
           cursor = page.nextCursor;
         } while (cursor);
         return prompts;
@@ -206,11 +266,11 @@ export class ManagedMcpGateway extends EventEmitter {
         do {
           if (templates) {
             const page = await client.listResourceTemplates({ cursor });
-            entries.push(...page.resourceTemplates.map(entry => ({ ...entry, uriTemplate: this.resourceUri(record.id, entry.uriTemplate) })));
+            entries.push(...page.resourceTemplates.map(entry => this.sanitize(record, { ...entry, uriTemplate: this.resourceUri(record.id, entry.uriTemplate) })));
             cursor = page.nextCursor;
           } else {
             const page = await client.listResources({ cursor });
-            entries.push(...page.resources.map(entry => ({ ...entry, uri: this.resourceUri(record.id, entry.uri) })));
+            entries.push(...page.resources.map(entry => this.sanitize(record, { ...entry, uri: this.resourceUri(record.id, entry.uri) })));
             cursor = page.nextCursor;
           }
         } while (cursor);
@@ -226,18 +286,34 @@ export class ManagedMcpGateway extends EventEmitter {
       instructions: 'Tools are provided by user-configured MCP services. Tool descriptions identify their original service and name.',
     });
     server.setRequestHandler(ListToolsRequestSchema, async () => {
+      const generation = session.inventoryGeneration;
+      if (session.backend === 'codex') return { tools: CODEX_TOOLS };
       const tools = await this.listTools(session.sessionId);
-      const bridge = [...session.bridges.values()].find(bridge => bridge.server === server);
-      if (bridge) bridge.inventory = tools.map(tool => tool.name).sort();
+      if (generation === session.inventoryGeneration) session.inventoryReceipt = this.inventoryDigest(tools);
       this.emit('inventory', session.sessionId);
       return { tools };
     });
-    server.setRequestHandler(CallToolRequestSchema, (request, extra) => this.callTool(session.sessionId, request.params.name,
-      request.params.arguments, extra.signal, request.params._meta?.progressToken === undefined ? undefined : progress => {
+    server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+      let name = request.params.name, args = request.params.arguments;
+      if (session.backend === 'codex') {
+        if (name === MANAGED_MCP_DISCOVER) {
+          const tools = await this.listTools(session.sessionId);
+          const catalog = { tools, revision: this.inventoryDigest(tools) };
+          return { content: [{ type: 'text', text: JSON.stringify(catalog) }], structuredContent: catalog };
+        }
+        if (name !== MANAGED_MCP_INVOKE || typeof args?.tool !== 'string' ||
+            !args.arguments || typeof args.arguments !== 'object' || Array.isArray(args.arguments)) {
+          throw new McpError(ErrorCode.InvalidParams, 'Use discover and invoke with a current tool ID and arguments');
+        }
+        name = args.tool; args = args.arguments as Record<string, unknown>;
+      }
+      return this.callTool(session.sessionId, name,
+      args, extra.signal, request.params._meta?.progressToken === undefined ? undefined : progress => {
         void extra.sendNotification({ method: 'notifications/progress', params: {
           ...progress, progressToken: request.params._meta!.progressToken!,
         } }).catch(() => undefined);
-      }));
+      });
+    });
     server.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: await this.listPrompts(session) }));
     server.setRequestHandler(GetPromptRequestSchema, async request => {
       const target = session.aliases.get(request.params.name);

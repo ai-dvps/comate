@@ -5,6 +5,14 @@ import { SqliteStore } from '../storage/sqlite-store.js';
 import { McpConfigService } from './mcp-config-service.js';
 
 describe('MCP configuration service', () => {
+  it('rejects duplicate JSON service keys before any entry is imported', async () => {
+    const store = new SqliteStore(':memory:');
+    const service = new McpConfigService(store);
+    try {
+      await assert.rejects(service.import('global', '{"mcpServers":{"example":{"command":"first"},"example":{"command":"second"}}}'), /duplicate.*character/i);
+      assert.equal(store.mcp.list('global').length, 0);
+    } finally { store.close(); }
+  });
   it('fully overrides, disables and restores global inheritance without sharing credentials', async () => {
     const store = new SqliteStore(':memory:');
     const ws = await store.create({ name: 'workspace', folderPath: '/tmp' });

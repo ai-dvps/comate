@@ -37,7 +37,7 @@ import {
   isBrowserUploadClassified,
 } from './browser-gate-state.js';
 import { browserAuditService } from './browser-audit.js';
-import { MANAGED_MCP_SERVER_KEY } from './managed-mcp-gateway.js';
+import { MANAGED_MCP_SERVER_KEY, managedMcpGateway } from './managed-mcp-gateway.js';
 
 
 const RING_BUFFER_CAP = 500;
@@ -298,6 +298,7 @@ export class SessionRuntime {
   }
 
   private kimiLoopDetector?: KimiLoopDetector;
+  private managedMcpInvocations = new Set<string>();
 
   private constructor(
     sessionId: string,
@@ -342,6 +343,16 @@ export class SessionRuntime {
       for (const handler of this.webEventHandlers) {
         handler(id, event);
       }
+      if (event.type === 'tool_use_start') {
+        if (event.toolName === `mcp__${MANAGED_MCP_SERVER_KEY}__invoke`) this.managedMcpInvocations.add(event.toolUseId);
+        const displayName = managedMcpGateway.displayName(this.sessionId, event.toolName);
+        if (displayName) this.emitter.emitEvent({ type: 'tool_use_meta', toolUseId: event.toolUseId, meta: { displayName } });
+      }
+      if (event.type === 'tool_use_done' && this.managedMcpInvocations.delete(event.toolUseId) &&
+          event.input && typeof event.input === 'object' && 'tool' in event.input && typeof event.input.tool === 'string') {
+        const displayName = managedMcpGateway.displayName(this.sessionId, `mcp__${MANAGED_MCP_SERVER_KEY}__${event.input.tool}`);
+        if (displayName) this.emitter.emitEvent({ type: 'tool_use_meta', toolUseId: event.toolUseId, meta: { displayName } });
+      }
       if (event.type === 'context_usage' && event.detail === 'full') {
         this.contextUsageRevision += 1;
         this.contextUsagePending = false;
@@ -371,7 +382,7 @@ export class SessionRuntime {
       ...this.options,
       // The managed gateway owns approval so direct authenticated HTTP calls
       // cannot bypass it. Native backend approval must not prompt twice.
-      canUseTool: (name, input, extra) => name.startsWith(`mcp__${MANAGED_MCP_SERVER_KEY}__`)
+      canUseTool: (name, input, extra) => name.startsWith(`mcp__${MANAGED_MCP_SERVER_KEY}__`) && managedMcpGateway.ownsApproval(this.sessionId)
         ? Promise.resolve({ behavior: 'allow' as const, updatedInput: input })
         : canUseTool(name, input, extra),
       ...(Object.keys(hooks).length > 0 ? { hooks } : {}),
@@ -708,7 +719,7 @@ export class SessionRuntime {
     if (this.closed || signal.aborted) throw new Error('MCP call cancelled');
     const id = randomUUID();
     const decision = await this.buildCanUseToolCallback()(name, input, {
-      signal, toolUseID: id, requestId: id, suppressAlwaysAllowRule: true,
+      signal, toolUseID: id, requestId: id, suppressAlwaysAllowRule: true, title: managedMcpGateway.displayName(this.sessionId, name),
     });
     if (decision?.behavior !== 'allow' || this.closed || signal.aborted) throw new Error('MCP call was not approved');
     return decision.updatedInput ?? input;
@@ -1667,6 +1678,7 @@ export class SessionRuntime {
   }
 
   async close(): Promise<void> {
+    this.managedMcpInvocations.clear();
     if (this.closed) return;
     this.deliberateShutdown = true;
     this.closed = true;

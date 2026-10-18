@@ -2,7 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
-import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+import { UnauthorizedError, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { ManagedMcpRecord } from '@comate/api-contracts';
 import { ListRootsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { pathToFileURL } from 'node:url';
@@ -30,8 +30,11 @@ export const managedMcpFetch: typeof fetch = async (input, init) => {
 
 export function managedMcpError(error: unknown): string {
   const code = (error as { code?: unknown; name?: string })?.code;
+  const message = error instanceof Error ? error.message : '';
+  if (['Program not found. Check the MCP command and PATH.', 'Authorization required. Sign in or update the service credentials.',
+    'MCP operation was cancelled.'].includes(message)) return message;
   if (code === 'ENOENT') return 'Program not found. Check the MCP command and PATH.';
-  if ((error as { name?: string })?.name === 'UnauthorizedError' || code === 401) return 'Authorization required. Sign in or update the service credentials.';
+  if (error instanceof UnauthorizedError || code === 401 || message === 'Authorization required' || message === 'MCP authorization expired. Sign in again.') return 'Authorization required. Sign in or update the service credentials.';
   if ((error as { name?: string })?.name === 'AbortError') return 'MCP operation was cancelled.';
   return 'MCP connection failed. Check the program, address, network and authentication.';
 }
@@ -46,7 +49,7 @@ export function sanitizeMcpValue<T>(record: ManagedMcpRecord, value: T): T {
   const secrets = [
     ...Object.values(connection?.type === 'stdio' ? connection.env ?? {} : connection?.headers ?? {}),
     ...(connection?.type === 'stdio' ? connection.args ?? [] : []),
-    record.oauthState?.tokens?.access_token, record.oauthState?.tokens?.refresh_token,
+    record.oauthState?.tokens?.access_token, record.oauthState?.tokens?.refresh_token, record.oauthState?.tokens?.id_token,
     record.oauthState?.clientInformation?.client_secret,
     connection && connection.type !== 'stdio' ? connection.oauth?.clientSecret : undefined,
   ].filter((secret): secret is string => typeof secret === 'string' && secret.length > 0);
@@ -54,7 +57,8 @@ export function sanitizeMcpValue<T>(record: ManagedMcpRecord, value: T): T {
     const url = new URL(connection.url);
     secrets.push(...[url.username, url.password, ...url.searchParams.values()].filter(Boolean));
   }
-  for (const secret of [...secrets]) if (/^Bearer /i.test(secret)) secrets.push(secret.slice(7));
+  for (const secret of [...secrets]) if (/^(Bearer|Basic) /i.test(secret)) secrets.push(secret.slice(secret.indexOf(' ') + 1));
+  for (const secret of [...secrets]) if (encodeURIComponent(secret) !== secret) secrets.push(encodeURIComponent(secret));
   const walk = (item: unknown): unknown => {
     if (typeof item === 'string') return secrets.reduce((text, secret) => text.split(secret).join('[REDACTED]'), item);
     if (Array.isArray(item)) return item.map(walk);
@@ -83,9 +87,11 @@ export async function connectManagedMcp(
     : connection.type === 'sse'
       ? new SSEClientTransport(new URL(connection.url), { authProvider,
         requestInit: { headers: connection.headers }, fetch: managedMcpFetch,
-        eventSourceInit: { fetch: (input, init) => managedMcpFetch(input, {
-          ...init, headers: { ...connection.headers, ...Object.fromEntries(new Headers(init?.headers).entries()) },
-        }) } })
+        eventSourceInit: { fetch: (input, init) => {
+          const headers = new Headers(connection.headers);
+          new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
+          return managedMcpFetch(input, { ...init, headers });
+        } } })
       : new StreamableHTTPClientTransport(new URL(connection.url), { authProvider,
         requestInit: { headers: connection.headers }, fetch: managedMcpFetch,
         reconnectionOptions: { maxRetries: 0, maxReconnectionDelay: 1000, initialReconnectionDelay: 1000, reconnectionDelayGrowFactor: 1 } });

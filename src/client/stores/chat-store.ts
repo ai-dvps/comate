@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useMcpStore } from './mcp-store'
 import i18next from 'i18next'
 import { readNavigationState, saveActiveSessionIds } from '../lib/navigation-state'
 
@@ -3282,6 +3283,10 @@ export function handleSseEvent(
       })
       stopWorkflowPolling(sessionId, runId)
       void fetchWorkflowOnce(workspaceId, sessionId, runId, set)
+      return
+    }
+    case 'mcp_application': {
+      if (Array.isArray(data.applications)) useMcpStore.getState().updateApplications(sessionId, data.applications)
       return
     }
     case 'session_title': {

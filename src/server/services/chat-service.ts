@@ -2018,8 +2018,15 @@ export class ChatService {
       if (managedContext) {
         managedContext.authorizeTool = (name, input, signal) => runtime.authorizeManagedMcpTool(name, input, signal);
         managedContext.refreshInventory = async expected => {
-          await managedMcpGateway.confirmInventory(sessionId, expected);
-          await runtime.verifyManagedMcpInventory(expected);
+          const deadline = Date.now() + 15_000;
+          for (;;) {
+            try { await runtime.verifyManagedMcpInventory(expected.map(tool => tool.name)); break; }
+            catch (error) {
+              if (Date.now() >= deadline || runtime.isClosed()) throw error;
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+          }
+          if (backend !== 'codex') await managedMcpGateway.confirmInventory(sessionId, expected);
         };
         const onMcpChange = (changedId: string) => {
           if (changedId === sessionId) runtime.emitMcpApplication(mcpSessionCoordinator.status(sessionId));
@@ -2058,6 +2065,8 @@ export class ChatService {
       // early-returns and would never clear the bot-gate bookkeeping
       // (sessionSpawnRoles is set inside buildSdkOptions) — drop it here.
       if (!this.runtimes.has(sessionId)) {
+        await managedMcpGateway.close(sessionId);
+        sessionCapabilityService.revokeForSession(sessionId);
         this.releaseProviderRoute(this.runtimeProviderRoutes.get(sessionId), 'RUNTIME_CREATION_FAILED');
         this.sessionSpawnRoles.delete(sessionId);
         this.demotionRebuilds.delete(sessionId);
@@ -2075,10 +2084,10 @@ export class ChatService {
     // Runtime replacement is terminal for capture drains, opaque auth handles,
     // and exact-operation approvals. The browser process/page may stay alive.
     this.disposeBrowserRuntimeEphemera(sessionId);
-    await managedMcpGateway.close(sessionId);
+    const managedClose = managedMcpGateway.close(sessionId);
     const session = workspaceStore.getLocalSession(sessionId);
     if (session) browserTaskStateService.invalidateRuntime(session.workspaceId, sessionId);
-    if (!runtime) return;
+    if (!runtime) { await managedClose; return; }
     this.clearPendingRebuild(sessionId);
     this.runtimeContexts.delete(sessionId);
     this.sessionSpawnRoles.delete(sessionId);
@@ -2115,6 +2124,7 @@ export class ChatService {
     }
     await runtime.close();
     this.onRuntimeClose?.(sessionId);
+    await managedClose;
   }
 
   private releaseProviderRoute(lease: ProviderRouteLease | undefined, failureCode?: string): void {
@@ -3037,7 +3047,8 @@ export class ChatService {
       includePartialMessages: false,
       pathToClaudeCodeExecutable: claudePath,
       stderr: (data) => {
-        const trimmed = data.trim();
+        const capabilities = [taskCapabilityToken, env[SESSION_TOKEN_ENV], env[MANAGED_MCP_AUTH_ENV]?.replace(/^Bearer /, '')].filter((value): value is string => Boolean(value));
+        const trimmed = capabilities.reduce((text, token) => text.split(token).join('[REDACTED]'), data.trim());
         if (trimmed) sidecarLog(`[ChatService.claude.stderr] ${trimmed}`);
       },
     };

@@ -7,6 +7,7 @@ import { networkInterfaces, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { WebSocket } from 'ws';
+import { startManagedMcpHttpFixture } from './fixtures/managed-mcp-http-fixture.js';
 
 import {
   buildSidecarEnv,
@@ -53,6 +54,38 @@ test('packaged sidecar creates a New Chat session from a prose prompt without cr
     });
     assert.equal(workspaceResponse.status, 201);
     const workspaceBody = await workspaceResponse.json() as { workspace: { id: string } };
+
+    const local = await fetch(`${baseUrl}/api/mcp`, { method: 'POST', headers, body: JSON.stringify({
+      scope: 'global', name: 'packaged-local', enabled: true, connection: { type: 'stdio', command: process.execPath,
+        args: ['--import', join(process.cwd(), 'node_modules/tsx/dist/loader.mjs'), join(process.cwd(), 'scripts/fixtures/managed-mcp-fixture.ts')] },
+    }) });
+    assert.equal(local.status, 201, await local.clone().text());
+    const localBody = await local.json() as { server: { id: string } };
+    const localProbe = await fetch(`${baseUrl}/api/mcp/${localBody.server.id}/test`, { method: 'POST', headers, body: '{}' });
+    assert.deepEqual((await localProbe.json()).connection, { state: 'connected', tools: [{ name: 'echo', description: 'Echo a message after an optional delay' }] });
+
+    const oauthFixture = await startManagedMcpHttpFixture({ oauth: true });
+    try {
+      const remote = await fetch(`${baseUrl}/api/mcp`, { method: 'POST', headers, body: JSON.stringify({
+        scope: 'global', name: 'packaged-oauth', enabled: true,
+        connection: { type: 'http', url: `${oauthFixture.base}/http`, oauth: { clientId: 'fixture-client' } },
+      }) });
+      assert.equal(remote.status, 201);
+      const entry = await remote.json() as { server: { id: string } };
+      const started = await fetch(`${baseUrl}/api/mcp/${entry.server.id}/oauth`, { method: 'POST', headers, body: '{}' });
+      assert.equal(started.status, 201, await started.clone().text());
+      const operation = await started.json() as { id: string; authorizationUrl: string };
+      assert.equal((await fetch(operation.authorizationUrl)).status, 200);
+      const status = await fetch(`${baseUrl}/api/mcp/oauth/${operation.id}`, { headers });
+      assert.equal((await status.json()).state, 'authorized');
+      const probe = await fetch(`${baseUrl}/api/mcp/${entry.server.id}/test`, { method: 'POST', headers, body: '{}' });
+      const result = await probe.json();
+      assert.equal(result.connection.state, 'connected');
+      assert.equal(result.connection.tools[0].name, 'remote_echo');
+      const list = await (await fetch(`${baseUrl}/api/mcp`, { headers })).text();
+      assert.doesNotMatch(list, /fixture-oauth-(access|refresh)-secret/);
+      assert.equal(await directoryMatches(dataDir, /fixture-oauth-(access|refresh)-secret/), false);
+    } finally { await oauthFixture.close(); }
 
     // The title-derivation path must never touch Intl.Segmenter: the packaged
     // (@yao-pkg/pkg) runtime segfaults inside segment() for every granularity.
