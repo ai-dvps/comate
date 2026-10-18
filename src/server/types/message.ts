@@ -77,7 +77,8 @@ export interface ContextUsageSnapshot {
   totalTokens: number
   maxTokens: number
   percentage: number
-  categories: { name: string; tokens: number; isDeferred?: boolean }[]
+  categories: { name: string; tokens: number; isDeferred?: boolean; kind?: 'used' | 'free' | 'buffer' | 'deferred' }[]
+  detail?: 'summary' | 'full'
   model?: string
   rawMaxTokens?: number
   overLimit?: { tokensOver: number; kind: 'hard_limit' | 'compaction_window' }
@@ -297,6 +298,10 @@ export type SessionBackgroundTask = {
   id: string
   type: string
   description: string
+  runId?: string
+  parentTaskId?: string
+  subagentType?: string
+  ambient?: boolean
 }
 
 export type SessionActivityInterruption = {
@@ -383,7 +388,8 @@ export type SseEvent =
       totalTokens: number
       maxTokens: number
       percentage: number
-      categories: { name: string; tokens: number; isDeferred?: boolean }[]
+      categories: { name: string; tokens: number; isDeferred?: boolean; kind?: 'used' | 'free' | 'buffer' | 'deferred' }[]
+      detail?: 'summary' | 'full'
       /** SDK getContextUsage / context_usage twin: model the usage was computed for. */
       model?: string
       /** Raw model/context window before autocompact policy narrowing. */
@@ -436,6 +442,8 @@ export type SseEvent =
       title?: string
       description?: string
       suggestions?: PermissionSuggestion[]
+      defaultToNo?: boolean
+      suppressAlwaysAllowRule?: boolean
       expiresAt?: number
       denialReason?: 'safetyCheck' | 'asyncAgent' | string
       /** U11 (KTD-15): escalation audience; undefined = legacy self flow. */

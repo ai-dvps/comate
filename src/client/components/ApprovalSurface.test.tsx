@@ -54,6 +54,37 @@ const baseProps = {
   onStop: noop,
 }
 
+describe('ApprovalSurface SDK constraints', () => {
+  it('moves focus off Allow when a queued approval requires a negative default', () => {
+    const onAllow = vi.fn()
+    const view = render(<ApprovalSurface {...baseProps} onAllow={onAllow} />)
+    expect(screen.getByRole('button', { name: 'Allow' })).toHaveFocus()
+    view.rerender(<ApprovalSurface {...baseProps} onAllow={onAllow} pendingItem={{
+      ...makePendingApproval(), requestId: 'restricted-next', defaultToNo: true,
+    }} />)
+    expect(screen.getByRole('button', { name: 'Deny' })).toHaveFocus()
+    fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true })
+    expect(onAllow).not.toHaveBeenCalled()
+  })
+
+  it('focuses deny and hides permanent approval while permitting an explicit one-time click', () => {
+    const onAllow = vi.fn()
+    const pendingItem = {
+      ...makePendingApproval(),
+      defaultToNo: true,
+      suppressAlwaysAllowRule: true,
+      suggestions: [{ type: 'setMode' as const, mode: 'bypassPermissions' as const, destination: 'session' as const }],
+    }
+    render(<ApprovalSurface {...baseProps} pendingItem={pendingItem} onAllow={onAllow} />)
+    expect(screen.getByRole('button', { name: 'Deny' })).toHaveFocus()
+    expect(screen.queryByRole('button', { name: 'approval.allowAlways' })).not.toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'Enter' })
+    expect(onAllow).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Allow' }))
+    expect(onAllow).toHaveBeenCalledOnce()
+  })
+})
+
 describe('ApprovalSurface question option highlight', () => {
   it('draws the focused option ring inside the scroll container', () => {
     render(

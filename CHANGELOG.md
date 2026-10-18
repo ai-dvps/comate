@@ -9,9 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Explain Claude context and background work** — Automatic context updates use coalesced summary estimates; detailed `/context` reports distinguish reserved and deferred tokens. Background activity shows task hierarchy and separates maintenance watchers from business work.
+
 - **Upgrade the Claude runtime** — Comate now bundles Claude Agent SDK 0.3.301 and Claude Code 2.1.301, keeping approvals under Comate's control across desktop, scheduled, and Bot sessions.
 
 ### Fixed
+
+- **Respect approval interaction constraints** — Restricted approvals default away from Allow and cannot grant permanent permission, including after reconnecting. Background task stop controls distinguish resumed runs and reject known-stale requests.
 
 - **Keep Claude task results and activity in sync** — Structured tool results survive live and restored conversations, subagent results no longer end the main task, and resumed background tasks can be stopped again.
 - **Restore GLM Coding Plan usage** — Quota checks now use the Provider API key with BigModel's API endpoint instead of a captured website login. Empty or invalid responses no longer appear as “No coding plan”.

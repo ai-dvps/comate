@@ -11,6 +11,7 @@ import { getLoopbackAuth } from '../services/security/loopback-auth.js';
 import type { BotUser } from '../models/bot-user.js';
 import { loadWorkflowState, listWorkflowRunIds } from '../services/workflow-loader.js';
 import { validateQuestionAnswers } from '../utils/question-answer-validation.js';
+import { TaskRunChangedError } from '../services/session-runtime.js';
 import { deriveFallbackSessionTitle } from '../utils/session-title.js';
 
 const router = Router({ mergeParams: true });
@@ -304,6 +305,10 @@ router.post('/sessions/:sessionId/approvals/:requestId', async (req, res) => {
     }
 
     let result: PermissionResult;
+    if (behavior === 'allow' && pending.type === 'approval' && pending.suppressAlwaysAllowRule && updatedPermissions?.length) {
+      res.status(400).json({ error: 'Permanent permission updates are not allowed for this approval', code: 'PERMISSION_UPDATE_FORBIDDEN' });
+      return;
+    }
     if (behavior === 'allow') {
       if (pending.type === 'question') {
         const validation = validateQuestionAnswers(pending.questions, answers);
@@ -397,12 +402,23 @@ router.post('/sessions/:sessionId/tasks/:taskId/stop', async (req, res) => {
       return;
     }
 
-    const stopped = await runtime.stopBackgroundTask(taskId);
+    const runId = req.body?.runId;
+    if (runId !== undefined && (typeof runId !== 'string' || !runId)) {
+      res.status(400).json({ error: 'runId must be a non-empty string' });
+      return;
+    }
+    const stopped = runId === undefined
+      ? await runtime.stopBackgroundTask(taskId)
+      : await runtime.stopBackgroundTask(taskId, runId);
     res.json({ ok: true, stopped });
   } catch (error) {
     diagLog(
       `[Route] Failed to stop background task session=${sessionId} task=${taskId}: ${error instanceof Error ? error.message : String(error)}`,
     );
+    if (error instanceof TaskRunChangedError) {
+      res.status(409).json({ error: error.message, code: 'TASK_RUN_CHANGED', activity: chatService.getRuntimeIfExists(sessionId)?.getActivitySnapshot() });
+      return;
+    }
     res.status(500).json({ error: 'Failed to stop background task' });
   }
 });

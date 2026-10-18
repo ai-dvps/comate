@@ -31,18 +31,22 @@ interface SectionRow {
   tokens: number
 }
 
-function ContextUsageCard({ usage }: { usage: ContextUsage }) {
+function ContextUsageCard({ usage, supportsFullDiagnostic }: { usage: ContextUsage; supportsFullDiagnostic: boolean }) {
   const { t } = useTranslation('chat')
 
   const visibleCategories = usage.categories.filter(
-    (c) => c.tokens > 0 && !c.name.toLowerCase().includes('free'),
+    (category) => category.tokens > 0 && (category.kind
+      ? category.kind !== 'free' && category.kind !== 'deferred'
+      : !category.isDeferred && !category.name.toLowerCase().includes('free')),
   )
   const segments = visibleCategories.map((category, index) => ({
-    name: category.name,
+    name: category.kind === 'buffer' ? `${category.name} (${t('tokenUsage.reserve')})` : category.name,
     tokens: category.tokens,
     color: CATEGORY_COLORS[index % CATEGORY_COLORS.length],
   }))
   const totalForBar = Math.max(usage.maxTokens, usage.totalTokens, 1)
+  const deferredCategories = usage.categories.filter(category => category.kind
+    ? category.kind === 'deferred' : category.isDeferred)
 
   const sections: { title: string; rows: SectionRow[] }[] = []
   if (usage.mcpTools && usage.mcpTools.length > 0) {
@@ -126,6 +130,10 @@ function ContextUsageCard({ usage }: { usage: ContextUsage }) {
       <div className="text-[11px] text-text-secondary">
         {formatTokens(usage.totalTokens)} / {formatTokens(usage.maxTokens)} tokens · {usage.percentage}%
       </div>
+      <p className="whitespace-normal text-[11px] text-text-tertiary">
+        {t(usage.detail === 'summary' ? 'tokenUsage.summary' : usage.detail === 'full' ? 'tokenUsage.detailed' : 'tokenUsage.savedSnapshot')}
+        {supportsFullDiagnostic && usage.detail !== 'full' ? ` · ${t('tokenUsage.contextCommand')}` : ''}
+      </p>
 
       {usage.overLimit && (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
@@ -178,7 +186,16 @@ function ContextUsageCard({ usage }: { usage: ContextUsage }) {
         ))}
       </div>
 
-      {sections.map((section) => (
+      {deferredCategories.length > 0 && (
+        <div className="space-y-1 border-t border-border/40 pt-2 text-[11px] text-text-tertiary">
+          <p>{t('tokenUsage.deferred')}</p>
+          {deferredCategories.map(category => (
+            <p key={category.name} className="whitespace-normal break-words">{category.name}: {formatTokens(category.tokens)}</p>
+          ))}
+        </div>
+      )}
+
+      {usage.detail !== 'summary' && sections.map((section) => (
         <div key={section.title} className="space-y-1 border-t border-border/40 pt-2">
           <div className="text-[10px] font-medium uppercase tracking-wider text-text-tertiary">
             {section.title}
@@ -206,6 +223,7 @@ export default function SessionTokenUsage({
   const [open, setOpen] = useState(false)
   const cumulative = useChatStore((s) => s.sessionUsage[sessionId])
   const contextUsage = useChatStore((s) => s.contextUsage[sessionId])
+  const backend = useChatStore((state) => Object.values(state.sessions).flat().find(session => session.id === sessionId)?.backend ?? 'claude')
   const cumulativeTotal = cumulative?.cumulativeTotal ?? (cumulative
     ? cumulative.cumulativeInput + cumulative.cumulativeOutput +
       cumulative.cumulativeCacheRead + cumulative.cumulativeCacheWrite
@@ -240,7 +258,7 @@ export default function SessionTokenUsage({
           </PopoverTrigger>
           <PopoverContent side="top" align="end" sideOffset={6}
             className="z-50 rounded-lg border border-border bg-surface-active p-3 shadow-lg">
-            <ContextUsageCard usage={contextUsage} />
+            <ContextUsageCard usage={contextUsage} supportsFullDiagnostic={backend === 'claude'} />
           </PopoverContent>
         </Popover>
       ) : (

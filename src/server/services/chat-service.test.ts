@@ -1877,10 +1877,20 @@ describe('chat-service canUseTool policy gating', { concurrency: false }, () => 
       },
     });
 
-    const promise = canUseTool('Bash', { command: 'ls' }, { toolUseID: 'tu-ask-1', signal: new AbortController().signal });
-    assert.ok(promise instanceof Promise, 'ask policy should return a Promise');
-
     const runtime = (service as unknown as { runtimes: Map<string, SessionRuntime> }).runtimes.get('s1')!;
+    const requestApproval = runtime.requestToolApproval.bind(runtime);
+    const forwarded: Array<Parameters<SessionRuntime['requestToolApproval']>[4]> = [];
+    runtime.requestToolApproval = (...args) => {
+      forwarded.push(args[4]);
+      return requestApproval(...args);
+    };
+    const promise = canUseTool('Bash', { command: 'ls' }, {
+      toolUseID: 'tu-ask-1', signal: new AbortController().signal,
+      defaultToNo: true, suppressAlwaysAllowRule: true,
+    });
+    assert.ok(promise instanceof Promise, 'ask policy should return a Promise');
+    assert.strictEqual(forwarded[0]?.defaultToNo, true);
+    assert.strictEqual(forwarded[0]?.suppressAlwaysAllowRule, true);
     runtime.resolveApproval('tu-ask-1', { behavior: 'allow', updatedInput: { command: 'ls' } });
 
     const result = await promise;

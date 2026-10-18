@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import React from 'react'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import i18n from '../i18n'
 import SessionTokenUsage from './SessionTokenUsage'
@@ -36,6 +36,24 @@ vi.mock('../stores/provider-store', () => ({
 }))
 
 describe('SessionTokenUsage', () => {
+  it('uses typed categories instead of English names for summary diagnostics', async () => {
+    mockStore.contextUsage.s2 = {
+      totalTokens: 20, maxTokens: 100, percentage: 20, detail: 'summary',
+      categories: [
+        { name: '内容', tokens: 20, kind: 'used' },
+        { name: '可用', tokens: 50, kind: 'free' },
+        { name: '保留', tokens: 30, kind: 'buffer' },
+        { name: '工具库', tokens: 500, kind: 'deferred' },
+      ],
+    }
+    renderWithI18n(<SessionTokenUsage sessionId="s2" />)
+    fireEvent.click(screen.getByRole('button', { name: /Context: 20%/i }))
+    expect(await screen.findByText(/Summary estimate/)).toBeInTheDocument()
+    expect(screen.getByTitle('内容: 20')).toHaveStyle({ width: '20%' })
+    expect(screen.queryByTitle('可用: 50')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('工具库: 500')).not.toBeInTheDocument()
+    expect(screen.getByText(/工具库:/)).toBeInTheDocument()
+  })
   it('renders independent dashes when no usage data exists', () => {
     renderWithI18n(<SessionTokenUsage sessionId="s1" />)
     expect(screen.getByLabelText(/Session: —/i)).toBeInTheDocument()

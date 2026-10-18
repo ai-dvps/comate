@@ -3173,6 +3173,8 @@ export class ChatService {
               toolName: string,
               input: Record<string, unknown>,
               sdkOptions: {
+                defaultToNo?: boolean;
+                suppressAlwaysAllowRule?: boolean;
                 signal: AbortSignal;
                 suggestions?: import('../types/message.js').PermissionSuggestion[];
                 title?: string;
@@ -3311,6 +3313,8 @@ export class ChatService {
                   title: sdkOptions.title,
                   description: sdkOptions.description,
                   suggestions: sdkOptions.suggestions,
+                  defaultToNo: sdkOptions.defaultToNo,
+                  suppressAlwaysAllowRule: sdkOptions.suppressAlwaysAllowRule,
                   timeout,
                   signal: sdkOptions.signal,
                   decisionReasonType: sdkOptions.decisionReasonType,
@@ -3425,6 +3429,8 @@ export class ChatService {
               toolName: string,
               input: Record<string, unknown>,
               sdkOptions: {
+                defaultToNo?: boolean;
+                suppressAlwaysAllowRule?: boolean;
                 signal: AbortSignal;
                 suggestions?: import('../types/message.js').PermissionSuggestion[];
                 title?: string;
@@ -3457,6 +3463,8 @@ export class ChatService {
                   title: sdkOptions?.title,
                   description: sdkOptions?.description,
                   suggestions: sdkOptions?.suggestions,
+                  defaultToNo: sdkOptions?.defaultToNo,
+                  suppressAlwaysAllowRule: sdkOptions?.suppressAlwaysAllowRule,
                   timeout,
                   signal: sdkOptions?.signal,
                   decisionReasonType: sdkOptions?.decisionReasonType,
@@ -4107,6 +4115,8 @@ export class ChatService {
           toolName: string,
           input: Record<string, unknown>,
           sdkOptions: {
+            defaultToNo?: boolean;
+            suppressAlwaysAllowRule?: boolean;
             signal: AbortSignal;
             suggestions?: import('@anthropic-ai/claude-agent-sdk').PermissionUpdate[];
             title?: string;
@@ -4196,6 +4206,8 @@ export class ChatService {
               title: sdkOptions.title,
               description: sdkOptions.description,
               suggestions: sdkOptions.suggestions,
+              defaultToNo: sdkOptions.defaultToNo,
+              suppressAlwaysAllowRule: sdkOptions.suppressAlwaysAllowRule,
               timeout,
               signal: sdkOptions.signal,
               decisionReasonType: sdkOptions.decisionReasonType,

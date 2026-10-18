@@ -43,6 +43,14 @@ const RING_BUFFER_CAP = 500;
 const STOP_DRAIN_TIMEOUT_MS = 2000;
 const BACKGROUND_TASK_STOP_TIMEOUT_MS = 10_000;
 
+type ApprovalConstraints = { defaultToNo?: boolean; suppressAlwaysAllowRule?: boolean };
+
+export class TaskRunChangedError extends Error {
+  constructor() {
+    super('Task run changed; refresh activity before stopping it.');
+  }
+}
+
 export type RuntimeUserContentBlock =
   | { type: 'text'; text: string }
   | {
@@ -85,7 +93,9 @@ function backgroundTasksEqual(
 ): boolean {
   return left.length === right.length && left.every((task, index) => {
     const other = right[index];
-    return task.id === other.id && task.type === other.type && task.description === other.description;
+    return task.id === other.id && task.type === other.type && task.description === other.description &&
+      task.runId === other.runId && task.parentTaskId === other.parentTaskId &&
+      task.subagentType === other.subagentType && task.ambient === other.ambient;
   });
 }
 
@@ -161,6 +171,7 @@ export class SessionRuntime {
       timer?: NodeJS.Timeout;
       /** U8 (KTD-15): approval audience; undefined for non-escalation pendings. */
       audience?: BotEscalationAudience;
+      constraints?: ApprovalConstraints;
     }
   >();
   /**
@@ -174,6 +185,11 @@ export class SessionRuntime {
   private closed = false;
   private messageLoopPromise: Promise<void> = Promise.resolve();
   private currentMessageStartId?: string;
+  private contextUsageRevision = 0;
+  private contextUsagePending = false;
+  private contextUsageScheduled = false;
+  private contextUsageInFlight = false;
+  private preserveDetailedContext = false;
   private foregroundMessageUuid?: string;
   private backgroundTasks = new Map<string, SessionBackgroundTask>();
   private backgroundTaskToolUseIds = new Map<string, string>();
@@ -325,13 +341,19 @@ export class SessionRuntime {
       for (const handler of this.webEventHandlers) {
         handler(id, event);
       }
-      if (
+      if (event.type === 'context_usage' && event.detail === 'full') {
+        this.contextUsageRevision += 1;
+        this.contextUsagePending = false;
+        this.preserveDetailedContext = true;
+      }
+      if (event.type === 'tool_result' || event.type === 'compact_boundary') this.preserveDetailedContext = false;
+      if (!this.preserveDetailedContext && (
         event.type === 'assistant_start' ||
         event.type === 'tool_result' ||
         event.type === 'assistant_done' ||
         event.type === 'result' ||
         event.type === 'compact_boundary'
-      ) {
+      )) {
         this.emitContextUsage();
       }
     });
@@ -379,6 +401,9 @@ export class SessionRuntime {
     try {
       for await (const msg of messages) {
         if (this.closed) break;
+        if (msg.type === 'assistant' && !(msg as unknown as Record<string, unknown>).context_usage) {
+          this.preserveDetailedContext = false;
+        }
         this.handleActivityMessage(msg);
         if (
           (msg.type === 'stream_event' || msg.type === 'assistant') &&
@@ -486,7 +511,13 @@ export class SessionRuntime {
     this.backgroundTasks = new Map(
       message.tasks.map((task) => [
         task.task_id,
-        { id: task.task_id, type: task.task_type, description: task.description },
+        {
+          id: task.task_id, type: task.task_type, description: task.description,
+          ...(task.run_id && { runId: task.run_id }),
+          ...(task.parent_task_id && { parentTaskId: task.parent_task_id }),
+          ...(task.subagent_type && { subagentType: task.subagent_type }),
+          ...(task.ambient !== undefined && { ambient: task.ambient }),
+        },
       ]),
     );
     for (const taskId of this.backgroundTaskToolUseIds.keys()) {
@@ -526,7 +557,7 @@ export class SessionRuntime {
         toolUseID: string;
         decisionReasonType?: string;
         requestId: string;
-      },
+      } & ApprovalConstraints,
     ): Promise<PermissionResult | null> => {
       const requestId = options.requestId ?? options.toolUseID;
 
@@ -581,6 +612,8 @@ export class SessionRuntime {
                 'The embedded browser is leaving the sites it has already visited this session. Confirm this first cross-site navigation; later ones only get an audit marker.',
               signal: options.signal,
               decisionReasonType: options.decisionReasonType,
+              defaultToNo: options.defaultToNo,
+              suppressAlwaysAllowRule: options.suppressAlwaysAllowRule,
             },
           );
           if (result.behavior === 'allow') {
@@ -619,6 +652,8 @@ export class SessionRuntime {
             timeout: this.parseTimeout(input),
             signal: options.signal,
             decisionReasonType: options.decisionReasonType,
+            defaultToNo: options.defaultToNo,
+            suppressAlwaysAllowRule: options.suppressAlwaysAllowRule,
           });
           if (result.behavior === 'allow') {
             commitSessionNavigation(this.sessionId, nav.domain);
@@ -658,6 +693,8 @@ export class SessionRuntime {
         timeout,
         signal: options.signal,
         decisionReasonType: options.decisionReasonType,
+        defaultToNo: options.defaultToNo,
+        suppressAlwaysAllowRule: options.suppressAlwaysAllowRule,
       });
     };
   }
@@ -829,6 +866,7 @@ export class SessionRuntime {
           pending.expiresAt,
           undefined,
           pending.audience,
+          pending.constraints,
         );
       }
     }
@@ -864,6 +902,7 @@ export class SessionRuntime {
           pending.expiresAt,
           undefined,
           pending.audience,
+          pending.constraints,
         );
       }
     }
@@ -931,7 +970,7 @@ export class SessionRuntime {
   }
 
   async getContextUsage(): Promise<SDKControlGetContextUsageResponse> {
-    return this.query.getContextUsage();
+    return this.query.getContextUsage({ detail: 'summary' });
   }
 
   /**
@@ -963,17 +1002,29 @@ export class SessionRuntime {
   }
 
   private emitContextUsage(): void {
-    this.getContextUsage()
+    this.contextUsageRevision += 1;
+    this.contextUsagePending = true;
+    if (this.contextUsageScheduled || this.contextUsageInFlight || this.closed) return;
+    this.contextUsageScheduled = true;
+    queueMicrotask(() => {
+      this.contextUsageScheduled = false;
+      if (this.closed || !this.contextUsagePending) return;
+      this.contextUsagePending = false;
+      this.contextUsageInFlight = true;
+      const revision = this.contextUsageRevision;
+      this.getContextUsage()
       .then((usage) => {
-        if (this.closed) return;
+        if (this.closed || revision !== this.contextUsageRevision) return;
         this.emitter.emitEvent({
           type: 'context_usage',
+          detail: 'summary',
           totalTokens: usage.totalTokens,
           maxTokens: usage.maxTokens,
           percentage: usage.percentage,
           categories: usage.categories.map((category) => ({
             name: category.name,
             tokens: category.tokens,
+            ...(category.kind !== undefined && { kind: category.kind }),
             ...(category.isDeferred && { isDeferred: true }),
           })),
           ...(usage.model !== undefined && { model: usage.model }),
@@ -1015,7 +1066,12 @@ export class SessionRuntime {
         diagLog(
           `[Runtime ${this.sessionId}] getContextUsage failed: ${err instanceof Error ? err.message : String(err)}`,
         );
+      })
+      .finally(() => {
+        this.contextUsageInFlight = false;
+        if (this.contextUsagePending && !this.preserveDetailedContext && !this.closed) this.emitContextUsage();
       });
+    });
   }
 
   isClosed(): boolean {
@@ -1047,7 +1103,7 @@ export class SessionRuntime {
       ? 'stopping'
       : this.foregroundMessageUuid !== undefined || this.pendingApprovals.size > 0
         ? 'foreground'
-        : backgroundTasks.length > 0
+        : backgroundTasks.some(task => !task.ambient)
           ? 'background'
           : 'idle';
     return {
@@ -1106,6 +1162,7 @@ export class SessionRuntime {
       uuid,
     };
     this.foregroundMessageUuid = uuid;
+    this.preserveDetailedContext = false;
     this.activityInterruption = undefined;
     this.evaluateActivity();
     this.input.push(msg);
@@ -1122,6 +1179,7 @@ export class SessionRuntime {
   resolveApproval(requestId: string, result: PermissionResult, provenance?: ApprovalResolutionProvenance): boolean {
     const pending = this.pendingApprovals.get(requestId);
     if (!pending) return false;
+    if (pending.constraints?.suppressAlwaysAllowRule && result.behavior === 'allow' && result.updatedPermissions?.length) return false;
     if (provenance) {
       this.rememberResolutionProvenance(requestId, provenance);
     }
@@ -1160,6 +1218,8 @@ export class SessionRuntime {
         description?: string;
         suggestions?: PermissionSuggestion[];
         audience?: BotEscalationAudience;
+        defaultToNo?: boolean;
+        suppressAlwaysAllowRule?: boolean;
       }
     | { type: 'question'; questions: QuestionPayload[] }
     | undefined {
@@ -1177,6 +1237,7 @@ export class SessionRuntime {
       description: pending.description,
       suggestions: pending.suggestions,
       audience: pending.audience,
+      ...pending.constraints,
     };
   }
 
@@ -1199,7 +1260,7 @@ export class SessionRuntime {
       decisionReasonType?: string;
       /** U8 (KTD-15): escalation audience for this pending. */
       audience?: BotEscalationAudience;
-    } = {},
+    } & ApprovalConstraints = {},
   ): Promise<PermissionResult> {
     if (this.stopFenceActive) {
       return Promise.resolve({ behavior: 'deny', message: 'Session stopped by user.' });
@@ -1219,6 +1280,7 @@ export class SessionRuntime {
       timerInfo?.expiresAt,
       options.decisionReasonType,
       options.audience,
+      options,
     );
     return this.waitForResolution(requestId, input, 'approval', {
       toolName,
@@ -1230,6 +1292,7 @@ export class SessionRuntime {
       timer: timerInfo?.timer,
       signal: options.signal,
       audience: options.audience,
+      constraints: { defaultToNo: options.defaultToNo, suppressAlwaysAllowRule: options.suppressAlwaysAllowRule },
     });
   }
 
@@ -1293,6 +1356,7 @@ export class SessionRuntime {
       timer?: NodeJS.Timeout;
       signal?: AbortSignal;
       audience?: BotEscalationAudience;
+      constraints?: ApprovalConstraints;
     },
   ): Promise<PermissionResult> {
     return new Promise<PermissionResult>((resolve) => {
@@ -1309,6 +1373,7 @@ export class SessionRuntime {
         ...(data.expiresAt !== undefined && { expiresAt: data.expiresAt }),
         ...(data.timer !== undefined && { timer: data.timer }),
         ...(data.audience !== undefined && { audience: data.audience }),
+        ...(data.constraints !== undefined && { constraints: data.constraints }),
       });
       this.evaluateActivity();
 
@@ -1350,7 +1415,7 @@ export class SessionRuntime {
     }
   }
 
-  stopBackgroundTask(taskId: string): Promise<boolean> {
+  stopBackgroundTask(taskId: string, expectedRunId?: string): Promise<boolean> {
     if (!this.driver.supportsIndividualTaskStop) {
       return Promise.reject(
         new Error(`Individual background task stopping is not supported by '${this.driver.backendId}'`),
@@ -1359,6 +1424,7 @@ export class SessionRuntime {
     if (!this.backgroundTasks.has(taskId)) return Promise.resolve(false);
 
     const runId = this.backgroundTaskRunIds.get(taskId);
+    if (expectedRunId !== undefined && expectedRunId !== runId) return Promise.reject(new TaskRunChangedError());
     const existing = this.backgroundTaskStopOperations.get(taskId);
     if (existing && existing.runId === runId) return existing.operation;
     if (this.individuallyStoppedTaskIds.has(taskId)) return Promise.resolve(true);
@@ -1393,7 +1459,7 @@ export class SessionRuntime {
 
   stopAll(): Promise<void> {
     if (this.stopOperation) return this.stopOperation;
-    if (!this.getActivitySnapshot().active) return Promise.resolve();
+    if (!this.getActivitySnapshot().active && this.backgroundTasks.size === 0) return Promise.resolve();
 
     this.stopping = true;
     this.stopFenceActive = true;

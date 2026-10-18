@@ -4,6 +4,7 @@ import assert from 'node:assert';
 import { store as workspaceStore } from '../storage/sqlite-store.js';
 import { chatService, ChatError } from '../services/chat-service.js';
 import { botService } from '../services/bot-service.js';
+import { TaskRunChangedError } from '../services/session-runtime.js';
 
 function createMockRes() {
   return {
@@ -316,6 +317,22 @@ describe('chat route approvals funnel (U8, KTD-15)', { concurrency: false }, () 
     } finally {
       stub.restore();
     }
+  });
+
+  it('refuses permanent approval updates without consuming the pending card', async () => {
+    let resolveCalls = 0;
+    const stub = stubChatService({ getRuntimeIfExists: () => ({
+      getPendingCardState: () => ({ type: 'approval', suppressAlwaysAllowRule: true }),
+      resolveApproval: () => { resolveCalls += 1; return true; },
+    }) });
+    try {
+      const handler = await importApprovalsHandler();
+      const response = createMockRes();
+      await handler({ params: { id: 'ws-1', sessionId: 's1', requestId: 'req' },
+        body: { behavior: 'allow', updatedPermissions: [{ type: 'setMode', mode: 'bypassPermissions' }] } }, response);
+      assert.strictEqual(response.statusCode, 400);
+      assert.strictEqual(resolveCalls, 0);
+    } finally { stub.restore(); }
   });
 
   it('resolves a multi-question AskUserQuestion with the pending server questions', async () => {
@@ -756,6 +773,27 @@ describe('chat route background task stop', { concurrency: false }, () => {
     } finally {
       restore();
     }
+  });
+
+  it('returns the current activity when the requested run has changed', async () => {
+    const activity = { phase: 'background', active: true, backgroundTasks: [{ id: 'task', type: 'agent', description: 'Current', runId: 'b' }] };
+    const restore = stubRuntime({
+      getStatus: () => ({ workspaceId: 'ws-1' }),
+      getBackendId: () => 'claude',
+      getActivitySnapshot: () => activity,
+      stopBackgroundTask: async (taskId: string, runId: string) => {
+        assert.strictEqual(taskId, 'task');
+        assert.strictEqual(runId, 'a');
+        throw new TaskRunChangedError();
+      },
+    });
+    try {
+      const handler = await importTaskStopHandler();
+      const response = createMockRes();
+      await handler({ params: { id: 'ws-1', sessionId: 's1', taskId: 'task' }, body: { runId: 'a' } }, response);
+      assert.strictEqual(response.statusCode, 409);
+      assert.deepStrictEqual((response.jsonBody as { activity: unknown }).activity, activity);
+    } finally { restore(); }
   });
 
   it('returns an idempotent success when the runtime is gone', async () => {
