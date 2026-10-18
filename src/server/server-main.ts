@@ -12,6 +12,7 @@ import fileRoutes from './routes/files.js';
 import chatRoutes from './routes/chat.js';
 import backendRoutes from './routes/backends.js';
 import { createBrowserMcpHttpRouter } from './services/browser-mcp-http.js';
+import { createMcpRouter } from './routes/mcp.js';
 import { createScheduledTasksMcpHttpRouter, resolveScheduledTasksMcpDeps } from './services/scheduled-tasks-mcp.js';
 import { chatService } from './services/chat-service.js';
 import { browserUploadStagingService } from './services/browser-upload-staging.js';
@@ -222,6 +223,7 @@ app.use('/api/health/browser', healthBrowserRoutes);
 app.use('/api/health/sandbox', healthSandboxRoutes);
 app.use('/api/browser', browserRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/mcp', createMcpRouter());
 app.use('/api/broker/request', apiBrokerRoutes);
 
 // Health checks

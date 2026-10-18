@@ -38,7 +38,9 @@ export class McpConfigStore {
       return { id: row.id, scope: row.scope, name: row.name, kind: row.kind,
         enabled: Boolean(row.enabled), revision: row.revision, ...payload };
     } catch {
-      throw new McpConfigError('MCP credentials cannot be decrypted. Reconfigure this service.', 500);
+      return { id: row.id, scope: row.scope, name: row.name, kind: row.kind,
+        enabled: Boolean(row.enabled), revision: row.revision,
+        error: 'MCP credentials cannot be decrypted. Replace the connection settings or delete this service.' };
     }
   }
 
@@ -108,8 +110,13 @@ export class McpConfigStore {
   deleteScope(scope: string): void {
     this.db.transaction(() => {
       this.db.prepare('DELETE FROM mcp_entries WHERE scope = ?').run(scope);
+      if (scope.startsWith('workspace:')) this.db.prepare('DELETE FROM mcp_workspace_migrations WHERE workspace_id = ?').run(scope.slice(10));
       this.bump(scope);
     })();
+  }
+
+  isWorkspaceMigrated(id: string): boolean {
+    return Boolean(this.db.prepare('SELECT 1 FROM mcp_workspace_migrations WHERE workspace_id = ?').get(id));
   }
 
   migrateWorkspace(id: string, entries: Array<{ name: string; command: string; args?: string[] }>): void {

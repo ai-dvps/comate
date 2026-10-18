@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
 export const mcpScopeSchema = z.string().regex(/^(global|workspace:[A-Za-z0-9_-]+)$/);
-export const mcpNameSchema = z.string().min(1).max(128).refine(value => value === value.trim() && !/[\x00-\x1f\x7f]/.test(value));
+export const mcpNameSchema = z.string().min(1).max(128).refine(value =>
+  value === value.trim() && [...value].every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127));
 const values = z.record(z.string().min(1), z.string());
 const url = z.string().url().refine(value => ['http:', 'https:'].includes(new URL(value).protocol));
 export const mcpOAuthOptionsSchema = z.object({
@@ -33,6 +34,7 @@ export interface ManagedMcpRecord {
   revision: number;
   connection?: McpConnection;
   oauthState?: McpOAuthState;
+  error?: string;
 }
 export interface McpServerView {
   id: string;
@@ -51,6 +53,7 @@ export interface McpServerView {
   authorization: 'not_required' | 'not_authorized' | 'authorized' | 'reauthorization_required';
   inherited?: boolean;
   overridden?: boolean;
+  error?: string;
 }
 export interface McpConnectionStatus {
   state: 'disconnected' | 'connecting' | 'connected' | 'failed' | 'authorization_required';

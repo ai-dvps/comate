@@ -111,6 +111,16 @@ router.post('/:id/open', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const input = req.body as UpdateWorkspaceInput;
+    if (input.mcpServers !== undefined && store.mcp.isWorkspaceMigrated(req.params.id)) {
+      const existing = await store.get(req.params.id);
+      const normalized = (servers: NonNullable<UpdateWorkspaceInput['mcpServers']>) =>
+        JSON.stringify(servers.map(({ name, command, args }) => ({ name, command, args: args ?? [] })));
+      if (existing && normalized(input.mcpServers) !== normalized(existing.mcpServers)) {
+        res.status(409).json({ error: 'MCP configuration is managed separately. Use MCP settings to change services.' });
+        return;
+      }
+      delete input.mcpServers;
+    }
 
     // Field-level merge (KTD-8): a whole-bag settings save must neither
     // clobber a concurrent remember-site write nor carry client-supplied
