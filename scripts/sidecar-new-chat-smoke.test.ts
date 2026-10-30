@@ -6,6 +6,7 @@ import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { networkInterfaces, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { pathToFileURL } from 'node:url';
 import { WebSocket } from 'ws';
 import { startManagedMcpHttpFixture } from './fixtures/managed-mcp-http-fixture.js';
 
@@ -57,7 +58,7 @@ test('packaged sidecar creates a New Chat session from a prose prompt without cr
 
     const local = await fetch(`${baseUrl}/api/mcp`, { method: 'POST', headers, body: JSON.stringify({
       scope: 'global', name: 'packaged-local', enabled: true, connection: { type: 'stdio', command: process.execPath,
-        args: ['--import', join(process.cwd(), 'node_modules/tsx/dist/loader.mjs'), join(process.cwd(), 'scripts/fixtures/managed-mcp-fixture.ts')] },
+        args: ['--import', pathToFileURL(join(process.cwd(), 'node_modules/tsx/dist/loader.mjs')).href, join(process.cwd(), 'scripts/fixtures/managed-mcp-fixture.ts')] },
     }) });
     assert.equal(local.status, 201, await local.clone().text());
     const localBody = await local.json() as { server: { id: string } };

@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import express from 'express';
 import { createServer } from 'node:http';
 import { SqliteStore } from '../src/server/storage/sqlite-store.js';
@@ -37,7 +38,7 @@ const fixture = remote ? { type: transport === 'sse' ? 'sse' as const : 'http' a
   url: `${remote.base}/${transport === 'sse' ? 'sse' : 'http'}`,
   ...(transport === 'oauth' ? { oauth: { clientId: 'fixture-client' } } : transport === 'http-public' ? {} : { headers: { Authorization: 'Bearer fixture-manual-secret' } }),
 } : { type: 'stdio' as const, command: process.execPath,
-  args: ['--import', path.resolve('node_modules/tsx/dist/loader.mjs'), path.resolve('scripts/fixtures/managed-mcp-fixture.ts')],
+  args: ['--import', pathToFileURL(path.resolve('node_modules/tsx/dist/loader.mjs')).href, path.resolve('scripts/fixtures/managed-mcp-fixture.ts')],
   env: { MCP_FIXTURE_TRACE: path.join(process.env.COMATE_DATA_DIR!, 'native-boundary.jsonl'), MCP_FIXTURE_VERSION: 'initial' } };
 const firstRecord = await config.save({ scope: 'global', name: 'first', enabled: true, connection: fixture });
 if (transport === 'oauth') {

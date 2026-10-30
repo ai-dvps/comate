@@ -2,6 +2,7 @@ import '../test-utils/test-env.js';
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { SqliteStore } from '../storage/sqlite-store.js';
@@ -15,7 +16,7 @@ it('waits for real dispatched calls, switches without ending a turn, and isolate
   const workspace = await store.create({ name: 'one', folderPath: process.cwd() });
   const other = await store.create({ name: 'two', folderPath: process.cwd() });
   const connection = { type: 'stdio' as const, command: process.execPath,
-    args: ['--import', path.resolve('node_modules/tsx/dist/loader.mjs'), path.resolve('scripts/fixtures/managed-mcp-fixture.ts')] };
+    args: ['--import', pathToFileURL(path.resolve('node_modules/tsx/dist/loader.mjs')).href, path.resolve('scripts/fixtures/managed-mcp-fixture.ts')] };
   const entry = await config.save({ scope: 'global', name: 'example', enabled: true, connection });
   await config.save({ scope: `workspace:${other.id}`, name: 'example', enabled: true, connection });
   const gateway = new ManagedMcpGateway(config);
@@ -49,7 +50,7 @@ it('applies the latest of rapid edits, keeps another service running, and never 
   const config = new McpConfigService(store);
   const workspace = await store.create({ name: 'coordinator', folderPath: directory });
   const connection = (version: string) => ({ type: 'stdio' as const, command: process.execPath,
-    args: ['--import', path.resolve('node_modules/tsx/dist/loader.mjs'), path.resolve('scripts/fixtures/managed-mcp-fixture.ts')],
+    args: ['--import', pathToFileURL(path.resolve('node_modules/tsx/dist/loader.mjs')).href, path.resolve('scripts/fixtures/managed-mcp-fixture.ts')],
     env: { MCP_FIXTURE_TRACE: trace, MCP_FIXTURE_VERSION: version } });
   const a = await config.save({ scope: 'global', name: 'a', enabled: true, connection: connection('a1') });
   await config.save({ scope: 'global', name: 'b', enabled: true, connection: connection('b1') });

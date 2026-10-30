@@ -2,6 +2,7 @@ import '../test-utils/test-env.js';
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import express from 'express';
 import { createServer } from 'node:http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -16,7 +17,7 @@ it('serves isolated real MCP tools, prompts and resources over authenticated HTT
   const service = new McpConfigService(store);
   await service.save({ scope: 'global', name: 'example', enabled: true, connection: {
     type: 'stdio', command: process.execPath,
-    args: ['--import', path.resolve('node_modules/tsx/dist/loader.mjs'), path.resolve('scripts/fixtures/managed-mcp-fixture.ts')],
+    args: ['--import', pathToFileURL(path.resolve('node_modules/tsx/dist/loader.mjs')).href, path.resolve('scripts/fixtures/managed-mcp-fixture.ts')],
     env: { MCP_FIXTURE_SECRET: 'resource-credential-sentinel' },
   } });
   const gateway = new ManagedMcpGateway(service);
@@ -63,7 +64,7 @@ it('cancels a queued call while the previous configuration is still draining', a
   const service = new McpConfigService(store);
   const entry = await service.save({ scope: 'global', name: 'example', enabled: true, connection: {
     type: 'stdio', command: process.execPath,
-    args: ['--import', path.resolve('node_modules/tsx/dist/loader.mjs'), path.resolve('scripts/fixtures/managed-mcp-fixture.ts')],
+    args: ['--import', pathToFileURL(path.resolve('node_modules/tsx/dist/loader.mjs')).href, path.resolve('scripts/fixtures/managed-mcp-fixture.ts')],
   } });
   const gateway = new ManagedMcpGateway(service);
   const context = await gateway.register({ sessionId: 'cancel', workspaceId: workspace.id, directory: process.cwd(), generation: 'g', backend: 'test' });
