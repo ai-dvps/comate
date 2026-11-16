@@ -29,10 +29,12 @@ The finance data above is synthetic, but the interface is the current Comate des
 Download the latest release for your platform:
 
 - **macOS** — `.dmg` and `.zip` packages for Apple silicon and Intel Macs
-- **Windows** — 64-bit `.exe` installer (NSIS)
+- **Windows** — 64-bit `.exe` installer (NSIS) and a portable `.zip`; extract the entire ZIP and run `Comate.exe`
 - **Linux** — x64 `.AppImage` and `.deb` packages
 
 Installers are published on [GitHub Releases](https://github.com/ai-dvps/comate/releases), with a [Gitee mirror](https://gitee.com/ai-dvps/comate/releases) available for faster downloads in China. See the notes for each release for current system compatibility, architecture coverage, signing status, and upgrade guidance.
+
+The Windows ZIP needs no installation. Keep all extracted files together. App data remains in `%APPDATA%\com.comate.app`, shared with the installed version. To keep using the ZIP version, quit Comate and extract a newer ZIP into a new folder; the in-app Windows updater uses the NSIS installer.
 
 ### Agent setup
 

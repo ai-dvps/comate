@@ -72,6 +72,15 @@ This bundles the sidecar server, runs the CDP gates (the native shell-CDP parity
 
 Before opening a pull request, run `npm run check` for the complete lint, type-check, and unit-test suite. Use the individual `test:*` commands while iterating on a focused area.
 
+### Windows artifacts (NSIS installer and portable ZIP)
+
+The Windows CI job builds both targets in one electron-builder invocation:
+
+- **NSIS** — `Comate-<version>-win-x64.exe`, the installer used by the Windows in-app updater.
+- **ZIP** — `Comate-<version>-win-x64.zip`, an installation-free archive. Extract the entire archive and run `Comate.exe` with the accompanying files and `resources/` directory in place. No separate Node.js or Electron installation is required.
+
+Both files are uploaded to GitHub Releases and the workflow artifacts, with or without signing credentials. Enterprise builds add `-enterprise` after the version. The ZIP uses the same `%APPDATA%\com.comate.app` data directory as the installer; it does not keep user data beside the executable. ZIP users should quit the app and extract each new version into a new folder, since the in-app updater installs NSIS releases.
+
 ### Linux artifacts (AppImage primary, deb secondary)
 
 Linux targets build only on a Linux host (electron-builder cannot cross-build them from macOS without Docker) — in practice the `ubuntu-22.04` CI leg produces them. Two artifacts ship per release:

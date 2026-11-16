@@ -204,7 +204,8 @@ const config: Configuration = {
   },
 
   win: {
-    target: ['nsis'],
+    // Keep NSIS for installed-app updates; ZIP runs directly after extraction.
+    target: ['nsis', 'zip'],
     icon: 'build/icon.ico',
     azureSignOptions: winAzureSignOptions,
   },

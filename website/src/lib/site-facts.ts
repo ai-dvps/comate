@@ -26,7 +26,7 @@ export const platformFacts = [
       zh: '需要受支持的 64 位 Windows 系统；具体系统要求见版本说明。',
       en: 'Requires a supported 64-bit Windows system; see the release notes for current system requirements.',
     },
-    artifactKinds: ['nsis'],
+    artifactKinds: ['nsis', 'zip'],
   },
   {
     key: 'linux',

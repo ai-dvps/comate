@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Run Windows without installation** — Releases now include a ZIP alongside the NSIS installer. Extract the full archive and launch `Comate.exe`; user data remains in the current user's app-data directory.
+
 ## [0.4.9] - 2026-10-30
 
 ### Added

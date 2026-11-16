@@ -116,7 +116,7 @@ describe('upstream Electron release compatibility', () => {
     const platformBlock = (key: 'mac' | 'win' | 'linux') =>
       builderConfig.match(new RegExp(`^  ${key}: \\{\\n([\\s\\S]*?)^  \\},`, 'm'))?.[1] ?? '';
     expect(platformBlock('mac')).toMatch(/target:\s*\['dmg', 'zip'\]/);
-    expect(platformBlock('win')).toMatch(/target:\s*\['nsis'\]/);
+    expect(platformBlock('win')).toMatch(/target:\s*\['nsis', 'zip'\]/);
     expect(platformBlock('linux')).toMatch(/target:\s*\['AppImage', 'deb'\]/);
 
     expect(buildWorkflow).toMatch(/platform: macos-latest[\s\S]*?builder-args: '--mac --x64 --arm64'/);
